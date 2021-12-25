@@ -1,0 +1,1051 @@
+<HTML>
+<HEAD>
+<LINK REL=StyleSheet HREF="basicIE4.css" TYPE="text/css">
+<TITLE>Server-Side ATL Programming</TITLE>
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY>
+<A NAME="726"><H1>Server-Side ATL Programming</H1></A><P>We've covered ATL's client-side support. While a fair amount of ATL is 
+devoted to client-side development aids (such as smart pointers and BSTR 
+wrappers), the bulk of ATL exists to support COM-based servers, which we'll cover 
+next. First you'll get an overview of ATL in order to understand how the pieces 
+fit together. Then you'll re-implement the spaceship example in ATL to 
+investigate ATL's Object Wizard and get a good feel for what it takes to write 
+COM classes using ATL.
+<A NAME="727"><H2>ATL and COM Classes</H2></A><P>Your job as a COM class developer is to wire up the function tables to 
+their implementations and to make sure 
+<I>QueryInterface</I>, <I>AddRef</I>, and 
+<I>Release</I> work as advertised. How you get that to happen is your own business. As far as 
+users are concerned, they couldn't care less what methods you use. You've seen 
+two basic approaches so far&#151;the raw C++ method using multiple inheritance of 
+interfaces and the MFC approach using macros and nested classes. The 
+ATL approach to implementing COM classes is somewhat different from either of 
+these approaches.
+<P>Compare the raw C++ approach to MFC's approach. Remember that 
+one way of developing COM classes using raw C++ involves multiply inheriting 
+a single C++ class from at least one COM interface and then writing all the 
+code for the C++ class. At that point, you've got to add any extra features (such 
+as supporting <I>IDispatch</I> or COM aggregation) by hand. The MFC approach 
+to COM classes involves using macros that define nested classes (with one 
+nested class implementing each interface). MFC supports 
+<I>IDispatch</I> and COM aggregation&#151;you don't have to do a lot to get those features up and running. 
+However, it's very difficult to paste any new interfaces onto a COM class without a lot 
+of typing. (As you saw in <A HREF="ch24a.htm">Chapter 24</A>, MFC's COM support uses some 
+lengthy macros.)
+<P>The ATL approach to composing COM classes requires inheriting a 
+C++ class from several template-based classes. However, Microsoft has already done the 
+work of implementing <I>IUnknown</I> for you through the class templates within ATL.
+<P>Let's dive right in and create the spaceship example as a COM class. 
+As always, start by selecting New from the File in Visual 
+C++. This opens the New dialog with the Projects tab activated, as shown in Figure 29-1. Select ATL 
+COM AppWizard from the Projects tab. Give your project a useful name such 
+as spaceshipsvr, and click OK.
+
+<P><A HREF="javascript:fullSize('f29og01x.htm')"> <img src="f29og01.jpg" width=404 height=288 border="0" ALT = "Click to view at full size."> </A><P>
+<!-- caption -->
+<B>Figure 29-1.</B> <I>Selecting ATL COM AppWizard from the New dialog box.</I>
+<!-- /caption -->
+<A NAME="728"><H2>ATL COM AppWizard Options</H2></A><P>In the Step 1 dialog, shown in Figure 29-2, you can choose the server type 
+for your project from a list of options. The ATL COM AppWizard gives you the 
+choice of creating a Dynamic Link Library (DLL), an Executable (EXE), or a 
+Service (EXE). If you select the DLL option, the options for attaching the 
+proxy/stub code to the DLL and for including MFC in your ATL project will be 
+activated.
+<P><A HREF="javascript:fullSize('f29og02x.htm')"> <img src="f29og02.jpg" width=404 height=325 border="0" ALT = "Click to view at full size."> </A><P>
+
+<!-- caption -->
+<B>Figure 29-2.</B> <I>Step 1 of the ATL COM AppWizard.</I>
+<!-- /caption -->
+<P>Selecting DLL as the server type produces all the necessary pieces to 
+make your server DLL fit into the COM milieu. Among these pieces are the 
+following well-known COM functions: <I>DllGetClassObject, DllCanUnloadNow, 
+DllRegisterServer, </I>and<I> DllUnregisterServer.</I> Also included are the correct server 
+lifetime mechanisms for a DLL.
+<P>If you decide you might want to run your DLL out of process as a 
+surrogate, selecting the Allow Merging Of Proxy/Stub Code option permits you 
+to package all your components into a single binary file. (Proxy/stub code 
+has traditionally shipped as a separate DLL.) That way you have to distribute 
+only a single DLL. If you decide you absolutely must include MFC in your DLL, 
+go ahead and select the Support MFC check box. MFC support 
+includes AfxWin.h and AfxDisp.h in your StdAfx.h file and links your project to 
+the current version of MFC's import library. While using MFC can be very 
+convenient and almost addictive at times, beware of dependencies you're 
+inheriting when you include MFC. You can also select Support MTS to add support 
+for Microsoft Transaction Server.
+<P>If you elect to produce an Executable EXE server, the ATL COM 
+AppWizard produces code that compiles to an EXE file. The EXE will 
+correctly register the class objects with the operating system by using 
+<I>CoRegisterClassObject</I> and 
+<I>CoRevokeClassObject</I>. The project will also insert the correct 
+code for managing the lifetime of the executable server. Finally, if you choose 
+the Service EXE option, the ATL COM AppWizard adds the necessary 
+service-oriented code.
+<P>Using the ATL COM AppWizard to write a lightweight COM server 
+yields several products. First, you get a project file for compiling your object. The 
+project file ties together all the source code for the project and maintains the 
+proper build instructions for each of the files. Second, you get some boilerplate 
+Interface Definition Language (IDL) code. The IDL file is important because as 
+the starting point for genuine COM development, it's one of the primary files 
+you'll focus on when writing COM classes.
+<P>IDL is a purely declarative language for describing COM interfaces. 
+Once a COM interface is described in an IDL file, a simple pass though the 
+Microsoft Interface Definition Language (MIDL) compiler creates several more 
+useful products.
+<P>These products include:
+<UL>
+<LI>The pure abstract base classes needed to write COM classes
+<P><LI>A type library
+<P><LI>Source code for building the proxy stub DLL (necessary 
+for standard COM remoting)<P>
+</UL>
+<A NAME="729"><H2>Creating a COM Class</H2></A><P>Once you've created a COM server, you're ready to start piling COM 
+classes into the server. Fortunately, there's an easy way to do that with the ATL 
+Object Wizard, shown in Figure 29-3. Select New ATL Object from the 
+Insert menu to start the ATL Object Wizard.
+<P>Using the ATL Object Wizard to generate a new object adds a 
+C++ source file and a header file containing the new class definition and implementation 
+to your project. In addition, the ATL Object Wizard adds an interface to the 
+IDL code. Although the ATL Object Wizard takes care of pumping out a 
+skeleton IDL file, you'll still need to understand IDL to some extent if you want to 
+write effective COM interfaces (as you'll soon see).
+
+<P><img src="f29og03x.gif" width=413 height=257 border="0" > <P>
+
+<!-- caption -->
+<B>Figure 29-3.</B> <I>Using the ATL Object Wizard to insert a new ATL-based COM class into the project.</I>
+<!-- /caption -->
+<P>After you choose the type of ATL object, click Next to display the 
+ATL Object Wizard Properties dialog. Depending on which object you choose, 
+the Attributes tab of the ATL Object Wizard Properties dialog allows you to 
+select the threading model for your COM class, and 
+whether you want a dual (<I>IDispatch</I>-based) or a custom interface. The dialog also allows you to 
+choose how your class will support aggregation. In addition, the Object Wizard 
+lets you easily include the 
+<I>ISupportErrorInfo</I> interface and connection points 
+in your class. Finally, you can aggregate to the Free-Threaded Marshaler if 
+you so choose.
+<A NAME="730"><H2>Apartments and Threading</H2></A><P>To figure out COM, you have to understand that COM is centered on the 
+notion of <U>abstraction</U>&#151;hiding as much information as possible from the client. 
+One piece of information that COM hides from the client is whether COM 
+class is thread-safe. The client should be able to use an object as it sees fit 
+without having to worry about whether an object properly serializes access to 
+itself&#151;that is, properly protects access to its internal data. COM defines the notion of 
+an <U>apartment</U> to provide this abstraction.
+<P>An apartment defines an execution context, or thread, that houses 
+interface pointers. A thread enters an apartment by calling a function from the 
+<I>CoInitialize</I> family: <I>CoInitialize, 
+CoInitializeEx,</I> or <I>OleInitialize</I>. Then COM requires 
+that all method calls to an interface pointer be executed within the apartment 
+that initialized the pointer (in other words, from the same thread that called 
+<I>CoCreateInstance</I>). COM defines two kinds of apartments&#151;single-threaded 
+apartments and multithreaded apartments. Single-threaded apartments can house only 
+one thread while multithreaded apartments can house several threads. While a 
+process can have only one multithreaded apartment, it can have many 
+single-threaded apartments. An apartment can house any number of COM objects.
+<P>A single-threaded apartment guarantees that COM objects created 
+within it will have method calls serialized through the remoting layer, while a 
+COM object created within a multithreaded apartment will not. A helpful way 
+to remember the difference between apartments is to think of it this way: 
+instantiating a COM object within the multithreaded apartment is like putting a 
+piece of data into the global scope where multiple threads can get to it. 
+Instantiating a COM object within a single-threaded apartment is like putting data within 
+the scope of only one thread. The bottom line is that COM classes that want to 
+live in the multithreaded apartment had better be thread-safe, while COM 
+classes that are satisfied living in their own apartments need not worry about 
+concurrent access to their data.
+<P>A COM object living within a different process space from its client 
+has its method calls serialized automatically via the remoting layer. However, a 
+COM object living in a DLL might want to provide its own internal protection 
+(using critical sections, for example) rather than having the remoting layer protect 
+it. A COM class advertises its thread safety to the world via a Registry setting. 
+This named value lives in the Registry under the CLSID under 
+<I>HKEY_CLASSES_ROOT</I> like this:
+<P><PRE>[HKCR\CLSID\{some GUID &#133;}\InprocServer32]
+@=&quot;C:\SomeServer.DLL&quot;
+ThreadingModel=&lt;thread model&gt;</PRE>
+<P>The ThreadingModel can be one of four values: 
+<I>Single</I>, <I>Both</I>, <I>Free</I>, or 
+<I>Apartment</I>, or it can be blank. ATL provides support for all current 
+threading models. Here's a rundown of what each value indicates:
+<UL>
+<LI><I>Single</I> or blank indicates that the class executes in the main 
+thread only (the first single thread created by the client).
+<P><LI><I>Both</I> indicates that the class is thread-safe and can execute in 
+both the single-threaded and multithreaded apartments. This value 
+tells COM to use the same kind of apartment as the client.
+<P><LI><I>Free</I> indicates that the class is thread-safe. This value tells COM 
+to force the object inside the multithreaded apartment.
+<P><LI><I>Apartment</I> indicates that the class isn't thread-safe and must live 
+in its own single-threaded apartment.<P>
+</UL>
+<P>When you choose a threading model in the ATL Object Wizard, the 
+wizard inserts different code into your class depending upon your selection. 
+For example, if you select the apartment model, the Object Wizard derives your 
+class from <I>CComObjectRootEx</I> and includes 
+<I>CComSingleThreadModel</I> as the template parameter like this:
+<P><PRE>class ATL_NO_VTABLE CAtlSpaceship : 
+    public CComObjectRootEx&lt;CComSingleThreadModel&gt;,
+    public CComCoClass&lt;CAtlSpaceship, &amp;CLSID_AtlSpaceship&gt;,
+    public IDispatchImpl&lt;IAtlSpaceship, &amp;IID_IAtlSpaceship,
+                         &amp;LIBID_SPACESHIPSVRLib&gt;
+{
+.
+.
+.
+};</PRE>
+<P>The <I>CComSingleThreadModel</I> template parameter mixes in the 
+more efficient standard increment and decrement operations for 
+<I>IUnknown</I> (because access to the class is automatically serialized). In addition, the ATL 
+Object Wizard causes the class to insert the correct threading model value in 
+the Registry. If you choose the Single option in the ATL Object Wizard, the 
+class uses the <I>CComSingleThreadModel</I> but leaves the ThreadingModel value 
+blank in the Registry.
+<P>Choosing Both or Free causes the class to use the 
+<I>CComMultiThreadModel</I> template parameter, which employs the thread-safe Win32 increment and 
+decrement operations <I>InterlockedIncrement</I> and 
+<I>InterlockedDecrement</I>. For example, a free-threaded class definition looks like this:
+<P><PRE>class ATL_NO_VTABLE CAtlSpaceship : 
+    public CComObjectRootEx&lt; CComMultiThreadModel&gt;,
+    public CComCoClass&lt;CAtlSpaceship, &amp;CLSID_AtlSpaceship&gt;,
+    public IDispatchImpl&lt;IAtlSpaceship, &amp;IID_IAtlSpaceship,
+                         &amp;LIBID_SPACESHIPSVRLib&gt;
+{
+.
+.
+.
+};</PRE>
+<P>Choosing Both for your threading model inserts 
+<I>Both</I> as the data for the ThreadingModel value, while choosing Free uses the data value 
+<I>Free</I> for 
+the ThreadingModel value.
+<A NAME="731"><H2>Connection Points and <I>ISupportErrorInfo</I></H2></A><P>Adding connection to your COM class is easy. Selecting the Support 
+Connection Points check box causes the class to derive from 
+<I>IConnectionPointImpl</I>. This option also adds a blank connection map to your class. Adding connection 
+points (for example, an event set) to your class is simply a matter of performing 
+the following four steps:
+<OL>
+<LI>Define the callback interface in the IDL file.
+<P><LI>Use the ATL proxy generator to create a proxy.
+<P><LI>Add the proxy class to the COM class.
+<P><LI>Add the connection points to the connection point map.
+<P></OL>
+<P>ATL also includes support for 
+<I>ISupportErrorInfo</I>. The 
+<I>ISupportErrorInfo</I> interface ensures that error information is propagated up the call chain 
+correctly. OLE Automation objects that use the error-handling interfaces must 
+implement <I>ISupportErrorInfo</I>. Selecting Support 
+<I>ISupportErrorInfo</I> in the ATL Object Wizard dialog causes the ATL-based class to derive from 
+<I>ISupportErrorInfoImpl</I>.
+<A NAME="732"><H2>The Free-Threaded Marshaler</H2></A><P>Selecting the Free Threaded Marshaler option aggregates the COM 
+free-threaded marshaler to your class. The generated class does this by calling 
+<I>CoCreateFreeThreadedMarshaler</I> in its 
+<I>FinalConstruct</I> function. The free-threaded 
+marshaler allows thread-safe objects to bypass the standard marshaling that occurs 
+whenever cross-apartment interface methods are invoked, allowing threads 
+living in one apartment to access interface methods in another apartment as 
+though they were in the same apartment. This process speeds up cross-apartment 
+calls tremendously. The free-threaded marshaler does this by implementing 
+the <I>IMarshal</I> interface. When the client asks the object for an interface, the 
+remoting layer calls <I>QueryInterface,</I> asking for 
+<I>IMarshal</I>. If the object implements 
+<I>IMarshal</I> (in this case, the object implements 
+<I>IMarshal</I> because the ATL Object Wizard also adds an entry into the class's interface to handle 
+<I>QueryInterface</I> requests for <I>IMarshal</I>) and the marshaling request is in process, 
+the free-threaded marshaler actually copies the pointer into the marshaling 
+packet. That way, the client receives an actual pointer to the object. The client 
+talks to the object directly without having to go through proxies and stubs. 
+Of course, if you choose the Free Threaded Marshaler option, all data in 
+your object had better be thread-safe. Just be very cautious if you check this box.
+<A NAME="733"><H2>Implementing the Spaceship Class Using ATL</H2></A><P>We'll create the spaceship class using the defaults provided by the ATL 
+Object Wizard in the ATL Object Wizard Properties dialog. For example, the 
+spaceship class will have a dual interface, so it will be accessible from 
+environments such as VBScript on a Web page. In addition, the spaceship class will be 
+an 
+apartment model object, meaning COM will manage most of the 
+concurrency issues. The only information you need to supply to the ATL Object Wizard 
+is a clever name. Enter a value such as 
+<I>AtlSpaceship</I> in the Short Name text box on the Names tab.
+<P>You don't need to set any of the other options right now. For 
+instance, you don't need to set the Support Connection Points option because we'll 
+cover connections in the next chapter. You can always add connection points later 
+by typing them in by hand.
+<P>If you tell the ATL Object Wizard to create a Simple Object COM 
+class named <I>ATLSpaceship</I>, here's the class definition it generates:
+<P><PRE>class ATL_NO_VTABLE CAtlSpaceship : 
+    public CComObjectRootEx&lt;CComSingleThreadModel&gt;,
+    public CComCoClass&lt;CAtlSpaceship, &amp;CLSID_AtlSpaceship&gt;,
+    public IDispatchImpl&lt;IAtlSpaceship, &amp;IID_IAtlSpaceship,
+                         &amp;LIBID_SPACESHIPSVRLib&gt;
+{
+.
+.
+.
+};</PRE>
+<P>While ATL includes quite a few COM-oriented C++ classes, those 
+listed in the spaceship class's inheritance list above are enough to get a flavor of 
+how ATL works.
+<P>The most generic ATL-based COM objects derive from three base 
+classes: <I>CComObjectRoot</I>, <I>CComCoClass</I>, and 
+<I>IDispatch</I>. <I>CComObjectRoot</I> implements 
+<I>IUnknown</I> and manages the identity of the class. This means 
+<I>CComObjectRoot</I> implements <I>AddRef</I> and 
+<I>Release</I> and hooks into ATL's 
+<I>QueryInterface</I> mechanism. 
+<I>CComCoClass</I> manages the COM class's class object and some 
+general error reporting. In the class definition above, 
+<I>CComCoClass</I> adds the class object that knows how to create 
+<I>CAtlSpaceship</I> objects. Finally, the code produced 
+by the ATL Object Wizard includes an implementation of 
+<I>IDispatch</I> based on the type library produced by compiling the IDL. The default 
+<I>IDispatch</I> is based on a dual interface (which is an 
+<I>IDispatch</I> interface followed by the 
+functions defined in the IDL).
+<P>As you can see, using ATL to implement COM classes is different 
+from using pure C++. The Tao of ATL differs from what you might be used to 
+when developing normal C++ classes. With ATL, the most important part of the 
+project is the interfaces, which are described in IDL. By adding functions to the 
+interfaces in the IDL code, you automatically add functions to the concrete 
+classes implementing the interfaces. The functions are added automatically because 
+the projects are set up such that compiling the IDL file yields a 
+C++ header file with those functions. All that's left for you to do after adding the functions in 
+the interface is to implement those functions in the 
+C++ class. The IDL file also provides a type library so the COM class can implement 
+<I>IDispatch</I>. However, while ATL is useful for implementing lightweight COM services and 
+objects, ATL is also a new means by which you can create ActiveX controls, as you'll 
+see in the <A HREF="ch30a.htm">next chapter</A>.
+<A NAME="734"><H2>Basic ATL Architecture</H2></A><P>If you've experimented at all with ATL, you've seen how it simplifies the 
+process of implementing COM classes. The tool support is quite good&#151;it's almost 
+as easy to develop COM classes using Visual C++ 6.0 as it is to create 
+MFC-based programs. Just use AppWizard to create a new ATL-based class. However, 
+instead of using ClassWizard (as you would to handle messages and to add dialog 
+box member variables), use ClassView to add new function definitions to an 
+interface. Then simply fill in the functions within the 
+C++ code generated by ClassView. The code generated by AppWizard includes all the necessary code for 
+implementing your class, including an implementation of 
+<I>IUnknown</I>, a server module to house your COM class, and a class object that implements 
+<I>IClassFactory</I>.
+<P>Writing COM objects as we've just described is certainly more 
+convenient than most other methods. But exactly what happens when you use the 
+AppWizard to generate the code for you? Understanding how ATL works is important if 
+you want to extend your ATL-based COM classes and servers much beyond 
+what AppWizard and ClassView provide. For example, ATL provides support 
+for advanced interface techniques such as tear-off interfaces. Unfortunately, 
+there's no Wizard option for implementing a tear-off interface. Even though ATL 
+supports it, you've got to do a little work by hand to accomplish the tear-off 
+interface. Understanding how ATL implements 
+<I>IUnknown</I> is helpful in this situation.
+<P>Let's examine the <I>CAtlSpaceship</I> class in a bit more detail. Here's the 
+entire definition:
+<P><PRE>class ATL_NO_VTABLE CAtlSpaceship : 
+    public CComObjectRootEx&lt;CComSingleThreadModel&gt;,
+    public CComCoClass&lt;CAtlSpaceship, &amp;CLSID_AtlSpaceship&gt;,
+    public IDispatchImpl&lt;IAtlSpaceship, &amp;IID_IAtlSpaceship,
+                         &amp;LIBID_SPACESHIPSVRLib&gt;
+{
+public:
+    CAtlSpaceship()
+    {
+    }
+
+DECLARE_REGISTRY_RESOURCEID(IDR_ATLSPACESHIP)
+
+BEGIN_COM_MAP(CAtlSpaceship)
+    COM_INTERFACE_ENTRY(IAtlSpaceship)
+    COM_INTERFACE_ENTRY(IDispatch)
+END_COM_MAP()
+
+// IAtlSpaceship
+public:
+};</PRE>
+<P>While this is ordinary vanilla C++ source code, it differs from normal 
+everyday C++ source code for implementing a COM object in several ways. For 
+example, while many COM class implementations derive strictly from COM 
+interfaces, this COM class derives from several templates. In addition, this 
+C++ class uses several odd-looking macros. As you examine the code, you'll see ATL's 
+implementation of <I>IUnknown</I>, as well as a few other interesting topics, such as 
+a technique for managing <I>vtable</I> bloat and an uncommon use for templates. 
+Let's start by taking a look at the first symbol in the wizard-generated macro 
+code: <I>ATL_NO_VTABLE</I>.
+<A NAME="735"><H2>Managing VTBL Bloat</H2></A><P>COM interfaces are easily expressed in C++ as pure abstract base classes. 
+Writing COM classes using multiple inheritance (there are other ways to write 
+COM classes) is merely a matter of adding the COM interface base classes to 
+your inheritance list and implementing the union of all the functions. Of course, 
+this means that the memory footprint of your COM server will include a 
+significant amount of vtable overhead for each interface implemented by your class. 
+That's not a big deal if you have only a few interfaces and your 
+C++ class hierarchy isn't very deep. However, implementing interfaces this way does add overhead 
+that tends to accumulate as interfaces are added and hierarchies deepen. ATL 
+provides a way to cut down on some of the overhead introduced by a lot of virtual 
+functions. ATL defines the following symbol:
+<P><PRE>#define ATL_NO_VTABLE  __declspec(novtable)</PRE>
+<P>Using <I>ATL_NO_VTABLE</I> prevents an object's vtable 
+(<I>vtable</I>) from being initialized in the constructor, thereby eliminating from the linker the vtable 
+and all the functions pointed to by the vtable for that class. This elimination can 
+lower the size of your COM server somewhat, provided the most-derived class 
+does not use the <I>novtable declspec</I> shown above. You'll notice the size difference 
+in classes with deep derivation lists. One caveat, however: calling virtual 
+functions from the constructor of any object that uses this 
+<I>declspec</I> is unsafe because <I>vptr</I> is uninitialized.
+<P>The second line in the class declaration previously shown demonstrates 
+that <I>CAtlSpaceship </I>derives from 
+<I>CComObjectRootEx</I>. This is where you get to 
+ATL's version of <I>IUnknown</I>.
+<A NAME="736"><H2>ATL's <I>IUnknown: CComObjectRootEx</I></H2></A><P>While <I>CComObjectRootEx</I> isn't quite at the top of the ATL hierarchy, it's 
+pretty close. The actual base class for a COM object in ATL is a class named 
+<I>CComObjectRootBase</I>. (Both class definitions are located in 
+ATLCOM.H.) Looking at <I>CComObjectRootBase</I> reveals the code you might expect for a 
+C++ based COM class. <I>CComObjectRootBase</I> includes a DWORD member named 
+<I>m_dwRef</I> for reference counting. You'll also see 
+<I>OuterAddRef</I>, <I>OuterRelease</I>, and 
+<I>OuterQueryInterface</I> to support COM aggregation and tear-off 
+interfaces. Looking at <I>CComObjectRootEx</I> reveals 
+<I>InternalAddRef</I>,<I> InternalRelease</I>, and 
+<I>InternalQueryInterface</I> for performing the regular native reference 
+counting, and <I>QueryInterface</I> mechanisms for class instances with object identity.
+<P>Notice that <I>CAtlSpaceship</I>'s definition shows that the class is derived 
+from <I>CComObjectRootEx</I> and that 
+<I>CComObjectRootEx</I> is a parameterized 
+template class. The listing below shows the definition of 
+<I>CComObjectRootEx</I>.
+<P><PRE>template &lt;class ThreadModel&gt;
+class CComObjectRootEx : public CComObjectRootBase
+{
+public:
+    typedef ThreadModel _ThreadModel;
+    typedef _ThreadModel::AutoCriticalSection _CritSec;
+    typedef CComObjectLockT&lt;_ThreadModel&gt; ObjectLock;
+
+    ULONG InternalAddRef() {
+        ATLASSERT(m_dwRef != -1L);
+        return _ThreadModel::Increment(&amp;m_dwRef);
+    }
+    ULONG InternalRelease() {
+        ATLASSERT(m_dwRef &gt; 0);
+        return _ThreadModel::Decrement(&amp;m_dwRef);
+    }
+
+    void Lock() {m_critsec.Lock();}
+    void Unlock() {m_critsec.Unlock();}
+private:
+    _CritSec m_critsec;
+};</PRE>
+<P><I>CComObjectRootEx</I> is a template class that varies in type based on 
+the kind of threading model class passed in as the template parameter. In fact, 
+ATL supports several threading models: Single-Threaded Apartments (STAs), 
+Multi-Threaded Apartments (MTAs), and Free Threading. ATL includes three 
+preprocessor symbols for selecting the various default threading models for 
+your project: <I>_ATL_SINGLE_THREADED</I>, 
+<I>_ATL_APARTMENT_THREADED</I>, and 
+<I>_ATL_FREE_THREADED</I>.
+<P>Defining the preprocessor symbol 
+_<I>ATL_SINGLE_THREADED</I> in stdafx.h changes the default threading model to support only one STA-based thread. 
+This option is useful for out-of-process servers that don't create any extra 
+threads. Because the server supports only one thread, ATL's global state can 
+remain unprotected by critical sections and the server is therefore more efficient. 
+The downside is that your server can support only one thread. Defining 
+_<I>ATL_APARTMENT_THREADED</I> for the preprocessor causes the default threading 
+model to support multiple STA-based threads. This is useful for apartment model 
+in-process servers (servers supporting the 
+<I>ThreadingModel=Apartment</I> Registry value). Because a server employing this threading model can support 
+multiple threads, ATL protects its global state using critical sections. Finally, defining 
+the <I>_ATL_FREE_THREADED</I> preprocessor symbol creates servers 
+compatible with any threading environment. That is, ATL protects its global state 
+using critical sections, and each object in the server will have its own critical 
+sections to maintain data safety.
+<P>These preprocessor symbols merely determine which threading class to 
+plug into <I>CComObjectRootEx</I> as a template parameter. ATL provides three 
+threading model classes. The classes provide support for the most efficient yet 
+thread-safe behavior for COM classes within each of the three contexts listed above. 
+The three classes are <I>CComMultiThreadModelNoCS, CComMultiThreadModel, 
+</I>and <I>CComSingleThreadModel.</I> The following listing shows the three threading 
+model classes within ATL:
+<P><PRE>class CComMultiThreadModelNoCS
+{
+public:
+    static ULONG WINAPI Increment(LPLONG p)
+                        {return InterlockedIncrement(p);}
+    static ULONG WINAPI Decrement(LPLONG p) 
+                        {return InterlockedDecrement(p);}
+    typedef CComFakeCriticalSection AutoCriticalSection;
+    typedef CComFakeCriticalSection CriticalSection;
+    typedef CComMultiThreadModelNoCS ThreadModelNoCS;
+};
+
+class CComMultiThreadModel
+{
+public:
+    static ULONG WINAPI Increment(LPLONG p)
+                        {return InterlockedIncrement(p);}
+    static ULONG WINAPI Decrement(LPLONG p)
+                        {return InterlockedDecrement(p);}
+    typedef CComAutoCriticalSection AutoCriticalSection;
+    typedef CComCriticalSection CriticalSection;
+    typedef CComMultiThreadModelNoCS ThreadModelNoCS;
+};
+
+class CComSingleThreadModel
+{
+public:
+    static ULONG WINAPI Increment(LPLONG p) {return ++(*p);}
+    static ULONG WINAPI Decrement(LPLONG p) {return --(*p);}
+    typedef CComFakeCriticalSection AutoCriticalSection;
+    typedef CComFakeCriticalSection CriticalSection;
+    typedef CComSingleThreadModel ThreadModelNoCS;
+};</PRE>
+<P>Notice that each of these classes exports two static 
+functions&#151;<I>Increment</I> and 
+<I>Decrement</I>&#151;and various aliases for critical sections.
+<P><I>CComMultiThreadModel</I> and 
+<I>CComMultiThreadModelNoCS</I> both implement 
+<I>Increment</I> and <I>Decrement</I> using the thread-safe Win32 
+<I>InterlockedIncrement</I> and 
+<I>InterlockedDecrement</I> functions. 
+<I>CComSingleThreadModel</I> implements 
+<I>Increment</I> and <I>Decrement</I> using the more 
+conventional ++ and -- operators.
+<P>In addition to implementing incrementing and decrementing 
+differently, the three threading models also manage critical sections differently. ATL 
+provides wrappers for two critical sections&#151;a 
+<I>CComCriticalSection</I> (which is a plain wrapper around the Win32 critical section API) and 
+<I>CComAutoCriticalSection</I> (which is the same as 
+<I>CComCriticalSection</I> with the addition of automatic 
+initialization and cleanup of critical sections). ATL also defines a &quot;fake&quot; 
+critical section class that has the same binary signature as the other critical section 
+classes but doesn't do anything. As you can see from the class definitions, 
+<I>CComMultiThreadModel</I> uses real critical sections while 
+<I>CComMultiThreadModelNoCS</I> and 
+<I>CComSingleThreadModel</I> use the fake no-op critical sections.
+<P>So now the minimal ATL class definition makes a bit more sense. 
+<I>CComObjectRootEx</I> takes a thread model class whenever you define it. 
+<I>CAtlSpaceship</I> is defined using the 
+<I>CComSingleThreadModel</I> class, so it uses the 
+<I>CComSingleThreadModel</I> methods for incrementing and decrementing as well as the 
+fake no-op critical sections. Thus 
+<I>CAtlSpaceship</I> uses the most efficient behavior 
+since it doesn't need to worry about protecting data. However, you're not 
+stuck with that model. If you want to make 
+<I>CAtlSpaceship</I> safe for any threading 
+environment, for example, simply redefine 
+<I>CAtlSpaceship</I> to derive from 
+<I>CComObjectRootEx</I> using 
+<I>CComMultiThreadModel</I> as the template parameter. 
+<I>AddRef</I> and <I>Release</I> calls are automatically mapped to the correct 
+<I>Increment</I> and <I>Decrement</I> functions.
+<A NAME="737"><H2>ATL and <I>QueryInterface</I></H2></A><P>It looks as though ATL took a cue from MFC for implementing 
+<I>QueryInterface</I>&#151;ATL uses a lookup table just like MFC's version. Take a look at 
+the middle of <I>CAtlSpaceship</I>'s<I> </I>definition&#151;you'll see a construct based on 
+macros called the interface map. ATL's interface maps constitute its 
+<I>QueryInterface</I> mechanism.
+<P>Clients use <I>QueryInterface</I> to arbitrarily widen the connection to an 
+object. That is, when a client needs a new interface, it calls 
+<I>QueryInterface</I> through an existing interface. The object then looks at the name of the requested 
+interface and compares that name to all the interfaces implemented by the object. If 
+the object implements the interface, the object hands the interface back to the 
+client. Otherwise, <I>QueryInterface</I> returns an error indicating that no interface was found.
+<P>Traditional <I>QueryInterface</I> implementations usually consist of long 
+if-then statements. For example, a standard implementation of 
+<I>QueryInterface</I> for a multiple-inheritance COM class might look like this:
+<P><PRE>class CAtlSpaceship: public IDispatch,
+                            IAtlSpaceship {
+    HRESULT QueryInterface(RIID riid, 
+                           void** ppv) {
+        if(riid == IID_IDispatch)
+            *ppv = (IDispatch*) this;
+        else if(riid == IID_IAtlSpaceship ||
+                riid == IID_IUnknown)
+            *ppv = (IAtlSpaceship *) this;
+        else {
+            *ppv = 0;
+            return E_NOINTERFACE;
+        }
+
+        ((IUnknown*)(*ppv))-&gt;AddRef();
+        return NOERROR;
+    }
+    // AddRef, Release, and other functions
+};</PRE>
+<P>As you'll see in a moment, ATL uses a lookup table instead of this 
+conventional if-then statement.
+<P>ATL's lookup table begins with a macro named 
+<I>BEGIN_COM_MAP</I>. The listing below shows the full definition of 
+<I>BEGIN_COM_MAP</I>.
+<P><PRE>#define BEGIN_COM_MAP(x) public: 
+    typedef x _ComMapClass; 
+    static HRESULT WINAPI _Cache(void* pv, 
+                                 REFIID iid, 
+                                 void** ppvObject, 
+                                 DWORD dw) {  
+        _ComMapClass* p = (_ComMapClass*)pv;
+        p-&gt;Lock();
+        HRESULT hRes = 
+          CComObjectRootBase::_Cache(pv, 
+                                     iid, 
+                                     ppvObject, 
+                                     dw);
+        p-&gt;Unlock();
+        return hRes;
+    }
+    IUnknown* GetRawUnknown() { 
+        ATLASSERT(_GetEntries()[0].pFunc == 
+              _ATL_SIMPLEMAPENTRY); 
+        return (IUnknown*)((int)this+_GetEntries()-&gt;dw); 
+    }
+    _ATL_DECLARE_GET_UNKNOWN(x)
+    HRESULT _InternalQueryInterface(REFIID iid, 
+                                    void** ppvObject) { 
+        return InternalQueryInterface(this, 
+                                      _GetEntries(), 
+                                      iid, 
+                                      ppvObject); 
+    } 
+    const static _ATL_INTMAP_ENTRY* WINAPI _GetEntries() { 
+    static const _ATL_INTMAP_ENTRY _entries[] = { 
+        DEBUG_QI_ENTRY(x)
+        .
+        .
+        .
+    #define END_COM_MAP()   {NULL, 0, 0}};\
+    return _entries;}</PRE>
+<P>Each class that uses ATL for implementing 
+<I>IUnknown</I> specifies an interface map to provide to 
+<I>InternalQueryInterface</I>. ATL's interface maps consist of 
+structures containing interface ID (GUID)/DWORD/function pointer tuples. 
+The following listing shows the type named 
+<I>_ATL_INTMAP_ENTRY</I> that contains these tuples.
+<P><PRE>struct _ATL_INTMAP_ENTRY {
+    const IID* piid;       
+    DWORD dw;
+    _ATL_CREATORARGFUNC* pFunc; 
+};</PRE>
+<P>The first member is the interface ID (a GUID), and the second 
+member indicates what action to take when the interface is queried. There are three 
+ways to interpret the third member. If 
+<I>pFunc</I> is equal to the constant 
+<I>_ATL_SIMPLEMAPENTRY</I> (the value 1), 
+<I>dw</I> is an offset into the object. If 
+<I>pFunc</I> is non-null but not equal to 1, 
+<I>pFunc</I> indicates a function to be called when the interface 
+is queried. If <I>pFunc</I> is <I>NULL</I>, 
+<I>dw</I> indicates the end of the 
+<I>QueryInterface</I> lookup table.
+<P>Notice that <I>CAtlSpaceship</I> uses 
+<I>COM_INTERFACE_ENTRY</I>. This is the interface map entry for regular interfaces. Here's the raw macro:
+<P><PRE>#define offsetofclass(base, derived) 
+((DWORD)(static_cast&lt;base*&gt;((derived*)8))-8)
+
+#define COM_INTERFACE_ENTRY(x)\
+    {&amp;_ATL_IIDOF(x), \
+    offsetofclass(x, _ComMapClass), \
+    _ATL_SIMPLEMAPENTRY}</PRE>
+<P><I>COM_INTERFACE_ENTRY</I> fills the 
+<I>_ATL_INTMAP_ENTRY</I> structure with the interface's GUID. In addition, notice how 
+<I>offsetofclass</I> casts the <I>this</I> pointer to the right kind of interface and fills the 
+<I>dw</I> member with that value. Finally, 
+<I>COM_INTERFACE_ENTRY</I> fills the last field with 
+<I>_ATL_SIMPLEMAPENTRY</I> to indicate that 
+<I>dw</I> points to an offset into the class.
+<P>For example, the interface map for 
+<I>CAtlSpaceship</I> looks like this after the preprocessor is done with it:
+<P><PRE>const static _ATL_INTMAP_ENTRY* _
+_stdcall _GetEntries() { 
+    static const _ATL_INTMAP_ENTRY _entries[] = { 
+        {&amp;IID_IAtlSpaceship, 
+        ((DWORD)(static_cast&lt; IAtlSpaceship*&gt;((_ComMapClass*)8))-8),
+        ((_ATL_CREATORARGFUNC*)1)},
+        {&amp;IID_IDispatch, 
+        ((DWORD)(static_cast&lt;IDispatch*&gt;((_ComMapClass*)8))-8), 
+        ((_ATL_CREATORARGFUNC*)1)},
+        {0, 0, 0}
+    };
+    return _entries;
+}</PRE>
+<P>Right now, the <I>CAtlSpaceship</I> class supports two 
+interfaces&#151;<I>IAtlSpaceship</I> and 
+<I>IDispatch</I>, so there are only two entries in the map.
+<P><I>CComObjectRootEx</I>'s implementation of 
+<I>InternalQueryInterface</I> uses the 
+<I>_GetEntries</I> function as the second parameter. 
+<I>CComObjectRootEx::InternalQueryInterface</I> uses a global ATL function named 
+<I>AtlInternalQueryInterface</I> to look up the interface in the map. 
+<I>AtlInternalQueryInterface</I> simply walks through the map trying to find the interface.
+<P>In addition to <I>COM_INTERFACE_ENTRY,</I> ATL includes 16 other 
+macros for implementing composition techniques ranging from tear-off 
+interfaces to COM aggregation. Now you'll see what it takes to beef up the 
+<I>IAtlSpaceship</I> interface and add those two other interfaces, 
+<I>IMotion</I> and <I>IVisual</I>. You'll also learn about the strange COM beast known as a dual interface.
+<A NAME="738"><H2>Making the Spaceship Go</H2></A><P>Now that you've got some ATL code staring you in the face, what can you 
+do with it? This is COM, so the place to start is in the IDL file. Again, if you're 
+a seasoned C++ developer, this is a new aspect of software development 
+you're probably not used to. Remember that these days, software distribution 
+and integration are becoming very important. You've been able to get away 
+with hacking out C++ classes and throwing them into a project together because 
+you (as a developer) know the entire picture. However, component technologies 
+(like COM) change that. You as a developer no longer know the entire picture. 
+Often you have only a component&#151;you don't have the source code for the 
+component. The only way to know how to talk to a component is through the 
+interfaces it exposes.
+<P>Keep in mind that modern software developers use many different 
+tools&#151;not just C++. You've got Visual Basic developers, Java developers, Delphi 
+developers, and C developers. COM is all about making the edges line up so 
+that software pieces created by these various components can all integrate 
+smoothly when they come together. In addition, distributing software remotely (either 
+out-of-process on the same machine or even to a different machine) 
+requires some sort of inter-process communication. That's why there's Interface 
+Definition Language (IDL). Here's the default IDL file created by the ATL wizards 
+with the new spaceship class:
+<P><PRE>import &quot;oaidl.idl&quot;;
+import &quot;ocidl.idl&quot;;
+    [
+        object,
+        uuid(A9D750E1-51A1-11D1-8CAA-FD10872CC837),
+        dual,
+        helpstring(&quot;IAtlSpaceship Interface&quot;),
+        pointer_default(unique)
+    ]
+    interface IAtlSpaceship : IDispatch
+    {
+    };
+
+[
+    uuid(A0736061-50DF-11D1-8CAA-FD10872CC837),
+    version(1.0),
+    helpstring(&quot;spaceshipsvr 1.0 Type Library&quot;)
+]
+library SPACESHIPSVRLib
+{
+    importlib(&quot;stdole32.tlb&quot;);
+    importlib(&quot;stdole2.tlb&quot;);
+
+    [
+        uuid(A9D750E2-51A1-11D1-8CAA-FD10872CC837),
+        helpstring(&quot;AtlSpaceship Class&quot;)
+    ]
+    coclass AtlSpaceship
+    {
+        [default] interface IAtlSpaceship;
+    };
+};</PRE>
+<P>The key concept involved here is that IDL is a purely 
+<U>declarative</U> language. This language defines how other clients will talk to an object. 
+Remember&#151;you'll eventually run this code through the MIDL compiler to get a pure abstract 
+base class (useful for C++ clients) and a type library (useful for Visual Basic and 
+Java clients as well as others). If you understand plain C code, you're well on 
+your way to understanding IDL. You might think of IDL as C with footnotes. 
+The syntax of IDL dictates that attributes will always precede what they describe. 
+For example, attributes precede items such as interface declarations, library 
+declarations, and method parameters.
+<P>If you look at the IDL file, you'll notice that it begins by importing 
+oaidl.idl and ocidl.idl. Importing these files is somewhat akin to including windows.h 
+inside one of your C or C++ files. These IDL files include definitions for all of the 
+basic COM infrastructures (including definitions for 
+<I>IUnknown</I> and <I>IDispatch</I>).
+<P>An open square bracket ([) follows the <I>import 
+</I>statement. In IDL, square brackets always enclose attributes. The first element described in this IDL 
+file is the <I>IAtlSpaceship</I> interface. However, before you can describe the 
+interface, you need to apply some attributes to it. For example, it needs a name (a 
+GUID), and you need to tell the MIDL compiler that this interface is 
+COM-oriented rather than being used for standard RPC and that this is a dual interface 
+(more on dual interfaces shortly). Next comes the actual interface itself. Notice 
+how it appears very much like a normal C structure.
+<P>Once the interfaces are described in IDL, it is often useful to collect 
+this information into a type library, which is what the next section of the IDL 
+file does. Notice the type library section also begins with an open square 
+bracket, designating that attributes are to follow. As always, the type library is a 
+discrete &quot;thing&quot; in COM and as such requires a name (GUID). The library 
+statement tells the MIDL compiler that this library includes a COM class named 
+<I>AtlSpaceship</I> and that clients of this class can acquire the 
+<I>IAtlSpaceship</I> interface.
+<A NAME="739"><H2>Adding Methods to an Interface</H2></A><P>Right now the <I>IAtlSpaceship</I> interface is pretty sparse. It looks like it could 
+use a method or two. Let's add one. Notice that Visual 
+C++ now extends ClassView to include COM interfaces. (You can tell they're COM interfaces 
+because of the little lollipop next to the symbol.) Notice also that 
+<I>CAtlSpaceship</I> de-
+rives from something named <I>IAtlSpaceship. 
+IAtlSpaceship</I> is, of course, a COM interface. Double-clicking on 
+<I>IAtlSpaceship</I> in the ClassView brings that 
+specific section of the IDL into the editor window, as shown in Figure 29-4.
+
+<P><A HREF="javascript:fullSize('f29og04x.htm')"> <img src="f29og04.jpg" width=404 height=309 border="0" ALT = "Click to view at full size."> </A><P>
+
+<!-- caption -->
+<B>Figure 29-4.</B> <I>Interfaces in ClassView.</I>
+<!-- /caption -->
+<P>At this point, you could begin typing the COM interface into the IDL 
+file. If you add functions and methods this way (straight into the IDL file), 
+you'll have to touch the AtlSpaceship.h and AtlSpaceship.cpp files and insert the 
+methods by hand. A more effective way to add functions to the interface is through 
+the ClassView. To edit the IDL through the ClassView, simply right-click the 
+mouse on the interface within ClassView. Two items that appear in the context 
+menu are Add Method and Add Property. Let's add a method named 
+<I>CallStarFleet</I>. Figure 29-5 shows the dialog box that appears when adding a method.
+<P>To add a method, simply type the name of the method into the 
+Method Name text box. Then type the method parameters into the Parameters text 
+box. Here's where it helps to understand a little bit about IDL.
+<P><IMG SRC="F29OG05.GIF" width=366 height=257 BORDER=0><P>
+<!-- caption -->
+<B>Figure 29-5.</B> <I>Adding a method to an interface.</I>
+<!-- /caption -->
+<P>Remember that IDL's purpose is to provide completely 
+unambiguous information about how methods can be invoked. In the standard 
+C++ world, you could often get away with ambiguities like open-ended arrays because 
+the caller and the callee shared the same stack frame&#151;there was always a lot of 
+wiggle room available. Now that method calls might eventually go over the wire, 
+it's important to tell the remoting layer exactly what to expect when it 
+encounters a COM interface. This is done by applying attributes to the method 
+parameters (more square brackets).
+<P>The method call shown in Figure 29-5 
+(<I>CallStartFleet</I>) has two parameters in its list&#151;a 
+floating point number indicating the stardate and a BSTR 
+indicating who received the communication. Notice that the method definition 
+spells out the parameter direction. The stardate is passed into the method call, 
+designated by the [in] attribute. A BSTR identifying the recipient is passed 
+back as a pointer to a BSTR. The [out] attribute indicates the direction of the 
+parameter is from the object back to the client. The [retval] attribute indicates 
+that you can assign the result of this method to a variable in higher languages 
+supporting this feature.
+<A NAME="740"><H2>Dual Interfaces</H2></A><P>If you read through <A HREF="ch25a.htm">Chapter 25</A>, you had a chance to see the 
+<I>IDispatch</I> interface. <I>IDispatch</I> makes it possible to expose functionality (at the binary level) to 
+environments such as VBScript that don't have a clue about vtables. For 
+<I>IDispatch</I> to work, the client has to go through a lot of machinations before it can 
+call <I>Invoke</I>. The client first has to acquire the invocation tokens. Then the client 
+has to set up the VARIANT arguments. On the object side, the object has to 
+decode all those VARIANT parameters, make sure they're correct, put them 
+on some sort of stack frame, and then make the function call. As you can 
+imagine, all this work is complex and time-consuming. If you're writing a COM 
+object and you expect some of your clients to use scripting languages and other 
+clients to use languages like C++, you've got a dilemma. You've got to include 
+<I>IDispatch</I> or you lock your scripting language clients out. If you provide only 
+<I>IDispatch</I>, 
+you make accessing your object from C++ very inconvenient. Of 
+course, you can provide access through both 
+<I>IDispatch</I> and a custom interface, but that 
+involves a lot of bookkeeping work. Dual interfaces evolved to handle this problem.
+<P>A dual interface is simply <I>IDispatch</I> with functions pasted onto the 
+end. For example, the <I>IMotion</I> interface described below is a valid dual interface:
+<P><PRE>interface IMotion : public IDispatch {
+    virtual HRESULT Fly() = 0;
+    virtual HRESULT GetPosition() = 0;
+};</PRE>
+<P>Because <I>IMotion</I> derives from 
+<I>IDispatch</I>, the first seven functions of 
+<I>IMotion</I> are those of <I>IDispatch</I>. Clients who understand only 
+<I>IDispatch</I> (VBScript for instance) look at the interface as just another version of 
+<I>IDispatch</I> and feed DISPIDs to the 
+<I>Invoke</I> function in the hopes of invoking a function. Clients 
+who understand vtable-style custom interfaces look at the entire interface, ignore 
+the middle four functions (the <I>IDispatch</I> functions), and concentrate on the 
+first three functions (<I>IUnknown</I>) and the last three functions (the ones that 
+represent the interface's core functions). Figure 29-6 shows the vtable layout of 
+<I>IMotion</I>.
+<P>Most raw C++ implementations load the type library right away and 
+delegate to <I>ITypeInfo</I> to perform the nasty task of implementing 
+<I>Invoke</I> and <I>GetIDsOfNames</I>. To get an idea of how this works, see Kraig Brockschmidt's 
+book <I>Inside OLE</I>, 2d. ed. (Microsoft Press, 1995) or Dale Rogerson's book 
+<I>Inside COM</I> (Microsoft Press, 1997).
+<P><IMG SRC="F29og06.GIF" WIDTH=318 HEIGHT=248 ALIGN="BOTTOM" BORDER=0 ALT="">
+<P><B>Figure 29-6.</B>
+<P><I>The layout of a dual interface.</I>
+<A NAME="741"><H2>ATL and <I>IDispatch</I></H2></A><P>ATL's implementation of <I>IDispatch</I> delegates to the type library. ATL's 
+implementation of <I>IDispatch</I> lives in the class 
+<I>IDispatchImpl</I>. Objects that want to implement a dual interface include the 
+<I>IDispatchImpl</I> template in the inheritance list like this:
+<P><PRE>class ATL_NO_VTABLE CAtlSpaceship : 
+    public CComObjectRootEx&lt;CComSingleThreadModel&gt;,
+    public CComCoClass&lt;CAtlSpaceship, &amp;CLSID_AtlSpaceship&gt;,
+    public IDispatchImpl&lt;IAtlSpaceship, &amp;IID_IAtlSpaceship,
+                         &amp;LIBID_SPACESHIPSVRLib&gt;,
+    public IDispatchImpl&lt;IVisual, &amp;IID_IVisual,
+                         &amp;LIBID_SPACESHIPSVRLib&gt;,
+    public IDispatchImpl&lt;IMotion, &amp;IID_IMotion,
+                         &amp;LIBID_SPACESHIPSVRLib&gt;
+{
+.
+.
+.
+};</PRE>
+<P>In addition to including the 
+<I>IDispatchImpl</I> template class in the inheritance list, the object includes entries for the dual interface and for 
+<I>IDispatch</I> in the interface map so that 
+<I>QueryInterface</I> works properly:
+<P><PRE>BEGIN_COM_MAP(CAtlSpaceship)
+    COM_INTERFACE_ENTRY(IAtlSpaceship)
+    COM_INTERFACE_ENTRY(IDispatch)
+END_COM_MAP()</PRE>
+<P>As you can see, the <I>IDispatchImpl</I> template class arguments include 
+the dual interface itself, the GUID for the interface, and the GUID 
+representing the type library holding all the information about the interface. In 
+addition to these template arguments, the 
+<I>IDispatchImpl</I> class has some optional parameters not illustrated in Figure 29-6. The template parameter list also 
+includes room for a major and minor version of the type library. Finally, the last 
+template parameter is a class for managing the type information. ATL provides 
+a default class named <I>CComTypeInfoHolder</I>.
+<P>In most raw C++ implementations of 
+<I>IDispatch</I>, the class calls 
+<I>LoadTypeLib</I> and 
+<I>ITypeLib::GetTypeInfoOfGuid</I> in the constructor and holds on to the 
+<I>ITypeInfo</I> pointer for the life of the class. ATL's implementation does things a little 
+differently by using the <I>CComTypeInfoHolder</I> class to help manage the 
+<I>ITypeInfo</I> pointer. 
+<I>CComTypeInfoHolder</I> maintains an 
+<I>ITypeInfo</I> pointer as a data member and wraps the critical 
+<I>IDispatch</I>-related functions 
+<I>GetIDsOfNames</I> and <I>Invoke</I>.
+<P>Clients acquire the dual interface by calling 
+<I>QueryInterface</I> for 
+<I>IID_IAtlSpaceship.</I> (The client can also get this interface by calling 
+<I>QueryInterface</I> for <I>IDispatch.</I>) If the client calls 
+<I>CallStartFleet</I> on the interface, the client 
+accesses those functions directly (as for any other COM interface).
+<P>When a client calls <I>IDispatch::Invoke</I>, the call lands inside 
+<I>IDispatchImpl's</I> <I>Invoke</I> function as you'd expect. From there, 
+<I>IDispatchImpl::Invoke</I> delegates to the 
+<I>CComTypeInfoHolder</I> class to perform the invocation, 
+<I>CComTypeInfoHolder</I>'s <I>Invoke</I>. The 
+<I>CComTypeInfoHolder</I> class doesn't call 
+<I>LoadTypeLib</I> until an actual call to 
+<I>Invoke</I> or <I>GetIDsOfNames. 
+CComTypeInfoHolder</I> has a member function named 
+<I>GetTI</I> that consults the Registry for the type information 
+(using the GUID and any major/minor version numbers passed in as a 
+template parameter). Then 
+<I>CComTypeInfoHolder</I> calls 
+<I>ITypeLib::GetTypeInfo</I> to get the information about the interface. At that point, the type information 
+holder delegates to the type information pointer. 
+<I>IDispatchImpl</I> implements 
+<I>IDispatch::GetIDsOfNames</I> in the same manner.
+<A NAME="742"><H2>The <I>IMotion</I> and <I>IVisual</I> Interfaces</H2></A><P>To get this COM class up to snuff with the other versions (the raw 
+C++ version and the MFC version described in <A HREF="ch24a.htm">Chapter 24</A>), you need to add 
+the <I>IMotion</I> and <I>IVisible</I> interfaces to the project and to the class. 
+Unfortunately, at the present time the only way to get this to happen is by typing the 
+interfaces in by hand (the ATL AppWizard gives you only one interface by default). 
+Open the IDL file and position the cursor near the top (somewhere after the 
+<I>#import</I> statements but before the 
+<I>library</I> statement), and start typing interface 
+definitions as described in the following paragraph.
+<P>Once you get the hang of IDL, your first instinct when describing an 
+interface should be to insert an open square bracket. Remember that in IDL, 
+distinct items get attributes. One of the most important attributes for an interface is 
+the name, or the GUID. In addition, at the very least the interface has to have 
+the <I>object</I> attribute to tell the MIDL compiler you're dealing with COM at this 
+point (as opposed to regular RPC). You also want these interfaces to be dual 
+interfaces. The keyword &quot;dual&quot; in the interface attributes indicates this and 
+inserts certain Registry entries to get the universal marshaling working correctly. 
+After the attributes are closed off with a closing square bracket, the interface 
+keyword kicks in to describe the interface. You'll make 
+<I>IMotion</I> a dual interface and <I>IVisual</I> a plain custom interface to illustrate how the two different types of 
+interfaces are attached to the <I>CSpaceship</I> class. Here are the 
+<I>IMotion</I> and <I>IVisible</I> interfaces described in IDL:
+<P><PRE>   [
+        object,
+        uuid(97B5C101-5299-11d1-8CAA-FD10872CC837),
+        dual,
+        helpstring(&quot;IMotion interface&quot;)
+    ]
+    interface IMotion : IDispatch
+    {
+        HRESULT Fly();
+        HRESULT GetPosition([out,retval]long* nPosition);
+    };
+
+    [
+        object,
+        uuid(56F58464-52A4-11d1-8CAA-FD10872CC837),
+        helpstring(&quot;IVisual interface&quot;)
+    ]
+    interface IVisual : IUnknown
+    {
+        HRESULT Display();
+    };</PRE>
+<P>Once the interfaces are described in IDL, you run the IDL through 
+the MIDL compiler again. The MIDL compiler spits out a new copy of 
+spaceshipsvr.h with the pure abstract base classes for 
+<I>IMotion</I> and <I>IVisual</I>.
+<P>Now you need to add these interfaces to the 
+<I>CSpaceship</I> class. There are two steps here. The first step is to create the interface part of the COM 
+class's identity. Let's do the <I>IMotion</I> interface first. Adding the 
+<I>IMotion</I> interface to <I>CSpaceship</I> is easy. Just use the 
+<I>IDispatchImpl</I> template to provide an 
+implementation of a dual interface like this:
+<P><PRE>class ATL_NO_VTABLE CAtlSpaceship : 
+    public CComObjectRootEx&lt;CComSingleThreadModel&gt;,
+    public CComCoClass&lt;CAtlSpaceship, &amp;CLSID_AtlSpaceship&gt;,
+    public IDispatchImpl&lt;IAtlSpaceship, &amp;IID_IAtlSpaceship,
+                         &amp;LIBID_SPACESHIPSVRLib&gt;,
+    public IDispatchImpl&lt;IMotion, &amp;IID_IMotion,
+                         &amp;LIBID_SPACESHIPSVRLib&gt;
+{
+.
+.
+.
+};</PRE>
+<P>The second step involves beefing up the interface map so the client 
+can acquire the <I>IMotion</I> interface. However, having two dual interfaces in a 
+single COM class brings up an interesting issue. When a client calls 
+<I>QueryInterface</I> 
+for <I>IMotion</I>, the client should definitely get 
+<I>IMotion</I>. However, when the client calls 
+<I>QueryInterface</I> for <I>IDispatch</I>, which version of 
+<I>IDispatch</I> should the client 
+get&#151;<I>IAtlSpaceship</I>'s dispatch interface or 
+<I>IMotion</I>'s dispatch interface?
+<A NAME="743"><H2>Multiple Dual Interfaces</H2></A><P>Remember that all dual interfaces begin with the seven functions of 
+<I>IDispatch</I>. A problem occurs whenever the client calls 
+<I>QueryInterface</I> for <I>IID_IDispatch</I>. As a developer, you need to choose which version of 
+<I>IDispatch</I> to pass out.
+<P>The interface map is where the 
+<I>QueryInterface</I> for <I>IID_IDispatch</I> is 
+specified. ATL has a specific macro for handling the dual interface situation. 
+First consider the interface map for 
+<I>CAtlSpaceship</I> so far:
+<P><PRE>BEGIN_COM_MAP(CAtlSpaceship)
+    COM_INTERFACE_ENTRY(IAtlSpaceship)
+    COM_INTERFACE_ENTRY(IDispatch)
+END_COM_MAP()</PRE>
+<P>When the client calls <I>QueryInterface</I>, ATL rips through the table 
+trying to match the requested IID to one in the table. The interface map above 
+handles two interfaces: <I>IAtlSpaceship</I> and 
+<I>IDispatch</I>. If you want to add another dual interface to the 
+<I>CAtlSpaceship</I> class, you need a different macro.
+<P>The macro handling multiple dispatch interfaces in an ATL-based 
+COM class is named <I>COM_INTERFACE_ENTRY2</I>. To get 
+<I>QueryInterface</I> working correctly, all you need to do is decide which version of 
+<I>IDispatch</I> the client should get when asking for 
+<I>IDispatch,</I> like this:
+<P><PRE>BEGIN_COM_MAP(CAtlSpaceship)
+    COM_INTERFACE_ENTRY(IAtlSpaceship)
+    COM_INTERFACE_ENTRY(IMotion)
+    COM_INTERFACE_ENTRY2(IDispatch, IAtlSpaceship)
+END_COM_MAP()</PRE>
+<P>In this case, a client asking for 
+<I>IDispatch</I> gets a pointer to 
+<I>IAtlSpaceship</I> (whose first seven functions include the 
+<I>IDispatch</I> functions).
+<P>Adding a nondual interface to an ATL-based COM class is even easier. 
+Just add the interface to the inheritance list like this:
+<P><PRE>class ATL_NO_VTABLE CAtlSpaceship : 
+    public CComObjectRootEx&lt;CComSingleThreadModel&gt;,
+    public CComCoClass&lt;CAtlSpaceship, &amp;CLSID_AtlSpaceship&gt;,
+    public IDispatchImpl&lt;IAtlSpaceship, &amp;IID_IAtlSpaceship, 
+                         &amp;LIBID_SPACESHIPSVRLib&gt;,
+    public IDispatchImpl&lt;IMotion, &amp;IID_IMotion,
+                         &amp;LIBID_SPACESHIPSVRLib&gt;,
+    public IVisual
+{
+.
+.
+. 
+};</PRE>
+<P>Then add an interface map entry like this:
+<P><PRE>BEGIN_COM_MAP(CAtlSpaceship)
+    COM_INTERFACE_ENTRY(IAtlSpaceship)
+    COM_INTERFACE_ENTRY(IMotion)
+    COM_INTERFACE_ENTRY2(IDispatch, IAtlSpaceship)
+    COM_INTERFACE_ENTRY(IVisual)
+END_COM_MAP()</PRE>
+</BODY>
+</HTML>
+
+

@@ -1,0 +1,320 @@
+<HTML>
+<HEAD>
+<link rel="STYLESHEET" type="text/css" href="squeal7.css">
+<TITLE>Managing Memory</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch03b.htm">[Previous]</A> <A HREF="ch03d.htm">[Next]</A><P>
+
+<A NAME="97"><H1>Managing Memory</H1></A>
+
+<P>One of the major goals of SQL Server 7 was to scale easily from a laptop 
+installation on Windows 95 or Windows 98 to an SMP server running on Windows 
+NT Enterprise Edition. This requires a very robust policy for managing 
+memory. By default, SQL Server 7 adjusts it uses of system memory to balance the 
+needs of other applications running on the machine and the needs of its own 
+internal components. SQL Server can also be configured to use a fixed amount 
+of memory. Whether memory allocation is fixed or dynamically adjusted, the 
+total memory space is considered one unified cache and is managed as a 
+collection of various pools with their own policies and purposes. Memory can 
+be requested by and granted to any of several internal components.
+</P>
+
+<A NAME="98"><H2>The Buffer Manager and Memory Pools</H2></A>
+
+<P>The buffer pool is a memory pool that's the main memory component in the 
+server; all memory not used by another memory component remains in the 
+buffer pool. The Buffer Manager manages disk I/O functions for bringing data 
+and index pages into memory so that data can be shared among users. When 
+other components require memory, they can request a buffer from the buffer pool.
+</P>
+
+<P>Another memory pool is the operating system itself. Occasionally, 
+SQL Server must request contiguous memory in larger blocks than the 8-KB 
+pages that the buffer pool can provide. Typically, use of large memory blocks is 
+kept to a minimum, so direct calls to the operating system account for a very 
+small fraction of SQL Server's memory usage.
+</P>
+
+<P>The procedure cache can be considered another memory pool, in 
+which query trees and plans from stored procedures, triggers, or ad hoc queries can be stored. Other pools are used by memory-intensive queries that use sorting or hashing, and by special memory objects that need less than one 8-KB page.
+</P>
+
+<A NAME="99"><H2>Access to In-Memory Pages</H2></A>
+
+<P>Access to pages in the buffer pool must be fast. Even with real memory, it would be ridiculously inefficient to have to scan the whole cache for a page when you're talking about hundreds of megabytes, or even gigabytes, of data. To avoid this inefficiency, pages in the buffer pool are hashed for fast access. 
+<I>Hashing</I> is a technique that uniformly maps a key (in this case, a dbid-fileno-pageno 
+identifier) via a hash function across a set of hash buckets. A 
+<I>hash bucket </I>is a page in memory that contains an array of pointers (implemented as a linked list) to the 
+buffer pages. If all the pointers to buffer pages do not fit on a single hash page, a 
+<I>linked list</I> chains to additional hash pages.
+</P>
+
+<P>Given a dbid-fileno-pageno value, the hash function converts that key 
+to the hash bucket that should be checked; in essence, the hash bucket serves 
+as an index to the specific page needed. By using hashing, even when large 
+amounts of memory are present, you can find a specific data page in cache with only 
+a few memory reads (typically one or two).</p>
+
+<p><DIV CLASS="NOTE"><BLOCKQUOTE>
+<b>NOTE</b><HR>Finding a data page might require that multiple hash 
+buckets be accessed via the chain (linked list). The hash function 
+attempts to uniformly distribute the dbid-fileno-pageno values throughout the available hash buckets. The number of hash buckets is set 
+internally by SQL Server and depends on the total size of the buffer pool.
+</BLOCKQUOTE></div>
+</P>
+
+<A NAME="100"><H2>Access to Free Pages (lazywriter)</H2></A>
+
+<P>A data page or an index page can be used only if it exists in memory. 
+Therefore, a buffer in the buffer pool must be available for the page to be read into. Keeping a supply of buffers available for immediate use is an important performance optimization. If a buffer isn't readily available, many memory pages might have to be searched simply to locate a buffer to use as a workspace.
+</P>
+
+<P>The buffer pool is managed by a process called the lazywriter that uses 
+a clock algorithm to sweep through the buffer pool. Basically, the lazywriter 
+thread maintains a pointer into the buffer pool that &quot;sweeps&quot; sequentially through 
+it (like the hand on a clock). As it visits each buffer, it determines whether 
+that buffer has been referenced since the last sweep by examining a reference 
+count value in the buffer header. If the reference count is not 0, the buffer stays in 
+the pool and its reference count is adjusted in preparation for the next 
+sweep; otherwise, the buffer is made available for reuse: it is written to disk if 
+dirty, removed from the hash lists, and put on a special list of buffers called the 
+free list.</p>
+
+<P>
+<DIV CLASS="NOTE"><BLOCKQUOTE>
+<b>NOTE</b><HR>The set of buffers that the lazywriter sweeps through 
+is sometimes called the LRU (for least recently used list). However, 
+it does not function as a traditional LRU because the buffers do 
+not move within the list according to their use or lack of use; the 
+lazywriter clock hand does all the moving. Also note that the set of buffers that the lazywriter inspects actually include more than pages in the buffer pool. They also include pages from compiled plans for 
+procedures, triggers, or ad hoc queries.
+</BLOCKQUOTE></div>
+</P>
+
+<P>The reference count of a buffer is incremented each time the buffer's 
+contents are accessed by any process. For data or index pages, this is a simple increment by one. But objects that are expensive to create, such as stored procedure plans, get a higher reference count that reflects their &quot;replacement cost.&quot; When the lazywriter clock hand sweeps through and checks which pages have been referenced, it does not use a simple decrement. It divides the reference count by 4. This means that frequently referenced pages (those with a high reference 
+count) and those with a high replacement cost are &quot;favored&quot; and their count will not reach 0 any time soon, keeping them in the pool for further use.
+</P>
+
+<P>The lazywriter hand sweeps through the buffer pool when the number  
+of pages on the free list falls below its minimum size. The minimum size is computed as a percentage of the overall buffer pool size but is always between 128 KB and 4 MB. Currently, the percentage is set at 3 percent, but that could change in future releases.
+</P>
+
+<P>User threads also perform the same function of searching for pages for the free list. This happens when a user process needs to read a page from disk into a buffer. Once the read has been initiated, the user thread checks to see if the free list is too small. (Note that this process consumes one page of the list for its own read.) If so, the user thread performs the same function as the lazywriter: it advances the clock hand and searches for buffers to free. Currently, it advances the clock hand through 16 buffers, regardless of how many it actually finds 
+to free in that group of 16. The reason for having user threads share in the work of the lazywriter is so that the cost can be distributed across all of the CPUs in an SMP environment.
+</P>
+
+<A NAME="101"><H3>Keeping Pages in the Cache Permanently</H3></A>
+
+<P>Tables can be specially marked so that their pages are never put on the free 
+list and are therefore kept in memory indefinitely. This process is called 
+<I>pinning</I> a table. Any page (data, index, or text) belonging to a pinned table is never 
+marked as free and reused unless it is unpinned. Pinning and unpinning is 
+accomplished using the <I>pintable</I> option of the 
+<I>sp_tableoption</I> stored procedure. Setting 
+this option to TRUE for a table doesn't cause the table to be brought into 
+cache, nor does it mark pages of the table as &quot;favored&quot; in any way; instead, it 
+avoids the unnecessary overhead and simply doesn't allow any pages belonging to 
+a pinned table to be put on the free list for possible replacement.
+</P>
+
+<P>Because mechanisms such as write-ahead logging and checkpointing 
+are completely unaffected, such an operation in no way impairs recovery. Still, pinning too many tables can result in few or even no pages being available when a new buffer is needed. In general, you should pin tables only if you have carefully tuned your system, plenty of memory is available, and you have a good feel for which tables constitute hot spots.
+</P>
+
+<P>Pages that are &quot;very hot&quot; (accessed repeatedly) are never placed on the free list. A page in the buffer pool that has a nonzero use count, such as one that is newly read or newly created, is not added to the free list until its use count falls to 0. Prior to that point, the page is clearly hot and isn't a good candidate for reuse. Very hot pages might never get on the free list, even without their objects being pinned&#8212; which is as it should be.
+</P>
+
+<P>Protection against media failure is achieved using whatever level of 
+RAID (redundant array of independent disks) technology you choose. (We'll look at RAID technology in <A HREF="ch04a.htm#115">Chapter 4.</A>) Write-ahead logging in conjunction with RAID protection ensures that you never lose a transaction. (However, a good backup strategy is still essential in case of certain situations, such as when an administrator accidentally clobbers a table.) SQL Server always opens its files by instructing the operating system to write through any other caching that the 
+operating system might be doing. Hence, SQL Server ensures that transactions are atomic&#8212; even a sudden interruption of power results in no partial transactions existing in the database, and all completed transactions are guaranteed to be reflected. (It is crucial, however, that a hardware disk-caching controller not &quot;lie&quot; and 
+claim that a write has been completed unless it really has or will be. We'll discuss the use of a hardware caching controller in <A HREF="ch04a.htm#115">Chapter 4.</A>)
+</P>
+
+<A NAME="102"><H2>Checkpoints</H2></A>
+
+<P>Checkpoint operations minimize the amount of work that SQL Server must do when databases are recovered during system startup. Checkpoints are run on a database by database basis. They flush dirty pages from the current database out to disk so that those changes will not have to be redone during database recovery. (A <I>dirty page </I>is one that has been modified since it was brought from disk 
+into the buffer pool.) When a checkpoint occurs, SQL Server writes a 
+checkpoint record to the transaction log, which lists all the transactions that are active. 
+This allows the recovery process to build a table containing a list of all the potentially dirty pages.
+</P>
+
+<P>Checkpoints are triggered when:</p>
+
+<UL>
+<P><LI>A database owner explicitly issues a checkpoint command to 
+perform a checkpoint in that database.</LI></P>
+
+<P><LI>The log is getting full (more than 70 percent of capacity) and 
+the database option <I>trunc. log on chkpt.</I> is set. A checkpoint is 
+triggered to truncate the transaction log and free up space.</LI></P>
+
+<P><LI>     A long recovery time is estimated. When recovery time is 
+predicted to be longer than the <I>recovery 
+interval</I> configuration option, a checkpoint is triggered. SQL Server 7 uses a simple metric to 
+predict recovery time because it can recover, or redo, in less time than it took the original operations to run. Thus, if checkpoints are taken at least as often as the recovery interval frequency, recovery will 
+complete within the interval. A recovery interval setting of 1 means 
+checkpoints occur every minute. A minimum amount of work must 
+be done for the automatic checkpoint to fire; this is currently 10 MB 
+of log per minute. In this way, SQL Server doesn't waste time 
+taking checkpoints on idle databases. A default recovery interval of 0 
+means that SQL Server will choose an appropriate value automatically; 
+for the current version, this is one minute.</LI></P>
+</UL>
+
+<p>
+<DIV CLASS="SIDEBAR"><blockquote><B>Checkpoints and Performance Issues</B><p>A checkpoint is issued as part of an orderly shutdown, so a 
+typical recovery upon restart takes only seconds. (An orderly shutdown 
+occurs when you explicitly shut down SQL Server, unless you do so via 
+the SHUTDOWN WITH NOWAIT command. An orderly shutdown 
+also occurs when the SQL Server service is stopped through the 
+Windows NT Service Control Manager or the net stop command from an 
+operating system prompt.) Although a checkpoint speeds up recovery, 
+it does slightly degrade run-time performance.</p>
+
+<P>Unless your system is being pushed with high transactional 
+activity, the run-time impact of a checkpoint probably won't be 
+noticeable. It is minimized via the <I>fuzzy 
+checkpoint</I> technique, which reflects the changes to the data pages incrementally. You can also use the 
+recovery interval option of <I>sp_configure</I> to influence checkpointing 
+frequency, balancing the time to recover vs. any impact on run-time 
+performance. If you are interested in tracing how often checkpoints actually 
+occur, you can start your SQL Server with trace flag 3502, which 
+writes information to SQL Server's error log every time a checkpoint occurs.</P>
+</blockquote></DIV>
+</P>
+
+<A NAME="103"><H2>Accessing Pages via the Buffer Manager</H2></A>
+
+<P>The Buffer Manager handles the in-memory version of each physical disk 
+page and provides all other modules access to it (with appropriate safety 
+measures). The memory image in the buffer pool, if one exists, takes precedence over 
+the disk image. That is, the copy of the data page in memory might include 
+updates that have not yet been written to disk. (It might be dirty.) When a page is 
+needed for a process, it must exist in memory (in the buffer pool). If the page is 
+not there, a physical I/O is performed to get it. Obviously, because physical 
+I/Os are expensive, the fewer the better. The more memory there is (the bigger 
+the buffer pool), the more pages can reside there and the more likely a page can 
+be found there.</p>
+
+<P>A database appears as a simple sequence of numbered pages. The 
+database ID (dbid), file number (fileno), and page number (pageno) uniquely specify a page for the entire SQL Server environment. When another module (such as the access methods manager, row manager, index manager, or text manager) needs to access a page, it requests access from the Buffer Manager by specifying the dbid, fileno, and pageno.
+</P>
+
+<P>The Buffer Manager responds to the calling module with a pointer to 
+the memory buffer holding that page. The response might be immediate if the page is already in the cache, or it might take an instant for a disk I/O to complete and bring the page into memory. Typically, the calling module also requests that the lock manager perform the appropriate level of locking on the page. The calling module notifies the Buffer Manager if and when it is finished dirtying, or making updates to, the page. The Buffer Manager is responsible for writing these updates to disk in a way that coordinates with logging and transaction management.
+</P>
+
+<A NAME="104"><H2>Large Memory Issues</H2></A>
+
+<P>Systems with hundreds of megabytes of RAM are not uncommon. In fact, 
+for benchmark activities, Microsoft runs with a memory configuration of as much as 2 GB of physical RAM. Using SQL Server on a DEC Alpha processor, or using the Enterprise Edition of SQL Server, allows even more memory to be used. In the future, Windows NT will support a 64-bit address space and memory prices probably will continue to decline, so huge data caches of many gigabytes will not be so unusual. The reason to run with more memory is, of course, to reduce the need for physical I/O by increasing your cache-hit ratio.
+</P>
+
+<p>
+<DIV CLASS="SIDEBAR"><blockquote>
+<B>Memory: How Much Is Too Much?</B><p>
+Most systems would not benefit from huge amounts of memory. 
+For example, if you have 2 GB of RAM and your entire database is 1 
+GB, you won't even be able to fill the available memory, let alone 
+benefit from its size. A pretty small portion of most databases is &quot;hot,&quot; so a memory size that is only a small percentage of the entire database size can often yield a high cache-hit ratio. If you find that SQL Server is doing a lot of memory-intensive processing, such as internal sorts and hashing, you can add additional memory. Adding additional memory beyond what is needed for a high cache-hit ratio and internal sorts and hashes might bring only marginal improvement.</p>
+</blockquote></DIV>
+</P>
+
+<A NAME="105"><H3>Read Ahead</H3></A>
+
+<P>SQL Server supports a mechanism called read ahead, whereby the need for 
+data and index pages can be anticipated and pages can be brought into the 
+buffer pool before they are actually read. This performance optimization allows 
+large amounts of data to be processed effectively. Unlike in previous versions of 
+SQL Server, read ahead is managed completely internally, and no 
+configuration adjustments are necessary. In addition, read ahead does not use 
+separate Windows NT threads. This ensures that read ahead stays far enough&#8212; but 
+not too far&#8212; ahead of the scan of the actual data.
+</P>
+
+<P>There are two kinds of read ahead: one for table scans and one for 
+index ranges. For table scans, the table's allocation structures are consulted to 
+read the table in disk order. There are up to 32 extents (32 
+* 8 pages/extent * 8192 bytes/page = 2MB) of read ahead outstanding at a time. The extents are 
+read with a single 64 KB scatter read. (Scatter-gather I/O was introduced in 
+Windows NT 4, Service Pack 2, with the Win32 functions ReadFileScatter 
+and WriteFileScatter. These functions allow SQL Server to issue a single read or 
+write to transfer up to eight pages of data directly to or from SQL Server's buffer 
+pool.) If the table is spread across multiple files in a file group, SQL Server 
+attempts to keep at least eight of the files busy with read ahead instead of 
+sequentially processing the files.
+</P>
+
+<P>For index ranges, the scan uses level one of the index structure, which is the level immediately above the leaf, to determine which pages to read ahead. It tries to stay a certain number of pages ahead of the scan; that number is currently about 40 plus the configuration value for 
+<I>max async I/O</I>. When the index scan starts, read ahead is invoked on the initial descent of the index to minimize the number of reads performed. For instance, for a scan of <I>WHERE state = 'WA'</I>, read ahead searches the index for <I>key = 'WA'</I>, and it can tell from the level one nodes how many pages have to be examined to satisfy the scan. 
+If the anticipated number of pages is small, all the pages are requested by the initial read ahead; if the pages are contiguous, they are fetched in scatter reads. If the range contains a large number of pages, the initial read ahead is performed and thereafter every time another 16 pages are consumed by the scan, the index is consulted to read in another 16 pages. This has several interesting effects:
+</P>
+
+
+<UL>
+<P><LI>Small ranges can be processed in a single read at the data page 
+level whenever the index is contiguous.</LI></P>
+
+<P><LI>The scan range (for example, <I>state = 'WA'</I>) can be used to prevent reading ahead of pages that will not be used since this information  is available in the index.</LI></P>
+
+<P><LI>     Read ahead is not slowed by having to follow page linkages at the data page level. (Read ahead can be done on both clustered 
+indexes and nonclustered indexes.)</LI></P>
+
+</UL>
+
+<P>
+<DIV CLASS="NOTE"><BLOCKQUOTE>
+<b>NOTE</b><HR>Scatter-gather I/O and asynchronous I/O are 
+available only to SQL Server running on Windows NT. This includes the 
+desktop edition of SQL Server if it has been installed on Windows 
+NT Workstation.
+</BLOCKQUOTE></div>
+</P>
+
+<A NAME="106"><H2>The Log Manager</H2></A>
+
+<P>All changes are &quot;written ahead&quot; by the Buffer Manager to the transaction 
+log. Write-ahead logging ensures that all databases can be recovered to a 
+consistent state even in the event of a complete server failure, as long as the physical 
+medium (hard disk) survives. A process is never given acknowledgment that a 
+transaction has been committed unless it is on disk in the transaction log. For this 
+reason, all writes to the transaction log are synchronous&#8212; SQL Server must wait for  
+acknowledgment of completion. Writes to data pages can be made 
+asynchronously, without waiting for acknowledgment, because if a failure occurs 
+the transactions can be undone or redone from the information in the transaction log.</p>
+
+<P>The log manager formats transaction log records in memory before 
+writing them to disk. To format these log records, the log manager maintains 
+regions of contiguous memory called <I>log 
+caches</I>.<B> </B>Unlike in previous versions, in 
+SQL Server 7 log records do not share the buffer pool with data and index 
+pages. Log records are maintained only in the log caches.
+</P>
+
+<P>To achieve maximum throughput, the log manager maintains two or 
+more log caches. One is the current<B> </B>log cache, in which new log records are 
+added. The log manager also has two queues of log caches: a flushQueue, which 
+contains log caches waiting to be flushed, and a freeQueue, which contains 
+log caches that have no data and can be reused.
+</P>
+
+<P>When a user process requires that a particular log cache be flushed 
+(for example, when a transaction commits), the log cache is placed into the flushQueue (if it isn't already there). Then the thread (or fiber) is put into the list of connections waiting for the log cache to be flushed. The connection does not do further work until its log records have been flushed.
+</P>
+
+<P>The <I>log writer</I> is a dedicated thread that goes through the flushQueue in order and flushes the log caches out to disk. The log caches are written one at a time. The log writer first checks to see if the log cache is the current log cache. If it is, the log writer pads the log cache to sector alignment and updates some header information. It then issues an I/O event for that log cache. When the flush for a particular log cache is completed, any processes waiting on that 
+log cache are woken up and can resume work.
+</P>
+
+</BODY>
+</HTML>
+
+
+

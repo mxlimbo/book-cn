@@ -1,0 +1,364 @@
+<HTML>
+<HEAD>
+<link rel="STYLESHEET" type="text/css" href="squeal7.css">
+<TITLE>The Lock Manager</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch13a.htm">[Previous]</A> <A HREF="ch13c.htm">[Next]</A><P>
+
+<A NAME="495"><H1>The Lock Manager</H1></A>
+
+<p>
+SQL Server can lock data using several different modes. For example, read 
+operations acquire shared locks and write operations acquire exclusive locks. 
+Update locks are acquired during the initial portion of an update operation when 
+the data is read. The SQL Server lock manager acquires and releases these locks. 
+It also manages compatibility between lock modes, resolves deadlocks, and 
+escalates locks if necessary. It controls locks on tables, on the pages of a table, on 
+index keys, and on individual rows of data. Locks can also be held on system 
+data&#8212;data that's private to the database system, such as page headers and indexes.
+</P>
+
+<p>
+The lock manager provides two separate locking systems. The first 
+system affects all fully shared data and provides row locks, page locks, and table 
+locks for tables, data pages, text pages, and leaf-level index pages. The second 
+system is used internally for index concurrency control, controlling access to 
+internal data structures, and retrieving individual rows of data pages. It uses latches, 
+which are less resource intensive than locks and provide performance optimization. 
+You could use full-blown locks for all locking, but because of their complexity, 
+they would slow down the system if they were used for all internal needs. If 
+you examine locks using the <I>sp_lock </I>system stored procedure or a similar 
+mechanism that gets information from the 
+<I>syslockinfo</I> table, you cannot see latches&#8212;you 
+see only information about locks for fully shared data.
+</P>
+
+<p>
+Another way to look at the difference between locks and latches is that 
+locks ensure the <I>logical </I>consistency of the data and latches ensure the 
+<I>physical </I>consistency. Latching happens when you place a row physically on a page or 
+move data in other ways, such as compressing the space on a page. SQL Server 
+must guarantee that this data movement can happen without interference.
+</P>
+<A NAME="496"><H2>The Lock Manager and Isolation Levels</H2></A>
+
+<p>
+SQL Server supports all four transaction isolation levels specified by ANSI and ISO: Serializable, Repeatable Read, Read Committed, and Read Uncommitted. (See <a href="ch03a.htm">Chapter 3</a> and <a href="ch10a.htm">Chapter 10</a> for details.) To achieve the Serializable 
+isolation level, phantoms must be prevented because the transaction's behavior must be identical to what would have occurred had the transaction run on a single-user system. SQL Server provides serializability, which you can set using SET TRANSACTION ISOLATION LEVEL SERIALIZABLE. To support 
+serializability, SQL Server locks index ranges using a special type of lock called a <I>key-range lock. </I>Such locks are held until the end of the transaction to prevent phantoms. If no index exists, the lock manager uses a table lock to guarantee serializability.
+</P>
+
+<p>
+The lock manager provides fairly standard two-phase locking 
+services. Although the names are similar, two-phase locking (2PL) and the 
+two-phase commit (2PC) protocol are not directly related, other than by the obvious 
+fact that 2PC must use 2PL services. In two-phase locking, a transaction has a 
+&quot;growing&quot; phase, during which it acquires locks, and a &quot;shrinking&quot; phase, during 
+which it releases locks. To achieve serializability, all acquired locks are held until 
+the end of the transaction and then are dropped all at once.
+</P>
+
+<p>
+For a lower isolation level, such as Committed Read, locks can be 
+released sooner&#8212;when the use of the object is completed. For example, if a range of 
+data is being queried in the table, there will probably be shared locks 
+outstanding. With Committed Read isolation, a shared lock is released as soon as the 
+scan moves off one piece of data and onto the next. Exclusive locks, on the 
+other hand, are always held until the end of the transaction so that the transaction 
+can be rolled back if necessary.
+</P>
+
+<p>
+With Serializable or Repeatable Read isolation, shared locks must be 
+held until the end of the transaction to guarantee that the data that was read will 
+not change or that new rows meeting the criteria of the query cannot be added 
+while the transaction is in progress. Like shared locks, latches are not tied to the 
+boundaries of a transaction because they are used to provide mutual exclusion 
+(mutex) functionality rather than to directly lock data. For example, during a row 
+insert in a table with a clustered index, the nearby index page is latched to prevent 
+other inserts from colliding. The latches are needed to provide mutual exclusion 
+only during long periods of time (that is, periods with more than a few 
+instruction cycles).
+</P>
+
+<A NAME="497"><H2>Spinlocks</H2></A>
+
+
+<p>
+For shorter-term needs, SQL Server achieves mutual exclusion using a 
+latch, implemented with a spinlock. Spinlocks are used purely for mutual exclusion 
+and never to lock user data. They are even more lightweight than latches, which 
+are lighter than the full locks used for data and index leaf pages. The spinlock is 
+the only place in SQL Server in which processor-specific assembly language is 
+used. A spinlock is implemented in a few lines of assembly language specific to 
+each processor type (such as <I>x</I>86/Pentium or Alpha). The requester of a 
+spinlock repeats its request if the lock is not immediately available. (That is, the 
+requestor &quot;spins&quot; on the lock until it is free.)
+</P>
+
+<p>
+Spinlocks are often used as mutexes within SQL Server when a 
+resource is usually not busy. If a resource is busy, the duration of a spinlock is short 
+enough that retrying is better than waiting and then being rescheduled by 
+Microsoft Windows NT, which results in context switching between threads. The 
+savings in context switches more than offsets the cost of spinning, as long as you 
+don't have to spin too long. Spinlocks are used for situations in which the wait for 
+a resource is expected to be brief (or if no wait is expected).
+</P>
+
+<A NAME="498"><H2>Deadlocks</H2></A>
+
+<p>
+A deadlock occurs when two processes are waiting for a resource and 
+neither process can advance because the other process prevents it from getting the 
+resource. A true deadlock is a catch-22 in which, without intervention, 
+neither process can ever progress. When a deadlock occurs, SQL Server 
+intervenes automatically.
+</P>
+
+<p>
+<DIV CLASS="NOTE"><BLOCKQUOTE>
+<B>NOTE</B><HR>A simple wait for a lock is not a deadlock. When the process that's holding the lock completes, the waiting process gets the lock. Lock waits are normal, expected, and necessary in multiple-user systems.
+</BLOCKQUOTE></DIV></p>
+
+<p>
+In SQL Server, two main types of deadlocks can occur: a cycle deadlock and a conversion deadlock. Figure 13-1 shows an example of a cycle deadlock. Process A starts a transaction, acquires an exclusive table lock on 
+the <I>authors </I>table, and requests an exclusive table lock on the <I>publishers </I>table. Simultaneously, process B starts a transaction, acquires an exclusive lock on the 
+<I>publishers </I>table, and requests an exclusive lock on the <I>authors </I>table. The two processes become deadlocked&#8212;caught in a &quot;deadly embrace.&quot; Each process holds a resource needed by the other process. Neither can progress, and, without intervention, both 
+would be stuck in deadlock forever. You can actually generate the deadlock using the SQL Server Query Analyzer, as follows:
+</P>
+
+<p>
+<OL>
+<LI><P>Open a query window, and change your database context to the <I>pubs</I> database. Execute the following batch for process A:</P>
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+BEGIN TRAN
+UPDATE authors SET contract = 0
+GO
+</pre>
+</td></tr></table></p></LI>
+<LI><p>Open a second window, and execute this batch for process B:</P>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>	
+<pre>
+BEGIN TRAN
+UPDATE publishers SET city = 'Redmond', state = 'WA'
+GO
+</pre>
+</td></tr></table>
+</P></LI>
+
+<LI><p>Go back to the first window, and execute this update statement:</P>
+<p>
+<table cellpadding=5 width="95%"><tr><td>	
+<pre>
+UPDATE publishers SET city = 'New Orleans', state = 'LA'
+GO
+</pre>
+</td></tr></table>
+</P>
+<p>
+At this point, the query should block. It is not deadlocked 
+yet, however. It is waiting for a lock on the <I>publishers 
+</I>table, and there is no reason to suspect that it won't eventually get that lock.
+</P></LI>
+
+<LI><P>Go back to the second window, and execute this update statement:
+</p>
+<p>
+<table cellpadding=5 width="95%"><tr><td>	
+<pre>
+BEGIN TRAN
+UPDATE authors SET contract = 1
+GO
+</pre>
+</td></tr></table>
+</P>
+
+<p>
+At this point, a deadlock occurs. The first connection will 
+never get its requested lock on the <I>publishers</I> 
+table because the second connection will not give it up until it gets a lock on the 
+<I>authors</I> table. Since the first connection already has the lock on the 
+<I>authors</I> table, we have a deadlock. One of the processes received this 
+error message (of course, the actual process ID reported will probably 
+be different):
+</P>
+<p>
+<table cellpadding=5 width="95%"><tr><td>	
+<pre>
+Server: Msg 1205, Level 13, State 1, Line 1
+Your transaction (process ID #12) was deadlocked with another 
+process and has been chosen as the deadlock victim. Rerun your 
+transaction.
+</pre>
+</td></tr></table>
+</P>
+</LI>
+</ol>
+</P>
+
+<P>
+<A HREF="javascript:fullSize('f13wh01x.htm')"> <img src="f13wh01.JPG" width=404 height=254 border=0 ALT="Click to view at full size."> </A>
+</P>
+<P>
+<!-- caption --><B>Figure 13-1.</B> <I>A cycle deadlock resulting from each of two processes holding a resource needed by the other.</I><!-- /caption -->
+</P>
+
+
+<p>
+Figure 13-2 shows an example of a conversion 
+deadlock. Process A and process B each hold a shared lock on the same page 
+within a transaction. Each process wants to promote its shared lock to an exclusive 
+lock but cannot do so because of the other process's lock. Again, intervention 
+is required.
+</P>
+
+<p>
+SQL Server automatically detects deadlocks and intervenes through 
+the lock manager, which provides deadlock detection for regular locks. Latches 
+are not involved in deadlock detection because SQL Server uses 
+deadlock-proof algorithms when it acquires latches. When SQL Server detects a deadlock, 
+it terminates one process's batch, rolling back the transaction and releasing all 
+that process's locks to resolve the deadlock.</p>
+
+<p>
+In SQL Server 7, a separate thread called LOCK_MONITOR checks 
+the system for deadlocks every 5 seconds. The lock monitor also uses an 
+internal counter called a <I>deadlock detection counter 
+</I>to determine whether to check the system for deadlocks more often. The deadlock detection counter starts at 
+a value of 3 and is reset to 3 if a deadlock occurs. If the LOCK_MONITOR 
+thread finds no deadlocks when it checks at the end of its 5-second cycle, it 
+decrements the deadlock detection counter. If the counter has a value greater than 0, the 
+lock manager requests that the lock monitor also check all the locks for a 
+deadlock cycle if a process requests a lock resource and is blocked. Thus, after 20 
+seconds of not finding any deadlocks, the deadlock detection counter is 0 and the 
+lock manager stops requesting deadlock detection every time a process blocks on 
+a lock. The deadlock detection counter stays at 0 most of the time and the 
+checking for deadlocks happens only at the 5-second intervals of the lock monitor.
+</P>
+
+<p>
+This LOCK_MONITOR thread checks for deadlocks by inspecting 
+the list of waiting locks for any cycles, which indicate a circular relationship 
+between processes holding locks and processes waiting for locks. Typically, the 
+process chosen as the <I>victim </I>is the process that has just requested a lock and 
+initiated the check for deadlocks. If a deadlock is encountered during the normal 
+execution of the lock monitor, the first process whose termination will break 
+the deadlock cycle is typically chosen as the victim. However, certain operations 
+are marked as <I>golden,</I> or unkillable. For example, a process involved in rolling 
+back a transaction cannot be chosen as a deadlock victim because the changes 
+being rolled back could be left in an indeterminate state, causing data corruption.
+</P>
+
+<P>
+<img src="f13wh02.GIF" width=383 height=399 border=0>
+</P>
+<P>
+<!-- caption --><B>Figure 13-2.</B> <I>A conversion deadlock resulting from two processes wanting to promote their locks on the same resource within a transaction.</I><!-- /caption -->
+</P>
+
+
+<p>
+In SQL Server 6.5, the lock manager checked for deadlocks every time 
+a process began waiting for a lock resource. This provided rapid deadlock 
+detection, but it wasted a lot of resources looking for deadlocks even in systems 
+or situations in which they were rare. In earlier SQL Server releases, 
+other algorithms were used to choose the deadlock victim (such as choosing the 
+process that had consumed fewer CPU cycles). Those algorithms made a 
+noble attempt at fairness, but they often resulted in another deadlock because 
+yet another process might have been queued up for the resource that was part 
+of the deadlock circular chain of lock requests. The result would be a chain reaction.
+</P>
+
+<p>
+Using the SET DEADLOCK_PRIORITY LOW | NORMAL 
+statement, you can make a process sacrifice itself as the victim if a deadlock is detected. 
+If a process has a deadlock priority of LOW, it terminates when a deadlock 
+is detected even if it is not the process that closed the loop. However, there is 
+no counterpart SET option to set a deadlock priority to HIGH. As much as 
+you might want your own processes to always come out the winner in a 
+deadlock situation, this feature has not yet been implemented in SQL Server.
+</P>
+
+<P>
+<DIV CLASS="NOTE"><BLOCKQUOTE>
+<B>NOTE</B><HR>
+The lightweight latches and spinlocks used internally do not have deadlock detection services. Instead, deadlocks on latches and spinlocks are avoided rather than resolved. Avoidance is achieved via strict programming guidelines used by the SQL Server development team. These lightweight locks must be acquired in a hierarchy, and 
+a process must not have to wait for a regular lock while holding a latch or spinlock. For example, one coding rule is that a process holding a spinlock must never directly wait for a lock or call another service that might have to wait for a lock, and a request can never be made for a spinlock that is higher in the acquisition hierarchy. By establishing similar guidelines for your development team for the order in which SQL Server objects are accessed, you can go a long way toward avoiding deadlocks in the first place.
+</BLOCKQUOTE></DIV>
+</P>
+
+<p>
+In the example in Figure 13-1, the cycle deadlock could have 
+been avoided if the processes had decided on a protocol beforehand&#8212;for 
+example, if they had decided to always access the 
+<I>customer</I> table first and the <I>parts</I> table 
+second. Then one of the processes would get the initial exclusive lock on the table 
+being accessed first, and the other process would wait for the lock to be released. 
+One process waiting for a lock is normal and natural. (Remember, waiting is not 
+a deadlock.)
+</P>
+
+<p>
+You should always try to have a standard protocol for the order in 
+which processes access tables. If you know that the processes might need to update 
+the row after reading it, they should initially request an update lock, not a 
+shared lock. If both processes request an update lock rather than a shared lock, 
+the process that is granted an update lock is assured that the lock can later be 
+promoted to an exclusive lock. The other process requesting an update lock has 
+to wait. The use of an update lock serializes the requests for an exclusive lock. 
+Other processes needing only to read the data can still get their shared locks and 
+read. Since the holder of the update lock is guaranteed an exclusive lock, the 
+deadlock is avoided. We'll look in more detail at the compatibility of locks later 
+in this chapter; additional information on deadlocks is presented in <a href="ch14a.htm">Chapter 14</a>.
+</P>
+
+<p>
+By the way, the time that your process holds locks should be minimal 
+so other processes don't wait too long for locks to be released. Although you 
+don't usually invoke locking directly, you can influence locking by keeping 
+transactions as short as possible. For example, don't ask for user input in the 
+middle of a transaction. Instead, get the input first and then quickly perform 
+the transaction.</p>
+
+<A NAME="499"><H2>Locks and Memory</H2></A>
+
+<p>
+Locks are not on-disk structures&#8212;you won't find a lock field directly on a 
+data page or a table header&#8212;because it would be too slow to do disk I/O for 
+locking operations. Locks are internal memory structures&#8212;they consume part 
+of the memory used for SQL Server. Each locked data resource (a row, index 
+key, page, or table) requires 32 bytes of memory to keep track of the database, 
+the type of lock, and the information describing the locked resource. Each 
+process holding a lock also must have a lock owner block of 32 bytes. Sometimes a 
+single transaction can have multiple lock owner blocks; a scrollable cursor 
+sometimes uses several. Also, one lock can have many lock owner blocks, as in the case 
+of a shared lock. Finally, each process waiting for a lock has a lock waiter 
+block of another 32 bytes.
+</P>
+
+<P>
+<DIV CLASS="NOTE"><BLOCKQUOTE>
+<B>NOTE</B><HR>
+In this context, we use the term &quot;process&quot; to refer to a SQL Server subtask. Every user 
+connection is referred to as a process, as are the checkpoint manager, the lazywriter, the log 
+writer, and the lock monitor. But these are only subtasks within SQL Server, not processes from 
+the perspective of Windows NT, which considers the entire SQL Server engine to be a single process 
+with multiple threads.
+</BLOCKQUOTE></DIV>
+</P>
+</BODY>
+</HTML>
+
+
+

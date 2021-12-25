@@ -1,0 +1,287 @@
+<HTML>
+<HEAD>
+	<link rel="STYLESHEET" type="text/css" href="squeal7.css">
+<TITLE>Batches</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch10a.htm">[Previous]</A> <A HREF="ch10c.htm">[Next]</A><P>
+
+<A NAME="370"><H1>Batches</H1></A>
+
+<P>A batch is one or several SQL Server commands that are dispatched and 
+executed together. Because every batch sent from the client to the server requires 
+handshaking between the two, sending a batch instead of sending separate 
+commands can prove to be more efficient. Even a batch that doesn't return a result set 
+(for example, a single INSERT statement) requires at least an acknowledgment 
+that the command was processed and offers a status code for its level of success. 
+At the server, the batch must be received, queued for execution, and so on.</P>
+
+<P>Although commands are grouped and dispatched together for 
+execution, each command is distinct from the others. Let's look at an example. 
+Suppose you need to execute 150 INSERT statements. Executing all 150 statements 
+in one batch requires the processing overhead to be incurred once rather than 
+150 times. In one real-world situation, an application that took 5 to 6 seconds 
+to complete 150 individual INSERT statements was changed so that all 
+150 statements were sent as one batch. The processing time decreased to well 
+under 0.5 second, more than a tenfold improvement. And this was on a LAN, 
+not on a slow network like a WAN or the Internet, where the improvement 
+would have been even more pronounced. (Try running an application with 150 
+batches to insert 150 rows over the Internet, and you'll be really sorry!)</P>
+
+<P>Using a batch is a huge win. By using the Transact-SQL constructs 
+that were presented in <A HREF="ch09a.htm">Chapter 9</A>, such as conditional logic and looping, you can 
+often perform sophisticated operations within a single batch and eliminate the 
+need to carry on an extensive conversation between the client and the server. 
+Those operations can also be saved on the server as a stored procedure, which 
+allows them to execute even more efficiently. Using batches and stored procedures 
+to minimize client/server conversations is crucial for achieving 
+high-performing applications. And now that more applications are being deployed on 
+slower networks&#8212;such as WANs, the Internet, and dial-up systems&#8212;instead of 
+on LANs only, using batches and stored procedures is crucial.</P>
+
+<P>Every SELECT statement (except for those used for assigning a value 
+to a variable) generates a result set. Even a SELECT statement that finds zero 
+rows returns a result set that describes the columns selected. Every time the 
+server sends a result set back to the client application, it must send 
+<I>metadata </I>as well as the actual data. The metadata describes the result set to the client. You 
+can think of metadata in this way: &quot;Here's a result set with eight columns. The 
+first column is named <I>last_name</I> and is of type 
+<I>char(30)</I>. The second column is ....&quot;</P>
+
+<P>Obviously, then, executing a single SELECT statement with a 
+WHERE clause formulated to find (in one fell swoop) all 247 rows that meet your 
+criteria is much more efficient than separately executing 247 SELECT 
+statements that each return one row of data. In the former case, one result set is 
+returned. In the latter case, 247 result sets are returned&#8212;the performance difference 
+is striking.</P>
+
+<P>Using batches might seem like an obvious necessity, yet many 
+programmers still write applications that perform poorly because they don't use 
+batches. The problem is especially common for developers who have worked on 
+ISAM or similar sequential files doing row-at-a-time processing. Unlike ISAM, 
+SQL Server works best with <I>sets</I> of data, not individual rows of data, 
+so that you can minimize conversations between the server and the client application.</P>
+
+<P>There's actually a middle ground between using one SELECT 
+statement that returns all your rows and using an individual batch to return each 
+row. Batches can contain multiple statements, each one returning its own 
+metadata, so the ideal solution is to minimize your total number of statements. 
+Multiple SELECTs within a single batch are still better than having each statement in 
+its own batch, because each batch has the overhead of handshaking between 
+the client and server.</P>
+
+<P>Following is a simple batch, issued from Query Analyzer. Even 
+though three unrelated operations are being performed, we can package them in a 
+single batch to conserve bandwidth:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+INSERT authors VALUES (etc.)
+SELECT * FROM authors
+UPDATE publishers SET pub_id= (etc.)
+GO
+</pre></p>
+</td></tr></table>
+
+<P>All the statements within a single batch are parsed as a unit. This 
+means that if you have a syntax error in any of the statements, none of the 
+statements will execute. For example, consider this batch of two statements, which we 
+can try to execute from Query Analyzer:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+SELECT * FROM sales
+SELECT * FOM titleauthor
+GO
+</pre></p>
+</td></tr></table>
+
+<P>When you execute this batch, you'll get the following error:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+Server: Msg 170, Level 15, State 1
+Line 2: Incorrect syntax near 'fom'.
+</pre></p>
+</td></tr></table>
+
+<P>Even though the first SELECT statement is perfectly legal, because of 
+the error in the second statement, no data is returned. If we separated this into 
+two different batches, the first one would return a result set and the second 
+one would return an error.</P>
+
+<P>Now suppose that instead of mistyping the keyword FROM as 
+<I>FOM</I>, we had mistyped the name of the table:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+SELECT * FROM sales
+SELECT * FROM titleautor
+GO
+</pre></p>
+</td></tr></table>
+
+<P>SQL Server 7 introduces delayed name resolution, in which object 
+names aren't resolved until execution time. Earlier versions of SQL Server 
+resolved names at compile time, so the above batch would return an &quot;Invalid 
+Object Name&quot; error, and nothing would be executed. In this example, SQL Server 
+7 returns the data from the first SELECT, followed by the error message below.</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+Server: Msg 208, Level 16, State 1
+Invalid object name 'titleautor'.
+</pre></p>
+</td></tr></table>
+
+<P>However, if we had mistyped the object name in the first statement, 
+execution of the batch would stop when the error was encountered. No 
+data would be returned by any subsequent valid queries.</P>
+
+<P>Normally when using Query Analyzer, everything in the query 
+window is considered a single batch and is sent to SQL Server for parsing, 
+compiling, and execution when you click the green EXECUTE button. However, 
+Query Analyzer provides two ways around this. First, it allows you to highlight just 
+a section of code in the query window so that when you click the EXECUTE 
+button, only the highlighted text is sent as a batch to SQL Server. Alternatively, 
+you can include the keyword GO between your queries.</P>
+
+<P>If you use either of the text-based query tools 
+(<I>osql</I> or <I>isql</I>), there's no green EXECUTE button to click. When using those tools, you must type 
+<I>GO</I> on a line by itself to indicate that everything you've typed up to that point is a 
+batch. The tool (<I>osql</I> or <I>isql</I>) will then send that batch to SQL Server for processing.</P>
+
+<P>GO isn't an SQL command. It's the end-of-batch signal understood 
+only by certain client tools. It's interpreted by the client to mean that everything 
+since the last GO should be sent to the server for execution. SQL Server never 
+sees the GO command and has no idea what it means. With a custom 
+application, a batch is executed with a single 
+<I>SQLExecute</I> from ODBC<B> </B>(or<B> 
+</B><I>dbsqlexec</I> from DB-Library).</P>
+
+<P>If you include the GO command in your query window in Query 
+Analyzer, Query Analyzer will break up your statement into the indicated batches 
+behind the scenes. Each batch (as marked by the GO command) will be sent 
+individually to SQL Server.</P>
+
+<P>A collection of batches that we frequently want to execute together 
+is sometimes called a <I>script</I>. Most of the client tools allow us a mechanism 
+for loading a script that we've saved to a text file and for executing it. In Query 
+Analyzer, we can use the File/Open command to load a script. From the 
+command-line <I>osql</I> or <I>isql</I> programs, we can specify 
+the <I>/i </I>flag followed by a filename to indicate that the SQL Server batches to execute should come from the 
+specified file.</P>
+
+<P>The fact that the client tool processes GO and not SQL Server can 
+lead to some unexpected behavior. Suppose you have a script containing 
+several batches. During your testing, you want to comment out a couple of the 
+batches, to ignore them for the time being. Your commented script might then 
+look something like this:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+SELECT * FROM authors
+/* 
+GO
+SELECT * FROM sales
+GO
+SELECT * FROM publishers
+GO 
+*/
+SELECT * FROM titles
+GO
+</pre></p>
+</td></tr></table>
+
+<P>The intention here was to comment out the SELECT from the 
+<I>sales</I> and <I>publishers</I> tables and to run the SELECT from 
+<I>authors</I> and <I>titles</I> as a single 
+batch. However, if you run this script from Query Analyzer, you'll find that you 
+get exactly the opposite behavior! That is, you'll see the data from the 
+<I>sales</I> and <I>publishers</I> tables, but not from 
+<I>authors</I> or <I>titles. </I>If you look at this script 
+from the perspective of the client tool, the behavior makes sense. The tool 
+doesn't try to interpret any of your SQL statements; it just breaks the statements 
+into batches to be sent to SQL Server. A batch is marked by a GO command at 
+the beginning of a line. So, the above script contains four batches.</P>
+
+<P>The first batch (everything before the first GO) is:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+SELECT * FROM authors
+/*
+</pre></p>
+</td></tr></table>
+
+<P>SQL Server generates an error message because there's an open 
+comment with no corresponding close comment.</P>
+
+<P>The second and third batches are:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+SELECT * FROM sales
+</pre></p>
+</td></tr></table>
+
+<P>and</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+SELECT * FROM publishers
+</pre></p>
+</td></tr></table>
+
+<P>Both of these batches are perfectly legal, and SQL Server can process them 
+and return results.</P>
+
+<P>The fourth batch is:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+*/
+SELECT * FROM titles
+</pre></p>
+</td></tr></table>
+
+<P>SQL Server also generates an error for this last one, because it has a 
+close comment without an open comment marker, and no data will be returned.</P>
+
+<P>If you want to comment out statements within a script that can 
+contain the end-of-batch GO command, you should use the alternative 
+comment marker&#8212;the double dash&#8212;in front of every GO. Your script would then 
+look like this:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+SELECT * FROM authors
+/* 
+--GO
+SELECT * FROM sales
+--GO
+SELECT * FROM publishers
+--GO 
+*/
+SELECT * FROM titles
+GO
+</pre></p>
+</td></tr></table>
+
+<P>With this revised script, the client tool won't recognize the GO as the 
+end-of-batch marker, because it's not the first thing on a line. The client will 
+consider this script to be one single batch and send it to SQL Server as such. 
+SQL Server will then ignore everything between the open comment 
+(/*) and the close comment (*/) and execute only the SELECT statements from 
+<I>authors</I> and <I>titles</I>.</P>
+
+</BODY>
+</HTML>
+
+
+

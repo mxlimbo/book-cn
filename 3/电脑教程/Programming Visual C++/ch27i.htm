@@ -1,0 +1,238 @@
+<HTML>
+<HEAD>
+<LINK REL=StyleSheet HREF="basicIE4.css" TYPE="text/css">
+<TITLE>The EX27C Example -- A Persistent Storage Client Program</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY>
+<A NAME="632"><H1><B>The EX27C Example&#151;A Persistent Storage Client Program</B></H1></A>
+<P>This program is similar to EX27A in function&#151;indeed, the storage files are compatible. Internally, however, both worker threads use the persistent COM class <I>CText</I> (EX27B) for loading and storing text.
+
+<P>To prepare EX27C, open the \vcpp32\ex27c\ex27c.dsw workspace and build the project. Run the program from the debugger, first choosing Write from the Storage menu and then choosing Read. Observe the output in the Debug window.
+
+<P>The menu, the view class, and the application class are the same as the EX27A versions. Only the thread code is different.
+
+<P>Figure 27-5 lists the code for both the WriteThread.cpp and the ReadThread.cpp files.
+
+
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<P><B>WRITETHREAD.CPP</B>
+
+<P><pre>
+#include &quot;StdAfx.h&quot;
+#include &quot;Thread.h&quot;
+#include &quot;itext.h&quot;
+
+CLSID g_clsid; // for the Text server
+int g_nIndent = 0;
+const char* g_szBlanks = &quot;                                          &quot;;
+const char* g_szRootStorageName = &quot;\\direct.stg&quot;;
+
+UINT WriteThreadProc(LPVOID pParam)
+{
+    USES_CONVERSION;
+    LPSTORAGE pStgRoot = NULL;
+    g_nIndent = 0;
+    ::CoInitialize(NULL);
+    ::CLSIDFromProgID(L&quot;EX27B.TEXT&quot;, &amp;g_clsid);
+    VERIFY(::StgCreateDocfile(T2COLE(g_szRootStorageName),
+           STGM_READWRITE | STGM_SHARE_EXCLUSIVE | STGM_CREATE,
+           0, &amp;pStgRoot) == S_OK);
+    ReadDirectory(&quot;\\&quot;, pStgRoot);
+    pStgRoot-&gt;Release();
+    AfxMessageBox(&quot;Write complete&quot;);
+    return 0;
+}
+void ReadDirectory(const char* szPath, LPSTORAGE pStg)
+{
+    // recursive function
+    USES_CONVERSION;
+    WIN32_FIND_DATA fData;
+    HANDLE h;
+    char szNewPath[MAX_PATH];
+    char szStorageName[100];
+    char szStreamName[100];
+    char szData[81];
+    char* pch = NULL;
+
+    LPSTORAGE pSubStg = NULL;
+    LPSTREAM pStream = NULL;
+    LPPERSISTSTREAM pPersistStream = NULL;
+
+    g_nIndent++;
+    strcpy(szNewPath, szPath);
+    strcat(szNewPath, &quot;*.*&quot;);
+    h = ::FindFirstFile(szNewPath, &amp;fData);
+
+    if (h == (HANDLE) 0xFFFFFFFF) return;  // can't find directory
+    do {
+            if (!strcmp(fData.cFileName, &quot;..&quot;) ||
+                !strcmp(fData.cFileName, &quot;.&quot;) ) continue;
+            while((pch = strchr(fData.cFileName, `!')) != NULL) {
+                *pch = `|';
+        }
+        if (fData.dwFileAttributes &amp; FILE_ATTRIBUTE_DIRECTORY) {
+            // It's a directory, so make a storage
+            strcpy(szNewPath, szPath);
+            strcat(szNewPath,fData.cFileName);
+            strcat(szNewPath, &quot;\\&quot;);
+
+            strcpy(szStorageName, fData.cFileName);
+            szStorageName[31] = `\0';    // limit imposed by OLE
+            TRACE(&quot;%0.*sStorage = %s\n&quot;, (g_nIndent - 1) * 4,
+                  g_szBlanks, szStorageName);
+            VERIFY(pStg-&gt;CreateStorage(T2COLE(szStorageName),
+                   STGM_CREATE | STGM_READWRITE | STGM_SHARE_EXCLUSIVE,
+                   0, 0, &amp;pSubStg) == S_OK);
+            ASSERT(pSubStg != NULL);
+            ReadDirectory(szNewPath, pSubStg);
+            pSubStg-&gt;Release();
+        }
+        else {
+            if ((pch = strrchr(fData.cFileName, `.')) != NULL) {
+                if (!stricmp(pch, &quot;.TXT&quot;)) {
+                    // It's a text file, so make a stream
+                    strcpy(szStreamName, fData.cFileName);
+                    strcpy(szNewPath, szPath);
+                    strcat(szNewPath, szStreamName);
+                    szStreamName[32] = `\0'; // OLE max length
+                    TRACE(&quot;%0.*sStream = %s\n&quot;, (g_nIndent - 1) * 4,
+                          g_szBlanks, szNewPath);
+                    CStdioFile file(szNewPath, CFile::modeRead);
+                    // Ignore zero-length files
+                    if(file.ReadString(szData, 80)) {
+                        TRACE(&quot;%s\n&quot;, szData);
+                        VERIFY(pStg-&gt;CreateStream(T2COLE(szStreamName),
+                               STGM_CREATE | STGM_READWRITE | 
+                               STGM_SHARE_EXCLUSIVE,
+                               0, 0, &amp;pStream) == S_OK);
+                        ASSERT(pStream != NULL);
+                        // Include the null terminator in the stream
+                        IText text;
+                        VERIFY(text.CreateDispatch(g_clsid));
+                        text.m_lpDispatch-&gt;QueryInterface
+                            (IID_IPersistStream,
+                            (void**) &amp;pPersistStream);
+                        ASSERT(pPersistStream != NULL);
+                        text.SetText(COleVariant(szData));
+                        pPersistStream-&gt;Save(pStream, TRUE);
+                        pPersistStream-&gt;Release();
+                        pStream-&gt;Release();
+                    }
+                }
+            }
+        }
+    } while (::FindNextFile(h, &amp;fData));
+    g_nIndent&#151;;
+}
+</pre>
+
+<P><B>READTHREAD.CPP</B>
+
+<P><pre>
+#include &quot;StdAfx.h&quot;
+#include &quot;Thread.h&quot;
+#include &quot;itext.h&quot;
+
+#ifdef _DEBUG
+#define new DEBUG_NEW
+#undef THIS_FILE
+static char THIS_FILE[] = __FILE
+__;
+#endif
+
+
+UINT ReadThreadProc(LPVOID pParam)
+{
+    g_nIndent = 0;
+    ::CoInitialize(NULL);
+    ::CLSIDFromProgID(L&quot;EX27B.TEXT&quot;, &amp;g_clsid);
+    LPSTORAGE pStgRoot = NULL;
+    if(::StgOpenStorage(L&quot;\\DIRECT.STG&quot;, NULL,
+                        STGM_READ|STGM_SHARE_EXCLUSIVE,
+                        NULL, 0, &amp;pStgRoot) == S_OK) {
+        ASSERT(pStgRoot!= NULL);
+        ReadStorage(pStgRoot);
+        pStgRoot-&gt;Release();
+    }
+    else {
+        AfxMessageBox(&quot;Storage file not available or not readable.&quot;);
+    }
+    AfxMessageBox(&quot;Read complete&quot;);
+    return 0;
+}
+
+void ReadStorage(LPSTORAGE pStg)
+// reads one storage &#151; recursive calls for substorages
+{
+    LPSTORAGE pSubStg = NULL;
+    LPSTREAM pStream = NULL;
+    LPENUMSTATSTG pEnum = NULL;
+    STATSTG statstg;
+    LPPERSISTSTREAM pPersistStream = NULL;
+
+    g_nIndent++;
+    if(pStg-&gt;EnumElements(0, NULL, 0, &amp;pEnum) != NOERROR) {
+        ASSERT(FALSE);
+        return;
+    }
+    while(pEnum-&gt;Next(1, &amp;statstg, NULL) == NOERROR) {
+        if(statstg.type == STGTY_STORAGE) {
+            VERIFY(pStg-&gt;OpenStorage(statstg.pwcsName, NULL,
+                   STGM_READ|STGM_SHARE_EXCLUSIVE,
+                   NULL, 0, &amp;pSubStg) == S_OK);
+            ASSERT(pSubStg != NULL);
+            ReadStorage(pSubStg);
+            pSubStg-&gt;Release();
+        }
+        else if(statstg.type == STGTY_STREAM) {
+            VERIFY(pStg-&gt;OpenStream(statstg.pwcsName, NULL,
+                   STGM_READ|STGM_SHARE_EXCLUSIVE,
+                   0, &amp;pStream) == S_OK);
+            ASSERT(pStream != NULL);
+            IText text;
+            VERIFY(text.CreateDispatch(g_clsid));
+            text.m_lpDispatch-&gt;QueryInterface(IID_IPersistStream, 
+                (void**) &amp;pPersistStream);
+            ASSERT(pPersistStream != NULL);
+            pPersistStream-&gt;Load(pStream);
+            pPersistStream-&gt;Release();
+            COleVariant va = text.GetText();
+            ASSERT(va.vt == VT_BSTR);
+            CString str = va.bstrVal;
+            TRACE(&quot;%s\n&quot;, str);
+            pStream-&gt;Release();
+        }
+        else {
+            ASSERT(FALSE);  // LockBytes?
+        }
+        ::CoTaskMemFree(statstg.pwcsName);
+    }
+    pEnum-&gt;Release();
+    g_nIndent&#151;;
+}
+</pre>
+</TD></TR>,</TABLE>
+<P><B>Figure 27-5.</B> <I>The code listing for the two worker threads in EX27C.</I>
+
+
+<P>Look at the second half of the <I>ReadDirectory</I> function in the WriteThread.cpp file in Figure 27-5. For each TXT file, the program constructs a <I>CText</I> object by constructing an <I>IText</I> driver object and then calling <I>CreateDispatch</I>. Then it calls the 
+<I>SetText </I>member function to write the first line of the file to the object. After that, the program calls <I>IPersistStream::Save</I> to write the object to the compound file. The <I>CText</I> object is deleted after the <I>IPersistStream</I> pointer is released and after the <I>IText</I> object is deleted, releasing the object's <I>IDispatch</I> pointer.
+
+<P>Now look at the second half of the <I>ReadStorage</I> function in the ReadThread.cpp file. Like 
+<I>ReadDirectory</I>, it constructs an <I>IText</I> driver object and calls <I>CreateDispatch</I>. Then it calls <I>QueryInterface</I> to get the object's <I>IPersistStream</I> pointer, which it uses to call <I>Load</I>. Finally, the program calls <I>GetText</I> to retrieve the line of text for tracing.
+
+<P>As you've learned already, a COM component usually implements <I>IPersistStorage</I>, not <I>IPersistStream</I>. The <I>CText</I> class could have worked this way, but then the compound file would have been more complex because each TXT file would have needed both a storage element (to support the interface) and a subsidiary stream element (to hold the text).
+
+<P>Now get ready to take a giant leap. Suppose you have a true creatable-by-CLSID COM component that supports the <I>IPersistStorage</I> interface. Recall the <I>IStorage</I> functions for class IDs. If a storage element contains a class ID, together with all the data an object needs, COM can load the server, use the class factory to construct the object, get an <I>IPersistStorage</I> pointer, and call 
+<I>Load</I> to load the data from a compound file. This is a preview of compound documents, which you'll see in <A HREF="ch28a.htm">Chapter 28</A>.
+
+</BODY>
+</HTML>
+
+
+

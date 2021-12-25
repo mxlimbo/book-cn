@@ -1,0 +1,177 @@
+<HTML>
+<HEAD>
+<LINK REL=StyleSheet HREF="basicIE4.css" TYPE="text/css">
+<TITLE>Displaying Database Rows in a Scrolling Window</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY>
+<A NAME="798"><H1><B>Displaying Database Rows in a Scrolling Window</B></H1></A>
+<p>You've seen all the general DAO theory you're going to get here. Now you're ready for a practical example. Before you dig into the code for EX32A, however, you need to study the general problem of displaying database rows in a scrolling window. If this were an easy problem to solve, there would probably be an MFC <I>CScrollDatabaseView</I> class. But there isn't, so we'll write our 
+own class. Actually, it's not that difficult if we make some simplifying 
+assumptions about the database. First, our scrolling row-view class will be based on a dynaset, and that means that it can accommodate <U>any</U> table, including those in ODBC data sources and ISAM-type files. Second, we'll specify read-only access, which means that the number of rows in the dynaset can't change.
+
+<A NAME="799"><H2><B>Scrolling Alternatives</B></H2></A>
+<p>There are lots of ways to implement scrolling with Visual C++. If you look at the DAOVIEW MFC sample database program on the Visual C++ CD-ROM, you'll see the use of the MFC <I>CListView</I> class, which encapsulates the Windows list view common control. The trouble with this approach is that you must copy all the selected rows into the control, which can be slow, and more significantly, you can't see updates that other programs are making in the same table. The list view is a de facto snapshot of a database table.
+
+<p>We'll base our scrolling view on the MFC <I>CScrollView</I> class, and our code will be smart enough to retrieve only those records that are needed for the client area of the window. The only limitation here is the logical size of the scrolling window. In Microsoft Windows 95, the limits are &#177;32,767, and that restricts the number of rows we can display. If the distance between rows is 14 units, we can display only up to 2340 rows.
+
+
+<A NAME="800"><H2><B>A Row-View Class</B></H2></A>
+<p>If you've read other books about programming for Windows, you know that authors spend lots of time on the problem of scrolling lists. This is a tricky 
+programming exercise that must be repeated over and over. Why not encapsulate a scrolling list in a base class? All the ugly details would be hidden, and you 
+could get on with the business of writing your application.
+
+<p>The <I>CRowView</I> class, adapted from the class of the identical name in 
+the CHKBOOK MFC advanced sample program on the Visual C++ CD-ROM, does the job. Through its use of virtual callback functions, it serves as a model for other derivable base classes. <I>CRowView</I> has some limitations, and it's not 
+built to industrial-strength specifications, but it works well in the DAO 
+example. Figure 32-1 shows the header file listing.
+
+
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<p><B>ROWVIEW.H</B>
+
+<P><pre>// rowview.h : interface of the CRowView class
+//
+// This class implements the behavior of a scrolling view that presents
+//  multiple rows of fixed-height data. A row view is similar to an
+//  owner-draw list box in its visual behavior; but unlike list boxes,
+//  a row view has all of the benefits of a view (as well as scroll view),
+//  including perhaps most importantly printing and print preview.
+/////////////////////////////////////////////////////////////////////////
+
+class CRowView : public CScrollView 
+{
+DECLARE_DYNAMIC(CRowView)
+protected:
+// Construction/destruction
+    CRowView();
+    virtual ~CRowView();
+
+// Attributes
+protected:
+    int m_nRowWidth;            // width of row in logical units
+    int m_nRowHeight;           // height of row in logical units
+    int m_nCharWidth;           // avg char width in logical units
+    int m_nPrevSelectedRow;     // index of the most recently selected row
+    int m_nPrevRowCount;        // most recent row count, before update
+    int m_nRowsPerPrintedPage;  // how many rows fit on a printed page
+
+// Operations-Attributes
+protected:
+    virtual void UpdateRow(int nInvalidRow); // called by derived class 
+                                             //  OnUpdate
+    virtual void CalculateRowMetrics(CDC* pDC)
+        { GetRowWidthHeight(pDC, m_nRowWidth, m_nRowHeight,
+            m_nCharWidth); }
+    virtual void UpdateScrollSizes();
+    virtual CRect RowToWndRect(CDC* pDC, int nRow);
+
+virtual int RowToYPos(int nRow);
+    virtual void RectLPtoRowRange(const CRect&amp; rectLP, int&amp; nFirstRow,
+        int&amp; nLastRow, BOOL bIncludePartiallyShownRows);
+    virtual int LastViewableRow();
+
+// Overridables
+protected:
+    virtual void GetRowWidthHeight(CDC* pDC, int&amp; nRowWidth, 
+        int&amp; nRowHeight, int&amp; nCharWidth) = 0;
+    virtual int GetActiveRow() = 0;
+    virtual int GetRowCount() = 0;
+    virtual void OnDrawRow(CDC* pDC, int nRow, int y, BOOL bSelected) = 0;
+    virtual void ChangeSelectionNextRow(BOOL bNext) = 0;
+    virtual void ChangeSelectionToRow(int nRow) = 0;
+
+// Implementation
+protected:
+    // standard overrides of MFC classes
+    virtual void OnInitialUpdate();
+    virtual void OnDraw(CDC* pDC);  // overridden to draw this view
+    virtual void OnPrepareDC(CDC* pDC, CPrintInfo* pInfo = NULL);
+    virtual BOOL OnPreparePrinting(CPrintInfo* pInfo);
+    virtual void OnBeginPrinting(CDC* pDC, CPrintInfo* pInfo);
+    virtual void OnPrint(CDC* pDC, CPrintInfo* pInfo);
+
+// Generated message map functions
+protected:
+    //{{AFX_MSG(CRowView)
+    afx_msg void OnKeyDown(UINT nChar, UINT nRepCnt, UINT nFlags);
+    afx_msg void OnSize(UINT nType, int cx, int cy);
+    afx_msg void OnLButtonDown(UINT nFlags, CPoint point);
+    //}}AFX_MSG
+    DECLARE_MESSAGE_MAP()
+};
+</pre>
+</TD></TR></TABLE>
+<P><B>Figure 32-1.</B> <I>The </I>CRowView<I> header file listing.</I>
+
+
+<A NAME="801"><H2><B>Dividing the Work Between Base and Derived Classes</B></H2></A>
+<p>Because the <I>CRowView</I> class (itself derived from <I>CScrollView</I>) is designed to be a base class, it is as general as possible. <I>CRowView</I> relies on its derived class to access and paint the row's data. The EX32A example's document class obtains its row data from a scrollable DAO database, but the CHKBOOK example uses a random access disk file. The <I>CRowView</I> class serves both examples effectively. It supports the concept of a selected row that is highlighted in the view. Through the <I>CRowView</I> virtual member functions, the derived class is alerted when the user changes the selected row.
+
+<A NAME="802"><H2><B>The <I>CRowView</I> Pure Virtual Member Functions</B></H2></A>
+<p>Classes derived from <I>CRowView</I> must implement the following pure 
+virtual member functions:
+
+<UL>
+<P><LI><B><I>GetRowWidthHeight</I></B>&#151;This function returns the character 
+width and height of the currently selected font and the width of the row, based on average character widths. As the device context switches between printer and display, the returned font metric values change accordingly.
+<P><LI><B><I>GetActiveRow</I></B>&#151;The base class calls this function frequently, so if another view changes the selected row, this view can track it.
+<P><LI><B><I>ChangeSelectionNextRow</I>, <I>ChangeSelectionToRow</I></B>&#151;These two functions serve to alert the derived class that the user has changed the selected row. The derived class can then update the document (and other views) if necessary.
+<P><LI><B><I>OnDrawRow</I></B>&#151;The <I>OnDrawRow</I> function is called by the function <I>CRowView::OnDraw</I> to draw a specific row.
+</UL>
+
+<A NAME="803"><H2><B>Other <I>CRowView</I> Functions</B></H2></A>
+<p>Three other <I>CRowView</I> functions are available to be called by derived 
+classes and the application framework:
+
+<UL>
+<P><LI><B><I>UpdateRow</I></B>&#151;This public function triggers a view update when the row selection changes. Normally, only the newly selected row and the deselected row are invalidated, and this means that the final invalid rectangle spans both rows. If the total number of rows has changed, <I>UpdateRow</I> calls <I>UpdateScrollSizes</I>.
+<P><LI><B><I>UpdateScrollSizes</I></B>&#151;This is a virtual function, so you can override it if necessary. The <I>CRowView</I> implementation updates the size of the view, which invalidates the visible portion. <I>UpdateScrollSizes</I> is called by <I>OnSize</I> and by <I>OnUpdate</I> (after the user executes a new query).
+<P><LI><B><I>OnPrint</I></B>&#151;The <I>CRowView</I> class overrides this function to cleverly adjust the viewport origin and clipping rectangle so that 
+<I>OnDraw</I> can paint on the printed page exactly as it does in the visible 
+portion of a window.
+</UL>
+
+<DIV CLASS="note"><BLOCKQUOTE><P><B>The MFC Dialog Bar</B>
+
+<p>You haven't seen the <I>CDialogBar</I> class yet because it hasn't made 
+sense to use it. (A dialog bar is a child of the frame window that is 
+arranged according to a dialog template resource and that routes commands in a manner similar to that of a toolbar.) It fits well in the DAO example, however. (See Figure 32-2.) The dialog bar contains an edit control for the SQL query string, and it has a pushbutton to re-execute the query. The button sends a command message that can be handled in the view, and it can be disabled by an update command UI handler. Most dialog bars reside at the top of the frame window, immediately under the toolbar. It's surprisingly easy to add a dialog bar to an application. You don't even need a new derived class. Here are the steps:
+
+<OL>
+<P><LI>Use the resource editor to lay out the dialog bar. Apply the following styles:
+
+<P>Style = Child
+<P>Border = None
+<P>Visible = Unchecked
+
+<P>You can choose a horizontally oriented bar for the top or bottom of the frame, or you can choose a vertically oriented bar for the left or right side of the frame. Add any controls you need, including buttons and edit controls.
+
+<P><LI>Declare an embedded <I>CDialogBar</I> object in your derived main frame class declaration, as shown here:
+<P>
+<PRE>
+CDialogBar m_wndMyBar;
+</PRE>
+
+<P><LI>Add dialog bar object creation code to your main frame class <I>OnCreate</I> member function, as shown here:
+<P>
+<PRE>
+if (!m_wndMyBar.Create(this, IDD_MY_BAR, CBRS_TOP, 
+    ID_MY_BAR)) {
+    TRACE(&quot;Failed to create dialog bar\n&quot;);
+    return -1;
+}
+</PRE>
+</ol>
+
+<p><I>IDD_MY_BAR</I> is the dialog resource ID assigned in the resource editor. The <I>CBRS_TOP</I> style tells the application framework to place the dialog bar at the top of the frame window. <I>ID_MY_BAR</I> is the dialog bar's control window ID, which should be within the range 0xE800 through 0xE820 to ensure that the Print Preview window preempts the dialog bar.</BLOCKQUOTE></DIV>
+
+</BODY>
+</HTML>
+
+
+

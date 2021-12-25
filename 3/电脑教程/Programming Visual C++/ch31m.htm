@@ -1,0 +1,114 @@
+<HTML>
+<HEAD>
+<LINK REL=StyleSheet HREF="basicIE4.css" TYPE="text/css">
+<TITLE>Multiple Recordsets</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY>
+<A NAME="783"><H1>Multiple Recordsets</H1></A><P>Both the EX31A and EX31B examples relied on a single recordset. In 
+many cases, you'll need simultaneous access to multiple recordsets. Suppose 
+you're writing a program that lets the user add Section records, but you want the 
+user to select a valid CourseID and InstructorID. You'll need auxiliary Course 
+and Instructor recordsets in addition to the primary Section recordset.
+<P>In the previous examples, the view object contained an embedded 
+recordset that was created with the 
+<I>CRecordset</I> default constructor, which caused 
+the creation of a <I>CDatabase</I> object. The view's 
+<I>OnInitialUpdate</I> function called 
+<I>CRecordset::Open</I>, which called the virtual 
+<I>CRecordset::GetDefaultConnect</I> function, opened the database, and then called the virtual 
+<I>CRecordset::GetDefaultSQL</I> function. The problem with this scenario is that there can be only 
+one recordset per database because the database is 
+<U>embedded</U> in the recordset.
+<P>To get multiple recordsets, you have to do things differently&#151;you 
+must create the <I>CDatabase</I> object first. Then you can construct as many 
+recordsets as you want, passing a <I>CDatabase</I> pointer as a parameter to the 
+<I>CRecordset</I> constructor. You start by embedding a 
+<I>CDatabase</I> object in the document in place of the 
+<I>CRecordset</I> object. You also include a pointer to the 
+primary recordset. Here are the document data members:
+<P><PRE>CEx31bSet* m_pEx31bSet;
+CDatabase m_database;</PRE>
+<P>In your overridden 
+<I>CDocument::OnNewDocument</I> function, you 
+construct the primary recordset on the heap, passing the address of the 
+<I>CDatabase</I> object to the recordset constructor. Here's the code you insert:
+<P><PRE>if (m_pEx31bSet == NULL) {
+    m_pEx31bSet = new CEx31bSet(&amp;m_database);
+    CString strConnect = m_pEx31bSet-&gt;GetDefaultConnect();
+    m_database.Open(NULL, FALSE, FALSE, strConnect, FALSE);
+}</PRE>
+<P>The <I>CRecordView::OnInitialUpdate</I> function still opens the recordset, 
+but this time <I>CRecordset::Open</I> does not open the database. (It's already open.) 
+Now the code for setting the view's <I>m_pSet</I> data member is a little different:
+<P><PRE>m_pSet = GetDocument()-&gt;m_pEx31bSet;</PRE>
+<P>Figure 31-5 shows the new relationship between the document, the 
+view, and the primary recordset. Also shown are possible auxiliary recordsets.
+<P><A HREF="javascript:fullSize('f31og05x.htm')"> <img src="f31og05.jpg" width=404 height=244 border=0 ALT = "Click to view at full size."> </A><P>
+<!-- caption -->
+<B>Figure 31-5.</B> <I>Object relationships for multiple recordsets.</I>
+<!-- /caption -->
+<A NAME="784"><H2>The EX31C Multiple Recordset Example</H2></A><P>The EX31C program is similar to EX31B except that the new 
+database_recordset relationships are implemented and an auxiliary recordset allows listing of 
+the sections an instructor teaches. The EX31C window looks like the screen shown below.
+<P>Build the EX31C project, and test the application. Sequence through 
+the instructor records, and watch the Sections Taught list change.
+<P><A HREF="javascript:fullSize('g31og12x.htm')"> <img src="g31og12.jpg" width=404 height=285 border=0 ALT = "Click to view at full size."> </A>
+<P>As you can see, there's a new list-box control in the form dialog box. 
+Also, there's one short helper function in the view class, 
+<I>LoadListbox</I>, which loads the list box with the rows in the Section recordset, as shown here:
+<P><PRE>void CEx31cView::LoadListbox()
+{
+    CEx31cDoc* pDoc = GetDocument();
+    CListBox* pLB = (CListBox*) GetDlgItem(IDC_SECTIONS);
+    CSectionSet sect(&amp;pDoc-&gt;m_database);  // db passed via constructor
+
+    sect.m_strFilter.Format(&quot;InstructorID = `%s'&quot;,
+        (LPCSTR) m_pSet-&gt;m_InstructorID);
+
+    sect.Open();
+    pLB-&gt;ResetContent();
+    while (!sect.IsEOF()) {
+        pLB-&gt;AddString(sect.m_CourseID + &quot; &quot; + sect.m_SectionNo);
+        sect.MoveNext();
+    }
+    // sect closed by CRecordset destructor
+}</PRE>
+<P>Notice that this function sets up a filter string based on the value of 
+the <I>InstructorID</I> field in the primary recordset. 
+<I>LoadListbox</I> is called from these <I>    
+</I>member functions: <I>OnInitDialog</I>, 
+<I>OnMove</I>, <I>OnUpdate</I>, <I>OnRecordAdd</I>, 
+and <I>OnRecordDelete</I>.
+<A NAME="785"><H2>Parameterized Queries</H2></A><P>The EX31C example sets up and executes a new query each time it accesses 
+the auxiliary recordset. It's more efficient, however, if you set up a single 
+parameterized query, which enables ODBC to bind to a parameter in your 
+program. You can simply change the value of that parameter and re-execute the query.
+<P>Here are the steps for querying the section set for all the sections a 
+selected instructor teaches.
+<OL>
+<LI>Add a parameter data member to the section recordset class:
+<P><PRE><B>CString m_InstructorIDParam;</B></PRE><P>
+<LI>Add the following line to the section recordset constructor, 
+which sets the value of the inherited 
+<I>m_nParams</I> data member to the total number of query parameters, in this case 1:
+<P><PRE><B>m_nParams = 1;</B></PRE><P>
+<LI>Add the following code to the section recordset 
+<I>DoFieldExchange</I> function:
+<P><PRE><B>pFX-&gt;SetFieldType(CFieldExchange::param);
+RFX_Text(pFX, &quot;Param&quot;, m_InstructorIDParam); // Any name will do</B></PRE><P>
+<LI>Add the following code to the view class prior to calling 
+<I>Open</I> for the section recordset:
+<P><PRE><B>sect.m_strFilter = &quot;InstructorID = ?&quot;;
+sect.m_InstructorIDParam = m_pSet-&gt;m_InstructorID;</B></PRE>
+</OL>
+
+</BODY>
+</HTML>
+
+
+

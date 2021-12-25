@@ -1,0 +1,213 @@
+<HTML>
+<HEAD>
+   <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=gb2312">
+   <META NAME="Author" CONTENT="FuGui">
+   <META NAME="GENERATOR" CONTENT="Mozilla/4.04 [en] (Win95; I) [Netscape]">
+   <TITLE>如何创建任务栏的应用程序</TITLE>
+</HEAD>
+<BODY BACKGROUND="../../bgimage/pink_fabric.gif" NOSAVE>
+
+<H1>
+怎样建立简单的任务栏应用程序:</H1>
+&nbsp;
+
+<P>&nbsp;&nbsp;&nbsp; Windows 95 和 Windows NT 4.0包含一个令人兴奋的特性：任务栏。这个通常位于区域任务条右面的区域能包含小的图标，这些图标能引出大的应用程序或者菜单。本篇文章主要讨论如何使用Delphi建立这样的应用程序。
+
+<P>&nbsp;&nbsp;&nbsp; 在开始之前，请看下面的需要的接口方面的内容：
+
+<P>&nbsp;&nbsp;&nbsp; 从技术方面来说，一个任务栏应用程序非常象普通的应用程序，它有一个消息循环，相应Windows的消息来完成相应的功能。
+<UL>
+<PRE>Procedure RunTrayApplication;
+Var Msg : TMsg;
+Begin
+&nbsp; CreateWindow;
+&nbsp; AddTrayIcon;
+&nbsp; While GetMessage(Msg,0,0,0) do Begin
+&nbsp;&nbsp;&nbsp; TranslateMessage(Msg);
+&nbsp;&nbsp;&nbsp; DispatchMessage(Msg);
+&nbsp; End;
+&nbsp; DeleteTrayIcon;
+End;</PRE>
+</UL>
+&nbsp;&nbsp;&nbsp; 你能看到：所有需要做的工作是创建一个窗口，注册一个图标到任务栏，设置它的消息循环，最后关闭它。当然，必须还有增加其他代码完成相应的功能，但是，它是真的不需要担心。
+
+<P>&nbsp;&nbsp;&nbsp; 让我们从窗口的创建开始。实际上，这个窗口是不是能在任务栏上能见到的窗口。相应的，这个窗口只是处理消息循环、其它父类的工作。任务窗口(Windows
+95 &amp; NT)句柄创建消息（例如鼠标单击等）和将消息发到我们的窗口。
+<UL>
+<PRE>Procedure CreateWindow;
+Var
+&nbsp; WC : TWndClass;
+&nbsp; W&nbsp; : hWnd;
+Begin
+&nbsp; With WC do Begin
+&nbsp;&nbsp;&nbsp; Style := 0;
+&nbsp;&nbsp;&nbsp; lpfnWndProc := @WndProc;
+&nbsp;&nbsp;&nbsp; cbClsExtra := 0;
+&nbsp;&nbsp;&nbsp; cbWndExtra := 0;
+&nbsp;&nbsp;&nbsp; hIcon := 0;
+&nbsp;&nbsp;&nbsp; hCursor := 0;
+&nbsp;&nbsp;&nbsp; hbrBackground := 0;
+&nbsp;&nbsp;&nbsp; lpszMenuName := nil;
+&nbsp;&nbsp;&nbsp; lpszClassName := 'MyTrayIconClass';
+&nbsp;&nbsp;&nbsp; hInstance := System.hInstance;
+&nbsp; end;
+&nbsp; RegisterClass(WC);
+&nbsp; W := Windows.CreateWindow('MyTrayIconClass','MyVeryOwnTrayIconWindow',
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ws_OverlappedWindow,0,0,0,0,0,0,hInstance,nil);
+&nbsp; ShowWindow(W,sw_Hide);
+&nbsp; UpdateWindow(W);
+&nbsp; MainWindow := W;
+End;</PRE>
+</UL>
+<FONT SIZE=+0>&nbsp;&nbsp;&nbsp; 这个窗口使用普通的窗口函数创建。注意这个窗口的类型是“ws_OverlappedWindow”，但是这个尺寸是0，并且它是隐藏的，所有，它将不会显示出来。</FONT>
+
+<P>&nbsp;&nbsp;&nbsp; 下一步是加(注册)我们的图标。这将需要使用<FONT SIZE=+0>Shell_NotifyIcon这个API函数，这个函数实际上可以完成三个功能，这里只需要它的增加的特性。</FONT>
+<UL>
+<PRE>Procedure AddTrayIcon;
+Var IconData : TNotifyIconData;
+Begin
+&nbsp; With IconData do Begin
+&nbsp;&nbsp;&nbsp; cbSize := SizeOf(IconData);
+&nbsp;&nbsp;&nbsp; Wnd := MainWindow;
+&nbsp;&nbsp;&nbsp; uID := 0;
+&nbsp;&nbsp;&nbsp; uFlags := nif_Icon Or nif_Message Or nif_Tip;
+&nbsp;&nbsp;&nbsp; uCallBackMessage := wm_MyCallBack;
+&nbsp;&nbsp;&nbsp; hIcon := LoadIcon(hInstance,'MYICON');
+&nbsp;&nbsp;&nbsp; StrCopy(szTip,PChar(TrayIconTip));
+&nbsp; End;
+&nbsp; Shell_NotifyIcon(nim_Add,@IconData);
+End;</PRE>
+</UL>
+<FONT SIZE=+0>&nbsp;&nbsp;&nbsp; 这个最重要的事情是TNotifyIconData的数据结构，它是一个设置Window句柄的数据结构，是一个记录参数，对我们来说，我们需要设置这个图标的窗口句柄(这将定义哪个窗口处理消息循环)，回调消息号，图标，工具提示等。一旦这个数据设置了，我们就可以增加一个图标到任务栏上了。为了完成这个工作，使用nim_Add程序。</FONT>
+
+<P><FONT SIZE=+0>&nbsp;&nbsp;&nbsp; 现行我们已经加了我们的图标到任务栏，下面需要决定如何处理消息。</FONT>
+<UL>
+<PRE>Const
+&nbsp; wm_MyCallback = wm_User+1000;
+&nbsp; cm_Exit&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; = 100; { we worry about... }
+&nbsp; cm_About&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; = 101; { ...these later&nbsp;&nbsp;&nbsp; }</PRE>
+</UL>
+<FONT SIZE=+0>&nbsp;&nbsp;&nbsp; 这个实际的窗口处理过程也是相当普通。几个窗口消息(如wm_NCCreate)必须处理。然而，对我们来说，更重要的事情是处理wm_MyCallback和wm_Command消息：</FONT>
+<UL>
+<PRE>Function WndProc(Window : hWnd; Msg,WParam,LParam : Integer): Integer; StdCall;
+Begin
+&nbsp; Result := 0;
+&nbsp; Case Msg of
+&nbsp;&nbsp;&nbsp; wm_NCCreate&nbsp;&nbsp; : Result := 1;
+&nbsp;&nbsp;&nbsp; wm_Destroy&nbsp;&nbsp;&nbsp; : PostQuitMessage(0);
+&nbsp;&nbsp;&nbsp; wm_Command&nbsp;&nbsp;&nbsp; : Begin { a command was chosen from the popup menu }
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; If (WParam = cm_Exit) Then
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; PostMessage(Window,wm_Destroy,0,0)
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Else If (WParam = cm_About) Then
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; MessageBox(0,'Shell Test Copyright � '+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 'Jani J鋜vinen 1996.',
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 'About Shell Test',mb_OK)
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Else OpenDesktopIcon(WParam-cm_About);
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; End;
+&nbsp;&nbsp;&nbsp; wm_MyCallback : Begin { our icon was clicked }
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; If (LParam = wm_LButtonDown) Then
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ShowIconPopupMenu
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Else If (LParam = wm_RButtonDown) Then
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ShowAboutPopupMenu;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; End;
+&nbsp;&nbsp;&nbsp; Else Result := DefWindowProc(Window,Msg,WParam,LParam);
+&nbsp; End;
+End;</PRE>
+</UL>
+<FONT SIZE=+0>&nbsp;&nbsp;&nbsp; 就象你看到的一样，当用户单击图标时，Windows提示我们。注意我们不使用通常使用的wm_LButtonDown
+消息，而使用wm_MyCallback message，详细的消息信息存储在LParam参数中。</FONT>
+
+<P><FONT SIZE=+0>&nbsp;&nbsp;&nbsp; 当用户单击鼠标右键，我们创建一个菜单在桌面上。</FONT>
+<UL>
+<PRE>Type
+&nbsp; TIconData = Array[1..100] of String;
+Var
+&nbsp; IconData&nbsp;&nbsp; : TIconData;
+Procedure ShowIconPopupMenu;
+Var
+&nbsp; ShellFolder : IShellFolder;
+&nbsp; EnumIDList&nbsp; : IEnumIDList;
+&nbsp; Result&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; : hResult;
+&nbsp; Dummy&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; : ULong;
+&nbsp; ItemIDList&nbsp; : TItemIDList;
+&nbsp; Pntr&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; : PItemIDList;
+&nbsp; StrRet&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; : TStrRet;
+&nbsp; PopupMenu&nbsp;&nbsp; : hMenu;
+&nbsp; ItemID&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; : Integer;
+&nbsp; Pos&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; : TPoint;
+&nbsp; Procedure AddToMenu(Item : String);
+&nbsp; Var S : String;
+&nbsp; Begin
+&nbsp;&nbsp;&nbsp; IconData[ItemID-cm_About] := Item;
+&nbsp;&nbsp;&nbsp; S := ExtractFileName(Item);
+&nbsp;&nbsp;&nbsp; If (System.Pos('.',S) &lt;> 0) Then SetLength(S,System.Pos('.',S)-1);
+&nbsp;&nbsp;&nbsp; AppendMenu(PopupMenu,mf_Enabled Or mf_String,ItemID,PChar(S));
+&nbsp;&nbsp;&nbsp; Inc(ItemID);
+&nbsp; End;
+begin
+&nbsp; PopupMenu := CreatePopupMenu;
+&nbsp; ItemID := cm_About+1;
+&nbsp; SHGetDesktopFolder(ShellFolder);
+&nbsp; ShellFolder.EnumObjects(MainWindow,SHCONTF_NONFOLDERS,EnumIDList);
+&nbsp; Pntr := @ItemIDList;
+&nbsp; Result := EnumIDList.Next(1,Pntr,Dummy);
+&nbsp; While (Result = NoError) do Begin
+&nbsp;&nbsp;&nbsp; ShellFolder.GetDisplayNameOf(Pntr,SHGDN_FORPARSING,@StrRet);
+&nbsp;&nbsp;&nbsp; With StrRet do AddToMenu(String(CStr));
+&nbsp;&nbsp;&nbsp; Result := EnumIDList.Next(1,Pntr,Dummy);
+&nbsp; End;
+&nbsp; EnumIDList.Release;
+&nbsp; ShellFolder.Release;
+&nbsp; GetCursorPos(Pos);
+&nbsp; AppendMenu(PopupMenu,mf_Separator,0,'');
+&nbsp; AppendMenu(PopupMenu,mf_Enabled Or mf_String,cm_Exit,'E&amp;xit');
+&nbsp; SetForegroundWindow(MainWindow);
+&nbsp; TrackPopupMenu(PopupMenu,tpm_LeftAlign Or tpm_LeftButton,
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Pos.X,Pos.Y,0,MainWindow,nil);
+&nbsp; DestroyMenu(PopupMenu);
+end;</PRE>
+</UL>
+<FONT SIZE=+0>&nbsp;&nbsp;&nbsp; 上面的程序看起来有点复杂，你可以将它分成两个部分来看：创建和显示菜单。</FONT>
+
+<P><FONT SIZE=+0>&nbsp;&nbsp;&nbsp; 列举创建菜单是用Windows的外壳接口完成的。首先，我们使用SHGetDesktopForlder函数得到使用桌面的IShellFolder接口。使用这个接口，我们能得到另一个接口的实例：IEnumIDList。这个接口通常实现实际的列举工作。我们简单的重复调用这个函数直到错误值返回(例如：所有的菜单被列举)。当我们得到一个菜单，我们使用AddToMenu函数加它。</FONT>
+
+<P><FONT SIZE=+0>&nbsp;&nbsp;&nbsp; 当所有的菜单被列举和创建后，现在我们需要运行这个菜单。我们将找到的菜单保存到一个全局的List变量中，每一个菜单都拥有它的菜单号。这确保我们能得到它的索引。</FONT>
+<BR><FONT SIZE=+0>&nbsp;</FONT>
+<BR><FONT SIZE=+0>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; OpenDesktopIcon(WParam-cm_About)</FONT><FONT SIZE=+0></FONT>
+
+<P><FONT SIZE=+0>当然，WParam中储存了用户单击鼠标的菜单的菜单号(ID)。</FONT>
+
+<P><FONT SIZE=+0>&nbsp;&nbsp;&nbsp; 下面我们将处理运行用户选择的菜单。</FONT>
+<UL>
+<PRE>Procedure OpenDesktopIcon(Number : Integer);
+Var
+&nbsp; S : String;
+&nbsp; I : Integer;
+begin
+&nbsp; S := IconData[Number];
+&nbsp; I := ShellExecute(0,nil,PChar(S),nil,nil,sw_ShowNormal);
+&nbsp; If (I &lt; 32) Then Begin
+&nbsp;&nbsp;&nbsp; S := 'Could not open selected item "'+S+'". '+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 'Result was: '+IntToStr(I)+'.';
+&nbsp;&nbsp;&nbsp; MessageBox(0,PChar(S),'Shell Test',mb_OK);
+&nbsp; End;
+end;</PRE>
+</UL>
+<FONT SIZE=+0></FONT>
+
+<P><FONT SIZE=+0>&nbsp;&nbsp;&nbsp; 上面，Win 32 API函数ShellExecute做了所有的工作。</FONT>
+
+<P><FONT SIZE=+0>&nbsp;&nbsp;&nbsp; 现在你应该能用Delphi创建简单的任务栏的程序了。</FONT>
+<BR>&nbsp;
+
+<P>&nbsp;&nbsp;&nbsp; 实际上，有一些<A HREF="../com/tray.zip">免费的元件</A>可以供您直接使用，不过，因为使用VCL，文件的大小将比较大，如果使用上面的方法，文件的大小将只要20K。当然，现在文件的大小已经不是我们该十分关注的问题了。
+
+<P>资料来源：Internet
+<BR>翻译：傅贵
+<BR>日期：98.3.2
+<BR>&nbsp;
+<BR>&nbsp;
+
+<P>本页版主：<A HREF="mailto:fgui@usa.net">傅贵</A>，最后修改日期：98.3.2
+</BODY>
+</HTML>

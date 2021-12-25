@@ -1,0 +1,172 @@
+<HTML>
+<HEAD>
+<LINK REL=StyleSheet HREF="basicIE4.css" TYPE="text/css">
+<TITLE>MFC Uniform Data Transfer Support</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY>
+<A NAME="560"><H1><B>MFC Uniform Data Transfer Support</B></H1></A>
+<P>The MFC library does a lot to make data object programming easier. As you study the MFC data object classes, you'll start to see a pattern in MFC COM support. At the component end, the MFC library provides a base class that implements one or more OLE interfaces. The interface member functions 
+call virtual functions that you override in your derived class. At the client end, the MFC library provides a class that wraps an interface pointer. You call simple member functions that use the interface pointer to make COM calls.
+
+<P>The terminology needs some clarification here. The data object that's been described is the actual C++ object that you construct, and that's the way Brockschmidt uses the term. In the MFC documentation, a data object is what the client program sees through an <I>IDataObject</I> pointer. A <U>data</U> <U>source</U> is the object you construct in a component program.
+
+<A NAME="561"><H2><B>The <I>COleDataSource</I> Class</B></H2></A>
+<P>When you want to use a data source, you construct an object of class <I>COleDataSource</I>, which implements the <I>IDataObject</I> interface (without advisory connection support). This class builds and manages a <U>collection</U> of data formats stored in a <U>cache</U> in memory. A data source is a regular COM object that keeps a reference count. Usually, you construct and fill a data source, and then you pass it to the clipboard or drag and drop it in another location, never to worry about it again. If you decide not to pass off a data source, you can invoke the destructor, which cleans up all its formats.
+
+<P>Following are some of the more useful member functions of the <I>COleDataSource</I> class.
+
+<h3><B>void CacheData(CLIPFORMAT <I>cfFormat</I>, 
+     STGMEDIUM*<I> lpStgMedium</I>, 
+     FORMATETC* <I>lpFormatEtc</I> = NULL);
+</B></h3>
+
+<P>This function inserts an element in the data object's cache for data transfer. The <I>lpStgMedium</I> parameter points to the data, and the <I>lpFormatEtc</I> parameter describes the data. If, for example, the <I>STGMEDIUM</I> structure specifies a disk filename, that filename gets stored inside the data object. If <I>lpFormatEtc</I> is set to <I>NULL</I>, the function fills in a 
+<I>FORMATETC</I> structure with default values. It's safer, though, if you create your <I>FORMATETC</I> variable with the <I>tymed</I> member set.
+
+<h3><B>void CacheGlobalData(CLIPFORMAT <I>cfFormat</I>,
+     HGLOBAL <I>hGlobal</I>, FORMATETC* 
+<I>lpFormatEtc</I> = NULL);
+</B></h3>
+
+<P>You call this specialized version of <I>CacheData</I> to pass data in global memory (identified by an <I>HGLOBAL</I> variable). The data source object is considered the owner of that global memory block, so you should not free it after you cache it. You can usually omit the <I>lpFormatEtc</I> parameter. The <I>CacheGlobalData</I> function does <U>not</U> make a copy of the data.
+
+<h3><B>
+DROPEFFECT DoDragDrop(DWORD <I>dwEffects</I> =           
+          DROPEFFECT_COPY|DROPEFFECT_MOVE|           
+          DROPEFFECT_LINK, LPCRECT 
+<I>lpRectStartDrag</I> = NULL,           COleDropSource* 
+<I>pDropSource</I> = NULL);
+</B></h3>
+
+<P>You call this function for drag-and-drop operations on a data source. You'll see it used in the EX26B example.
+
+<A NAME="562"><H3><B>void SetClipboard(void);</B></H3></A>
+<P>The <I>SetClipboard</I> function, which you'll see in the EX26A example, calls the <I>OleSetClipboard</I> function to put a data source on the Windows Clipboard. The clipboard is responsible for deleting the data source and thus for freeing the global memory associated with the formats in the cache. When you construct a <I>COleDataSource</I> object and call <I>SetClipboard</I>, COM calls <I>AddRef</I> on the object.
+
+<A NAME="563"><H2><B>The <I>COleDataObject</I> Class</B></H2></A>
+<P>This class is on the destination side of a data object transfer. Its base class is <I>CCmdTarget</I>, and it has a public member <I>m_lpDataObject</I> that holds an <I>IDataObject</I> pointer. That member must be set before you can effectively use the object. The class destructor only calls <I>Release</I> on the <I>IDataObject</I> pointer.
+
+<P>Following are a few of the more useful <I>COleDataObject</I> member functions.
+
+<h3><B>
+BOOL AttachClipboard(void);
+</B></h3>
+
+<P>As Brockschmidt points out, OLE clipboard processing is internally complex. From your point of view, however, it's straightforward&#151;as long as you use the <I>COleDataObject</I> member functions. You first construct an &quot;empty&quot; <I>COleDataObject</I> object, and then you call 
+<I>AttachClipboard</I>, which calls the global <I>OleGetClipboard</I> function. Now the 
+<I>m_lpDataObject</I> data member points back to the source data object (or so it appears), and you can access its formats.
+
+<P>If you call the <I>GetData</I> member function to get a format, you must remember that the clipboard owns the format and you cannot alter its contents. If the format consists of an 
+<I>HGLOBAL</I> pointer, you must not free that memory and you cannot hang on to the pointer. If you need to have long-term access to the data in global memory, consider calling <I>GetGlobalData</I> instead.
+
+<P>If a non-COM-aware program copies data onto the clipboard, the <I>AttachClipboard</I> function still works because COM invents a data object that contains formats corresponding to the regular Windows data on the clipboard.
+
+<h3><B>
+void BeginEnumFormats(void); 
+BOOL GetNextFormat(FORMATETC* <I>lpFormatEtc</I>);
+</B></h3>
+
+<P>These two functions allow you to iterate through the formats that the data object contains. You call <I>BeginEnumFormats</I> first, and then you call <I>GetNextFormat</I> in a loop until it returns 
+<I>FALSE</I>.
+
+<h3><B>
+BOOL GetData(CLIPFORMAT <I>cfFormat</I>, 
+     STGMEDIUM* <I>lpStgMedium</I> 
+     FORMATETC* <I>lpFormatEtc</I> = NULL);
+</B></h3>
+
+<P>This function calls <I>IDataObject::GetData</I> and not much more. The function returns <I>TRUE</I> if the data source contains the format you asked for. You generally need to supply the <I>lpFormatEtc</I> parameter.
+
+<h3><B>
+HGLOBAL GetGlobalData(CLIPFORMAT 
+<I>cfFormat</I>, 
+     FORMATETC*</B> <B><I>lpFormatEtc</I></B> <B>= NULL);
+</B></h3>
+
+<P>Use the <I>GetGlobalData</I> function if you know your requested format is compatible with global memory. This function makes a copy of the selected format's memory block, and it gives you an 
+<I>HGLOBAL</I> handle that you must free later. You can often omit the <I>lpFormatEtc</I> parameter.
+
+<h3><B>
+BOOL IsDataAvailable(CLIPFORMAT <I>cfFormat</I>, 
+     FORMATETC* <I>lpFormatEtc</I> = NULL);
+</B></h3>
+
+<P>The <I>IsDataAvailable</I> function tests whether the data object contains a given format.
+
+<A NAME="564"><H2><B>MFC Data Object Clipboard Transfer</B></H2></A>
+<P>Now that you've seen the <I>COleDataObject</I> and <I>COleDataSource</I> classes, you'll have an easy time doing clipboard data object transfers. But why not just do clipboard transfers the old way with <I>GetClipboardData</I> and <I>SetClipboardData</I>? You could for most common formats, but if you write functions that process data objects, you can use those same functions for drag and drop.
+<P>Figure 26-1 shows the relationship between the clipboard and the <I>COleDataSource</I> and <I>COleDataObject</I> classes. You construct a <I>COleDataSource </I>object 
+
+<P><A HREF="javascript:fullSize('f26og01x.htm')"> <img src="f26og01.jpg" width=404 height=253 border=0 ALT = "Click to view at full size."> </A>
+
+<P><!-- caption --><B>Figure 26-1.</B> <I>MFC OLE clipboard processing.</I><!-- /caption -->
+
+<P>on the copy side, and then you fill its cache with formats. When you call <I>SetClipboard</I>, the formats are copied to the clipboard. On the paste side, you call <I>AttachClipboard</I> to attach an 
+<I>IDataObject</I> pointer to a <I>COleDataObject</I> object, after which you can retrieve individual formats.
+
+<P>Suppose you have a document-view application whose document has a <I>CString</I> data member <I>m_strText</I>. You want to use view class command handler functions that copy to and paste from the clipboard. Before you write those functions, write two helper functions. The first, <I>SaveText</I>, creates a data source object from the contents of <I>m_strText</I>. The function constructs a 
+<I>COleDataSource</I> object, and then it copies the string contents to global memory. Last it calls<I> CacheGlobalData</I> to store the <I>HGLOBAL</I> handle in the data source object. Here is the 
+<I>SaveText</I> code:
+
+<P><pre>
+COleDataSource* CMyView::SaveText()
+
+{
+    CEx26fDoc* pDoc = GetDocument();
+    if (!pDoc-&gt;m_strtext.IsEmpty()) {
+        COleDataSource* pSource = new COleDataSource();
+        int nTextSize = GetDocument()-&gt;
+m_strText.GetLength() + 1;
+        HGLOBAL hText = ::GlobalAlloc(GMEM_SHARE, nTextSize);
+        LPSTR pText = (LPSTR) ::GlobalLock(hText);
+        ASSERT(pText);
+        strcpy(pText, GetDocument()-&gt;
+m_strText);
+        ::GlobalUnlock(hText);
+        pSource-&gt;CacheGlobalData(CF_TEXT, hText);
+        return pSource;
+    }
+    return NULL;
+}
+</pre>
+
+<P>The second helper function, <I>DoPasteText</I>, fills in <I>m_strText</I> from a data object specified as a parameter. We're using <I>COleDataObject::GetData</I> here instead of <I>GetGlobalData</I> because <I>GetGlobalData</I> makes a copy of the global memory block. That extra copy operation is unnecessary because we're copying the text to the <I>CString</I> object. We don't free the original memory block because the data object owns it. Here is the <I>DoPasteText</I> code:
+
+<P><pre>// Memory is MOVEABLE, so we must use GlobalLock!
+    SETFORMATETC(fmt, CF_TEXT, DVASPECT_CONTENT, NULL, TYMED_HGLOBAL, -1);
+    VERIFY(pDataObject-&gt;GetData(CF_TEXT, &amp;stg, &amp;fmt));
+    HGLOBAL hText = stg.hGlobal;
+    GetDocument()-&gt;m_strText = (LPSTR) ::GlobalLock(hText);
+    ::GlobalUnlock(hText);
+    return TRUE;
+}
+</pre>
+
+<P>Here are the two command handler functions:
+
+<P><pre>void CMyView::OnEditCopy()
+{
+    COleDataSource* pSource = SaveText();
+    if (pSource) {
+        pSource-&gt;SetClipboard(); 
+    }
+}
+void CMyView::OnEditPaste()
+{
+    COleDataObject dataObject;
+    VERIFY(dataObject.AttachClipboard());
+    DoPasteText(&amp;dataObject);
+    // dataObject released
+}
+</pre>
+
+</BODY>
+</HTML>
+
+
+

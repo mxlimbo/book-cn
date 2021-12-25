@@ -1,0 +1,727 @@
+<HTML>
+<HEAD>
+<link rel="STYLESHEET" type="text/css" href="squeal7.css">
+<TITLE>Monitoring Query Performance</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch14m.htm">[Previous]</A> <A HREF="ch14o.htm">[Next]</A><P>
+
+<A NAME="587"><H1>Monitoring Query Performance</H1></A>
+
+<P>Before you think about taking some action to make a query faster, such as 
+adding an index or denormalizing, you should understand how a query is 
+processed. You should also get some baseline performance measurements so you can 
+compare behavior both before and after making your changes. SQL Server 
+provides these tools (SET options) for monitoring queries:
+</P>
+
+<UL>
+<P><LI>STATISTICS IO
+</LI></P>
+
+<P><LI>STATISTICS TIME
+</LI></P>
+
+<P><LI>Showplan
+</LI></P>
+</UL>
+
+<P>You enable any of these SET options before you run a query, and they 
+will produce additional output. Typically, you run your query with these options 
+set in a tool such as the Query Analyzer. When you are satisfied with your 
+query, you can cut and paste the query into your application or into the script file 
+that creates your stored procedures. If you use the SET commands to turn these 
+options on, they apply only to the current connection. The Query 
+Analyzer provides check boxes you can use to turn any or all of these options on and off 
+for all connections.
+</P>
+
+<A NAME="588"><H2>STATISTICS IO</H2></A>
+
+<P>Don't let the term <I>statistics </I>fool you. STATISTICS IO doesn't have 
+anything to do with the statistics used for storing histograms and density information 
+in <I>sysindexes</I>. This option provides statistics on how much work SQL Server 
+did to process your query. When this option is set to ON, you get a separate 
+line of output for each query in a batch that accesses any data objects. (You 
+don't get any output for statements that don't access data, such as PRINT, 
+SELECT the value of a variable, or call a system function.) The output from SET 
+STATISTICS IO ON includes the values Logical Reads, Physical Reads, Read 
+Ahead Reads, and Scan Count.
+</P>
+
+<A NAME="589"><H3>Logical Reads</H3></A>
+
+<P>This value indicates the total number of page accesses needed to process 
+the query. Every page is read from the data cache, whether or not it was 
+necessary to bring that page from disk into the cache for any given read. This value is 
+always at least as large and usually larger than the value for Physical Reads. The 
+same page can be read many times (such as when a query is driven from an 
+index), so the count of Logical Reads for a table can be greater than the number of 
+pages in a table.</P>
+
+<A NAME="590"><H3> Physical Reads</H3></A>
+
+<P>This value indicates the number of pages that were read from disk; it is 
+always less than or equal to the value of Logical Reads. The value of the Buffer 
+Cache Hit Ratio, as displayed by Performance Monitor, is computed from the 
+Logical Reads and Physical Reads values as follows:
+</P>
+
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+Cache-Hit Ratio = (Logical Reads _ Physical Reads) / Logical Reads
+</PRE></TD></TR></TABLE>
+</P>
+
+
+<P>Remember that the value for Physical Reads can vary greatly and 
+decreases substantially with the second and subsequent execution because the cache 
+is loaded by the first execution. The value is also affected by other SQL 
+Server activity and can appear low if the page was preloaded by read ahead activity. 
+For this reason, you probably won't find it useful to do a lot of analysis of 
+physical I/O on a per-query basis. When looking at individual queries, the Logical 
+Reads value is usually more interesting because the information is consistent. 
+Physical I/O and achieving a good cache-hit ratio is crucial, but they are more 
+interesting at the all-server level. Pay close attention to Logical Reads for 
+each important query, and pay close attention to physical I/O and the cache-hit 
+ratio for the server as a whole.
+</P>
+
+<P>STATISTICS IO acts on a per-table, per-query basis. You might want 
+to see the <I>physical_io</I> column in 
+<I>sysprocesses</I> corresponding to the specific 
+connection. This column shows the cumulative count of synchronous I/O that 
+has occurred during the <I>spid</I>'s<I> 
+</I>existence<I>,</I> regardless of the table. It even includes 
+any Read Ahead Reads that were made by that connection.</P>
+
+<A NAME="591"><H3> Read Ahead Reads</H3></A>
+
+<P>The Read Ahead Reads value indicates the number of pages that were read 
+into cache using the read ahead mechanism while the query was processed. 
+These pages are not necessarily used by the query. If a page is ultimately needed, 
+a logical read is counted but a physical read is not. A high value means that 
+the value for Physical Reads is probably lower and the cache-hit ratio is 
+probably higher than if a read ahead was not done. In a situation like this, you 
+shouldn't infer from a high cache-hit ratio that your system can't benefit from 
+additional memory. The high ratio might come from the read ahead mechanism 
+bringing much of the needed data into cache. That's a good thing, but it could be 
+better if the data simply remains in cache from previous use. You might achieve the 
+same or a higher cache-hit ratio without requiring the Read Ahead Reads.
+</P>
+
+<P>You can think of read ahead as simply an optimistic form of physical I/O. In full or partial table scans, the table's IAMs are consulted to 
+determine which extents belong to the object. The extents are read with a single 
+64-KB scatter read, and because of the way that the IAMs are organized, they are 
+read in disk order. If the table is spread across multiple files in a file group, the 
+read ahead attempts to keep at least eight of the files busy instead of 
+sequentially processing the files. Read ahead reads are asynchronously requested by the 
+thread that is running the query; because they are asynchronous, the scan doesn't 
+block while waiting for them to complete. It blocks only when it actually tries to 
+scan a page that it thinks has been brought into cache and the read hasn't 
+finished yet. In this way, the read ahead neither gets too ambitious (reading too far 
+ahead of the scan) nor too far behind.
+</P>
+
+<A NAME="592"><H3>Scan Count</H3></A>
+
+<P>The Scan Count value indicates the number of times that the corresponding 
+table was accessed. Outer tables of a nested loop join have a Scan Count of 1. 
+For inner tables, the Scan Count might be the number of times &quot;through the 
+loop&quot; that the table was accessed. The number of Logical Reads is determined by 
+the sum of the Scan Count times the number of pages accessed on each scan. 
+However, even for nested loop joins, the Scan Count for the inner table might 
+show up as 1. SQL Server might copy the needed rows from the inner table into 
+a worktable in cache and use this worktable to access the actual data rows. 
+When this step is used in the plan, there is often no indication of it in the 
+STATISTICS IO output. You must use the output from STATISTIC TIME, as well 
+as information about the actual processing plan used, to determine the actual 
+work involved in executing a query. Hash joins and merge joins usually show the 
+Scan Count as 1 for both tables involved in the join, but these types of joins can 
+involve substantially more memory. You can inspect the 
+<I>memusage </I>value in sysprocesses while the query is being executed, but unlike the 
+<I>physical_io </I>value, this is not a cumulative counter and is valid only for the currently running query. Once 
+a query finishes, there is no way to see how much memory it used.</P>
+
+<A NAME="593"><H2> STATISTICS TIME</H2></A>
+
+<P>The output of SET STATISTICS TIME ON is pretty self-explanatory. It 
+shows the elapsed and CPU time required to process the query. (In this context, 
+it means the time not spent waiting for resources such as locks or reads to 
+complete.) The times are separated into two components: the time required to 
+parse and compile the query, and the time required to execute the query. For 
+some of your testing, you might find it just as useful to look at the system time 
+with <I>getdate() </I>before and after a query if all you need to measure is elapsed 
+time. However, if you want to compare elapsed vs. actual CPU time or if you are 
+interested in how long compilation and optimization took, you must use STATISTICS TIME.
+</P>
+
+<A NAME="594"><H3>Showplan</H3></A>
+
+<P>In SQL Server 7, there is not just a single option for examining the 
+execution plan for a query. You can choose to see the plan in a text format, with or 
+without additional performance estimates, or you can see a graphical 
+representation of the processing plan.
+</P>
+
+<P><B>SHOWPLAN_TEXT and SHOWPLAN_ALL</B></P>
+
+<P>The two SET options SHOWPLAN_TEXT and SHOWPLAN_ALL let you 
+see the estimated query plan without actually executing the query. Both options 
+also enable the SET NOEXEC option, so you don't see any results from your 
+query&#8212;you see only the way that SQL Server has determined is the best method 
+for processing the query. SHOWPLAN_TEXT shows you all the steps involved 
+in processing the query, including the type of join used, the order of table 
+accesses, and which index or indexes are used for each table. Any internal sorts are 
+also shown. SHOWPLAN_ALL provides this information plus estimates of the 
+number of rows that are expected to meet the queries' search criteria, the estimated 
+size of the result rows, the estimated CPU time, and the total cost estimate that 
+was used to compare this plan to other possible plans.</P>
+
+<P> 
+<div class="warning"><blockquote>
+<b>WARNING</b><hr>Since turning on SHOWPLAN TEXT or 
+SHOWPLAN ALL implies that NOEXEC is also on, you must set 
+the SHOWPLAN option to OFF before you do anything else. 
+For example, you must set SHOWPLAN_TEXT to OFF before 
+setting SHOWPLAN_ALL to ON. You must also set these options to 
+OFF before using the graphical Showplan, discussed below.
+</BLOCKQUOTE></DIV>
+</P>
+
+<P>The output from these options shows the order in which tables are 
+accessed and how they are joined, which indexes are used, which tables are scanned, 
+and what worktables are created. Showplan is your primary tool for 
+determining which indexes are useful. 
+Typically, you add one or more indexes that you think might help 
+speed up a query and then you use one of these Showplan options to see whether 
+any of them were actually used. If an index is not going to be used (and you're 
+not adding it to maintain a Primary Key or Unique constraint), you 
+might as well not add it. If an index is not useful for queries, the index is just 
+overhead in terms of space and maintenance time. After you add indexes, be 
+sure to monitor their effect on your updates, since indexes can add overhead to 
+data modification (inserts, deletes, and updates).
+</P>
+
+<P>If the index <I>is </I>useful, also consider whether it is worthwhile in terms 
+of the effect on your data modification operations. If a change to indexing 
+alone is not the answer, you should look at other possible solutions, such as using 
+an index hint or changing the general approach to the query. (In <a href="ch12a.htm">Chapter 12</a>, 
+you saw that several different approaches can be useful to some 
+queries&#8212;ranging from the use of somewhat tricky SQL to the use of temporary tables and 
+cursors. If these approaches also fail, you should consider changes to the 
+database design using the denormalization techniques discussed earlier.)</P>
+
+<A NAME="595"><H3> Graphical Showplan</H3></A>
+
+<P>SQL Server 7 provides a graphical representation of a query's estimated 
+execution plan. Like the SET options for Showplan, by default your query is not 
+executed when you choose to display the graphical Showplan output. You 
+can choose to display this graphical information by choosing Display 
+Estimated Execution Plan from the Query menu in the Query Analyzer or by clicking 
+the corresponding toolbar button in the Query Analyzer. The graphical 
+representation contains all the information available through SHOWPLAN_ALL, 
+but not all of it is visible at once. You can, however, move your cursor over any 
+of the icons in the graphical plan to see the additional performance estimates, 
+as shown in Figure 14-6 below.</P>
+
+<A NAME="596"><H3> Displaying the Actual Plan</H3></A>
+
+<P>All of the Showplan options discussed so far show the estimated query plan. 
+As long as the query is not actually being executed, you can only see an 
+estimate. Conditions such as memory resources might change before you actually run 
+the query, so the estimated plan might not be the actual plan. If you need to 
+see the actual plan at the time the query is executed, you have three options:
+</P>
+
+<UL>
+<P><LI>Choose Show Execution Plan from the Query menu in the 
+Query Analyzer. You'll see two tabs of results for every query you run until you deselect Show Execution Plan. The first tab shows the 
+actual query output, and the second shows the graphical 
+Showplan. 
+</LI></P>
+
+<P><LI>Set STATISTICS PROFILE to ON. This option gives you the 
+query results followed by the STATISTICS_ALL output in the same 
+results pane.</LI></P>
+
+<P><LI>Set up a trace in the SQL Server Profiler to capture the 
+Execution Plan events. This displays all the information from 
+SHOWPLAN_ALL in the trace output for every query that is executed.</LI></P>
+</UL>
+
+<P>
+<A HREF="javascript:fullSize('F14wh06x.htm')"> <img src="F14wh06.JPG" width=404 height=307 border=0 ALT="Click to view at full size."> </A>
+</P>
+<P>
+<!-- caption --><B>Figure 14-6.</B> <I>Graphical Showplan and context-sensitive performance estimates.</I><!-- /caption -->
+</P>
+
+
+<A NAME="597"><H2>Using Query Hints</H2></A>
+
+<P>As you know, locking and query optimization are done automatically by 
+SQL Server. But because the query optimizer is probability-based, it sometimes 
+makes wrong predictions. For example, to eliminate a deadlock, you might want 
+to force an update lock. Or you might want to tell the query optimizer that 
+you value the speed of returning the first row more highly than total 
+throughput. You can specify these and other behaviors by using query hints. The word 
+&quot;hint&quot; is a bit of a misnomer in this context, because the hint is handled as a 
+directive rather than as a suggestion. SQL Server provides four general types of hints:
+</P>
+
+<UL>
+<P><LI><B>Join hints</B> Specify the join technique that will be used.
+</LI></P>
+
+<P><LI><B>Index hints</B> Specify one or more specific indexes that should be used to drive a search or a sort.</LI>
+</P>
+
+<P><LI><B>Lock hints</B> Specify a particular locking mode that should be used.</LI>
+</P>
+
+<P><LI><B>Processing hints</B> Specify that a particular processing 
+strategy should be used.
+</LI></P>
+</UL>
+
+<P>If you've made it this far in this book, you probably understand the 
+various issues related to hints&#8212;locking, how indexes are selected, overall 
+throughput vs. the first row returned, and how join order is determined. Understanding 
+these issues is the key to effectively using hints and intelligently instructing 
+SQL Server to deviate from &quot;normal&quot; behavior when necessary. Hints are 
+simply syntactic hooks that override default behavior; you should now have 
+insight into those behaviors so you can make good decisions about when such 
+overrides are warranted.
+</P>
+
+<P>Query hints should be used for special cases&#8212;not as standard 
+operating procedure. When you specify a hint, you constrain SQL Server. For 
+example, if you indicate in a hint that a specific index should be used, and later you 
+add another index that would be even more useful, the hint prevents the 
+query optimizer from considering the new index. In future versions of SQL 
+Server, you can expect new query optimization strategies, more access methods, 
+and new locking behaviors. If you bind your queries to one specific behavior, 
+you forgo your chances of benefiting from such improvements. SQL Server 
+offers the nonprocedural development approach&#8212;that is, you don't have to tell 
+SQL Server <I>how </I>to do something. Rather, you tell it 
+<I>what </I>to do. Hints run contrary to this approach. Nonetheless, the query optimizer isn't perfect and never 
+can be. In some cases, hints can make the difference between a project's success 
+and failure, if they are used judiciously.
+</P>
+
+<P>When you use a hint, you must have a clear vision of how it might 
+help. It's a good idea to add a comment to the query to justify the hint. Then 
+test your hypothesis by watching the output of STATISTICS IO, 
+STATISTICS TIME, and one of the Showplan options both with and without your hint.
+</P>
+
+<P>
+<DIV CLASS="TIP"><BLOCKQUOTE><B>TIP</B><HR>
+Since your data is constantly changing, a hint that worked 
+well today might not indicate the appropriate processing strategy 
+next week. In addition, SQL Server's optimizer is constantly evolving, 
+and the next upgrade or service pack you apply might invalidate the 
+need for that hint. You should periodically retest all queries that rely on 
+hinting, to verify that the hint is still useful.
+</BLOCKQUOTE></DIV>
+</P>
+
+<A NAME="598"><H3>Join Hints</H3></A>
+
+<P>You can use join hints only when you use the ANSI-style syntax for 
+joins&#8212;that is, when you actually use the word JOIN in the query. In addition, the hint 
+comes between the type of join and the word JOIN, so you can't leave off the 
+word INNER for an inner join. Here's an example of forcing SQL Server to use 
+a HASH JOIN:
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+SELECT title_id, pub_name, title
+FROM titles INNER HASH JOIN publishers
+    ON titles.pub_id = publishers.pub_id
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>Alternatively, you can specify a LOOP JOIN or a MERGE JOIN. You 
+can use another join hint, REMOTE, when you have defined a linked server 
+and are doing a cross-server join. REMOTE specifies that the join operation is 
+performed on the site of the right table (that is, the table after the word 
+JOIN). This is useful when the left table is a local table and the right table is a 
+remote table. You should use REMOTE only when the left table has fewer rows 
+than the right table.</P>
+
+<A NAME="599"><H3> Index Hints</H3></A>
+
+<P>You can specify that one or more specific indexes be used by naming them 
+directly in the FROM clause. You can also specify the indexes by their 
+<I>indid</I> value, but this makes sense only when you specify 
+<I>not</I> to use an index or to use the clustered index, whatever it is. Otherwise, the 
+<I>indid</I> value is prone to change as indexes are dropped and re-created. You can use the value 0 to specify that 
+no index should be used&#8212;that is, to force a table scan. And you can use the 
+value 1 to specify that the clustered index should be used regardless of the 
+columns on which it exists. The index hint syntax looks like this:
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+SELECT <I>select_list</I>
+FROM <I>table</I> [(INDEX ({<I>index_name</I> | <I>index_id</I>}[, <I>index_name</I> | <I>index_id</I> ...]))]
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>This example forces the query to do a table scan:
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+SELECT au_lname, au_fname
+FROM authors (INDEX(0))
+WHERE au_lname LIKE 'C%'
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>This example forces the query to use the index named 
+<I>aunmind</I>:
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+SELECT au_lname, au_fname
+FROM authors (INDEX(aunmind))
+WHERE au_lname LIKE 'C%'
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>The following example forces the query to use both indexes 2 and 3. 
+Note, however, that identifying an index by 
+<I>indid</I> is dangerous. If an index is dropped and re-created in a different place, it might take on a different 
+<I>indid</I>. If you don't have an index with a specified ID, you get an error message. Also, you 
+cannot specify index 0 (no index) along with any other indexes.
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+SELECT au_lname, au_fname
+FROM authors (INDEX (2,3))
+WHERE au_lname LIKE 'C%'
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>A second kind of index hint is FASTFIRSTROW, which tells SQL 
+Server to use a nonclustered index leaf level to avoid sorting the data. This hint 
+has been preserved only for backward compatibility; it has been superseded by 
+the processing hint FAST <I>n</I>, which we'll discuss later.</P>
+
+<A NAME="600"><H3> Lock Hints</H3></A>
+
+<P>You can specify a lock type or duration with syntax similar to that for 
+specifying index hints. <a href="ch13a.htm">Chapter 13</a> explains lock compatibility and other issues that 
+are essential to using lock hints properly. Lock hints work only in the context of 
+a transaction, so if you use these hints, you must use BEGIN TRAN/END 
+TRAN blocks (or you must run with implicit transactions set to ON). The lock 
+hint syntax is as follows:
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+SELECT <I>select_list</I>
+FROM <I>table_name</I> [(<I>lock_type</I>)]
+</PRE></TD></TR></TABLE></P>
+
+<P><DIV CLASS="TIP"><BLOCKQUOTE><B>TIP</B><HR>
+Remember to put the lock hint in parentheses; if you 
+don't, it will be treated as an alias name for the table instead of as a lock hint.
+</BLOCKQUOTE></DIV></P>
+
+<P> You can specify one of the following keywords for 
+<I>lock_type</I>: 
+</P>
+
+<P>
+<B>HOLDLOCK</B> Equivalent to the SERIALIZABLE hint described below. This option is similar to specifying SET 
+TRANSACTION ISOLATION LEVEL SERIALIZABLE , except the SET option 
+affects all tables, not only the one specified in this hint.
+</P>
+
+<P><B>UPDLOCK</B> Takes update page locks instead of shared page locks while 
+reading the table and holds them until the end of the transaction. Taking 
+update locks can be an important technique for eliminating conversion deadlocks.
+</P>
+
+<P><B>TABLOCK</B> Takes a shared lock on the table even if page locks would be 
+taken otherwise. This option is useful when you know you'll escalate to a 
+table lock or if you need to get a complete snapshot of a table. You can use 
+this option with holdlock if you want the table lock held until the 
+end of the transaction block (repeatable read).
+</P>
+ 
+<P>
+<B>PAGLOCK</B> Takes shared page locks when a single shared table lock 
+might otherwise be taken. (There is no hint for taking an exclusive page 
+lock. Instead, you hint to take an update page lock using UPDLOCK. Once 
+the lock is acquired, you know that UPDLOCK can be automatically 
+upgraded to an exclusive lock if required.) 
+</P>
+
+<P>
+<B>TABLOCKX</B> Takes an exclusive lock on the table that is held until the 
+end of the transaction block. (All exclusive locks are held until the end of 
+a transaction, regardless of the isolation level in effect.)
+</P>
+
+<P><B>ROWLOCK</B> Specifies that a shared row lock be taken when a single 
+shared page or table lock is normally taken.
+</P>
+
+<P><B>READUNCOMMITTED | READCOMMITTED | 
+REPEATABLEREAD | SERIALIZABLE</B> These hints specify that SQL Server should use 
+the same locking mechanisms as when the transaction isolation level is set 
+to the level of the same name. However, the hint controls locking for a 
+single table in a single statement, as opposed to locking of all tables in all 
+statements in a transaction.
+</P>
+
+<P><B>NOLOCK</B> Allows uncommitted, or dirty, reads. Shared locks are not 
+issued by the scan, and the exclusive locks of others are not honored. This 
+hint is equivalent to READUNCOMMITTED.
+</P>
+
+<P><B>READPAST</B> Specifies that locked rows are skipped (read past). 
+READPAST applies only to transactions operating at READ COMMITTED 
+isolation and reads past row-level locks only.</P>
+
+<A NAME="601"><H3> Setting a Lock Timeout</H3></A>
+
+<P>Although it is not specifically a query hint, SET LOCK_TIMEOUT also 
+lets you control SQL Server locking behavior. By default, SQL Server does not 
+time out when waiting for a lock; it assumes optimistically that the lock will be 
+released eventually. Most client programming interfaces allow you to set a general 
+timeout limit for the connection so that a query is 
+automatically canceled by the client if no response comes back after a specified amount of time. 
+However, the message that comes back when the time period is exceeded does 
+not indicate the cause of the cancellation; it could be because of a lock not being released, 
+it could be because of a slow network, or it could just be a long 
+running query.
+</P>
+
+<P>Like other SET options, SET LOCK_TIMEOUT is valid only for 
+your current connection. Its value is expressed in milliseconds and can be 
+accessed by using the system function @@LOCK_TIMEOUT. This example sets 
+the LOCK_TIMEOUT value to 5 seconds and then retrieves that value for display:
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+SET LOCK_TIMEOUT 5000
+SELECT @@LOCK_TIMEOUT
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>If your connection exceeds the lock timeout value, you receive the 
+following error message:
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+Server: Msg 1222, Level 16, State 50, Line 0
+Lock request time out period exceeded.
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>Setting the LOCK_TIMEOUT value to 0 means that SQL Server does 
+not wait at all for locks. It basically cancels the entire statement and goes on to 
+the next one in the batch. This is not the same as the READPAST hint, which 
+skips individual rows.</P>
+
+<P> 
+<div class="warning"><blockquote>
+<b>WARNING</b><hr>Exceeding the LOCK_TIMEOUT value does 
+not automatically roll back a transaction, although it cancels the 
+current statement. If you have a user-defined transaction containing 
+multiple UPDATE statements, the first one might be canceled due to a 
+lock timeout and the second one might succeed and commit. If this 
+is unacceptable to your applications, you should program a check 
+for error 1222 and then explicitly roll back the transaction. If you do 
+not change the LOCK_TIMEOUT value, you don't have to worry 
+about this behavior because locks will never time out.
+</BLOCKQUOTE></DIV>
+</P>
+
+<P>The following example illustrates the difference between 
+READPAST, READUNCOMMITTED, and setting LOCK_TIMEOUT to 0. All of 
+these techniques let you &quot;get around&quot; locking problems, but the behavior is 
+slightly different in each case.
+</P>
+
+<OL>
+<P><LI>In a new query window, execute the following batch to lock one 
+row in the titles table:</LI>
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+USE pubs
+BEGIN TRANSACTION
+UPDATE titles
+SET price = price * 0.1 
+WHERE title_id = 'BU1032'
+</PRE></TD></TR></TABLE>
+</P>
+
+<P><LI>Open a second connection, and execute the following statements:
+</LI></P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+USE pubs 
+SET LOCK_TIMEOUT 0
+SELECT * FROM titles
+SELECT * FROM authors
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>Notice that after error 1222 is received, the second 
+select statement is executed, returning all the rows from the 
+<I>authors</I> table.
+</P>
+
+<P><LI>Open a third connection, and execute the following statements:
+</LI></P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+USE pubs 
+SELECT * FROM titles (READPAST) 
+SELECT * FROM authors 
+SQL Server skips (reads past) only one row, and the 
+remaining 17 rows of <I>titles</I> are returned, followed by all the 
+<I>authors </I>rows.
+</PRE></TD></TR></TABLE>
+</P> 
+
+<P><LI>Open a fourth connection, and execute the following statements:
+</LI></P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+USE pubs
+SELECT * FROM titles (READUNCOMMITTED) 
+SELECT * FROM authors 
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>In this case, SQL Server does not skip anything. It reads all 
+18 rows from <I>titles</I>, but the row for title BU1032 shows the dirty 
+data that you changed in step 1. This data has not yet been 
+committed and is subject to being rolled back.</P>
+</OL>
+
+<p>
+<div class="note"><blockquote>
+<b>NOTE</b><hr>The NOLOCK, READUNCOMMITTED, and 
+READPAST table hints are not allowed for tables that are targets of 
+delete, insert, or update operations.
+</BLOCKQUOTE></DIV></P>
+
+
+<A NAME="602"><H3>Combining Hints</H3></A>
+
+<P>You can combine index and lock hints and use different hints for different 
+tables, and you can combine HOLDLOCK with the level of shared locks. Here's 
+an example:
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+BEGIN TRAN
+SELECT title, au_lname
+FROM titles (TABLOCK), titleauthor, authors (PAGLOCK, HOLDLOCK, 
+    INDEX(1))
+WHERE titles.title_id=titleauthor.title_id
+AND authors.au_id=titleauthor.au_id
+</PRE></TD></TR></TABLE></P>
+
+<A NAME="603"><H3>Query Processing Hints</H3></A>
+
+<P>Query processing hints follow the word OPTION at the very end of your 
+SQL statement and apply to the entire query. If your query involves a UNION, 
+only the last SELECT in the UNION can include the OPTION clause. You 
+can include more than one OPTION clause, but you can specify only one hint 
+of each type. For example, you can have one GROUP hint and also use the 
+ROBUST PLAN hint. Here's an example of forcing SQL Server to process a 
+GROUP BY using hashing:
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+SELECT type, count(*)
+FROM titles
+GROUP BY type
+OPTION (HASH GROUP)
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>This example uses multiple query processing hints:
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+SELECT pub_name, count(*)
+FROM titles JOIN publishers
+    ON titles.pub_id = publishers.pub_id
+GROUP BY pub_name
+OPTION (ORDER GROUP, ROBUST PLAN, MERGE JOIN)
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>There are eight different types of processing hints, most of which are 
+fully documented in SQL Server Books Online. The key aspects of these hints 
+appear in the following list:
+</P>
+
+<P><B>Grouping hints</B> You can specify that SQL Server use a HASH GROUP 
+or an ORDER GROUP to process GROUP BY operations.
+</P>
+
+<P><B>Union hints</B> You can specify that SQL Server form the UNION of multiple result sets by using HASH UNION, MERGE UNION, or 
+CONCAT UNION. HASH UNION and MERGE UNION are ignored if the 
+query specifies UNION ALL because UNION ALL does not need to 
+remove duplicates. UNION ALL is always carried out by simple concatenation.
+</P>
+ 
+<P>
+<B>Join hints</B> You can specify join hints in the OPTION clause as well as in the JOIN clause, and any join hint in the OPTION clause applies to all the joins in the query. OPTION join hints override those in the JOIN clause. You can specify LOOP JOIN, HASH JOIN, or MERGE JOIN. 
+</P>
+
+<P>
+<B>FAST number_rows</B> This hint tells SQL Server to optimize so that the first rows come back as quickly as possible, possibly reducing overall throughput. You can use this option to influence the query optimizer to drive a scan using a nonclustered index that matches the ORDER BY clause of a query rather than using a different access method and then doing a sort to match the ORDER BY clause. After the first <I>number_rows</I> are returned, the query continues execution and produces its full result set. 
+</P>
+
+<P>
+<B>FORCE ORDER</B> This hint tells SQL Server to process the tables in exactly the order listed in your FROM clause. However, if any of your joins is an OUTER JOIN, this hint might be ignored.
+</P>
+
+<P><B>MAXDOP number</B> Overrides the <I>max degree of parallelism 
+</I>configuration option for only the query specifying this option. We'll discuss parallelism when we look at server configuration in <a href="ch15a.htm">Chapter 15</a>.
+</P>
+
+<P><B>ROBUST PLAN</B>  Forces the query optimizer to attempt a plan that works for the maximum potential row size, even if it means degrading performance. This is particularly applicable if you have wide <I>varchar</I> columns. When the query is processed, some types of plans might create intermediate tables. Operators might need to store and process rows that are wider than any of the input rows, which might exceed SQL Server's internal row size limit. If this happens, SQL Server produces an error during query execution. If you use ROBUST PLAN, the query optimizer will not consider any plans that might encounter this problem. 
+</P>
+
+<P>
+<B>KEEP PLAN</B> This option ensures that a query is not recompiled as frequently when there are multiple updates to a table. This can be particularly useful when a stored procedure does a lot of work with temporary tables, which might cause frequent recompilations.
+</P>
+
+</BODY>
+</HTML>
+
+
+

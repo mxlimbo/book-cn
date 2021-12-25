@@ -1,0 +1,571 @@
+<HTML>
+<HEAD>
+	<link rel="STYLESHEET" type="text/css" href="squeal7.css">
+<TITLE>Appropriate Use of Cursors</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch11d.htm">[Previous]</A> <A HREF="ch11f.htm">[Next]</A><P>
+
+<A NAME="426"><H1>Appropriate Use of Cursors</H1></A>
+
+<P>When should you use cursors? A somewhat simplistic answer is, &quot;Only when 
+you have to.&quot; This is not a totally facetious answer, because if you can think of a 
+set-based solution to a problem and avoid using a cursor, you should do 
+that. Ordinarily, cursors should be near the bottom of your list of possible 
+solutions. Remember that SQL Server is a relational database, so it is inherently set 
+based. As we mentioned earlier, if you overuse cursors, you turn SQL Server into 
+an ISAM-like product and severely cripple its power.</P>
+
+<P>You should not interpret this warning as a blanket statement that 
+you should never use cursors. Scrollable cursors were, in fact, near the top of the 
+new features wish list of many members of the SQL Server development team. 
+More important, cursors were near the top of the developer community's wish 
+list. Cursors are extremely powerful and provide SQL Server capabilities that 
+cannot be achieved with other products. So let's look at some situations in 
+which cursors provide a great benefit.</P>
+
+<A NAME="427"><H2>Row-by-Row Operations</H2></A>
+
+<P>Transact-SQL cursors are great for row-by-row operations with a stored 
+procedure or a single batch. For example, suppose we have some financial data 
+that includes cash flows, and for each row of that data we want to return only 
+rows having an internal rate of return (IRR) of more than 20 percent. IRR is a 
+pretty involved financial function that requires iterating and converging to an 
+answer, and we can't simply express it in the SELECT statement. But suppose we 
+write an extended stored procedure for IRR so that we can pass it the cash flows 
+and it will return the IRR. Then, for each row qualified by a query, we can 
+calculate the IRR using columns in the row as input to the IRR extended 
+procedure. Then we'll return only rows in which the IRR would be 20 percent or 
+more. This is an appropriate use of Transact-SQL cursors. If we couldn't use a 
+cursor, we'd have to return all the rows across the network to the client 
+application so we could do the IRR operation there. (Or we'd have to consider 
+other, more complex situations that could occur if cursors weren't available, such 
+as problems arising from having another program running on the server.)</P>
+
+<P>Because the cursor allows individual rows to be examined entirely at 
+the server, we avoid sending multiple requests from the client. Because a 
+SELECT statement does not work in this situation, the cursor allows the operation 
+to return to the client only rows in which the IRR value is greater than 20 
+percent&#8212;not all rows. If we had wanted to return all the rows, we could have 
+simply returned the raw data to the client and computed the IRR with a client 
+function. In the future, when SQL Server provides support for user-defined 
+functions (UDFs), this problem can be solved without the cursor. This is one reason 
+(of many) that UDFs are high on the list of desirable future enhancements.</P>
+
+<P>With Transact-SQL cursors, FETCH is almost always done in a loop 
+and the cursor is used to perform row-by-row processing on the entire result 
+set. But you should not use Transact-SQL cursors across multiple batches. 
+For example, don't issue singular FETCH commands as their own batches. If 
+your application fetches rows, does some work, fetches more rows, and so on, 
+you should use API server cursors, not Transact-SQL cursors.</P>
+
+<A NAME="428"><H2>Query Operations</H2></A>
+
+<P>Transact-SQL cursors are often used in conjunction with 
+EXECUTE(<I>'string'</I>) to write and execute SQL statements based on the results of some query. 
+For example, suppose we want to issue an UPDATE STATISTICS command 
+for every table in a database that doesn't contain the string &quot;lookup&quot; in its 
+name. Using Transact-SQL cursors, we can use the following generic batch to do 
+the entire operation&#8212;without having to return the names of the tables to the 
+calling client application, reformat them into the correct commands, and send 
+them back to the server. Instead, the entire operation is done at the server; only 
+the initial request is sent from the client application.</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+DECLARE tables_curs CURSOR FOR
+    SELECT name FROM sysobjects
+    WHERE type='U'
+    AND name NOT LIKE '%lookup%'
+OPEN tables_curs
+DECLARE @tablename varchar(30), @output_msg varchar(80)
+FETCH NEXT FROM tables_curs INTO @tablename
+WHILE (@@FETCH_STATUS=0 )
+    BEGIN
+    EXEC (&quot;UPDATE STATISTICS &quot; + @tablename)
+        IF (@@ERROR=0)
+            SELECT @output_msg=
+                'Statistics successfully updated on table '
+                + @tablename
+        ELSE
+            SELECT @output_msg=
+                'Failed to Update Statistics on table '
+                + @tablename + ' @@ERROR=' +
+                CONVERT(varchar, @@ERROR)
+    PRINT @output_msg
+    FETCH NEXT FROM tables_curs INTO @tablename
+    END
+CLOSE tables_curs
+DEALLOCATE tables_curs
+</PRE></P>
+</td></tr></table>
+
+<P>SQL Server 7 includes the system stored procedure 
+<I>sp_updatestats</I> to update the statistics for 
+<I>all </I>user-defined tables in a database. However, if you want 
+to restrict the set of names for which you are updating statistics (as in our 
+example where we didn't want to update statistics for lookup tables), the preceding 
+cursor-based solution might be just what you need.</P>
+
+<A NAME="429"><H2>Scrolling Applications</H2></A>
+
+<P>The need for Transact-SQL cursors was not the biggest motivation for 
+adding cursors to SQL Server. Rather, the crying need was for API server cursors 
+to support &quot;scrolling applications.&quot; Many of these applications originated 
+from ISAM applications, or they started as single-user Microsoft FoxPro or 
+dBASE applications (or they followed that paradigm&#8212;you know the type).</P>
+
+<P>For example, think of an address book of the type used in your 
+e-mail program. The user opens the address book and scrolls up or down to view 
+the list of names. The user drags the scroll bar slider to the bottom and expects 
+to be positioned at the last record. Dragging the slider to the beginning of the 
+list, the user expects to be repositioned at the first record. Is this an appropriate 
+use for a cursor? It depends on what you want to do with the information in 
+the list. Here are some examples of how you might think about the problem.</P>
+
+<B>Example 1</B>
+
+<P>A cursor is unnecessary if the address book includes only a few hundred 
+entries, if it will be read-only, or if you're not concerned with sensitivity to changes 
+in data (that is, you don't care whether the most up-to-date copy of the data 
+is available). After the user's list box is initially populated, a few new names 
+might be added or the information might change in some way. But for our 
+purposes, it is unnecessary for the list box to exhibit dynamic behavior such as 
+names appearing, disappearing, or changing as the user scrolls through the list. In 
+this case and with these requirements, you can simply issue the query and get 
+the results. You can easily buffer a few hundred rows of information on the 
+client, so there is no need for cursors.</P>
+
+<B>Example 2</B>
+
+<P>An API server cursor is appropriate if the address book has 100,000 entries. 
+The user will probably look at only a few dozen entries and then quit. Should 
+you select all 100,000 rows to populate the list box so that the user can see only 
+a few dozen? In most cases, the answer is no. Using a cursor is reasonable in 
+this situation; you can use an API server cursor.</P>
+
+<P>Suppose the list box can display 20 names at a time. You can set the 
+cursor width to 20 (a fat cursor) so that with any fetch forward or backward you 
+get one list box worth of data. Or you can fetch 60 or 80 rows at a time so that 
+the user can scroll by a few screenfuls within the application without having to 
+ask the server for more rows. If the user moves the scroll bar slider to the 
+bottom of the list, you fetch the bottom 20 rows by using LAST. If the user moves 
+the slider to the top, you fetch the top 20 rows by using FIRST. And if the 
+slider moves three-fourths of the way down the list, you can do some quick 
+division and scroll to that point by using ABSOLUTE 
+<I>n</I>. (For example, you can easily determine the total number of qualifying rows. If 100,000 rows are 
+available and you want to scroll approximately three-fourths of the way down, you 
+can do a FETCH ABSOLUTE 75000 statement.)</P>
+
+<P>If you have to provide this type of application with a large amount of 
+data, using a cursor makes sense. Of course, it might be better if the user is 
+required to type in a few characters&#8212;that would allow the application to qualify the 
+result set of the cursor. If you know that the user is interested only in names 
+starting with <I>S</I>, for example, you can significantly reduce the size of the cursor by 
+adding the appropriate criteria (for example, <I>name like 
+('S%'</I>) in the cursor SELECT statement.</P>
+
+<A NAME="430"><H2>Choosing a Cursor</H2></A>
+
+<P>Although it might seem as if you have an overabundance of choices for 
+your cursor model, the decision-making process is fairly straightforward. Follow 
+these guidelines to choose the appropriate cursor for your situation:</P>
+
+<UL>
+<P><LI>If you can do the operation with a good set-oriented solution, do 
+so and avoid using a cursor. (In ODBC parlance, use a firehose cursor.)</LI></P>
+ <P><LI>If you have decided that a cursor is appropriate and you will be 
+doing multiple fetches over the network (such as to support a 
+scrolling application), use an API server cursor. You'll use OLE DB, 
+ODBC, RDO, DB-Library, ADO, or another API depending on your 
+application needs.</LI></P>
+<P><LI>For the most part, avoid using client-side cursors and products 
+or libraries that perform many cursor operations in the client 
+application. Such applications tend to make excessive requests to the 
+server and use the server inefficiently&#8212;the multitude of network 
+round-trips makes for a slow, sluggish application.</LI></P>
+</UL>
+
+<P>Table 11-1 compares the ways cursors are declared and opened, and 
+how operations are performed in Transact-SQL cursor statements; their rough 
+equivalents among the pseudo_stored procedures used by the ODBC driver and 
+DB-Library; and the ODBC and OLE DB cursor methods.</P>
+
+<P><B>Table 11-1.</B> <I>Equivalent Transact-SQL cursor statements, pseudo_stored 
+procedures, ODBC cursor functions, and OLE DB cursor methods.</I></P>
+<P>
+<table valign="top" cellpadding=5 width="95%">
+<tr><th>Transact-SQL Cursor Statement</th>
+<th>Pseudo_Stored Procedure</th>
+<th>ODBC Cursor Function</th>
+<th>OLE DB Cursors </th>
+</tr>
+<tr>
+<td valign="top">DECLARE/ OPEN</td>
+<td valign="top"><I>sp_cursoropen </I></td>
+<td valign="top">SQLSetStmtAttr (SQL_ATTR_ CURSOR_TYPE)QLSetStmtAttr(SQL_ATTR_ CONCURRENCY) SQLExecDirect or SQLExecute</td>
+<td valign="top">Set row set properties such as DBPROP_OTHERINSERT, DBPROP_OTHER UPDATEDELETE, DBPROP_OWN INSERT, or DBPROP_OWN UPDATEDELETE to control cursor behaviors</td>
+</tr>
+<tr>
+<td valign="top">FETCH</td>
+<td valign="top"><I>sp_cursorfetch</I></td>
+<td valign="top">SQLFetch or SQLExtendedFetch()</td>
+<td valign="top">IRowset:: GetNextRows</td>
+</tr>
+<tr>
+<td valign="top">UPDATE/ DELETE (positioned)</td>
+<td valign="top"><I>sp_cursor</I></td>
+<td valign="top">SQLSetPos()</td>
+<td valign="top">IRowsetChange:: SetData or 
+IRowsetChange:: DeleteRows</td>
+</tr>
+<tr>
+<td valign="top">CLOSE/ DEALLOC</td>
+<td valign="top"><I>sp_cursorclose</I></td>
+<td valign="top">SQLCloseCursor</td>
+<td valign="top">IRowset::Release</td>
+</tr>
+</table>
+</P>
+
+<A NAME="431"><H2>Cursor Membership, Scrolling, and Sensitivity to Change</H2></A>
+
+<P>In addition to understanding the cursor model (that is, Transact-SQL or 
+API server cursors), you must understand some other key options that deal with 
+the &quot;membership&quot; of the cursor and the behavior the cursor exhibits as you 
+scroll through the result set. We can divide these options into the two categories 
+listed below.</P>
+
+<UL>
+<P><LI><B>     Cursor 
+types</B> The API server cursors usually specify cursor 
+behavior by dividing them into four different types: static, keyset, 
+dynamic, and forward-only.</LI></P>
+ <P><LI><B>     Cursor 
+behaviors</B> The ANSI SQL-92 standard defines the 
+keywords SCROLL and INSENSITIVE to specify the behavior of 
+cursors. Some of the APIs also support defining a cursor's 
+behavior using these terms. SQL Server 7 allows us to specify many more 
+aspects of the cursor's behavior.</LI></P>
+</UL>
+
+<P>Transact-SQL cursors can use either the ANSI-specified syntax 
+with INSENSITIVE and SCROLL options or the full range of cursor types, 
+which we call Transact-SQL Extended Syntax. Prior to SQL Server version 7, only 
+the ANSI syntax was available. However, since Transact-SQL Extended 
+Syntax, which allows all the various options available through API cursors, provides 
+much greater control and flexibility, we'll use that syntax in most of our examples. 
+The ANSI specification does not define standards for several semantic issues 
+related to sensitivity to changes made by others. (When the specification was 
+written, it is likely that no one involved had implemented scrollable cursors. Even 
+today, SQL Server is the only widely used product with scrollable cursors.) The 
+issue of sensitivity to changes is further complicated in the client/server 
+environment because using a FETCH statement means fetching across the network. 
+When you use the ANSI specification to declare a cursor, the behavior 
+characteristics are specified before the word 
+<I>CURSOR</I>:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+DECLARE <I>cursor_name</I> [INSENSITIVE] [SCROLL] CURSOR
+FOR <I>select_statement</I>
+[FOR {READ ONLY | UPDATE [OF <I>column_list</I>]}]
+</PRE></P>
+</td></tr></table>
+
+<P>When implementing cursors, Microsoft engineers had to make a lot 
+of decisions about subtle behavioral issues. They wanted efficient scrollable 
+cursors that could be used for updating in a networked client/server 
+environment. However, according to the ANSI specification, scrollable cursors are 
+read-only! Fortunately, they were able to go way beyond the specification when they 
+implemented scrollable, updatable cursors. In fact, Microsoft's original 
+cursor specification went so far beyond the original ANSI specification that they started 
+using the terminology of the four different cursor types (static, keyset, dynamic, 
+and forward-only) even though the syntax allowed only the words 
+INSENSITIVE and SCROLL. Since the new API-based syntax for declaring cursors actually 
+uses these types in the declaration, that is the syntax we'll mainly use. Here's 
+how to declare a cursor using Transact-SQL Extended Syntax:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+DECLARE <I>cursor_name</I> CURSOR
+[LOCAL | GLOBAL]
+[FORWARD_ONLY | SCROLL]
+[STATIC | KEYSET | DYNAMIC | FAST_FORWARD]
+[READ_ONLY | SCROLL_LOCKS | OPTIMISTIC]
+[TYPE_WARNING]
+FOR <I>select_statement</I>
+[FOR UPDATE [OF <I>column_list</I>]]
+</PRE></P>
+</td></tr></table>
+
+<P>The keywords describe how membership in the cursor is maintained 
+(that is, which rows qualify), the available scrolling capabilities, and the 
+cursor's sensitivity to change. Notice that the keywords appear after the word 
+<I>CURSOR </I>in the DECLARE statement. That is how the parser distinguishes the older 
+ANSI cursor syntax from the new Transact-SQL Extended Syntax for cursors: in 
+the former, the cursor qualifiers come before the word 
+<I>CURSOR</I>; in the latter, the qualifiers come after.</P>
+
+<A NAME="432"><H3>Static Cursors</H3></A>
+
+<P>A static cursor is attached to a snapshot of the data that qualifies for the 
+cursor. The snapshot is stored in <I>tempdb.</I> A static cursor is read-only, and the rows 
+in the cursor and the data values of the rows never change when you fetch 
+anywhere in the cursor because you operate on a private, temporary copy of the 
+data. Membership in a static cursor is fixed&#8212;that is, as you fetch in any direction, 
+new rows cannot qualify and old rows cannot change in such a way that they 
+no longer qualify.</P>
+
+<P>Before you use a static cursor, consider whether you need to use a 
+cursor at all. If the data is static and read-only, it probably makes more sense to 
+process it all in the client application as a default result set and not use a cursor. 
+If the number of rows is too large to reasonably process on the client, creating 
+this temporary table on the server can also prove to be an expensive undertaking.</P>
+
+<P>If you use ANSI-style cursors and specify the modifier INSENSITIVE, 
+the cursor will be static. Using Transact-SQL Extended Syntax, you can 
+actually specify the keyword STATIC. A private temporary table is created for the 
+SELECT statement you specify. Note that even the cursor cannot do 
+positioned updates or deletes on this snapshot of data in the temporary table. For 
+comparison, here are two cursor definitions for the same query, using the two 
+syntax possibilities:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+-- ANSI-style syntax for declaring static cursor
+DECLARE my_cursor1 INSENSITIVE CURSOR 
+FOR SELECT au_id, au_lname 
+FROM authors
+where state != 'CA'
+
+-- Transact-SQL Extended Syntax for declaring static cursor
+DECLARE my_cursor1 CURSOR STATIC 
+FOR SELECT au_id, au_lname 
+FROM authors
+where state != 'CA'
+</PRE></P>
+</td></tr></table>
+
+<P>The result rows returned from the two cursors above are identical, 
+with one minor behavioral difference. A static cursor defined using the ANSI 
+syntax and the keyword INSENSITIVE is not scrollable&#8212;that is, you can fetch 
+rows only in the forward direction. If you want the cursor to be scrollable, you 
+must specify the SCROLL keyword. The Transact-SQL Extended Syntax creates 
+static cursors that are scrollable by default.</P>
+
+<P>You might want to use a static cursor for some &quot;what 
+if&quot;-type operations on the data when you know that the changes will never be reflected in the 
+base tables. If you want to carry out this type of operation, you can do a 
+SELECT INTO in a temporary table and then declare a cursor on that table 
+without specifying STATIC. If you specify a query that performs an aggregate 
+function (such as SUM, MIN, MAX, GROUP BY, or UNION), the cursor might 
+also have to be materialized in a temporary table and therefore will automatically 
+be a static cursor.</P>
+
+<A NAME="433"><H3>Keyset Cursors</H3></A>
+
+<P>With a keyset cursor, a list of all the key values for the rows that meet the 
+SELECT statement criteria is kept in <I>tempdb</I>. For example, if you declare a 
+scrollable cursor on the <I>customer</I> table, the keyset is a list of those 
+<I>cust_id</I> values that qualified for membership in the SELECT statement when the cursor was 
+opened. Suppose that when the cursor was opened, the SELECT statement used 
+to declare the cursor had a WHERE clause in this form:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+WHERE cust_balance &gt; 100000
+</PRE></P>
+</td></tr></table>
+
+<P>Suppose also that customers 7, 12, 18, 24, and 56 (that is, rows with 
+<I>cust_id</I> of those values) qualified. These keys are used whenever fetching is 
+performed. Conceptually, further selection for the cursor takes this form</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+WHERE cust_id IN (7,12,18,24,56)
+</PRE></P>
+</td></tr></table>
+
+<P>rather than this form:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+WHERE cust_balance &gt; 100000
+</PRE></P>
+</td></tr></table>
+
+<P>(Internally, the SELECT statement is not issued again. This is for 
+purposes of illustration only.) Membership in the keyset cursor is fixed. That is, these 
+five identified rows are part of the cursor and no other rows are seen in 
+subsequent fetching. Even if other rows that meet the SELECT statement criteria are 
+subsequently inserted or updated, they are not seen by this cursor after it is opened.</P>
+
+<P>In a keyset cursor as opposed to a static cursor, you can see changes to 
+the data in the rows that meet the SELECT criteria when the cursor is opened. 
+For example, if another user modifies the customer balance while you hold the 
+cursor open and then fetch the row again, you see those changes (unless you hold 
+locks to prevent such changes). In fact, even if the modification causes the row to 
+no longer satisfy the criteria of <I>cust_balance &gt; 
+100000</I>, you still see the row in a subsequent fetch. The row disappears only if it is actually deleted. The key 
+value still exists because it was squirreled away in 
+<I>tempdb,</I> but the row is gone. Default values, NULL values, blank spaces, or zeros (as appropriate) are supplied 
+for the column values. But more important, the @@FETCH_STATUS system 
+function returns a value of _2 in this case, indicating that the row no longer exists.</P>
+
+<P>Because the keys are stored in <I>tempdb</I> when the cursor is open and 
+membership is fixed, keyset cursors can fetch to an absolute position within the 
+result set. For example, it is reasonable to fetch to row 104 of the cursor:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+FETCH ABSOLUTE 104 FROM cursor
+</PRE></P>
+</td></tr></table>
+
+<P>It shouldn't come as a surprise that a keyset cursor demands that a 
+unique index exist on every table used in the SELECT statement for the cursor. 
+The unique index is necessary to identify the keys. The index can be created 
+directly (with CREATE INDEX), or it can exist as a result of a 
+PRIMARY KEY or UNIQUE constraint.</P>
+
+<P><DIV CLASS="NOTE"><BLOCKQUOTE><b>NOTE</b><HR>
+In SQL Server 7, every clustered index is treated as
+unique internally, even if you didn't specifically define the index to be
+unique. (We'll see more about internal index structures in <A HREF="ch14a.htm">Chapter 14</A>.)
+For this reason, you can always define a keyset cursor on a table that
+has a clustered index.
+</BLOCKQUOTE></DIV></P>
+
+<P>If you declare a keyset cursor using Transact-SQL Extended Syntax on 
+a table that doesn't have a unique index, you do not receive an error message 
+or any warning unless the cursor was declared with the option 
+TYPE_WARNING. Without that option specified, you just don't get a keyset cursor. Instead, 
+the cursor is created as STATIC. Later in this chapter, we'll see the stored 
+procedures that provide information about your currently available cursors.</P>
+
+<A NAME="434"><H3>Dynamic Cursors</H3></A>
+
+<P>You can think of a dynamic cursor as a cursor in which the SELECT 
+statement is applied again in subsequent FETCH operations. That is, the cursor does 
+not refetch specific rows, as in this statement:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+WHERE cust_id IN (12,18,24,56,7)
+</PRE></P>
+</td></tr></table>
+
+<P>Instead, conceptually, the WHERE clause is reapplied. For example:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+WHERE cust_balance &gt; 100000
+</PRE></P>
+</td></tr></table>
+
+<P>This means that membership is <I>not</I> fixed&#8212;subsequent fetches might 
+include newly qualifying rows, or previously qualifying rows might disappear. This 
+can occur due to changes you have made within the cursor or due to changes 
+made by others. If the cursor has not locked the rows of the result set (which is 
+dependent on the concurrency options selected, as we'll see in a moment), 
+the changes made by others are seen in your cursor when you do a subsequent 
+fetch on the cursor. You see such changes only on a subsequent fetch. The image 
+of data in the buffer from the last fetch is just that&#8212;a copy in memory of what 
+the row or rows looked like when the last fetch was performed.</P>
+
+<P>Since membership in a dynamic cursor is not fixed, there is no 
+guarantee that subsequent fetches will always bring up the same information. For 
+this reason, FETCH ABSOLUTE is not supported for cursors declared using 
+the DYNAMIC keyword, even if you declare the cursor through the API. It 
+doesn't make sense, for example, to simply fetch to row 104 if every subsequent 
+fetch brings up a row 104 that contains different information. However, 
+FETCH RELATIVE is supported with dynamic cursors, which sometimes surprises 
+people. When used with a dynamic cursor, FETCH RELATIVE 
+<I>n </I>starts fetching from the first row in the current cursor set and skips the first 
+<I>n </I>rows from that point.</P>
+
+<P>A cursor declared with an Order By clause can be dynamic only if 
+an index contains keys that match the Order By clause. If no such index 
+exists, the cursor automatically converts to either a keyset or a static cursor. As 
+previously mentioned, you need a unique index on some column in the table to 
+get a keyset cursor. So if you have a unique index that just doesn't happen to be 
+on the columns in the ORDER BY, you get a keyset cursor. If there is no index 
+that matches the ORDER BY and no unique index on any column, the cursor 
+reverts to a static cursor.</P>
+
+<A NAME="435"><H3>Forward-Only Cursors</H3></A>
+
+<P>Forward-only cursors are dynamic cursors that allow only a FETCH type of 
+NEXT. It's OK for you to think of SQL Server as having only three types of 
+cursors (static, keyset, and dynamic). Forward-only is treated here as its own type 
+because the Transact-SQL Extended Syntax, as well as API server cursors, specify 
+forward-only at the same level as KEYSET and DYNAMIC.</P>
+
+<P>Forward-only scrolling is consistent with the recommended use 
+of Transact-SQL cursors to provide row-by-row processing within a stored 
+procedure or batch. Such processing is usually from start to end&#8212;one way&#8212;so 
+that rows are never refetched. If you use Transact-SQL cursors appropriately, 
+you typically scroll forward-only to do a row-by-row operation and you do not 
+revisit rows. Forward-only cursors are usually the fastest type of cursor, but a 
+standard SELECT statement (not a cursor) is still significantly faster.</P>
+
+<A NAME="436"><H3>Fast Forward&#8212;Only Cursors</H3></A>
+
+<P>Transact-SQL Extended Syntax allows for a special type of forward-only 
+cursor called a fast forward_only cursor. This type of cursor is always read-only, 
+in addition to being forward-only. You can also specify fast forward_only 
+cursors through the ODBC driver, and in fact this is the environment in which 
+they provide the most benefit. Applications using the SQL Server ODBC driver 
+can set the driver-specific statement attribute 
+SQL_SOPT_SS_CURSOR_OPTIONS to SQL_CO_FFO or SQL_CO_FFO_AF. The SQL_CO_FFO_AF 
+option specifies that an autofetch option also be enabled. Autofetch enables two 
+optimizations that can significantly reduce network traffic:</P>
+
+<UL>
+<P><LI>When the cursor is opened, the first row or batch of rows is 
+automatically fetched from the cursor. This saves you from having 
+to send a fetch request across the network.</LI></P>
+<P><LI>When a fetch hits the end of the cursor, the cursor is 
+automatically closed. This saves you from having to send a separate close 
+request across the network.</LI></P>
+</UL>
+
+<P>The most dramatic improvement comes when you process cursors 
+with relatively small result sets that can be cached in the memory of an 
+application. The fast forward_only cursor with autofetch enabled is the most efficient 
+way to get a result set into an ODBC application.</P>
+
+<P>The autofetch option is not available when you use Transact-SQL 
+Extended Syntax. It is meant as an optimization when you declare and manage 
+cursors through your client application.</P>
+
+<P><B>Implicit conversion of fast forward&#8212;only 
+cursors</B> Fast forward&#8212;only cursors are implicitly converted to other cursor types in certain situations. If the 
+SELECT statement joins one or more tables with triggers to tables without triggers, 
+the cursor is converted to a static cursor. If a fast forward_only cursor is not 
+read-only, it is converted to a dynamic cursor. If the SELECT statement is a 
+distributed query that references one or more remote tables on linked servers, 
+the cursor is converted to a keyset-driven cursor.</P>
+
+<P>Other implicit conversions are also carried out when you work with 
+Transact-SQL Extended Syntax cursors, depending on the structure of the 
+underlying tables and the keywords used in the cursor's SELECT statement. We saw 
+previously that a cursor declared as a keyset is implicitly converted to a static 
+cursor if any of the underlying tables don't have a unique index. A cursor 
+based on a SELECT statement that needs to build a 
+<I>temp </I>table is implicitly converted to a static cursor. In you have any doubt whether SQL Server actually 
+created the type of cursor you requested, you can use the cursor procedures 
+described in the following sections to verify all of the cursor's properties.</P>
+
+</BODY>
+</HTML>
+
+
+

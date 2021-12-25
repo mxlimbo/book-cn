@@ -1,0 +1,454 @@
+<html>
+
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=gb2312">
+<meta name="GENERATOR" content="Microsoft FrontPage 3.0">
+<title>Win32 进程讯的观念与技术</title>
+</head>
+
+<body bgcolor="#FFFFFF" text="#000000">
+
+<p> 
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 【Win32 
+行程通讯的观念与技术】</p>
+
+<p align="right">作者: <a href="mailto:wolfgang@ms2.hinet.net">钱达智</a> from 
+VCL-Team<br>
+本文原发表於微电脑传真, 1997/11</p>
+
+<p align="right"><a href="../delphi/ipcdemo.zip">下载本文之范例程式</a></p>
+
+<hr>
+
+<blockquote>
+  <p>窗子提供的永远只是局部的风景。身为窗子的制造者以及使用者的我们不可能不明白这个道理；对於窗子的使用者日益挑剔的品味，窗子的制造者所能提供的不仅止於窗子的大小，往往是窗子的数量。的确，探出窗去看得将更多一些，外头天空地宽朗朗白日，别的窗子也许正有我们想要的风景。</p>
+  <p>这篇文章谈的是 Interprocess Communication (IPC)，我将与你分享跨行程通讯的各项技术与资料交换的方法。</p>
+</blockquote>
+
+<h3>为什麽需要 IPC?</h3>
+
+<blockquote>
+  <p>为什麽需要 Inter-process Communication？</p>
+  <p>显而易见的，没有一个视窗应用程式可以包办全部的工作。为了避免资料重覆输入的时间浪费与人为错误，各应用程式间的资料会有互相交换的需求。首先的压力将来自於使用者，甚至於很可能是你自己。先不说别的，在写这篇文章时，我就曾剪贴原来以 
+  Delphi 
+  撰写的程式到文书编辑软体，同时，也利用抓图软体帮我拍下执行画面，最後，这些文章与范例程式得用压缩程式压起来，然後E-mail寄给杂志编辑。</p>
+  <p>使用 IPC 
+  在某些情况下是不得不然的决定，有时候程式必须跨过机器边界让另一部机器内的程式明白该怎麽合作来共同完成工作，这同时也暗示我们可能面临不同的作业系统的问题。</p>
+  <p>此外，IPC有助於系统的安全与稳定。由於Win32各个行程彼此独立的特性，一个行程死掉了，其他的行程还可以继续跑下去，对於某些稳定性要求很高的系统而言, 
+  值得以额外的负担(Overhead)交换系统的强固性(robustness)。嗯! 
+  我的意思是说，因为系统对稳定性的需求要求较高，值得拆开来做甚至额外的备援系统，既然工作拆成两个以上，此时必然需要IPC。</p>
+  <p>关於IPC，一般人可能会对其有「执行效率缓慢」的印象，这当然不能说是错误的，但绝不是公平的评语。这麽说吧：一个主管亲自去做一件事，往往会比先说明再授权下属去做来得快，这是单一工作时的情况；然而如果管理者同时有好几件事在手上，托付别人去做才能使得整个公司的效能提高。换句话说，如果能善用 
+  IPC，整体的系统效能不仅不会下降，反而可能因为充分利用整个运算群的能力而有提升。</p>
+</blockquote>
+
+<h3>我们的第一个 IPC 例子</h3>
+
+<blockquote>
+  <p>每个图形介面的视窗应用程式都接受并处理讯息(Message)，因此，使用讯息伫列通知其他的行程是脑中很自然会浮现的第一个想法；换句话说，两行程间彼此互相以 
+  SendMessage() 或 PostMessage() 传送讯息通知对方。</p>
+  <p>即然要互送讯息，就需要一个彼此都认得的讯息编号。於是，除了 
+  Windows 标准的讯息编号之外，我们还需要额外定义一个(一些)讯息。</p>
+  <p>行程通讯间用来约定讯息编号常用的方法是呼叫RegisterWindowMessage() 
+  API函数。这个函数只有一个字串型别的引数，Windows系统会检查我们传入的讯息名称并传回一个安全不重覆的讯息编号，假如传入的讯息名称早已经登记有案，则系统传回的是稍早传给那个行程的相同编号。</p>
+  <p>换句话说，两支程式只要彼此都用相同的讯息名称呼叫RegisterWindowMessage() 
+  注册讯息，系统便会都给两者一个相同的自订讯息编号。</p>
+  <p>接下来要送出讯息了，可是，要送给谁呢？嗯，我在这 
+  使用的方法是：第一次先用广播的，每一个视窗程式都会收到通知，讯息的短叁数(wParam)中写明发讯视窗的 
+  Handle 
+  值，如果是同志，它自然明白这个讯息代表了什麽，并且也使用SendMessage() 
+  回送约定的讯息表示收到。同样的，讯息的短叁数注明自己的Handle。於是，茫茫人海的小俩口终於得知对方的下落，以後就不再需要公开寻人可以透过Handle值直接与对方联络了。 
+  </p>
+  <p>除了讯息编号，讯息的wParam，lParam长短叁数也可以用来进一步约定通讯的细节。事情进展得似乎十分顺利，现在我们知道合作对象，也确信它明白我们的讯息代表什麽。虽然简单，但是这种暗通款曲的方式是系统默许的。不过，我们还需要再多解决一个问题。</p>
+  <p>由於SendMessage 只有 wParam，lParam 两个 DWORD 
+  型别的长短叁数，携带的资料量十分有限。很显然的，我们需要能够一次传送更多资料的方法。Windows 
+  也的确提供了许多交换资料的机制，我在这篇文章中将会一一说明，其中最简便的方法是使用 
+  WM_COPYDATA 讯息，作法如下 <ul>
+    <li>将资料内容指定到COPYDATASTRUCT这个资料结构中。</li>
+    <li>必须使用SendMessage()送出 WM_COPYDATA讯息，讯息的短叁数是发讯端视窗的Handle值，长叁数的内容则是指向COPYDATASTRUCT的指标。</li>
+    <li>受讯端行程收到讯息时，以长叁数提供的线索依址取回资料。</li>
+  </ul>
+  <p>小俩口书信往返时系统是居中牵线的红娘。就在发讯视窗送出WM_COPYDATA讯息,受讯视窗取得内容之间，系统在背後默默接管记忆体管理的琐事。有关WM_COPYDATA的使用有一点需要提醒读者的，收讯端应该视这块记忆体是唯读的，如果後来程式处理需要这些资料，应该要先将之拷贝出来。</p>
+  <p>多亏有了这项特殊的性质，使得WM_COPYDATA与讯息沟通模型成为 Win32 
+  平台上少数同时支援 16-bit与32-bit应用程式的IPC机制。你可以在WM_COPYDATA目录找到范例程式TwinApp的完整原始程式。</p>
+</blockquote>
+
+<h3>IPC基本概念的讨论</h3>
+
+<blockquote>
+  <p>总结来说，上述的例子是两个行程彼此利用RegisterWindowMessage()注册所得的编号对送讯息，并且利用讯息的长短叁数进一步协定通讯的内容与细节，对於资料量比较大的资料则使用WM_COPYDATA。</p>
+  <p>眼尖的读者在检视TwinApp时也许会察觉到一些DDE的影子。当然，比起DDE来说，TwinApp范例程式的讯息沟通模型实在阳春，缺点也不少。不过我的用意本来就不在於一开始就写一个大型程式出来吓唬人；相反的，我打算提供一个简单的例子，并且从这个例子支解出有关行程通讯的几个重要的观念与特性，这些特性并不是TwinApp所独有的，对於其他IPC机制的讨论也有相同的价值，等我们扣紧了对IPC的感觉，再陆续讨论其他 
+  Win32 平台所支援的IPC机制。</p>
+  <p>话说内行的看门道，外行的看热闹。或许我算不得顶尖高手，但至少应该比看热闹的多看出一些东西来吧! 
+  :p 观察TwinApp这个例子 --<ul>
+    <li>行程之间彼此有共同的通讯协定</li>
+    <li>通讯的仅限於单机，稍候讨论的IPC有些则是可以跨过机器边界甚至网域.</li>
+    <li>Process在行程通讯中的角色扮演</li>
+  </ul>
+  <blockquote>
+    <p>一般来说，叁与IPC的行程可以归类成Client与Server两类，所谓的Server指的是提供服务的行程；Client指的是使用或向Server要求服务的行程。</p>
+    <p>真实的世界中，人的角色扮演是随情境而变的。我们会是别人的子女，但也同时是别人的爸妈; 
+    即使同样是夫妻，居家生活与外出场合的行为表现也有差异。界定某一程式是Client与Server的角色端视当时的情况而定并非绝对的。举例来说，文书处理软体可能向试算表要求库存统计资料，此时试算表扮演的是Server的角色，但在试算表向库存管理系统索取统计资料的场合，试算表则是Client。</p>
+    <p>以我们的第一个例子TwinApp来说，彼此既接收讯息，同时也主动发出讯息。既可以是Client也可以是Server，没有明显的主从之别，对於这样的情况，有一个专有名词叫「对等模式」(Peer-to-peer 
+    model) 。</p>
+  </blockquote>
+  <ul>
+    <li>同步与非同步的讨论</li>
+  </ul>
+  <blockquote>
+    <p>TwinApp使用SendMessage()送出讯息，程式会暂停在SendMessage()那行等待讯息处理结束返回後再继续下一列程式，这样的情况属於同步处理。同步(Synchronous)与非同步(Asynchronous)在IPC中是一个非常重要的论题，有必要先对这两个名词先做说明:</p>
+    <p>假设程序A呼叫程序B时，若是A先暂停一直等到程序B结束返回後再继续程序A的下一动作，我们称其为同步(Synchronous)；另一种情况是 
+    -- 如果A呼叫B之後，不等B执行完，就直接进行A的下一动作，则是所谓的不同步。</p>
+    <p>以提款机为例，我们会先插入卡片，输入密码，键入金额，然後是内部安全与帐务查核，最後收回卡片及金额，列印交易明细，一动接一动按步就班；同样是提款这件事，某位老板可以交待会计小姐去提款，交待完之後他就迳自去忙别的事，等到会计小姐提款回来，再向老板回报，这样的程序是所谓的非同步。</p>
+    <p>如果进一步观察提款这个例子：会计小姐什麽时候出门什麽时候回来是算不得准的，假定这位老板除了会计小姐之外，另外还交办旁人其他工作，可以预见的，不一定那一件工作会先做完。由於执行的次序无法预估，采用非同步方式设计的行程通讯将会多出许多协调与事件处理的工作，使得彼此之间总互相期待点什麽。</p>
+  </blockquote>
+  <ul>
+    <li>叁与通讯的行程个数，讯息资料的流向</li>
+  </ul>
+  <blockquote>
+    <p>在TwinApp中，简单的只有两个端点。但在实际应用的场合，Server通常得同时应付好几个Client的要求，如何妥善照顾到每一个Client同时要兼顾系统执行的效能，是门很大的学问。</p>
+    <p>当行程对行程搭起通讯的鹊挢时，这座挢是单行道或者是双向通行，同样也值得列入评估要素。不过有一点需要注意的: 
+    不论选择单工或双工的IPC机制，并不构成我们建立双向沟通无可跨越的天堑，话说山不转路转，盖两座单向的挢一样可以有双向通行的效果，不过就先天本质的特性来说，某些IPC机制确实比较容易作出双工的效果，当然也有天生大嘴巴适合用来广播的，例如本文稍後叙述的MailSlot。</p>
+  </blockquote>
+  <ul>
+    <li>资料的可视性与安全性</li>
+  </ul>
+  <blockquote>
+    <p>交换的资料在行程之间当然必须是可见的，TwinApp是用WM_COPYDATA交出资料。IPC有些技术是可以让行程共同存取资料的，稍候我们在 
+    Shared memory 时将有讨论.</p>
+  </blockquote>
+  <ul>
+    <li>是否需要有视窗或者纯Console Application也能应用.</li>
+  </ul>
+  <blockquote>
+    <p>TwinAPP是以SendMesasage()送出讯息，这表示需要有视窗才行得通。如果你设计的是纯Console 
+    Mode 的应用程式，那麽，选用不需要视窗Handle也行得通的IPC机制(例如pipe)会比较适合。 
+    </p>
+  </blockquote>
+  <ul>
+    <li>关於执行效能的讨论</li>
+  </ul>
+  <blockquote>
+    <p>许多人耽心IPC的执行效能，的确，先不说别的，光是启动另一个Process本身就比启动一个Thread 
+    的Overhead要高上很多。如果涉及协调的问题，建立一个Mutex的时间也比Critical 
+    section慢上不知多少倍。遗憾的是我们却也别无选择，因为Critical 
+    section在Multi-Thread中固然简单好用，但是不能用在跨越行程边界的场合。<br>
+    但是要说 IPC 
+    一定使得系统效能降低，未免也太过悲观了；平视与俯看的视野是不同的。这年头大家都将Client/Server挂在嘴边，充分运用合理分配整个公司的运算资源才能提高整体的效能，我想 
+    IPC 在这 自有其应用的价值与效益。</p>
+    <p>另外一个导致IPC执行效率不彰的元凶来自不良的设计，着名的例子是所谓的Busy-loop 
+    一个什麽也不做只有一行程式不断地期待的回圈。以稍早的老板与会计小姐为例，如果老板交办事情之後却将全部的事都停下来，来回踱步只为专心等着会计小姐回来，时间没有花在刀口上的结果当然效率不彰。找出效率的瓶颈设法调校是件长期奋战的工作，如同管理是持续不断的合理化。</p>
+    <p>此处还有一个迷思也有待澄清，同步与非同步对於执行效能的影响是视情况而定的，并不能说非同步一定会比同步快，抽样样本很小或资料量偏小时，同步往往比非同步快。比较公允的说法应该是：同时有好几件工作要处理时，整体来说「非同步」往往快一些。以刚才的提款的事情为例，老板亲自去提款未必比小姐慢，但是如果老板同时有好几件工作要处理时，非同步的好处就很明显了。</p>
+  </blockquote>
+</blockquote>
+
+<h3>Win32支援的IPC相关技术</h3>
+
+<blockquote>
+  <p>上述的讨论与其说是针对TwinApp的观察，不如说是针对IPC的综合讨论。观念的说明之後是技术层次的讨论。接下来陆续介绍的是Win32 
+  API支援的各项IPC机制 -- <ul>
+    <li>Clipboard</li>
+    <li>COM</li>
+    <li>Dynamic Data Exchange (DDE)</li>
+    <li>File Mapping</li>
+    <li>Mailslots</li>
+    <li>Pipes</li>
+    <li>RPC</li>
+    <li>Windows Sockets</li>
+    <li>WM_COPYDATA</li>
+  </ul>
+</blockquote>
+
+<h3>剪贴簿(Clipboard)</h3>
+
+<blockquote>
+  <p>人，其实是最佳的 IPC 机制，十分的聪明也十分的有弹性。</p>
+  <p>剪贴簿几乎是专为人类而设的标准资料交换中心。它最大的特色除了使用者导向之外，任何应用程式都允许改写其内容，同时它是可以跨越机器边界，交换的范围不仅限於单机内的各个行程。</p>
+  <p>由於它是纯使用者导向，使用剪贴簿的程式有一项传统是值得遵守的：如果不是基於使用者的操作，程式不应该主动去异动剪贴簿的内容；同样的道理，我们也不应该假设剪贴簿中有我们程式想要的资料，哪怕是不久前才刚放进去的，因为，使用者可能已经清除或改变其内容了。</p>
+  <p>剪贴簿几乎可以容纳任何的资料，除了标准支援的CF_TEXT、CF_BITMAP...等资料格式，我们可以自行注册登记其他格式的资料。但由於它的使用者导向，也由於任何程式都可以改写其内容，除非使用者愿意，不然坦白来说不太适合行程间的资料交换。这也使得应用设计IPC时，剪贴簿成为每支应用程式都标准支援但却也都适可而止的IPC机制。我们应该再多看看其他的资料交换方法。</p>
+</blockquote>
+
+<h3>File Mapping</h3>
+
+<blockquote>
+  <p>在早期MS-DOS时代还没有现在这麽多 IPC机制可供利用时，使用磁碟档案来交换资料可说是一般应用程式的唯一选择。时至今日，档案不仅没有从IPC领域中消失，反而是更加发扬光大了，然而观念上早已不纯粹界定在档案系统的实体档案。的确，资料位於何处的份际如今是越来越模糊了，虚拟的记忆体实际上是档案，虚拟的档案结果是记忆体。</p>
+  <p>Win32 API 中有一个好玩的东西叫做File-mapping；基本的观念是开启一个档案并将之对映到某一块记忆体，有趣的是，虽然程式是针对这块记忆体操作，实际上改变的却是档案。<br>
+  更好玩的是你不必真的在硬碟 
+  开一个实体档案，而是使用分页置换档(paging file)的一块空间权充当作档案。这个虚拟的档案空间(或者你要说是记忆体)可以为行程间共享，通常我们管它一个特别的名字叫 
+  Share-memory，共享记忆体。</p>
+  <p>由於它的确不是真正的档案，行程间不仅省去特定磁碟目录档案等约定，也毋须在意谁是最後走的要负责删除档案，当然啦，即使当机不会留下一些垃圾档案。彼此分享的是正好是同一块记忆体，资料一旦写入，这项改变也立即反应到别的行程。</p>
+  <p>使用ShareMemory的大致步骤如下所述 <ul>
+    <li>呼叫CreateFileMapping() API函数建立File-mapping核心物件.</li>
+  </ul>
+  <blockquote>
+    <p>CreateFileMapping()函数的第一个引数原本应该是CreateFile()开档所得的档案物件Handle，若是传入$FFFFFFFF则是以分页置换档(paging 
+    file)的一部划作共享记忆体。函数的最後一个引数是这块区域的叁考名称，行程间彼此将根据此一相同的识别名称叁考同一块共享记忆体。</p>
+    <p>FHandle := CreateFileMapping(<br>
+    &nbsp;&nbsp;&nbsp; $FFFFFFFF, // Shared memory File，Handle 传入 $FFFFFFFF<br>
+    &nbsp;&nbsp;&nbsp; nil, // 不设安全属性<br>
+    &nbsp;&nbsp;&nbsp; PAGE_READWRITE, // 
+    存取模式设定为可读写以便行程交换资料<br>
+    &nbsp;&nbsp;&nbsp; 0, // 使用 paging file 时一般将之设为零<br>
+    &nbsp;&nbsp;&nbsp; Size, // 共享记忆体的大小<br>
+    &nbsp;&nbsp;&nbsp; pchar(name)); // 
+    其他的行程将以此名称叁考到这块共享记忆体</p>
+  </blockquote>
+  <ul>
+    <li>由於各个行程各有其逻辑定址空间，在正式存取这块共享记忆体之前，我们得将其全部或部分映射回行程本身的位址空间中。呼叫MapViewOfFile()的用意即是在此，该函数将传回mapped 
+      view 「视野」的起头(就是指标啦)，接下来的就是用这个指标存取记忆体了。</li>
+  </ul>
+  <blockquote>
+    <p>FFileView := MapViewOfFile(<br>
+    &nbsp;&nbsp;&nbsp; Fhandle, // File-mapping object 的 Handle 值<br>
+    &nbsp;&nbsp;&nbsp; FILE_MAP_ALL_ACCESS, // 设为 FILE_MAP_ALL_ACCESS 开放存取<br>
+    &nbsp;&nbsp;&nbsp; 0, // 模式以便顺利存取共享记忆体<br>
+    &nbsp;&nbsp;&nbsp; 0,<br>
+    &nbsp;&nbsp;&nbsp; Size); // 预备映射回来的 byte 数</p>
+  </blockquote>
+  <ul>
+    <li>最後，别忘了使用UnmapViewOfFile()归还指标并呼叫CloseHandle()释放File-mapping核心物件。</li>
+  </ul>
+  <p>碍於篇辐，完整的程式码请读者叁阅ShareMem目录的 DemoSMem专案。另外，为了方便使用，这些CreateFileMapping(),MapViewOfFile()等函数已经包装进TSharedMem这个类别。</p>
+</blockquote>
+
+<h3>Mutex</h3>
+
+<blockquote>
+  <p>Shared memory的示范专案DemoSMem留下诸多悬疑待解，或许你也正有相同的疑问：既然两个行程都利用这块记忆体，那我们怎麽知道什麽时候资料改变了？此外，如何防止行程同时读写资料？</p>
+  <p>的确，行程通讯既是两个以上的个体，协调是必然存在的负担，要避免两个行程同时使用关键资源，Mutex(互斥器)的使用是你必备的技术。</p>
+  <p>从字面上解释，互斥意思是同一时间唯一；换句话说，同一时间最多只许握有Mutex的执行绪(Thread)有权使用关键资源，其他的执行绪若要使用只有等待。嗯! 
+  在Mutex与Event这两节我将暂时改口为执行绪，事实上这才是真正的CPU排程单位，由於每个行程至少有个Thread(主执行绪)，这样的称呼应该是与本文行程通讯的主旨不相违背的。</p>
+  <p>就像是注册讯息，共享记忆体一样(甚至稍後的Event，MailSlot，Pipe都是)，在我们取得核心物件的Handle前，都是以「名称」叁考的，产生一个Mutex的API函数是:CreateMutex(), 
+  以下范例采自本文所附的ChienIPC程式单元 </p>
+  <p>constructor TMutex.Create(const name: string);<br>
+  begin<br>
+  &nbsp;&nbsp;&nbsp; FHandle := CreateMutex(<br>
+  &nbsp;&nbsp;&nbsp; Nil, // 安全防护属性, 暂时传入nil采用预设值<br>
+  &nbsp;&nbsp;&nbsp; False, // 执行绪是否一开始就握有 mutex 的所有权<br>
+  &nbsp;&nbsp;&nbsp; pchar(name)); // Mutex核心物件的名称<br>
+  &nbsp;&nbsp;&nbsp; if FHandle = 0 then Abort;<br>
+  end;</p>
+  <p>好极了，现在我们有了一个Mutex，该怎麽使用呢? 
+  我用一个情节来说明：如果一群人在一起开会，每个人桌子前面各摆着一支麦克风，为了让大家听清楚彼此说什麽，这些麦克风暂时都是关的，规定只有主席可以透过中央控制系统开启回路。要说话的得先举手表示：「我要我要」，如果没有别人举手也没人正在发言，主席便打开开关将发言权交给他，然後这个人的手放下开始讲话。此时若是其他人也要讲话，根据规则得先举手，在别人讲完交出发言权前只有继续举手等待的份。当然，排队的人，可以选择手一直举着；或者他只打算等三分钟，手酸了就放下来。</p>
+  <p>执行绪要求拥有Mutex的方法是呼叫WaitForSingleObject()(我要我要，举手等待)，此时程式将暂停(Blocking)在这列。倘若此时正好没有别的执行绪拥有Mutex 
+  (没人讲话)，系统会短暂的将Mutex设为Signaled(激发状态)，使得WaitForSingleObject()正常返回，同时，系统也会将这个Mutex的所有权交给这个执行绪，然後程式继续执行，握有Mutex所有权者开始使用关键资源，并尽快在事後以ReleaseMutex()交出Mutex拥有权。</p>
+  <p>关於程式实入这部分请您叁阅DemoSMem范例程式的读取与写入程式，同样的，有关Mutex的API函数也已包装进TMutex类别方便你的使用。</p>
+</blockquote>
+
+<h3>Event</h3>
+
+<blockquote>
+  <p>讨论过行程之间以Mutex协调避让的技术之後，Shared memory的示范专案DemoSMem尚留下一个悬疑待解：既然两个行程都利用这块记忆体，那我们怎麽知道什麽时候资料被改变了呢? 
+  以一个回圈定期不断去抓资料回来比对不仅程式写起来累人，执行效率也很低落。</p>
+  <p>当然，回到一开始提出的方法，写入资料的行程用讯息一一个别通知其他合作夥伴是可以行得通，不过，事情该有更好的解决之道才是。Win32的核心物件中有一种叫Event(事件)物件，方便我们在某一事件发生时设定其状态以便叁与通讯的行程注意到某一件重要事情的发生。</p>
+  <p>产生一个Event物件的方法是呼叫CreateEvent() API函数:</p>
+  <p>HANDLE CreateEvent(<br>
+  &nbsp;&nbsp;&nbsp; LPSECURITY_ATTRIBUTES lpEventAttributes, <br>
+  &nbsp;&nbsp;&nbsp; BOOL bManualReset, // flag for manual-reset event<br>
+  &nbsp;&nbsp;&nbsp; BOOL bInitialState,// flag for initial state<br>
+  &nbsp;&nbsp;&nbsp; LPCTSTR lpName // address of event-object name<br>
+  );</p>
+  <p>同样的，最後一个引数是执行绪在取得Event Handle前叁考同一Event物件的识别名称，如果相同名称的Event物件稍早已经产生而且叁用次数尚未归零消灭，并不会多产生一个Event物件，系统只单纯的将其叁用次数加一，执行绪彼此得以叁考到同一个物件。第三个引数用来设定Event物件的初值是否为Signaled(激发状态) 
+  。第二个引数用来设定事件的激发状态是手动或自动；所谓手动与自动的分别在於事件的状态变成Signaled(激发状态)时，要由系统自动帮我们重设回非激发状态，或者由程式自行以ResetEvent()将事件设成非激发状态。</p>
+  <p>观察DemoSMem的作法是这样的：当某一个行程修改了Shared memory的内容时，该行程以SetEvent() 
+  API 函数将Event物件的状态设为Signaled(激发状态)，叁与行程通讯的各支程式在开跑之初，除了以相同的识别名称建立(叁用)Event物件之外，还特别分派另一个Thread专司侦测特定Event物件激发状态的任务,一旦物件激发了，表示一定某一个行程修改了Shared 
+  memory的资料，此时我们知道该是重新读取资料内容的时候了。</p>
+  <p>呼! 终於将Shared memory的范例程式DemoSMem讲完了，下图是它执行的画面，彼此看来是亳无关联，但是经由共同分享的记忆体与Mutex，Event两种同步协调技术，彼此正在密切交换意见。</p>
+  <p><br>
+  图: DemoSMem执行情形</p>
+</blockquote>
+
+<h3>MailSlot</h3>
+
+<blockquote>
+  <p>执行DemoSMem时如果让你有广播的感觉，接下来要说的MailSlot会让你更有广播的感觉，而且它是可以跨越机器边界向网路广播的。从字面上看来，这像是与寄信有关的通讯机制，实际上它的行为也的确与其名称相符合。MailSlot就像是你的信箱，只要知道地址，任何人都可以寄信给你，不过，只有你才可以打开信箱读信。</p>
+  <p>MailSlot是一种由系统维护的虚拟档案，建立并拥有Mailslot的行程扮演Server.的角色，其他的行程包含MailSlot 
+  Server本身的行程均可以开启MailSlot写入讯息，不过，只有MailSlot Server可以读取资料的内容。这是个单一Server多个Client的机制，同时，资料只允许由Client对Server单向传送。</p>
+  <p>我想你可能也习惯了，要产生一个MailSlot物件大概也需要一个识别名称吧! 
+  :p 说不定连CreateMailSlot()函数名称都猜得一字不差。不过，这次的名称可不像先前那样可以随便高兴取什麽就取什麽的，它具有以下的固定格式:</p>
+  <p><a href="file://ServerName/mailslot/[path]name">\\ServerName\mailslot\[path]name</a></p>
+  <p>我第一次看到时心想: 天哪! 这该怎麽填呀? 
+  边举例边说明会比较容易懂 </p>
+  <p>\\.\mailslot\MyMailSlotName MailSlot的识别名称一定从「\\」双倒斜线开始。接下来的是机器的名称或组群网域的名称，这 
+  的「.」句号代表的是行程所在的那部机器。再来是「\mailslot」，对於MailSlot，一定是这个单字照抄就是了。最後则是你自订的MailSlot名字。先前提到MailSlot实际上是特殊的虚拟档案，所以，要当它是档名应该也是说得通的。</p>
+  <p>的确，援引我们对於档案系统的概念，MailSlot的识别名称就像路径档名一样，可以经过适当的阶层加分类管理，例如: 
+  \\.\mailslot\Account\Note。最後再看一个例子: \\*\mailslot\MyMailSlotName，其中「*」指的是群组内的所有机器。</p>
+  <p>说得够多了，让我们动手做做看吧! 首先是建立MailSlot Server的例子，取自本文所附的ChienIPC这个程式单元 
+  </p>
+  <p>procedure TMailSlotServer.Open;<br>
+  var<br>
+  &nbsp;&nbsp;&nbsp; ASlotName: AnsiString;<br>
+  begin<br>
+  &nbsp;&nbsp;&nbsp; if FActive then Exit;<br>
+  &nbsp;&nbsp;&nbsp; // 构成 Mailslot 识别名称<br>
+  &nbsp;&nbsp;&nbsp; ASlotName := '\\' + FServerName + '\mailslot\' + FSlotName;<br>
+  &nbsp;&nbsp;&nbsp; FHandle := CreateMailslot(<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; pchar(ASlotName), // MailSlot 识别名称<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0, // 
+  讯息长度的最大值，设为零表示不限<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; MAILSLOT_WAIT_FOREVER, // read time-out<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; nil); // 
+  安全属性，先暂时采用预设值<br>
+  &nbsp;&nbsp;&nbsp; if FHandle = INVALID_HANDLE_VALUE then<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; FActive := False<br>
+  &nbsp;&nbsp;&nbsp; else<br>
+  &nbsp;&nbsp;&nbsp; begin<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; FActive := True;<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; FWaitThread.Resume;<br>
+  &nbsp;&nbsp;&nbsp; end;<br>
+  end;</p>
+  <p>再强调一次，只有MailSlolt Server才可以读取资料，读取的方法是先以GetMailslotInfo()侦测讯息的长度与数量，然後以回圈逐一配置记忆体并以ReadFile()读出资料(别忘了MailSlot也是档案)，以下是一则范例:</p>
+  <p>procedure TMailSlotServer.ReadFromMailSlot;<br>
+  var<br>
+  &nbsp;&nbsp;&nbsp; NextSize: DWORD;<br>
+  &nbsp;&nbsp;&nbsp; MessageCount: DWORD;<br>
+  &nbsp;&nbsp;&nbsp; Result: BOOL;<br>
+  &nbsp;&nbsp;&nbsp; Buffer: pchar;<br>
+  begin<br>
+  &nbsp;&nbsp;&nbsp; if FHandle = INVALID_HANDLE_VALUE then Exit;<br>
+  &nbsp;&nbsp;&nbsp; // 侦测 MailSlot 中是否有资料<br>
+  &nbsp;&nbsp;&nbsp; Result := GetMailslotInfo(Fhandle, nil, <br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; NextSize, @MessageCount, nil);<br>
+  &nbsp;&nbsp;&nbsp; if not Result or (NextSize = MAILSLOT_NO_MESSAGE) then<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Exit;<br>
+  &nbsp;&nbsp;&nbsp; // 如果还有资料 (MessageCount &lt;&gt; 0)，逐一读出资料<br>
+  &nbsp;&nbsp;&nbsp; while Result and (MessageCount &lt;&gt; 0) do<br>
+  &nbsp;&nbsp;&nbsp; begin<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; // 资料的长度<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Buffer := AllocMem(NextSize + 1);<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; try<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; // 读出资料<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; FileRead(Fhandle, 
+  Buffer^, NextSize);<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; if 
+  Assigned(FOnDataAvailable) then<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; FOnDataAvailable(Self, 
+  StrPas(Buffer));<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; finally<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; FreeMem(Buffer, 
+  NextSize + 1);<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; end;<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; // 继续看看 MailSlot 中还有没有资料<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Result := GetMailslotInfo(Fhandle, nil,<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; NextSize, @MessageCount, nil);<br>
+  &nbsp;&nbsp;&nbsp; end;<br>
+  end;</p>
+  <p>至於MailSlot的Client程式则没有什麽好说的，就当是档案迳行开启与写入即可：</p>
+  <p>procedure TMailSlotClient.Open;<br>
+  var<br>
+  &nbsp;&nbsp;&nbsp; ASlotName: string;<br>
+  begin<br>
+  &nbsp;&nbsp;&nbsp; if FActive then Exit;<br>
+  &nbsp;&nbsp;&nbsp; // MailSlot 的识别名称<br>
+  &nbsp;&nbsp;&nbsp; ASlotName := '\\' + FServerName + '\mailslot\' + FSlotName;<br>
+  &nbsp;&nbsp;&nbsp; // 开启 MailSlot(档案)<br>
+  &nbsp;&nbsp;&nbsp; FHandle := CreateFile(pchar(ASlotName), <br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; GENERIC_WRITE, // Client 端对於 MailSlot 
+  只能写入<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; FILE_SHARE_READ, // 设定为可供分享读取<br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Nil, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);<br>
+  &nbsp;&nbsp;&nbsp; FActive := FHandle &lt;&gt; INVALID_HANDLE_VALUE;<br>
+  end; </p>
+  <p>function TMailSlotClient.WriteIntoMailSlot(<br>
+  &nbsp;&nbsp;&nbsp; const Data: string): integer;<br>
+  begin<br>
+  &nbsp;&nbsp;&nbsp; Result := 0;<br>
+  &nbsp;&nbsp;&nbsp; if FHandle = INVALID_HANDLE_VALUE then Exit;<br>
+  &nbsp;&nbsp;&nbsp; Result := FileWrite(Fhandle, Data[1], Length(Data));<br>
+  end;</p>
+  <p>稍早提到MailSlot适合於跨越机器边界的网路广播, 
+  可是我也说明了只有MailSlot Server才可以读取资料，那要怎麽广播啊？答案在於MailSlot的名称。别的机器如果也用相同的名称建立MailSlot 
+  Server，一旦任一个Client对某一个MailSlot(也是经由名称来叁考)送出讯息，这份讯息会游向网路节点上各个指定同名的MailSlot，这样子就达成广播的效果。至於讯息是怎麽流来流去的，就留给系统与网路底层去伤脑筋了，程式只管以档案写入资料的方式送出资料即可。</p>
+  <p>使用MailSlot时很可能你会遇到讯息重覆的问题；也就是说，虽然MailSlot 
+  Client端只写了一个讯息，但相同的讯息MailSlot Server却可能收到两份。原因是这样的：由於Win32多重通讯协定的缘故，MailSlot在广播时，并不知道到底该采用哪一条路径，於是便各种可能的通路都传了一份。情况有点像在发布台风警报，我们在电视，广播与网路都同时会晓得有台风要来的消息。解决的方法是在资料开头处加上一些控制用的编号代码，Server据以判断是否是相同的资料。</p>
+  <p>像MailSlot这样的通讯机制可以应用在哪些场合呢? 着名的例子是WinPopup，刚才我也写了一支阳春的, 
+  次图是MyWinpop.exe 执行的情况。由於MailSlot广播的特性，十分适合网管时用来知会使用者重要的讯息，此外，MIS系统也可以用它适时的报告异常状况，各使用者如果在「开始┃启动」中都放置这支小程式，彼此便可以之交换讯息，当讯号进来时，也会立即显示讯息的内容。</p>
+  <p><br>
+  图: MyWinPop.exe执行情形</p>
+  <p>当然，你还可以想得到其他的应用。像我就觉得它很适合用来作为程式除错工具，不仅可以将程式执行的过程与情况记录下来，而且程式在网路上各节点的执行状况也将源源而来，这是一般的测试方法所不容易达成的效果。</p>
+</blockquote>
+
+<h3>Pipe</h3>
+
+<blockquote>
+  <p>看过广播式的 MailSlot後，Pipe则是点对点的通讯机制，资料允许单向或双向於管子连接的两端移动。pipe可分为Anonymous 
+  pipe与Named pipe 两种，Anonymous pipe的资料只能单向流动，而且仅限於单机内使用，但却是行程重导其标准输出(Standard 
+  Output)成为另一行程之标准输入的方法；Named pipe 
+  就如同先前讨论的各项IPC机制，由於有一个识别名称，其他的行程很容易可以依照名称找过来，通讯范围不限於单机，同时，资料允许双向流通。</p>
+</blockquote>
+
+<h3>DDE</h3>
+
+<blockquote>
+  <p>如同本文第一个TwinApp这个例子，DDE也是建立在讯息通讯这个基础上的，不过它的协定内容显然严谨很多。</p>
+  <p>DDE是由Client端以WM_DDE_INITIATE广播讯息起拉开通话的序幕，Server端受理後以WM_DDE_ACK回应，连通後则是一连串Server与Client间彼此互送WM_DDE_DATA、WM_DDE_REQUEST、WM_DDE_ACK等讯息。实际的资料并不是真的经由讯息传递，而是提供线索彼此利用Atoms(由Windows系统提供的字串对照表)寻求Application(应用程式), 
+  Topic(主题)与Data(资料)等三个项目。最後，以WM_DDE_TERMINATE讯息结束对话。</p>
+  <p>行程间建立DDE连接时，当Server端的资料改变时，依资料交换的频繁与Client的主动程度，其通道的形态可分为：<ul>
+    <li>Cold Link：来要才有；Client端得主动要求传送资料，如果没有来要，即使Server的资料已经改变很多了，Server对Client也置之不理。</li>
+    <li>Hot Link：有变就给；当资料改变时，Server端将主动通知Client改变的内容。</li>
+    <li>Warm Link：更新通知；当资料改变时，Server端只对Client端告知资料改变的消息，真正的资料要等Client提出要求才会送出。</li>
+  </ul>
+  <p>由於DDE讯息通讯牵涉的实作细节颇多，为了使用方便起见，微软也提供DDE管理函式库(The 
+  DDE Management Library, 简称 DDEML), 使用上的最大差别在於使用DDEML的程式是用Callback函数处理DDE交易(Transaction) 
+  。另外，三大项目的Application改口叫做(Service name)服务。</p>
+  <p>时至今日，讨论DDE的文献已不在少数，的确，DDE的使用应该是容易许多了，几乎没有一个Windows程式开发工具不提供一些元件或类别让程式员更方便制作DDE 
+  Server或Client程式。当然，如果你的需求只是在行程间通知某些消息，自行设计一套讯息通讯协定倒也简单得以完成任务，我想本文的第一个例子TwinApp是一个不错的提示。</p>
+</blockquote>
+
+<h3>其他的IPC技术</h3>
+
+<blockquote>
+  <p>EXE通常呼叫DLL的输出函数(exports function)，某些情况下DLL也会使用EXE 
+  事先预备的回呼(Callback)函数。函数呼叫这个观念与想法如果移植到行程通讯中会发生什麽事呢? 
+  我的意思是说，让一个行程呼叫另一个行程的函数。Ya! 
+  这就是所谓的 RPC，行程之间属於函数呼叫层级的合作。可以想见的，由於行程各有其定址空间，如同OLE，要达到 
+  RPC确实需要额外标准的介面加以定义。</p>
+  <p>有关IPC的技术与观念我们已经介绍得不少了，不论是讯息交换，剪贴簿，Shared 
+  memory，DDE，MailSlot，Pipe等等，几乎都是资料的交换或者Client与Server「要求-回应」，叁与通讯的行讯必须对於交换的资料有一定程度的了解与处理能力。换句话说，在我们以DDE向试算表软体要求传回资料後，这份资料到底代表什麽得自己解释；同样的，如果要传入资料到试算表软体，即使透过现成元件的帮忙，仍然必须对试算表软体有基本的认识。</p>
+  <p>话说回来了，只有试算表自己最清楚资料代表什麽，不是吗？那麽，由它来处理资料应该才是适当的人选，强以外部程式去操作总有外行人指导内行人的遗憾。利用OLE技术将应用程式整合在一起工作确实是比较合理的作法，如果COM物件可以像电子IC一样安插进我们的程式与我们的程式一同工作，那这种我们称之为OLE 
+  Control(ActiveX)，距离拉大到网路上，DCOM这个名词你一定听说过.</p>
+  <p>想想看，终於我们可以用甲公司的统计图表元件，然後用乙公司的元件将图表传真出去，这样窗景真是美好。窗子确实只提供局部的风景，但是加装了望远镜的窗子可是一个天文台，加了风铃的窗子所提供的就不只是风景了，还有悦耳的声音。</p>
+  <p>不论是RPC或OLE，我想这都是属於本文应该讨论但肯定是来不及讨论的，这两个主题甚至以单篇文章来谈都不怎麽够用。事实上，有些地方(例如DDE这一节)我也没有提到技术方面的实作细节，碍於篇辐(这篇文章已经太长了) 
+  日後我们会在本专栏继续以专文介绍RPC等主题。关於以Winsock作为IPC通讯机制这部分，本专栏的前一篇文章「走! 
+  让我们上BBS聊天去」才刚说明过，在此就不再重覆了。</p>
+</blockquote>
+
+<h3>应用IPC到你的程式中</h3>
+
+<blockquote>
+  <p>各项IPC的技术往往以各种方式组合在一起。例如本文提供的DemoSMem范例程式就同时用了ShareMem交换资料，同步机制则采用Mutex与Event。情况并不如想像中的复杂：既是行程通讯，那必然是两个以上行程之间的事，既是分开的，中间一定有介面存在，定义这个介面的具体内容就是所谓的协定，留意资料交换的位置与方式，需要协调避让的采用合适的同步控制加以处理。这些重点把握住了，应该心 
+  就已经有数了。</p>
+  <p>面对各式各样的技术时，如果你正考虑应用IPC到你的程式中，首先得正视自己的需求，不妨提出类似以下的问题问问自己，最好将之写下来 
+  <ul>
+    <li>是否真的需要跨行程处理，成效何在？</li>
+    <li>技术实作的难易程度与所需付出的成本</li>
+    <li>资料的流向是单向或双向，需不需反馈(feedback)的控制查核</li>
+    <li>这些工作只在单机完成，或者需要连上网路，范围只在公司内部区域网路或者是广域网路</li>
+    <li>叁与通讯的行程最多与平均的数量是多少？</li>
+    <li>只在一种作业环境，或者可能同时要满足不同的作业平台</li>
+    <li>执行效能( performance)是不是关键需求.</li>
+    <li>应用程式使用 GUI 介面或者 console mode</li>
+  </ul>
+  <p>接下来开始比较各项IPC的特性，哪些是与你列出的需求相符合的，有没有哪些限制是你必须要排除而避免使用的，各项IPC经过与先前写下的需求交叉评比的结果，积分高的自然是脱颖而出。最後，事情如果能简单解决是最好，开发时程缩短成本自然降低，而且日後维护容易。</p>
+</blockquote>
+
+<h3>结语</h3>
+
+<blockquote>
+  <p>技术是不断推陈出新的，当各式各样的IPC机制提出时，回顾行程之所以开始通讯合作的初衷是有必要的，唯有回到最初原始的简单需求，才能看出技术演进过程的缘由与其修正的价值，不断的变易之中我们可以粹化出一些不变的原则与观念，而这些原则应该是与最初的需求互相吻合的。</p>
+  <p>以IPC这麽大的题目只写一篇文章是件很痛苦的事，我不清楚有多少读者会期待以一篇文章能将IPC的技术细节讲清楚，不过已尽我所能的交待来龙去脉。观念与说理太占篇幅，大部分的技术细节是隐藏在范例的原始程式中，这些程式日後如有修改或加强，您可以在我的网站(http://www.chih.com)找到更新後的版本，对於本文如有任何意见或评论，也欢迎您E-mail与我联络, 
+  来信请寄wolfgang@ms2.hinet.net <a href="mailto:或chien@chih.com">或chien@chih.com</a>。</p>
+</blockquote>
+
+<hr>
+
+<p>叁考资料 
+
+<ul>
+  <li>Charles Petzold, Programming Windows 95</li>
+  <li>Jim Beveridge &amp; Robert Wiener着, 侯俊杰译, Win32多绪程式设计, 
+    Multithreading Application in Win32</li>
+  <li>MSDN Library CD, 1997/7, SDK Documentation / Platform SDK / Windows base services / 
+    Interprocess Communication</li>
+</ul>
+</body>
+</html>

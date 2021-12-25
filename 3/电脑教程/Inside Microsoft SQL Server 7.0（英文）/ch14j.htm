@@ -1,0 +1,220 @@
+<HTML>
+<HEAD>
+<link rel="STYLESHEET" type="text/css" href="squeal7.css">
+<TITLE>Resolving Blocking Problems</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch14i.htm">[Previous]</A> <A HREF="ch14k.htm">[Next]</A><P>
+
+<A NAME="554"><H1>Resolving Blocking Problems</H1></A>
+<P>Many applications suffer poor performance because processes are backed 
+up waiting to acquire locks or because of deadlocks. A smooth, fast 
+application should minimize the time spent waiting for locks, and it should avoid 
+deadlocks. The most important step you can take is to first understand how locking works.
+</P>
+
+<P>A process <I>blocks</I> when it stalls while waiting to acquire a lock that is 
+incompatible with a lock held by some other process. This condition is often, 
+but erroneously, referred to as a &quot;deadlock.&quot; As long as the process being stalled 
+is not, in turn, stalling the offending process&#8212;which results in a circular chain 
+that will never work itself out without intervention&#8212;you have a blocking 
+problem, not a deadlock. If the blocking process is simply holding on to locks or is 
+itself blocked by some other process, this is not a deadlock either. The process 
+requesting the lock must wait for the other process to release the incompatible 
+lock; when it does, all will be fine. Of course, if the process holds that lock 
+excessively, performance still grinds to a halt and you must deal with the blocking 
+problem. Your process will suffer from bad performance and might also hold locks 
+that stall other processes; every system on the network will appear to hang.
+</P>
+
+<P>The following guidelines will help you avoid or resolve blocking problems:
+</P>
+
+<UL>
+<P><LI>Keep transactions as short as possible. Ideally, a BEGIN TRAN&#8230; COMMIT TRAN block will include only the actual DML 
+statements that must be executed. To the extent possible, do conditional 
+logic, variable assignment, and other &quot;setup&quot; work before the 
+BEGIN TRAN. The shorter the transaction lasts, the shorter the time 
+that locks will be held. Keep the entire transaction within one batch 
+if possible.
+</LI></P>
+
+<P><LI>Never add a pause within a transaction for user input. This rule 
+is basically a part of the previous one, but it is especially important. 
+Humans are slow and unreliable compared to computers. Do not add 
+a pause in the middle of the transaction to ask a user for input or 
+to confirm some action. The person might decide to get up to take 
+a coffee break, stalling the transaction and making it hold locks 
+that cause blocking problems for other processes. If some locks must 
+be held until the user provides more information, you should set 
+timers in your application so that even if the user decides to go to 
+lunch, the transaction will be aborted and the locks will be released. 
+Similarly, give your applications a way to cancel out of a query if such 
+an action is necessary. Alternatively, you can use the 
+LOCK_TIMEOUT session option to control when SQL Server automatically cancels 
+out of a locking situation. We'll look at this option later in this chapter.
+</LI></P>
+
+<P><LI>When you process a result set, process all rows as quickly as 
+possible. Recall from <a href="ch03a.htm">Chapter 3</a> that an application that stops processing 
+results can prevent the server from sending more results and stall 
+the scanning process, which requires locks to be held much longer.
+</LI></P>
+
+<P><LI>For browsing applications, consider using cursors with 
+optimistic concurrency control. An address book application is a good 
+example of a browsing application: users scroll around to look at data 
+and occasionally update it. But the update activity is relatively 
+infrequent compared to the time spent perusing the data. Using scrollable 
+cursors with the OPTIMISTIC locking mode is a good solution for such 
+applications. Instead of locking, the cursor's optimistic concurrency 
+logic determines whether the row has changed from the copy that your 
+cursor read. If the row has not changed, the update is made 
+without holding locks during the lengthy period in which the user is 
+perusing the data. If the row has changed, the UPDATE statement 
+produces an error and the application can decide how to respond. 
+Although you were strenuously cautioned in <a href="ch11a.htm">Chapter 11</a> about the misuse 
+of cursors, they are ideally suited to browsing applications.</LI></P>
+
+<P>You can also easily implement your own optimistic locking 
+mechanism without using cursors. Save the values of the data you 
+selected and add a WHERE clause to your update that checks whether 
+the values in the current data are the same as those you retrieved. 
+Or, rather than use the values of the data, use a SQL Server 
+<I>timestamp</I> column&#8212;an ever-increasing number that's updated whenever the 
+row is touched, unrelated to the system time. If the values or 
+timestamp are not identical, your update will not find any qualifying row 
+and will not affect anything. You can also detect changes with 
+@@ROWCOUNT and decide to simply abort, or more typically, you can 
+indicate to the user that the values have changed and then ask 
+whether the update should still be performed. But between the time the 
+data was initially retrieved and the time the update request was 
+issued, shared locks are not held, so the likelihood of blocking and 
+deadlocks is significantly reduced.
+</P>
+</UL>
+
+<A NAME="555"><H2>Indexes and Blocking</H2></A>
+<P>We've already recommended that you choose your indexes wisely, strictly 
+for performance reasons. However, concurrency concerns are also a reason to 
+make sure you have good indexes on your tables. (Of course, better concurrency 
+can also lead to better performance.) We saw in <a href="ch13a.htm">Chapter 13</a> that SQL Server 
+acquires row (or key) locks whenever possible. However, this does not always mean 
+that no other rows are affected if you are updating only one row in a table. 
+Remember that to find the row to update, SQL Server must first do a search and 
+acquire UPDATE locks on the resources it inspects. If SQL Server does not have a 
+useful index to help find the desired row, it uses a table scan. This means every row 
+in the table acquires an update lock, and the row actually being updated 
+acquires an exclusive lock, which is not released until the end of the transaction. 
+The following shows a small example that nevertheless illustrates the 
+crucial relationship between indexes and concurrency.
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+USE pubs
+go
+DROP TABLE t1
+go
+/* First create and populate a small table. */
+CREATE TABLE t1 (a int)
+go
+INSERT INTO t1 VALUES (1)
+INSERT INTO t1 VALUES (3)
+INSERT INTO t1 VALUES (5)
+go
+
+BEGIN tran 
+UPDATE t1 
+SET a = 7 WHERE a = 1
+
+EXEC sp_lock @@spid
+/* The output here should show you one X lock, on a RID; that is the 
+   row that has been updated. */
+/* In another query window, run this batch before rollback is 
+   issued: */
+
+USE pubs
+UPDATE t1
+SET a = 10
+WHERE a = 3
+
+/* Execute the rollback in the first window. */
+ROLLBACK TRAN
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>You should have noticed that the second connection was unable to 
+proceed. To find the row where a = 3, it tries to scan the table, first acquiring 
+update locks. However, it cannot obtain an update lock on the first row, which 
+now has a value of 7 for <I>a</I>, because that row is exclusively locked. Since SQL 
+Server has no way to know whether that is a row it is looking for without being 
+able to even look at it, this second connection blocks. When the rollback occurs in 
+the first connection, the locks are released and the second connection can finish.</p>
+
+<p>Let's see what happens if we put an index on the table. We'll run the 
+same script again, except we'll build a nonclustered index on column 
+<I>a</I>.
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+USE pubs
+go
+DROP TABLE t1
+go
+/* First create and populate a small table. */
+CREATE TABLE t1 ( a int)
+Go
+CREATE INDEX idx1 ON t1(a)
+go
+INSERT INTO t1 VALUES (1)
+INSERT INTO t1 VALUES (3)
+INSERT INTO t1 VALUES (5)
+go
+
+BEGIN tran 
+UPDATE t1 
+SET a = 7 WHERE a = 1
+
+EXEC sp_lock @@spid
+/* In this case, the output should show you three X locks (one again on 
+a RID) and two KEY locks. When the key column a is changed, the leaf 
+level of the nonclustered index is adjusted. Since the leaf level of 
+the index keeps all the keys in sorted order, the old key with the 
+value 1 is moved from the beginning of the leaf level to the end, 
+because now its value is 7. However, until the transaction is over, a 
+ghost entry is left in the original position and the key lock is 
+maintained. So there are two key locks: one for the old value and one 
+for the new. */
+/* In another query window, run this batch before rollback is issued: */
+
+USE pubs
+UPDATE t1
+SET a = 10
+WHERE a = 3
+
+/* Execute the rollback in the first window. */
+ROLLBACK TRAN
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>This time the second query succeeded, even though the first query 
+held X locks on the keys in the leaf level of the index. The second connection 
+was able to generate the lock resource string for the keys it needed to lock, and 
+then only request locks on those particular keys. Since the keys the second 
+connection requested were not the same as the keys that the first connection 
+locked, there was no conflict over locking resources and the second connection 
+could proceed.
+</P>
+
+</BODY>
+</HTML>
+
+
+

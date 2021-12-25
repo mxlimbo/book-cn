@@ -1,0 +1,277 @@
+<HTML>
+<HEAD>
+	<link rel="STYLESHEET" type="text/css" href="squeal7.css">
+<TITLE>Triggers</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch10e.htm">[Previous]</A> <A HREF="ch10g.htm">[Next]</A><P>
+
+<A NAME="403"><H1>Triggers</H1></A>
+
+<P>A trigger is a special type of stored procedure that is fired on an 
+event-driven basis rather than by a direct call. Here are some common uses for triggers:</P>
+
+<UL>
+<P><LI>
+To maintain data integrity rules that extend beyond simple 
+referential integrity.
+</LI></P>
+
+<P><LI>
+To keep running totals updated.
+</LI></P>
+
+<P><LI>
+To keep a computed column updated.
+</LI></P>
+
+<P><LI>
+To implement a referential action, such as cascading deletes.
+</LI></P>
+
+<P><LI>
+To maintain an audit record of changes.
+</LI></P>
+
+<P><LI>
+To invoke an external action, such as beginning a reorder process if inventory falls below a certain level or sending e-mail or a 
+pager notification to someone who needs to perform an action because of data changes.
+</LI></P>
+</UL>
+
+<P>A trigger can be set up to fire when data is changed in some way&#8212;that 
+is, via an INSERT, an UPDATE, or a DELETE statement. Multiple triggers 
+can be defined on a table for each event, and each trigger can invoke many 
+stored procedures as well as carry out many different actions based on the values of 
+a given column of data. However, there is no way to control the order of 
+firing of triggers on the same table. For example, if you have three INSERT 
+triggers on the <I>inventory</I> table, they will all be executed whenever rows are inserted 
+into the table, but they could be executed in any order. If it is crucial that 
+certain steps happen in a prescribed order, you should reconsider whether you 
+really need to split the steps into multiple triggers.</P>
+
+<P>A single trigger can be created to execute for any or all the 
+INSERT, UPDATE, and DELETE actions, which modify data. Currently, SQL 
+Server offers no trigger on a SELECT statement, since SELECT does not modify 
+data. In addition, triggers can exist only on base tables, not on views. (Of course, 
+data modified through a view does cause a trigger on the underlying base table 
+to fire.)</P>
+
+<P>A trigger is executed once for each UPDATE, INSERT, or 
+DELETE statement, regardless of the number of rows it affects. Although it is 
+sometimes thought that a trigger is executed once per row or once per transaction, 
+neither of these assumptions is correct, strictly speaking. Let's see a simple example 
+of this. The script below creates and populates a small table with three rows. It 
+will then build a trigger on the table to be fired when a DELETE statement is 
+executed for this table:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+CREATE TABLE test_trigger
+(col1 int,
+ col2 char(6) )
+GO
+INSERT INTO test_trigger VALUES (1, 'First')
+INSERT INTO test_trigger VALUES (2, 'Second')
+INSERT INTO test_trigger VALUES (3, 'Third')
+INSERT INTO test_trigger VALUES (4, 'Fourth')
+INSERT INTO test_trigger VALUES (5, 'Fifth')
+GO
+CREATE TRIGGER delete_test
+ON test_trigger FOR DELETE 
+AS
+PRINT 'You just deleted a row!'
+GO
+</pre></p>
+</td></tr></table>
+
+<P>Now let's put the trigger to the test. What do you think would 
+happen when the following statement is executed?</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+DELETE test_trigger
+WHERE col1 = 0
+</pre></p>
+</td></tr></table>
+
+<P>If you execute this statement, you'll see the following message:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+You just deleted a row!
+</pre></p>
+</td></tr></table>
+
+<P>The message appears because the DELETE statement is a legal 
+DELETE from the <I>test_trigger </I>table. The trigger is fired once no matter how many 
+rows are affected, even if the number of rows is 0! To avoid executing code that 
+is meaningless, it is not uncommon for the first statement in a trigger to check 
+to see how many rows were affected. We have access to the 
+@@ROWCOUNT function, and if the first thing the trigger does is check its value, it will 
+reflect the number of rows affected by the data modification statement that caused 
+the trigger to be fired. So we could change the trigger to something like this:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+CREATE TRIGGER delete_test
+ON test_trigger FOR DELETE 
+AS
+IF @@rowcount = 0 RETURN
+PRINT 'You just deleted a row!'
+</pre></p>
+</td></tr></table>
+
+<P>The trigger will still fire, but it will end almost as soon as it begins. 
+You can also inspect our trigger's behavior if many rows are affected. What do 
+you think would happen when the following statement is executed?</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+DELETE test_trigger
+</pre></p>
+</td></tr></table>
+
+<P>A DELETE without a WHERE clause means all the rows will be 
+removed, and we get the following message:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+You just deleted a row!
+
+(5 row(s) affected)
+</pre></p>
+</td></tr></table>
+
+<P>Again, the trigger was only fired once, even though more than one 
+row was affected.</P>
+
+<P>If a statement affects only one row or is a transaction unto itself, the 
+trigger will exhibit the <I>characteristics</I> of per-row or per-transaction execution. 
+For example, if a WHILE loop were set up to perform an UPDATE 
+statement repeatedly, an update trigger would execute each time the UPDATE 
+statement was executed in the loop.</P>
+
+<P>A trigger fires after the data modification statement has performed its 
+work but before that work is committed to the database. Both the statement and 
+any modifications made in the trigger are implicitly a transaction (whether or 
+not an explicit BEGIN TRANSACTION was declared). Therefore, the trigger 
+can roll back the data modifications that caused the trigger to fire. A trigger has 
+access to the before image and after image of the data via the special 
+pseudotables<I> inserted</I> and <I>deleted</I>. These two tables have the same set of columns as 
+the underlying table being changed. You can check the before and after values 
+of specific columns and take action depending on what you encounter. These 
+tables are not physical structures&#8212;SQL Server constructs them from the 
+transaction log. In fact, you can think of the 
+<I>inserted</I> and <I>deleted</I> tables as views of the 
+transaction log. This is why an unlogged operation such as a bulk copy or 
+SELECT INTO does not cause triggers to fire. For regular logged operations, a 
+trigger will always fire if it exists and has not been disabled. A trigger can be
+disabled by using the DISABLE TRIGGER clause of the ALTER TABLE statement.</P>
+
+<P>The <I>inserted</I> and <I>deleted</I> 
+pseudotables<I> </I>cannot be modified directly 
+because they don't actually exist. As mentioned earlier, the data from these tables 
+can be queried only. The data they appear to contain is based entirely on 
+modifications made to data in an actual, underlying base table. The 
+<I>inserted </I>and <I>deleted</I> pseudotables will contain as many rows as the 
+insert, update, or delete statement affected. Sometimes it is necessary to work on a row-by-row 
+basis within the pseudotables, although, as usual, a set-based operation is 
+generally preferable to row-by-row operations. You can perform row-by-row 
+operations by executing the underlying insert, update, 
+or delete in a loop so that any single execution affects only one row, or you can perform the 
+operations by opening a cursor on one of the 
+<I>inserted</I> or <I>deleted</I> tables within the trigger. </P>
+
+<A NAME="404"><H2>Rolling Back a Trigger</H2></A>
+
+<P>Executing a ROLLBACK from within a trigger is different from executing 
+a ROLLBACK from within a nested stored procedure. In a nested stored 
+procedure, a ROLLBACK will cause the outermost transaction to abort, but the flow 
+of control continues. However, if a trigger results in a ROLLBACK 
+(because of a fatal error or an explicit ROLLBACK command), the entire batch is aborted.</P>
+
+<P>Suppose that the following pseudocode batch is issued from the 
+Query Analyzer:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+begin tran
+delete....
+update....
+insert.... -- This starts some chain of events that fires a trigger
+           -- that rolls back the current transaction
+update.... -- Execution never gets to here - entire batch is 
+           -- aborted because of the rollback in the trigger
+if....commit  -- Neither this statement nor any of the following 
+              -- will be executed
+else....rollback
+begin tran....
+insert....
+if....commit
+else....rollback
+
+GO            -- isql batch terminator only
+
+select ...    -- Next statement that will be executed is here
+</pre></p>
+</td></tr></table>
+
+<P>As you can see, once the trigger in the first INSERT statement aborts 
+the batch, SQL Server not only rolls back the first transaction but skips the 
+second transaction completely and continues execution following the GO.</P>
+
+<P>Misconceptions about triggers include the belief that the trigger 
+cannot do a SELECT statement that returns rows and that it cannot execute a 
+PRINT statement. Although you can use SELECT and PRINT in a trigger, doing 
+these operations is usually a dangerous practice unless you control all the 
+applications that will work with the table that includes the trigger. Otherwise, 
+applications not written to expect a result set or a print message following a change in 
+data might fail because that unexpected behavior occurs anyway. For the most 
+part, you should assume the trigger will execute invisibly, and that if all goes well, 
+users and application programmers will never even know that a trigger was fired.</P>
+
+<P>Be aware that if a trigger modifies data in the same table on which 
+the trigger exists, using the same operation (INSERT, UPDATE or 
+DELETE) won't, by default, fire that trigger again. That is, if you have an UPDATE 
+trigger for the <I>inventory</I> table that updates the 
+<I>inventory</I> table within the trigger, the trigger will not be fired a second time. You can change this behavior by 
+allowing triggers to be recursive. This is controlled on a database-by-database basis 
+by setting the option <I>recursive triggers</I> to TRUE. It's up to the developer to 
+control the recursion and make sure it terminates appropriately. However, it will 
+not cause an infinite loop if the recursion isn't terminated because, just like 
+stored procedures, triggers can be nested only to a maximum level of 32. Even 
+if recursive triggers have not been enabled, if separate triggers exist for 
+INSERT, UPDATE, and DELETE statements, one trigger on a table could cause 
+other triggers on the same table to fire (but only if 
+<I>sp_configuration 'nested triggers'</I> is set to 1, as we'll see in a moment).</P>
+
+<P>A trigger can also modify data on some other table. If that other table 
+has a trigger, whether or not that trigger also fires depends on the 
+current <I>sp_configuration</I> value for the <I>nested 
+triggers</I> option<I>.</I> If that option is set to 
+1 (TRUE), which is the default setting, triggers will cascade to a maximum 
+chain of 32. If an operation would cause more than 32 triggers to fire, the batch 
+will be aborted and any transaction will be rolled back. This prevents an infinite 
+cycle from being encountered. If your operation is hitting the limit of 32 
+firing triggers, you should probably look at your design&#8212;you've reached a point 
+at which there are no longer any simple operations, so you're probably not 
+going to be ecstatic with the performance of your system. If your operation truly 
+is so complex that you need to perform further operations on 32 or more 
+tables to modify any data, you could call stored procedures to perform the 
+actions directly rather than enabling and using cascading triggers. Although 
+valuable, overused cascading triggers can make your system a nightmare to maintain.</P>
+
+<P>We'll see some actual examples of real triggers, including recursive 
+triggers and the use of the IF update() conditional statement, in <A HREF="ch12a.htm">Chapter 12</A>.</P>
+
+</BODY>
+</HTML>
+
+
+

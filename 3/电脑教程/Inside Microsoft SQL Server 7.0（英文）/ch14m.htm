@@ -1,0 +1,1478 @@
+<HTML>
+<HEAD>
+<link rel="STYLESHEET" type="text/css" href="squeal7.css">
+<TITLE> Optimizing Queries</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch14l.htm">[Previous]</A> <A HREF="ch14n.htm">[Next]</A><P>
+
+<A NAME="568"><H1> Optimizing Queries</H1></A>
+
+<P>Monitoring and tuning of queries are essential to optimizing 
+performance. Knowing how the query optimizer works can be helpful as you think about 
+how to write a good query or what indexes to define. However, you should 
+guard against outsmarting yourself and trying to predict what the optimizer will 
+do. You might miss some good options this way. Try to write your queries in 
+the most intuitive way you can and then try to tune them only if their 
+performance doesn't seem good enough.
+</P>
+
+<P>The big gains in query performance usually do not come from 
+syntactic changes in the query but rather from a change in the database design or 
+in indexing&#8212;or from taking a completely different approach to the query. 
+For example, you might have to choose among the following approaches: 
+writing a pretty complex query using a self-join or multilevel correlated subquery, 
+using a cursor, or creating a solution that involves temporary tables. (We saw some 
+of these techniques in <a href="ch12a.htm">Chapter 12</a>.) Invariably, the only way you can determine 
+which solution is best is to try all the queries. You might be surprised by the results.
+</P>
+
+<P>Rather than trying to learn a bunch of tricks to do up front, you 
+should be much more interested in doing the basics right. That is, you need to be 
+sure that you've set up a good database structure&#8212;including perhaps some 
+denormalization based on your CRUD analysis&#8212;and that you've created in advance 
+what appear to be useful indexes. From there, you can test your queries and 
+study the query plans generated for any queries that seem problematic. (This is 
+why we've looked at general database design strategies and indexing before 
+discussing how the query optimizer works.)
+</P>
+
+<P>Nevertheless, insight into how the optimizer works is certainly useful. 
+It can help you understand the guidelines on which indexes to create, as well 
+as the query plans you will examine in the SQL Server Query Analyzer. For 
+each table involved in the query, the query optimizer evaluates the search 
+arguments and considers which indexes are available to narrow the scan of a table. 
+That is, the optimizer evaluates to what extent the index can exclude rows 
+from consideration. The more rows that can be excluded, the better, since that 
+leaves fewer rows to process.
+</P>
+
+<P>Joins can be processed using one of three methods: nested iteration, 
+hashing, or merging. For any of these methods, the optimizer decides on the 
+order in which the tables should be accessed. Because a nested iteration is a loop, 
+order is important. The fewer the iterations through the loops, the less processing 
+will be required. So it is useful to start with the table (or tables) that can 
+exclude the most rows as the outer loops. The general strategy is to make the outer 
+table limit the search the most, which results in the fewest total iterations (scans). 
+With hash or merge joins, SQL Server builds an in-memory structure from one 
+of the tables. To conserve memory resources, it tries to determine which is 
+the smaller table or which will have the smallest number of qualifying rows after 
+the WHERE conditions are applied. This table is typically chosen as the first 
+table to be processed. (We'll see more on each of these join strategies later in 
+the chapter.)
+</P>
+
+<P>For each combination of join strategy, join order, and indexes, the 
+query optimizer estimates a cost, taking into account the number of logical reads 
+and the memory resources that are required and available. Then the 
+optimizer compares the cost of each plan and chooses the plan with the lowest 
+estimate. You can think of query optimization as happening in three main phases: 
+query analysis, index selection, and join selection (although there is a lot of 
+overlap between the index selection and join selection phases). The following 
+sections discuss each phase.
+</P>
+
+<A NAME="569"><H2>Query Analysis</H2></A>
+
+<P>During the first phase of query optimization, query analysis, the query 
+optimizer looks at each clause of the query and determines whether it can be useful 
+in limiting how much data must be scanned&#8212;that is, whether the clause is 
+useful as a search argument (SARG) or as part of the join criteria. A clause that 
+can be used as a search argument is referred to as 
+<I>sargable,</I> or <I>optimizable,</I> and can make use of an index for faster retrieval.
+</P>
+
+<P>A SARG limits a search because it specifies an exact match, a range of 
+values, or a conjunction of two or more items joined by AND. A SARG contains 
+a constant expression (or a variable that is resolved to a constant) that acts on 
+a column by using an operator. It has the form
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+column inclusive_operator &lt;constant or variable&gt;
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>or</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+&lt;constant or variable&gt; inclusive_operator column
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>The column name can appear on one side of the operator, and the 
+constant or variable can appear on the other side. If a column appears on both sides of the operator, the clause is not sargable. Sargable operators include =, &gt;, &lt;, =&gt;, &lt;=, BETWEEN, and sometimes LIKE. LIKE is sargable depending on the type of wildcards (regular expression) used. For example, <I>LIKE 'Jon%'</I> is sargable but <I>LIKE 'Jon%' 
+</I>is not because the wildcard (%) at the beginning prevents 
+the use of an index. Here are some SARG examples:
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+name = 'jones'
+
+salary &gt; 40000
+
+60000 &lt; salary
+
+department = 'sales'
+
+name = 'jones' AND salary &gt; 100000
+
+name LIKE 'dail%'
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>A single SARG can include many conditions if they are AND'ed 
+together. That is, one index might be able to operate on all the conditions that are 
+AND'ed together. In the example above, there might be an index on 
+(<I>name,salary</I>), so the entire clause <I>name 
+= 'jones' AND salary &gt; 100000<B> </B></I>can be considered 
+one SARG and can be evaluated for qualifying rows using one index. If OR is 
+used instead of AND in this example, a single index scan cannot be used to 
+qualify both terms. The reason should be clear&#8212;if the lead field in the index key is 
+<I>name</I>, the index is useful for finding just the 
+<I>'jones'</I> entries. If the criteria is AND 
+<I>salary</I>, the second field of the index also qualifies those rows. But if the criteria is 
+OR <I>salary</I>,<I> </I>the index is not useful because all the rows would need to be 
+examined, not just the <I>'jones'</I> entries. 
+</P>
+<P>
+The phone book analogy also applies. If you want to find 
+<I>people with the name &quot;jones&quot; AND that live on 5th 
+Avenue,</I> using the phone book can help greatly reduce the size of your search. But if you want to find 
+<I>people with the name &quot;Jones&quot; OR that live on 5th 
+Avenue,</I> you have to scan every entry in the 
+book. (This assumes that you have only one phone book that is sorted 
+alphabetically by name. If you have two phone books, and one is sorted by name and one 
+is sorted by street, that's another story, which we'll discuss a bit later.)</P>
+ 
+<P>An expression that is not sargable cannot limit the search. (That is, 
+every row must be evaluated.) So an index is not useful to nonsargable 
+expressions. Typical nonsargable expressions include negation operators such as NOT, 
+!=, &lt;&gt;, !&gt;, !&lt;, NOT EXISTS, NOT IN, and NOT LIKE. Don't extrapolate too 
+far and think that this means using a nonsargable clause always results in a table 
+scan. An index is not useful to the nonsargable clause, but there might be 
+indexes useful to other SARGs in the query. Queries often have multiple clauses, so 
+a great index for one or more of the other clauses might be available. Here 
+are some examples of nonsargable clauses:
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+name &lt;&gt; 'jones'
+
+salary !&gt; 40000
+
+NOT(60000 &lt; salary)
+
+name LIKE '%jon%'
+
+name = 'jones' OR salary &gt; 100000
+</PRE></TD></TR></TABLE></P>
+
+<p>
+<div class="note"><blockquote>
+<b>NOTE</b><hr>The last example above is not a single search argument, 
+but each expression on either side of the OR is individually sargable. 
+So a single index won't be used to evaluate both expressions, as it 
+might if the operator is AND. A separate index can still be useful to 
+each expression.
+</BLOCKQUOTE></DIV>
+</P>
+
+<P>Unlike previous versions of SQL Server, expressions involving 
+computations are not always nonsargable. SQL Server 7 can do scalar simplification 
+in some cases. The following table shows examples of expressions that the 
+SQL Server optimizer will simplify, along with the resultant simplified expression 
+that is used to determine the usefulness of an index: 
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%">
+<tr><th><B>Original Expression</b></th>
+<th><b>Simplified Expression</B></th> 
+</tr>
+<tr>
+<td valign="top"><pre>WHERE price * 12 = sales/costs</pre></td>
+<td valign="top"><pre>WHERE price = sales/costs/12</pre></td>
+</tr> 
+<tr>
+<td valign="top"><pre>WHERE salary * 1 &gt; 40000</pre></td> 
+<td valign="top"><pre>WHERE salary &gt; 40000</pre></td>
+</tr></table>
+     
+</P>
+
+<P>The simplified expression is not guaranteed to be exactly equivalent to 
+the original, particularly if you have a mixture of datatypes and implicit 
+conversions are occurring. However, the simplified expression is used only during 
+optimization, to detect and measure the usefulness of a particular index. When 
+determining whether a particular row actually qualifies for the result set, SQL 
+Server always uses the original expression. 
+Expressions that apply a function to a column are not sargable, and in 
+SQL Server 7, the optimizer does not attempt to internally convert them to 
+something that is sargable. In some cases, however, you might be able to write 
+an equivalent expression. For example, suppose you have an index on the 
+<I>lname</I> column of the <I>newemployee</I> table. The following two queries return the 
+same results, but the first one does not use an index and the second one does:</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+SELECT * FROM newemployee WHERE substring(lname,1,1) = 'K'
+
+SELECT * FROM newemployee WHERE lname LIKE 'K%'
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>Future versions of SQL Server will address more issues of 
+nonsargable clauses.
+</P>
+
+<A NAME="570"><H2>Index Selection</H2></A>
+
+<P>During the second phase of query optimization, index selection, the 
+query optimizer determines whether an index exists for a sargable clause, assesses 
+the index's usefulness by determining the selectivity of the clause (that is, how 
+many rows will be returned), and estimates the cost to find the qualifying rows. 
+An index is potentially useful if its first column is used in the search argument 
+and the search argument establishes a lower bound, upper bound, or both to 
+limit the search. In addition, if an index contains every column referenced in a 
+query, even if none of those columns is the first column of the index, the index 
+is considered useful.
+</P>
+
+<P>An index that contains all the referenced columns is called a 
+<I>covering index </I>and is one of the fastest ways to access data. The data pages do not have to 
+be accessed at all, which can mean a substantial savings in physical I/O. For 
+example, suppose we have an index on last name, first name, and date of 
+hire. The query at the top of the following page is 
+covered by this index.
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+SELECT lname, hire_date
+FROM employee
+WHERE fname = 'Sven'
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>You might have more covering indexes than you are aware of. In 
+SQL Server 7, a nonclustered index contains the clustered index key as part of 
+the row locator. So if the <I>employee</I> table has a clustered index on the employee 
+ID (<I>emp_id</I>) column, the nonclustered index on 
+<I>lname </I>contains both the last name and the ID for every data row, stored in the leaf level of the index. Thus, 
+the following is also a covered query:
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+SELECT emp_id, fname, lname
+FROM employee
+WHERE lname LIKE 'B%'
+</PRE></TD></TR></TABLE></P>
+
+<A NAME="571"><H3>Index Statistics</H3></A>
+
+<P>After the query optimizer finds a potentially useful index that matches the 
+clause, it evaluates the index based on the selectivity of the clause. The optimizer 
+checks the index's statistics&#8212;the histogram of values accessible through the index's 
+row in the <I>sysindexes </I>table. The histogram 
+is created when the index is created on existing data, and 
+the values are refreshed each time UPDATE 
+STATISTICS runs. If the index is created before data exists in the table, no statistics 
+appear. The statistics will be misleading if they were generated when the dispersion 
+of data values was significantly different from what appears in the current data 
+in the table. However, SQL Server detects if statistics are not up-to-date, and 
+by default it automatically updates them during query optimization.
+</P>
+
+<P>Statistics are a histogram consisting of an even sampling of values for 
+the index key (or the first column of the key for a composite index) based on 
+the current data. The histogram is stored in the 
+<I>statblob</I> field of the <I>sysindexes</I> 
+table, which is of type <I>image</I>. (As you know, 
+<I>image</I> data is actually stored in structures separate from the data row itself. The data row merely contains a pointer to 
+the <I>image</I> data. For simplicity's sake, we'll talk about the index statistics as 
+being stored in the <I>image</I> field called 
+<I>statblob</I>.) To fully estimate the usefulness of 
+an index, the optimizer also needs to know the number of pages in the table 
+or index; this information is stored in the 
+<I>dpages</I> column of <I>sysindexes</I>.
+</P>
+
+<P>The statistics information also includes details about the uniqueness of 
+the data values encountered, referred to as the 
+<I>density,</I> which provides a measure of how selective the index is. Recall that the more selective an index is, the 
+more useful it is, because higher selectivity means that more rows can be 
+eliminated from consideration. A unique index, of course, is the most selective&#8212;by 
+definition, each index entry can point to only one row. A unique index has a density 
+value of 1/<I>number of rows in the table</I>. </P>
+
+<P>Density values range from 0 through 1. Highly selective indexes have
+density values of 0.10 or lower. For example, a unique index on a table with 8345 
+rows has a density of 0.00012 (1/8345). If there is a nonunique nonclustered 
+index with a density of 0.2165 on the same table, each index key can be expected 
+to point to about 1807 rows (0.2165 &#215; 8345). This is probably not 
+selective enough to be more efficient than just scanning the table, so this index is 
+probably not useful. Because driving the query from a nonclustered index 
+means that the pages must be retrieved in index order, an estimated 1807 data 
+page accesses (or logical reads) are needed if there is no clustered index on the 
+table and the leaf level of the index contains the actual RID of the desired data 
+row. The only time a data page doesn't need to be reaccessed is for the 
+occasional coincidence that can occur when two adjacent index entries happen to point 
+to the same data page. </P>
+
+
+<P>Assume in this example that about 40 rows fit on a page, so there are 
+about 209 total pages. The chance of two adjacent index entries pointing to the 
+same page is only about 0.5 percent (1/209). The number of logical reads for 
+just the data pages, not even counting the index I/O, is likely to be close to 
+1807. If there is also a clustered index on the table, a couple of additional page 
+accesses will be needed for each nonclustered key accessed. In contrast, the entire 
+table can be scanned with just 209 logical reads&#8212;the number of pages in the table. 
+In this case, the optimizer looks for better indexes or decides that a table scan 
+is the best it can do.
+</P>
+
+<P>The statistics histogram records steps (samples) for only the lead 
+column of the index. This optimization takes into account the fact that an index is 
+useful only if its lead column is specified in a WHERE clause. The density 
+information stored in the <I>statblob</I> field consists of two types of 
+information, called <I>density</I> values and 
+<I>all_density</I> values. The values are computed based on 
+the number of rows in the table, the cardinality of the indexed columns (the 
+number of distinct values), the number of nonfrequent (NF) values (values 
+that appear no more than once in the histogram step boundaries), and the 
+cardinality of NF values. This will become clearer when we see some actual 
+statistics information.
+</P>
+
+<P>SQL Server defines <I>density </I>and <I>all_density 
+</I>as follows:</P>
+
+<UL>
+<P><LI>
+<I>density</I> = (<I>NF</I> 
+<I>count</I>/<I>distinct</I> <I>NF</I> 
+<I>count</I>)/(<I>number</I> <I>of</I> <I>rows</I>)
+</LI></P>
+
+<P><LI>
+<I>all_density</I> = 1/<I>cardinality of index keys</I>
+</LI></P>
+</UL>
+
+
+<P>Statistics for a single column<I> </I>consist of 
+one<I> </I>histogram, one<I> all_density</I> 
+value, and one<I> density</I> value. The multicolumn statistics for one set of columns in 
+a composite index consist of one<I> </I>histogram for the first column in the index, 
+one<I> density </I>value for the first column, and 
+<I>all_density </I>values for each prefix combination of columns (including the first column alone).The fact that density 
+information is kept for all columns helps you decide how useful the index is for joins.
+</P>
+
+<P>Suppose, for example, that an index is composed of three key fields. 
+The density on the first column might be 0.50, which is not too useful. But as 
+you look at more columns in the key, the number of rows pointed to is fewer (or 
+in the worst case, the same) as the first column, so the density value goes 
+down. If you're looking at both the first and second columns, the density might be 
+0.25, which is somewhat better. And if you examine three columns, the density 
+might be 0.03, which is highly selective. (It doesn't make sense to refer to the 
+density of only the second column. The lead column density is always needed.)
+</P>
+
+<P>The histogram contains up to 300 values of a given key column. In 
+addition to the histogram, the <I>statblob </I>field contains the following information:
+</P>
+
+<UL>
+<P><LI>The time of the last statistics collection
+</LI></P>
+
+<P><LI>The number of rows used to produce the histogram and 
+density information
+</LI></P>
+
+<P><LI>The average row length
+</LI></P>
+
+<P><LI>Densities for other combinations of columns
+</LI></P>
+</UL>
+
+<P>The following example uses the <I>authors</I> table in the 
+<I>pubs</I> database. Assume that we have built a nonclustered composite index 
+(<I>idx3</I>) on <I>state</I> and <I>au_lname</I> in addition to an existing clustered index on 
+<I>au_id</I>. We can use DBCC SHOW_STATISTICS to display the statistics information for this index:
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+DBCC SHOW_STATISTICS(authors, idx3)
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>We see the following results:
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+Updated      Rows      Rows Sampled Steps   Density        Average key length
+------------ --------- ------------ ------- -------------- ------------------
+Jan 20 1999  23        23           23      4.3478262E-2   9.6956511
+
+All density              Columns 
+------------------------ ----------------------
+0.125                    state
+4.5454547E-2             state, au_lname
+4.3478262E-2             state, au_lname, au_id
+
+(3 row(s) affected)
+
+Steps 
+----- 
+CA
+CA
+CA
+CA
+CA
+CA
+CA
+CA
+CA
+CA
+CA
+CA
+CA
+CA
+CA
+IN
+KS
+MD
+MI
+OR
+TN
+UT
+UT
+
+(23 row(s) affected)
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>This output indicates that the statistics for this index were last updated 
+on January 20, 1999. It also indicates that the table currently has 23 rows. 
+There are eight distinct values for state, but two of them occur in multiple steps, 
+so only six of them are nonfrequent. In this data set, all the NF key values 
+actually occur only once in the data, so the NF count is the same as the unique 
+NF count, and density is computed as 6/6/23, or 4.3478262E-2. The 
+<I>all_density </I>value for the <I>state</I> column is 1/8, or 0.125. For the combination of 
+<I>state </I>and <I>au_lname</I>, there is only one duplicate, so there are 22 unique values, and  
+1/22 is 4.5454547E-2. Notice that there is also an 
+<I>all_density </I>value for the combination of 
+<I>state</I>, <I>au_lname</I>, and <I>au_id</I>. Since this table has a clustered 
+index on <I>au_id</I>, that key appears along with every nonclustered index key and can 
+be used in determining density information. Since the addition of 
+<I>au_id</I> makes the three-valued key unique, 
+<I>all_density </I>is 1/23, or 4.3478262E-2. (In this 
+case, this is the same as the density for first column, but this won't always be true.)</P> 
+
+<P>
+In addition to statistics on indexes, SQL Server 7 can also keep track 
+of statistics on columns with no indexes. Knowing the density, or the 
+likelihood of a particular value occurring, can help the optimizer determine an 
+optimum processing strategy, even if SQL Server can't use an index to actually locate 
+the values. We'll discuss column statistics in more detail when we look at 
+statistics management later in this section. 
+</P>
+
+<P>
+Query optimization is probability-based<I>,</I> which means that its 
+conclusions can be wrong. It can sometimes make decisions that are not optimal, even if 
+those decisions make sense from a probability standpoint. (As an analogy, you can 
+think of national election polls, which show how accurate relatively small samples 
+can be for predicting broader results. But the famous headline &quot;Dewey 
+Defeats Truman!&quot; proves that predictions based on sample populations can also be 
+wrong.) 
+</P>
+
+<p><div class="note"><blockquote>
+<b>NOTE</b><hr>The information about the meaning of the SHOW_ 
+STATISTICS values, as well as information about statistics on 
+columns, was adapted from a preliminary copy of a whitepaper by 
+Lubor Kollar. We are indebted to him for his assistance.
+</blockquote></div></p>
+
+<A NAME="572"><H3>Index Cost</H3></A>
+
+<P>The second part of determining the selectivity of a clause is calculating 
+the estimated cost of the access methods that can be used. Even if a useful index 
+is present, it might not be used if the optimizer determines that it is not the 
+cheapest access method. One of the main components of the cost calculation, 
+especially for queries involving only a single table, is the amount of logical I/O, which 
+refers to the number of page accesses that are needed. Logical I/O is counted 
+whether the pages are already in the memory cache or must be read from disk and 
+brought into the cache. The term is sometimes used to refer to I/O from cache, as 
+if a read were either logical or physical, but this is a misnomer. As discussed 
+in <a href="ch03a.htm">Chapter 3</a>, pages are always retrieved from the cache via a request to the 
+Buffer Manager, so all reads are logical. If the pages are not already in the cache, 
+they must be brought in first by the Buffer Manager. In those cases, the read is 
+also physical. Only the Buffer Manager, which serves up the pages, knows 
+whether a page is already in cache or must be accessed from disk and brought into 
+cache. The ratio of how much I/O is already in the cache and does not require a 
+physical read is referred to as the <I>cache-hit 
+ratio,</I> an important metric to watch. 
+</P>
+
+<P>
+The optimizer evaluates indexes to estimate the number of likely 
+&quot;hits&quot; based on the density and step values in the statistics. Based on these values, 
+the optimizer estimates how many rows qualify for the given SARG and how 
+many logical reads would retrieve those qualifying rows. It might find 
+multiple indexes that can find qualifying rows, or it might determine that just scanning 
+the table and checking all the rows is best. It chooses the access method that 
+it predicts will require the fewest logical reads. 
+</P>
+
+<P>
+Whether the access method uses a clustered index, one or more 
+nonclustered indexes, a table scan, or another option determines the estimated number 
+of logical reads. This number can be very different for each method. Using an 
+index to find qualifying rows is frequently referred to as 
+<I>an index driving the scan</I>. When a nonclustered index drives the scan, the query optimizer assumes 
+that the page containing each identified qualifying row is probably not 
+the same page accessed the last time. Because the pages must be retrieved 
+according to the order of the index entries, retrieving the next row with a query driven by 
+a nonclustered index will likely require that a different page than the one 
+that contained the previous row be fetched because the two rows probably 
+don't reside on the same page. They might reside on the same page by 
+coincidence, but the optimizer correctly assumes that typically this will not be the case. 
+(With 5000 pages, the chance of this occurring is 1/5000.) If the index is not 
+clustered, data order is random with respect to the index key. 
+</P>
+
+<P>
+If the scan is driven from a clustered index, the next row is probably 
+located on the same page as the previous row, since the index leaf is, in fact, the 
+data. The only time this is not the case when you use a clustered index is when 
+the last row on a page has been retrieved; the next page must be accessed, and 
+it will contain the next bunch of rows. But moving back and forth between 
+the index and the data pages is not required.
+</P>
+
+<P>There is, of course, a chance that a specific page might already be in 
+cache when you use a nonclustered index. But a logical read will still occur, even 
+if the scan does not require physical I/O (a read from disk). Physical I/O is 
+an order of magnitude more costly than I/O from cache. But don't assume 
+that only the cost of physical I/O matters&#8212;reads from the cache are still far 
+from free. In some of the advanced examples in <a href="ch12a.htm">Chapter 12</a>, different solutions for the small <I>pubs</I> database each use about the same 
+number of physical reads because the tables are small enough to all be cached. But the solutions have widely 
+different needs for logical I/O, and the performance differences are quite dramatic. 
+</P>
+
+<P>
+To minimize logical I/O, the query optimizer tries to produce a plan 
+that will result in the fewest number of page operations. In doing so, the 
+optimizer will probably minimize physical I/O as well. For example, suppose we need 
+to resolve a query with the following SARG:
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+WHERE Emp_Name BETWEEN 'Smith' AND 'Snow'
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>The relevant index entries for a nonclustered index on 
+<I>Emp_Name</I> appear below.
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+Index_Key (Emp_Name)    Found on Page(s)
+--------------------    -------------------
+Smith                   1:267, 1:384, 1:512
+Smyth                   1:267
+Snow                    1:384, 1:512
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>If this table is a heap, when we use this nonclustered index, six logical reads are required to retrieve the data pages in addition to the I/O necessary to read the index. If none of the pages is already cached, the data access results in three physical I/O reads, assuming that the pages remain in the cache long enough to be reused for the subsequent rows (which is a good bet).
+</P>
+
+<P>Suppose that all the index entries are on one leaf page and the index 
+has one intermediate level. In this case, three I/O reads (logical and probably 
+physical) are necessary to read the index (one root level, one intermediate level, 
+and one leaf level). So chances are that driving this query via the nonclustered 
+index requires about nine logical I/O reads, six of which are probably 
+physical if the cache started out empty. The data pages are retrieved in the 
+following order:
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+Page 1:267 to get row with Smith
+Page 1:384 for Smith
+Page 1:512 for Smith
+Page 1:267 (again) for Smyth 
+Page 1:384 (again) for Snow 
+Page 1:512 (again) for Snow 
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>The number of logical reads is more if the table has a clustered index 
+(for example, on the zip code field). Our leaf-level index entries might look like this:</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+Index_Key (Emp_Name)    Clustered Key(s)
+--------------------    -------------------
+Smith                   06403, 20191, 98370
+Smyth                   37027
+Snow                    22241, 80863
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>For each of the six nonclustered keys, we have to traverse the 
+clustered index. You typically see about three to four times as many logical reads for 
+traversing a nonclustered index for a table that also has a clustered index. 
+However, if the indexes for this table are re-created so that a clustered index 
+existed on the <I>Emp_Name</I> column, all six of the qualifying rows are probably 
+located on the same page. The number of logical reads is probably only three (the 
+index root, the intermediate index page, and the leaf index page, which is the 
+data page), plus the final read that will retrieve all the qualifying rows. This 
+scenario should make it clear to you why a clustered index can be so 
+important to a range query. 
+</P>
+
+<P>
+With no clustered index, you have a choice between doing a table scan 
+and using one or more nonclustered indexes. The number of logical I/O 
+operations required for a scan of the table is equal to the number of pages in the table. 
+A table scan starts at the first page and uses the Index Allocation Map (IAM) 
+to access all the pages in the table. As the pages are read, the rows are 
+evaluated to see whether they qualify based on the search criteria. Clearly, if the table 
+from the previous example had fewer than nine total data pages, fewer logical 
+reads would be necessary to scan the whole thing than to drive the scan off 
+the nonclustered index (which was estimated to take nine logical 
+reads). </P>
+
+<P>
+The estimated logical reads for scanning qualifying rows is 
+summarized in Table 14-2. The access method with the least estimated cost is chosen 
+based on this information. </P>
+
+<P><B>Table 14-2.</B> <I>The cost of data access for tables with different index structures.</I></P>
+
+<P>
+<TABLE cellpadding=5 width="95%">
+<TR>
+<TH>Access Method     </TH>
+<TH>Estimated Cost (in Logical Reads) </TH>
+</TR>
+
+<TR>
+<TD VALIGN="TOP">Table scan     </TD>
+<TD VALIGN="TOP">The total number of data pages in the table.</TD>
+</TR>
+
+<TR>
+<TD VALIGN="TOP">Clustered index     </TD>
+<TD VALIGN="TOP">The number of levels in the index plus the number of data pages to scan. (Data pages to be scanned =  number of qualifying rows / rows per data page.) </TD>
+</TR>
+
+<TR>
+<TD VALIGN="TOP">Nonclustered index on a heap</TD>
+<TD VALIGN="TOP">The number of levels in the index plus the number of leaf pages plus the number of qualifying rows (a logical read for the data page of each qualifying row). The same data pages are often retrieved (from cache) many times, so the number of logical reads can be much higher than the number of pages in the table. </TD>
+</TR>
+
+<TR>
+<TD VALIGN="TOP">Nonclustered index </TD>     
+<TD VALIGN="TOP">The number of levels in the index plus the number on a table with      of leaf pages plus the number of qualifying rows times a clustered index     the cost of searching for a clustered index key. </TD>
+</TR>
+
+<TR>
+<TD VALIGN="TOP">Covering nonclustered </TD>    
+<TD VALIGN="TOP">The number of levels in the index plus the number index of leaf index pages (qualifying rows / rows per leaf page). The data page need not be accessed because all necessary information is in the index key. </TD>
+</TR>
+</TABLE>
+</P>
+
+
+<A NAME="573"><H3>Using Multiple Indexes</H3></A>
+
+<P>In SQL Server 7, the optimizer can decide to use two or more 
+nonclustered indexes to satisfy a single query. When more than one index is considered 
+useful because of two or more SARGs, the cost estimate changes a bit from 
+the formulas given in Table 14-1. In addition to the I/O cost of finding the 
+qualifying rows in each index, there is an additional cost of finding the 
+intersection of the indexes so that SQL Server can determine which data rows satisfy all 
+search conditions. Since each nonclustered index key contains a locator for the 
+actual data, the results of the two index searches can be treated as worktables and 
+joined together on the locator information.
+</P>
+
+<P>Suppose we have the following query and we have indexes on both 
+the <I>lastname </I>and <I>firstname </I>columns. In this case, we have a clustered index on 
+ID number, which is a unique value.</P>
+
+<P> 
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+SELECT firstname, lastname, ID_num FROM employees
+WHERE lastname BETWEEN 'Smith' AND 'Snow'
+AND firstname BETWEEN 'Daniel' and 'David'
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>If the query optimizer decides to use both indexes, it builds two 
+worktables with the results of each index search:</P>
+
+<P> 
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+Index_Key (lastname)    Locator(Clustered Key)
+--------------------    ----------------------
+Smith                   66-712403
+Smith                   87-120191
+Smith                   76-137027
+Smyth                   11-983770
+Snow                    43-220191
+Snow                    21-780863
+
+Index_Key (firstname)   Locator(Clustered Key)
+--------------------    ----------------------
+Daniel                  11-983770
+Daniel                  77-321456
+Danielle                66-712403
+David                   29-331218
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>These worktables are joined on the row locator information, which is 
+unique for each row. (Even if you don't declare a clustered index as unique, SQL 
+Server adds a special uniqueifier where needed so there is always a unique row 
+locator in every nonclustered index.) From the information above, we can see that 
+only two rows have both their first name and last name values in the requested 
+range. The result set is:</P>
+
+<P> 
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+firstname   lastname          ID_num
+----------  ---------------   ---------
+Daniel      Smythe            11-983770
+Danielle    Smith             66-712403
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>In this example, the data in the two indexes is enough to satisfy the 
+query. If we also want to see information such as address and phone number, the 
+query optimizer uses the locator to find the actual data row by traversing the 
+clustered index. It can also use multiple indexes if a single table has multiple SARGs 
+that are OR'ed together. In this case, SQL Server finds the UNION of the 
+rows returned by each index to determine all the qualifying rows. If we take the 
+same query and data and write an OR query instead of an AND, we can 
+demonstrate the main differences:</P>
+
+<P> 
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+SELECT firstname, lastname, ID_num FROM employees
+WHERE lastname BETWEEN 'Smith' AND 'Snow'
+OR firstname BETWEEN 'Daniel' and 'David'
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>SQL Server can use the two indexes in the same way and build the 
+same two worktables. However, it must UNION the two worktables together 
+and remove duplicates. Once it removes the duplicates, it uses the locators to 
+find the rows in the table. All the result rows will have either a first name or a 
+last name in the requested range, but not necessarily both. For example, we 
+can return a row for Daniel Delaney or Bridgette Smith. If we don't remove 
+duplicates, we end up with Daniel Smythe and Danielle Smith showing up 
+twice because they meet both conditions of the SARGs.
+</P>
+
+<A NAME="574"><H3>Unusable Statistics</H3></A>
+
+<P>In two cases, the query optimizer can't use the statistics to estimate how 
+many rows will satisfy a given SARG. First, if there are no statistics available, 
+SQL Server obviously can't come up with any cost estimate. However, this 
+situation is rare in SQL Server 7 because by default every database has the two 
+options <I>auto create statistics</I> and <I>auto update 
+statistics</I> set to TRUE. As we'll see later, you can turn this behavior off at the table level or the database level, but it 
+is usually not recommended. The second situation in which there are no 
+usable statistics is if the values in a SARG are 
+variables.<I> </I>Consider this example:</P>
+
+<P> 
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+DECLARE @name varchar(30)
+SET @name = 'Zelda'
+SELECT firstname, lastname, ID_num FROM employees
+WHERE lastname &gt; @name
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>When the preceding query is optimized, the SET statement has not 
+been executed and the value of <I>@name</I> is unknown. No specific value can be used 
+to compare the steps in the index's statistics information, so the query 
+optimizer must guess.
+</P>
+
+<p>
+<div class="note"><blockquote>
+<b>NOTE</b><hr>Don't confuse variables with parameters, even though 
+their syntax is nearly identical. A variable's value is never known until 
+the statement is actually executed; it is never known at compile 
+time. Stored procedure parameters are known when the procedure is 
+compiled because compilation and optimization don't even take place 
+until the procedure is actually called with specific values for the parameters.
+</BLOCKQUOTE></DIV>
+</P>
+
+<P>If the query optimizer can't use the statistics for either of the reasons 
+mentioned, the server uses fixed percentages, shown below, depending on the 
+operator. These fixed percentages can be grossly inaccurate for your specific 
+data, however, so make sure that your statistics are up-to-date. </P>
+
+<P> 
+<TABLE cellpadding=5 width="95%">
+<TR>
+	<TH>Operator</TH>    
+	<TH> Percentage of Rows</TH> 
+</TR>	
+<TR>	
+	<TD>=</TD>     
+	<TD>10</TD>
+</TR>	
+<TR>	
+	<TD>&gt;</TD>     
+	<TD>30</TD>
+</TR>	
+<TR>	
+	<TD>&lt;</TD>     
+	<TD>30</TD>
+</TR>	
+<TR>	
+	<TD>BETWEEN</TD>     
+	<TD>10</TD>
+</TR>
+</TABLE>
+</P>
+
+
+<P>When the SARG involves an equality, the situation is usually handled in 
+a special way. The 10 percent estimate shown above is actually used only in 
+the unusual case in which there are no statistics at all. If there are statistics, they 
+can be used. Even if we don't have a particular value to compare against the steps 
+in the statistics histogram, the density information can be used. That 
+information basically tells the query optimizer the expected number of duplicates, so when 
+the SARG involves looking for one specific value, it assumes that the value occurs 
+the average number of times. An even more special case occurs when the 
+query optimizer recognizes an equality in the WHERE clause and the index is 
+unique. Because this combination yields an exact match and always returns at most 
+one row, the query optimizer doesn't have to use statistics. For queries of one row 
+that use an exact match such as a lookup by primary key, a unique nonclustered 
+index is highly efficient. In fact, many environments probably shouldn't 
+&quot;waste&quot; their clustered index on the primary key. If access via the complete primary 
+key is common, it might be beneficial to specify NONCLUSTERED when 
+you declare the primary key and save the clustered index for another type of 
+access (such as a range query) that can benefit more from the clustered index.</P>
+
+<A NAME="575"><H2> Join Selection</H2></A>
+
+<P>Join selection is the third major step in query optimization. If the query is 
+a multiple-table query or a self-join, the query optimizer evaluates join 
+selection and selects the join strategy with the lowest cost. It determines the cost 
+using a number of factors, including the expected number of reads and the 
+amount of memory required. It can use three basic strategies for processing joins: 
+nested loop joins, merge joins, and hash joins. In each method, the tables to be 
+joined (or subsets of tables that have already been restricted by applying SARGs) 
+are called the join inputs.</P>
+
+<A NAME="576"><H3> Nested Loop Joins</H3></A>
+
+<P>Joins are usually processed as nested iterations&#8212;a set of loops that take a 
+row from the first table and use that row to scan the inner table, and so on, 
+until the result that matches is used to scan the last table. The number of 
+iterations through any of the loops equals the number of scans that must be done. 
+(This is not a table scan<I>,</I> since it is usually done using an index. In fact, if no 
+useful index is available to be used for an inner table, nested iteration probably 
+isn't used and a hash join strategy is used instead.) The result set is narrowed 
+down as it progresses from table to table within each iteration in the loop. If 
+you've done programming with an ISAM-type product, this should look familiar 
+in terms of opening one &quot;file&quot; and then seeking into another in a loop. To 
+process this join</P>
+
+<P> 
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+WHERE dept.deptno=empl.deptno
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>you use pseudocode that looks something like this:</P>
+
+<P> 
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+    DO (until no more dept rows);
+        GET NEXT dept row;
+            {
+            begin
+ // Scan empl, hopefully using an index on empl.deptno
+                GET NEXT empl row for given dept 
+            end
+}
+</PRE></TD></TR></TABLE></P>
+
+<A NAME="577"><H3>Merge Joins</H3></A>
+
+<P>Merge joins were introduced in SQL Server 7. You can use a merge join 
+when the two join inputs are both sorted on the join column. Consider the query 
+we looked at in the previous section:
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+WHERE dept.deptno=empl.deptno
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>If both the <I>department</I> table and the 
+<I>employee</I> table have clustered indexes on the 
+<I>deptno</I> column, the query is a prime candidate for a merge join. You 
+can think of merge joins as taking two sorted lists of values and merging 
+them. Suppose you have two piles of contractor information. One pile contains 
+the master contract that each contractor has signed, and the second contains 
+descriptions of each project that the contractor has worked on. Both piles are sorted by contractor name. You need to merge the two piles of paperwork so 
+each contractor's master contract is placed with all the project descriptions for 
+that contractor. You basically need to make just one pass through each stack.</p>
+
+<p>Going back to the <I>employee</I> and 
+<I>department</I> query, our pseudocode would look something like this:</P>
+
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+    GET one dept row and one empl row
+    DO (until one input is empty);
+        IF dept_no values are equal
+            Return values from both rows
+        ELSE IF empl.dept_no &lt; dept.dept_no
+            GET new employee row
+        ELSE GET new department row
+        GET NEXT dept row;
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>The query optimizer usually chooses the merge join strategy when 
+both inputs are already sorted on the join column. In some cases, even if a sort 
+must be done on one of the inputs, the query optimizer might decide that it is 
+faster to sort one input and then do a merge join than to use any of the other 
+available strategies. If the inputs are both already sorted, little I/O is required 
+to process a merge join if the join is one to many. A many-to-many merge join 
+uses a temporary table to store rows instead of discarding them. If there are 
+duplicate values from each input, one of the inputs must rewind to the start of 
+the duplicates as each duplicate from the other input is processed.
+</P>
+
+<A NAME="578"><H3>Hash Joins</H3></A>
+
+<P>Hash joins, also introduced in SQL Server 7, can be used when no useful 
+index exists on the join column in either input. Hashing is commonly used in 
+searching algorithms (as discussed in detail in Donald Knuth's classic 
+<I>The Art of Computer Programming: Sorting and 
+Searching</I>). We'll look at a simplified definition 
+here. Hashing lets you determine whether a particular data item 
+matches an already existing value by dividing the existing data into groups based on some 
+property. You put all the data with the same value in what we can call a 
+<I>hash bucket</I>. Then, to see if a new value has a match in existing data, you simply look in the 
+bucket for the right value.
+</P>
+
+<P>For example, suppose you need to keep all your wrenches organized in 
+your workshop so that you can find the right size and type when you need it. 
+You can organize them by size property and put all half-inch wrenches (of any 
+type) together, all 10-mm wrenches together, and so on. When you need to find 
+a 15-mm box wrench, you simply go to the 15-mm drawer to find one (or 
+see whether the last person who borrowed it has returned it). You don't have 
+to look through all the wrenches, only the 15-mm ones, which greatly reduces 
+your searching time. Alternatively, you can organize your wrenches by type and 
+have all the box wrenches in one drawer, all the socket wrenches in another 
+drawer, and so on.
+</P>
+
+<P>Hashing data in a table is not quite so straightforward. You need a 
+property by which to divide the data into sets of manageable size with a 
+relatively equal membership. For integers, the hashing property might be something 
+as simple as applying the modulo function to each existing value. If you decide 
+to hash on the operation modulo 13, every value is put in a hash bucket based 
+on its remainder after dividing by 13. This means you need 13 buckets because 
+the possible remainders are the integers 0 through 12. (In real systems, the 
+actual hash functions are substantially more complex; coming up with a good 
+hash function is an art as well as a science.)</p>
+
+<p>When you use hashing to join two inputs, SQL Server uses one input, 
+called the <I>build input,</I> to actually build the hash buckets. Then, one row at a time, 
+it inspects the other input and tries to find a match in the existing buckets. 
+The second input is called the <I>probe input</I>. Suppose we use modulo 3 as the 
+hash function and join the two inputs shown in Figure 14-4 below. (The rows not matching the SARGs are not shown, so the two inputs are 
+reduced in size quite a bit.) Here is the query:
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+SELECT Name, Manager
+FROM employee.dept_no empl JOIN department.dept_no dept
+ON dept.deptno=empl.deptno
+WHERE &lt;SARGs&gt;
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>
+<A HREF="javascript:fullSize('f14wh04x.htm')"> <img src="f14wh04.JPG" width=404 height=296 border=0 ALT="Click to view at full size."> </A>
+</P>
+<P>
+<!-- caption --><B>Figure 14-4.</B> <I>Two inputs to a hash join operation.</I><!-- /caption -->
+</P>
+
+
+<P>When processing hash joins, SQL Server tries to use the smaller input 
+as the build input, so in this case we'll assume that the hash buckets have been 
+built based on the <I>department</I> table values. The buckets are actually stored as 
+linked lists, in which each entry contains only the columns from the build input 
+that are needed. In this case, all we have to keep track of is the department 
+number and manager name. The collection of these linked lists is called the 
+<I>hash table</I>. Our hash table is shown in Figure 14-5. Our pseudocode looks something like this:
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+Allocate an Empty Hash Table
+For Each Row in the Build Input
+    Determine the hash bucket by applying the hash function
+    Insert the relevant fields of the record into the bucket
+For Each Record in the Probe Input
+    Determine the hash bucket
+    Scan the hash bucket for matches
+    Output matches
+Deallocate the Hash Table
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>Applying this algorithm to our two inputs, we get these results:
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+Name        Manager
+--------    -------
+Pike        Laszlo
+Delaney     Graeffe
+Moran       Aebi
+Dwyer       Laszlo
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>
+<A HREF="javascript:fullSize('f14wh05x.htm')"> <img src="f14wh05.JPG" width=404 height=188 border=0 ALT="Click to view at full size."> </A> 
+</P>
+<P>
+<!-- caption --><B>Figure 14-5.</B> <I>A hash table built from the smaller (build) input.</I><!-- /caption -->
+</P>
+
+
+
+<A NAME="579"><H3>Hashing Variations</H3></A>
+
+<P>Although you can use hashing effectively when there are no useful indexes 
+on your tables, the query optimizer might not always choose it as the join 
+strategy because of its high cost in terms of memory required. Ideally, the entire 
+hash table should fit into memory; if it doesn't, SQL Server must split both 
+inputs into partitions, each containing a set of buckets, and write those partitions 
+out to disk. As each partition (with a particular set of hash buckets) is needed, it 
+is brought into memory. This increases the amount of work required in terms 
+of I/O and general processing time. In the academic literature, you might see 
+this type of hashing operation referred to as a 
+<I>Grace hash</I>; the name comes from the project for which this technique was developed. SQL Server has another 
+alternative, somewhere in between keeping everything in memory and writing 
+everything out to disk. Partitions are only written out as needed, so you might have 
+some partitions in memory and some out on disk.
+</P>
+
+<P>To effectively use hashing, SQL Server must be able to make a good 
+estimate of the size of the two inputs and choose the smaller one as the build 
+input. Sometimes, during execution SQL Server will discover that the build input 
+is actually the larger of the two. At that point, it can actually switch the roles 
+of the build and probe input midstream, in a process called 
+<I>role reversal</I>. Determining which input is smaller isn't too hard if there are no restrictive 
+SARGs, as in this query:
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+SELECT Name, Manager
+FROM employee.dept_no empl JOIN department.dept_no dept
+ON dept.deptno=empl.deptno
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>SQL Server knows the sizes of the inputs because 
+<I>sysindexes</I> keeps track of the size of each table. However, consider the case in which additional 
+conditions are added to the query, as in this example:
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+WHERE empl.phone like '425%'
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>It would help the query optimizer to know what percentage of the 
+employees have phone numbers starting with 425. This is a case in which column 
+statistics can be helpful. Statistics can tell the query optimizer the estimated 
+number of rows that will meet a given condition, even if there is no actual 
+index structure to be used.
+</P>
+
+<P><DIV CLASS="NOTE"><BLOCKQUOTE><B>NOTE</B><HR>Hash and merge join can be used only if the join is an equijoin&#8212;that is, if the join predicate compares columns from the two inputs for an equality match. If the join is not based on an equality, as in the example below, a nested loops join is the only possible strategy:
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+WHERE table1.col1 BETWEEN table2.col2 AND table2.col3,
+</PRE></TD></TR></TABLE>
+</P>
+</blockquote></div>
+</p>
+
+
+<P>The hashing and merging strategies can be much more memory 
+intensive than the nested loops strategy, and since the query optimizer takes into 
+account all available resources, you might notice that a system with little available 
+memory might not use the hash and merge joins as often as systems with plenty of 
+memory. Desktop installations are particularly vulnerable to memory pressure because 
+you are more likely to have many competing applications running 
+simultaneously. Although the online documentation states that the desktop edition of SQL 
+Server does not support hash and merge joins at any time, this is not true. 
+Because in most situations there is limited memory for a desktop installation, the 
+query optimizer is much more pessimistic when it decides to use one of these 
+two strategies.
+</P>
+
+<A NAME="580"><H3>Multiple-Table Joins</H3></A>
+
+<P>According to some folklore, SQL Server &quot;does not optimize&quot; joins of more 
+than four tables. There was some truth to this in earlier versions of SQL Server, 
+but in SQL Server 7 optimization doesn't happen in the same way at all. There 
+are so many different possible permutations of join strategies and index usage 
+that the query optimizer goes through multiple optimization passes, each 
+considering a larger set of the possible plans. On each pass, it keeps track of the 
+best plan so far and uses a cost estimate to reduce the search in succeeding 
+passes. If your query contains many tables, the query optimizer is likely to 
+interrupt the last pass before completion because the last pass is quite exhaustive. 
+The cheapest plan found will then be used.</P>
+
+<A NAME="581"><H2> Other Processing Strategies</H2></A>
+
+<P>Although our discussion of the query optimizer has dealt mainly with the 
+choice of indexes and join strategies, it makes other decisions as well. It must 
+decide how to process queries with GROUP BY, DISTINCT, and UNION, and it 
+must decide how updates should be handled&#8212;either row at a time or table at a 
+time. We discussed update strategies in <a href="ch08a.htm">Chapter 8</a>. Here we'll briefly discuss 
+GROUP BY, DISTINCT, and UNION.</P>
+
+<A NAME="582"><H3> GROUP BY Operations</H3></A>
+
+<P>In prior versions of SQL Server, a GROUP BY operation was processed in 
+only one way. SQL Server sorted the data (after applying any SARGs) and then 
+formed the groups from the sorted data. SQL programmers noticed that queries 
+involving grouping returned results in sorted order, although this was merely a 
+byproduct of the internal grouping mechanism. In SQL Server 7, you can use 
+hashing to organize your data into groups and compute aggregates. The 
+pseudocode looks like this:
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+For Each Record in the Input
+    Determine the hash bucket
+    Scan the hash bucket for matches
+    If a match exists
+        Aggregate the new record into the old
+        Drop the new record
+    Otherwise
+        Insert the record into the bucket
+Scan and Output the Hash Table
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>If the query optimizer chooses to use hashing to process the GROUP 
+BY, the data does not come back in any predictable order. (The order actually 
+depends on the order in which records appear in the hash table, but without 
+knowing the specific hash function, you can't predict this order.) If you use a lot 
+of GROUP BY queries, you might be surprised that sometimes the results 
+come back sorted and sometimes they don't. If you absolutely need your data in 
+a particular order, you should use ORDER BY in your query.
+</P>
+
+<p>
+<div class="note"><blockquote>
+<b>NOTE</b><hr>If a database has its compatibility level flag set to 60 or 
+65, the query processor automatically includes an ORDER BY in 
+the query. This allows you to mimic the behavior of older SQL 
+Server versions.
+</BLOCKQUOTE></div>
+</P>
+
+<A NAME="583"><H3>DISTINCT Operations</H3></A>
+
+<P>As with GROUP BY queries, the only technique for removing duplicates 
+in previous versions of SQL Server was to first sort the data. In SQL Server 7, 
+you can use hashing to return only the distinct result rows. The algorithm is 
+much like the algorithm for hashing with GROUP BY, except that an aggregate 
+does not need to be maintained.
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+For Each Record in the Input
+    Determine the hash bucket
+    Scan the hash bucket for matches
+    If a match exists
+        Drop the new record
+    Otherwise
+        Insert the record into the bucket
+            and return the record as output
+</PRE></TD></TR></TABLE></P>
+
+<A NAME="584"><H3>UNION Operations</H3></A>
+
+<P>The UNION operator in SQL Server has two variations for combining the 
+result sets of two separate queries into a single result set. If you specify UNION 
+ALL, SQL Server returns all rows from both as the final result. If you don't 
+specify ALL, SQL Server removes any duplicates before returning the results. For 
+performance reasons, you should carefully evaluate your data, and if you know 
+that the inputs are not overlapping, with no chance of duplicates, you should 
+specify the ALL keyword to eliminate the overhead of removing duplicates. If 
+SQL Server has to find the unique rows, it can do so in three ways: It can use 
+hashing to remove the duplicates in a UNION, just the way it does for 
+DISTINCT; it can sort the inputs and then merge them; or it can concatenate the inputs 
+and then sort them to remove the duplicates.
+</P>
+
+<P>For GROUP BY, DISTINCT, and UNION operations, your best bet 
+is to let the query optimizer decide whether to use hashing or sorting and 
+merging. If you suspect that the query optimizer might not have made the best 
+choice, you can use query hints to force SQL Server to use a particular processing 
+strategy and compare the performance with and without the hints. In most 
+cases, the query optimizer will have made the best choice after all.
+</P>
+
+<A NAME="585"><H2>Maintaining Statistics</H2></A>
+
+<P>As we've seen, the query optimizer uses statistics on both indexed and 
+nonindexed columns to determine the most appropriate processing strategy for any 
+particular query. Whenever an index is created on a table containing data (as opposed 
+to an empty table), the query optimizer collects statistics and stores them for 
+that index in <I>sysindexes.statblob</I>. By default, the statistics are automatically 
+updated whenever the query optimizer determines that they are out-of-date. In 
+addition, the query optimizer generates statistics on columns used in SARGs when it 
+needs them, and it updates them when needed. </P>
+
+<P>The histogram for statistics on an index key or statistics on a 
+nonindexed column is a set of up to 300 values for that column. SQL Server composes 
+this set of values by taking either all occurring values or a sampling of the 
+occurring values and then sorting that list of values and dividing it into as many as 
+299 approximately equal intervals. The endpoints of the intervals become the 
+300 histogram steps, and the query optimizer's computations assume that the 
+actual data has an equal number of values between any two adjacent steps. 
+These step values are stored in the <I>statblob 
+</I>column of <I>sysindexes</I>. Even if the table 
+or sample has more than 300 rows, the histogram might have fewer than 300 
+steps to achieve uniformity of step size. </P>
+
+<P>You can specify the sampling interval when the indexes or statistics 
+are initially created or at a later time using the statistics management tools. You 
+can specify the FULLSCAN option, which means that all existing column values 
+are sorted, or you can specify a percentage of the existing data values. By 
+default, SQL Server uses a computed percentage that is a logarithmic function of 
+the size of the table. If a table is less than 8 MB in size, a FULLSCAN is always 
+done. When sampling, SQL Server randomly selects pages from the table by 
+following the IAM chain. Once a particular page has been selected, all values from 
+that page are used in the sample. Since disk I/O is the main cost of 
+maintaining statistics, using all values from every page read minimizes that cost. </P>
+
+<P>Statistics on nonindexed columns are built in exactly the same way as 
+statistics on indexes. The system procedure 
+<I>sp_helpindex</I> shows column statistics as well as indexes on a table. If the statistics are created automatically, their 
+names are very distinctive, as shown in this example: </P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+index_name                  index_description                   index_keys     
+--------------------------- ----------------------------------- --------------  
+UPKCL_auidind               clustered, unique, primary key      au_id 
+                            located on PRIMARY
+aunmind                     nonclustered located on PRIMARY     au_lname, 
+                                                                au_fname
+s1                          nonclustered, statistics            state
+                            located on PRIMARY
+_WA_Sys_au_fname_07020F21   nonclustered, statistics,           au_fname
+                            auto create located on PRIMARY
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>Here we have two indexes and two sets of statistics. The name of 
+the explicitly generated statistics is <I>s1</I>. The name of the system-generated 
+statistics is <I>_WA_Sys_au_fname_07020F21</I>. To avoid long-term maintenance 
+of unused statistics, SQL Server ages out the statistics that are 
+automatically created on nonindexed columns. After it updates the column statistics 
+more than a certain number of times, the statistics are dropped rather than 
+updated again. The <I>StatVersion </I>column of the 
+<I>sysindexes </I>table shows how many times the statistics have been updated. Once 
+<I>StatVersion </I>exceeds an internally generated threshold, the statistics are dropped. If they are needed in the future, they 
+can be created again. There is no substantial cost difference between creating 
+statistics and updating them. Statistics that are explicitly created (such as 
+<I>s1 </I>in the preceding example) are not automatically dropped.
+</P>
+
+<P>Statistics are automatically updated when the query optimizer 
+determines they are out-of-date. This basically means that sufficient data 
+modification operations have occurred since the last time they were updated to minimize 
+their usefulness. The number of operations is tied to the size of the table and is 
+usually something like 500 + 0.2 * (number of rows in the table). This means that 
+the table must have at least 500 modification operations before statistics are 
+updated during query optimization; for large tables, this threshold can be much larger.
+</P>
+
+<P>You can also manually force statistics to be updated in one of two 
+ways. You can run the UPDATE STATISTICS command on a table or on one 
+specific index or column statistics. Or you can also execute the procedure 
+<I>sp_updatestats</I>, which runs UPDATE STATISTICS against all user-defined tables in the 
+current database.</p>
+
+<p>You can create statistics on nonindexed columns using the 
+CREATE STATISTICS command or by executing 
+<I>sp_createstats</I>, which creates single-column statistics for all eligible columns for all user tables in the current 
+database. This includes all columns except computed columns and columns of 
+the <I>ntext</I>,<I> text</I>, or <I>image</I> datatypes, and columns that already have statistics or 
+are the first column of an index.</p>
+
+<p>Every database is created with the database options 
+<I>auto create statistics</I> and <I>auto update 
+statistics</I> set to true, but either one can be turned off. You 
+can also turn off automatic updating of statistics for a specific table in one of two ways:
+</P>
+
+<UL>
+<P><LI>
+<B><I>sp_autostats</I></B>This procedure sets or unsets a flag for a table to indicate that statistics should or should not be updated 
+automatically. You can also use this procedure with only the table name to find out whether the table is set to automatically have its index statistics updated.</LI></P>
+
+
+<P><LI><B>UPDATE STATISTICS</B> In addition to updating the statistics, the option WITH NORECOMPUTE indicates that the statistics should not be automatically recomputed in the future. Running UPDATE STATISTICS again without the WITH NORECOMPUTE option enables automatic updates.</LI></P>
+</UL>
+
+<p>However, setting the database option <I>auto update statistics</I> to FALSE overrides any individual table settings. In other words, no automatic updating of statistics takes place. This is not a recommended practice unless thorough testing has shown you that you don't need the automatic updates or that the performance overhead is more than you can afford.</p>
+
+<A NAME="586"><H2>The Index Tuning Wizard</H2></A>
+
+<P>We've seen that the query optimizer can come up with a reasonably 
+effective query plan even in the absence of well-planned indexes on your tables. 
+However, this does not mean that a well-tuned database doesn't need good 
+indexes. The query plans that don't rely on indexes frequently consume additional 
+system memory, and other applications might suffer. In addition, having 
+appropriate indexes in place can help solve many blocking problems. </P>
+
+<P>Designing the best possible indexes for the tables in your database is 
+a complex task; it not only requires a thorough knowledge of how SQL 
+Server uses indexes and how the query optimizer makes its decisions, but it 
+requires that you be intimately familiar with how your data will actually be used. 
+SQL Server 7 provides two tools to help you design the best possible indexes. </P>
+
+<P>The Query Analyzer includes a tool called Index Analyzer, which you 
+can access by choosing Perform Index Analysis from the Query menu. The 
+index analyzer recommends indexes for the queries that you've included in the 
+current workspace. It assumes that all your existing indexes will stay in place, so 
+it might end up not recommending any new ones. It never recommends a 
+clustered index because the optimum choice for a clustered index must take 
+more than a single query into account. The index analyzer displays a dialog box 
+with its recommendations and lets you choose whether to implement the 
+recommendations. You cannot postpone the creation of the indexes or save a script of 
+the CREATE INDEX statements to be used. If you need to do either of these, 
+you can use the Index Tuning Wizard.
+</P>
+
+<P>You can access the Index Tuning Wizard from the Wizards list in 
+the Enterprise Manager or from SQL Server Profiler under the Tools menu. 
+The wizard tunes a single database at a time, and it bases its recommendations on 
+a workload file that you provide. The workload file can be a file of captured 
+trace events that contains at least the RPC and SQL Batch starting or 
+completed events, as well as the text of the RPCs and batches. It can also be a file of 
+SQL statements. If you use the SQL Server Profiler to create the workload file, 
+you can capture all SQL statement submitted by all users over a period of time. 
+The wizard can then look at the data access patterns for all users, for all tables, 
+and make recommendations with everyone in mind.
+</P>
+
+<P>The book's companion CD includes a whitepaper with more details 
+about this wizard. The CD also includes a sample database called 
+<I>orders</I>, which is in two files: 
+<I>orders_data.mdf</I> and <I>orders_log.ldf</I>. You can use the 
+procedure <I>sp_attachdb</I> to add the 
+<I>orders</I> database to your system. Finally, the CD 
+includes a sample workload file 
+(<I>Orders_Workload.sql</I>) composed of SQL statements 
+that access the <I>orders </I>database.
+</P>
+
+<P>When the wizard gets a workload file, it tunes the first 32 KB of 
+parsable queries and produces five reports. You can make the analysis more 
+exhaustive or less. You can choose to have the wizard keep all existing indexes, or you 
+can have it come up with a totally new set of index recommendations, which 
+might mean dropping some or all of your existing indexes.
+</P>
+
+<P>After the wizard generates its reports, which you can save to disk, you 
+can implement the suggestions immediately, schedule the implementation for a 
+later time, or save the script files for the creation (and optional dropping) of 
+indexes. Once the scripts are saved, you can run them later or just inspect them to 
+get ideas of possible indexes to create.
+</P>
+
+<P>You can also use the wizard purely for analyzing your existing design. 
+One of the reports, Index Usage Report (Current Configuration), shows what 
+percentage of the queries in the submitted workload make use of each of 
+your existing indexes. You can use this information to determine whether an 
+index is being used at all and get rid of any unused indexes along with their space 
+and maintenance overhead.
+</P>
+
+<P>The current version of the wizard cannot completely tune 
+cross-database queries. It inspects the local tables involved in the queries for index 
+recommendations, but it ignores the tables in other databases. Also, if you are using 
+Unicode data, the wizard does not recognize Unicode constants (such as 
+<I>N'mystring'</I>) in your queries and cannot optimize for them. Future versions of the wizard 
+will address these issues and probably add new features as well.</P>
+
+<P> 
+<div class="note"><blockquote>
+<b>NOTE</b><hr>If you're going to use SQL Server Profiler to capture 
+a workload file, you should consider tracing events at several 
+periods throughout the day. This can give you a more balanced picture of 
+the kinds of queries that are actually being executed in your database. 
+If you define your trace using the SQL Server Profiler extended 
+procedures, you can set up a SQL Server Agent job to start and stop the 
+trace at predefined times, appending to the same workload file each time.
+</BLOCKQUOTE></DIV></P>
+
+</BODY>
+</HTML>
+
+
+

@@ -1,0 +1,999 @@
+<HTML>
+<HEAD>
+	<link rel="STYLESHEET" type="text/css" href="squeal7.css">
+<TITLE>Working with Transact-SQL Cursors</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch11e.htm">[Previous]</A> <A HREF="ch11g.htm">[Next]</A><P>
+
+<A NAME="437"><H1>Working with Transact-SQL Cursors</H1></A>
+
+<P>In the following sections, we'll discuss the cursor syntax for each of the 
+cursor manipulation statements and then look at issues of locking and 
+concurrency control. Throughout this discussion, we'll look at cursor functionality that 
+is present in the server, which in some cases is available only through API 
+server cursors.</P>
+
+<A NAME="438"><H2>DECLARE</H2></A>
+
+<P>Here again is the Transact-SQL Extended Syntax for declaring a cursor with 
+a given name:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+DECLARE <I>cursor_name</I> CURSOR
+[LOCAL | GLOBAL]
+[FORWARD_ONLY | SCROLL]
+[STATIC | KEYSET | DYNAMIC | FAST_FORWARD]
+[READ_ONLY | SCROLL_LOCKS | OPTIMISTIC]
+[TYPE_WARNING]
+FOR <I>select_statement</I>
+[FOR UPDATE [OF <I>column_list</I>]]
+</PRE></P>
+</td></tr></table>
+
+<P>A cursor is always limited in scope to the connection that declares 
+it. Although the cursor is named, it is not visible to other connections and 
+other connections can have cursors of the same name. This is true whether the 
+cursor is declared as GLOBAL or LOCAL; it is always private to the connection.</P>
+
+<A NAME="439"><H3>Global and Local Cursors</H3></A>
+
+<P>By default, Transact-SQL cursors are global for the connection in which 
+they are declared. This means that you can declare a cursor in one batch and use 
+it in subsequent batches or fetch each row in its own batch. It also means that 
+you can declare a cursor in a stored procedure and have access to the cursor 
+outside of the stored procedure. This is not necessarily a good thing, because if the 
+stored procedure is then called a second or subsequent time, it can get an error 
+message when it tries to declare a cursor that already exists (from a previous 
+execution using the same connection).</P>
+
+<P>You can use the syntax for declaring a cursor to specify whether the 
+cursor is global or local. As mentioned earlier, 
+<I>global </I>means global to the connection for which the cursor was declared. A 
+<I>local</I> cursor is local to the batch, stored procedure, or trigger in which it is declared, and no reference can be made 
+to the cursor outside of that scope. If you need access to a cursor declared as 
+local inside a stored procedure, you can pass the cursor as an output parameter to 
+the batch that called the procedure. You'll see the details of this when we look 
+at cursor variables and parameters.</P>
+
+<P>Transact-SQL cursors are global by default in SQL Server. You can 
+override this default at the database level by setting the database option 
+<I>default to local cursor</I> to TRUE. Local cursors are implicitly deallocated when the 
+batch, stored procedure, or trigger terminates unless it was passed back in an 
+output parameter. If it is passed back in an output 
+parameter, the cursor is deallocated when the last variable referencing it is deallocated or goes out of scope.</P>
+
+<A NAME="440"><H3>Specifying the Cursor's Result Set</H3></A>
+
+<P>A Transact-SQL cursor always has its result set generated from a 
+SELECT statement. The SELECT statement can be ordered (ORDER BY), and it 
+often is. An API server cursor can also be declared; the result set is the result of a 
+stored procedure. This powerful capability, which is important for scrolling 
+applications, is not available using the Transact-SQL syntax.</P>
+
+<A NAME="441"><H3>Specifying the Cursor's Behavior</H3></A>
+
+<P>In addition to specifying whether the cursor is local or global, the 
+DECLARE statement also specifies what kind of directional movement is possible, using 
+the keywords SCROLL and FORWARD_ONLY. When neither of these is 
+specified, FORWARD_ONLY is the default, unless a STATIC, KEYSET, or 
+DYNAMIC keyword is specified. STATIC, KEYSET, and DYNAMIC cursors default 
+to SCROLL.</P>
+
+<P>The DECLARE statement also controls how much of the cursor's 
+result set is stored in <I>tempdb</I> and how subject to change the cursor's result set is. 
+These behaviors are specified using the STATIC, KEYSET, and DYNAMIC 
+keywords, which we discussed earlier. The DECLARE statement uses the READ 
+ONLY option to prevent updates from being made through this cursor by the 
+connection that opened the cursor. A READ_ONLY cursor cannot be referenced in 
+a WHERE CURRENT OF clause in an UPDATE or DELETE statement.
+This option overrides the cursor's default ability to be updated.</P>
+
+<P>The READ ONLY option controls only whether the connection that 
+opened the cursor can update the data through the cursor. It has no affect on 
+what changes can be made to the cursor's data from other connections. Such 
+changes are controlled by the STATIC, KEYSET, and DYNAMIC options. The 
+READ ONLY option also controls the locks that are taken when rows are 
+fetched through the cursor. The locking (or concurrency) options are discussed later.</P>
+
+<P> It is worth pointing out that if the DECLARE statement includes a 
+local variable, the variable's value is captured at declare time, not at open time. 
+In the following example, the cursor uses a WHERE clause of 
+<I>qty &gt; 30</I>, not <I>qty &gt; 5</I>:</P> 
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+DECLARE @t smallint
+SELECT @t=30
+
+DECLARE c1 CURSOR SCROLL FOR SELECT ord_num, qty FROM sales
+    WHERE qty &gt; @t
+
+DECLARE @ordnum varchar(20), @qty smallint
+
+SELECT @t=5
+OPEN c1
+</PRE></P>
+</td></tr></table>
+
+<A NAME="442"><H2>OPEN</H2></A>
+
+<P>The OPEN statement  opens the cursor, generating and populating 
+temporary tables if needed:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+OPEN <I>cursor_name</I>
+</PRE></P>
+</td></tr></table>
+
+<P>If the cursor is keyset based, the keys are also retrieved when the cursor 
+is opened. Subsequent update or fetch operations on a cursor are illegal unless 
+the cursor opens successfully. You can call the system function 
+@@CURSOR_
+ROWS<I> </I>after the OPEN statement to retrieve the number of qualifying rows 
+in the last opened cursor. Depending on the number of rows expected in the 
+result set, SQL Server might populate the keyset cursor asynchronously on a 
+separate thread. This allows fetches to proceed immediately, even if the keyset 
+cursor is not fully populated. Table 11-2 shows the values returned by 
+using @@CURSOR_ROWS<I> </I>and a description of each value.</P>
+
+<P><B>Table 11-2.</B> 
+<I>Possible values returned by @@CURSOR_ROWS.</I></P>
+
+<table valign="top" cellpadding=5 width="95%">
+<tr><th> Value</th>
+<th>Description</th>
+</tr>
+<tr>
+<td valign="top">-1</td>
+<td valign="top">The cursor is dynamic. @@CURSOR_ROWS is not applicable.</td>
+</tr>
+<tr>
+<td valign="top">-<I>m</I></td>
+<td valign="top">A keyset cursor is still in the process of being populated asynchronously. This value refers to the number of rows in the keyset so far. The negative value indicates that the keyset is still being retrieved. A negative value (asynchronous 
+population) can be returned only with a keyset cursor.</td>
+</tr>
+<tr>
+<td valign="top"><I>n</I> </td>
+<td valign="top">This value refers to the number of rows in the cursor.</td>
+</tr>
+<tr>
+<td valign="top">0</td>
+<td valign="top">No cursors have been opened, or the last opened cursor has been closed.</td>
+</tr>
+</table>
+     
+<P>To set the threshold at which SQL Server generates keysets 
+asynchronously (and potentially returns a negative value), you use the 
+<I>cursor threshold</I> configuration option with 
+<I>sp_configure</I>. Note that this is an &quot;advanced option&quot; and 
+is not visible unless Show Advanced Options is also enabled with 
+<I>sp_configure. </I>By default, the setting for this cursor threshold is 
+-1, which means that the keyset is fully populated before the OPEN statement completes. (That is, the 
+keyset generation is synchronous.) With asynchronous keyset generation, OPEN 
+completes almost immediately and you can begin fetching rows while other keys 
+are still being gathered. However, this can lead to some puzzling behaviors. 
+For example, you can't really FETCH LAST until the keyset is fully 
+populated. Unless you are generating large cursors, it's usually not necessary to set 
+this option&#8212;synchronous keyset generation works fine and the behavior is 
+more predictable. If you need to open a large cursor, however, this is an 
+important capability for maintaining good response times.</P>
+
+<A NAME="443"><H2>FETCH</H2></A>
+
+<P>The FETCH statement fetches a row from the cursor in the specified direction:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+FETCH [<I>row_selector</I> FROM] <I>cursor_name</I> [INTO @<I>vl</I>, @<I>v2</I>, ...]
+</PRE></P>
+</td></tr></table>
+
+<P>A successful fetch results in the system function 
+@@fetch_status<I> </I>returning the value 0. If the cursor is scrollable, 
+<I>row_selector</I> can be NEXT, PRIOR, FIRST, LAST, ABSOLUTE 
+<I>n,</I> or RELATIVE <I>n</I>. (We have seen one exception: a DYNAMIC cursor cannot FETCH ABSOLUTE.) If no 
+<I>row_selector</I> is specified, the default is NEXT. FETCH NEXT operations are by 
+far the most common type of fetch for Transact-SQL cursors. This is 
+consistent with their recommended use when row-by-row processing is needed with 
+a stored procedure or batch. Such processing is nearly always from start to finish.</P>
+
+<P>More exotic forms of fetch are also supported. ABSOLUTE 
+<I>n</I> returns the <I>n</I>th row in the result set, with a negative value representing a row number 
+counting backward from the end of the result set. RELATIVE 
+<I>n</I> returns the <I>n</I>th row relative to the last row fetched, and a negative value indicates the row 
+number is counted backward starting from the last row fetched. Fetches using 
+NEXT, PRIOR, or RELATIVE operations are done with respect to the current 
+cursor position.</P>
+
+<P>RELATIVE 0 means &quot;refetch the current row.&quot; This can be useful 
+to &quot;freshen&quot; a &quot;stale&quot; row. The row number 
+<I>n</I> specified in RELATIVE and ABSOLUTE fetch types can be a local variable or a parameter of type 
+<I>integer,</I> <I>smallint,</I> or <I>tinyint</I>.</P>
+
+<P>When a cursor is opened, the current row position in the cursor is 
+logically before the first row. This causes the fetch options to have slightly 
+different behaviors if they are the first fetch performed after the cursor is opened:</P>
+
+<UL>
+<P><LI>FETCH NEXT is equivalent to FETCH FIRST.</LI></P>
+<P><LI>FETCH PRIOR does not return a row.</LI></P>
+<P><LI>FETCH RELATIVE is equivalent to FETCH ABSOLUTE if 
+<I>n</I> is positive. If <I>n</I> is negative or 0, no row is returned.</LI></P>
+</UL>
+
+<P>The ANSI SQL-92 specification states that scrollable cursors must be 
+read-only. There really isn't any rational reason for this, except that 
+updatable scrollable cursors were considered too hard to implement to put into the 
+standard. Fortunately, SQL Server scrollable cursors are indeed updatable&#8212;a 
+quantum leap beyond what the standard specifies!</P>
+
+<P>If the cursor is not scrollable, only NEXT (or no explicit parameter, 
+which amounts to the same thing) is legal. When the cursor is opened and no fetch 
+is done, the cursor is positioned before the first row&#8212;that is, FETCH 
+NEXT returns the first row. When some rows are fetched successfully, the cursor 
+is positioned on the last row fetched. When a FETCH request causes the 
+cursor position to exceed the given result set, the cursor is positioned after the last 
+row&#8212;that is, a FETCH PRIOR returns the last row. A fetch that causes the 
+position to go outside the cursor range (before the first row or after the last row) 
+causes the system function @@FETCH_STATUS to return the value 
+-1.</P>
+
+<P><DIV CLASS="TIP"><BLOCKQUOTE><b>TIP</b><HR>
+Probably the most common and appropriate use of
+Transact-SQL cursors is to FETCH NEXT within a loop while
+@@FEtch_
+status equals 0 (or &lt;&gt; -1). However, you must issue the
+first FETCH before checking the value of @@FETCH_STATUS and
+then reissue your FETCH within the loop. If your cursor is a keyset
+cursor, you must also check for a @@FETCH_STATUS of _2 after
+every row is read to verify that the row is still available. If a row
+is fetched but no longer exists with a keyset cursor,
+the row is considered &quot;missing&quot; and @@FETCH_STATUS returns
+-2. The row might have been deleted by some other user or by an
+operation within the cursor. A missing row has been deleted, not simply
+updated so that it no longer meets the criteria of the SELECT
+statement. (If that's the semantic you want, you should use a dynamic cursor.)
+</BLOCKQUOTE></DIV></P>
+
+<P>Missing rows apply to keyset cursors only. A static cursor, of course, 
+never changes&#8212;it is merely a snapshot of the data stored in a temporary table 
+and cannot be updated. A dynamic cursor does not have fixed membership. The 
+row is not expected to be part of a dynamic cursor because rows come and go as 
+the cursor is fetched, depending on what rows currently meet the query criteria. 
+So there is no concept of a missing row for a dynamic cursor.</P>
+<P>If an INTO clause is provided, the data from each column in the 
+SELECT list is inserted into the specified local variable; otherwise, the data is sent to 
+the client as a normal result set with full metadata using TDS. In other words, 
+the result set of a Transact-SQL cursor is the same as any other result set. But 
+doing 50 fetches back to the application in this way produces 50 result sets, 
+which is inefficient. An error occurs from the fetch if the datatypes of the column 
+being retrieved and the local variable being assigned are incompatible or if the 
+length of the local variable is less than the maximum length of the column. Also, 
+the number of variables and their order must exactly match those of the 
+selected columns in the SELECT statement that defines the cursor.</P>
+
+<A NAME="444"><H2>UPDATE</H2></A>
+
+<P>The UPDATE statement updates the table row corresponding to the given 
+row in the cursor:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+UPDATE <I>table_name</I> SET <I>assignment_list</I> WHERE CURRENT OF <I>cursor_name</I>
+</PRE></P>
+</td></tr></table>
+
+<P>This is referred to as a <I>positioned 
+update</I>. Using Transact-SQL cursors, a positioned update (or a 
+<I>positioned delete</I>) operates only on the last row 
+fetched and can affect only one row. (API server cursors can update multiple rows in 
+a single operation. You can think of this capability as an array of structures 
+that can all be applied in one operation. This is a significant capability, but it 
+makes sense to use it only from an application programming language.)</P>
+
+<P>An update involving a column that is used as a key value is treated 
+internally as a delete/insert&#8212;as though the row with the original key values 
+was deleted and a new row with the modified key values was inserted into the table.</P>
+
+<A NAME="445"><H2>DELETE</H2></A>
+
+<P>The following is a positioned delete:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+DELETE FROM <I>table_name</I> WHERE CURRENT OF <I>cursor_name</I>
+</PRE></P>
+</td></tr></table>
+
+<P>This statement deletes from the given table the row corresponding to 
+the current position of the cursor. This is similar to a positioned update. 
+Using Transact-SQL cursors, however, you can't perform positioned inserts. Since 
+a cursor can be thought of as a named result set, it should be clear that you 
+do not insert into a cursor but into the table (or view) that the cursor is selecting from.</P>
+
+<A NAME="446"><H2>CLOSE</H2></A>
+
+<P>The CLOSE statement closes the cursor:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+CLOSE <I>cursor_name</I>
+</PRE></P>
+</td></tr></table>
+
+<P>After the cursor is closed, it can no longer be fetched from or 
+updated/deleted. Closing the cursor deletes its keyset while leaving the definition of 
+the cursor intact. (That is, a closed cursor can be reopened without being 
+redeclared.) The keyset is regenerated during the next OPEN. Similarly, closing a static 
+cursor deletes the temporary table of results, which can be regenerated when the 
+cursor is reopened. Closing a dynamic cursor doesn't have much effect because 
+neither the data nor the keys are materialized.</P>
+
+<P>ANSI specifies that cursors are closed when a COMMIT statement is 
+issued, but this is not SQL Server's default behavior. In the types of applications in 
+which cursors are most appropriate (what you might call scrolling applications), it 
+is common to make a change and want both to commit it and to keep 
+working within the cursor. Having the cursor close whenever a COMMIT is issued 
+seems inefficient and rather pointless. But if you want to be consistent with ANSI 
+on this, you can use the following SET option, which provides this &quot;feature&quot; 
+by closing all open cursors when a COMMIT or a ROLLBACK occurs.</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+SET CURSOR_CLOSE_ON_COMMIT ON
+</PRE></P>
+</td></tr></table>
+
+<P>Note that when you use API server cursors with ODBC, the default is 
+to close the cursor on COMMIT; ODBC followed the ANSI lead here. But 
+the SQL Server ODBC driver and the SQL Server OLE DB provider both set 
+the CURSOR_CLOSE_ON_COMMIT option to OFF. You can also control 
+this behavior at the database level with the database option 
+<I>close cursor on commit</I>.</P>
+
+<P><DIV CLASS="NOTE"><BLOCKQUOTE><b>NOTE</b><HR>
+Unlike earlier versions of SQL Server, version 7
+always closes cursors on a ROLLBACK, regardless of the value of
+the CURSOR_CLOSE_ON_COMMIT option. The only exception
+is cursors that are defined as STATIC (or INSENSITIVE, if you're
+using the older ANSI cursor syntax). Static cursors are not closed on
+ROLLBACK if the CURSOR_CLOSE_ON_COMMIT setting is OFF.
+</BLOCKQUOTE></DIV></P>
+
+<A NAME="447"><H2>DEALLOCATE</H2></A>
+
+<P>DEALLOCATE, which is not part of the ANSI specification, is a 
+cleanup command:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+DEALLOCATE <I>cursor_name</I>
+</PRE></P>
+</td></tr></table>
+
+<P>When the last cursor reference is deallocated, SQL Server releases the 
+data structures comprising the cursor. As we'll see shortly, with cursor variables 
+you can have additional references to a cursor besides the original cursor name 
+specified in the DECLARE statement. You can deallocate one of the references, 
+but if other references to the same cursor exist, you can still access the cursor's 
+rows using those other references.</P>
+
+<P>Once the last reference to a cursor is deallocated, the cursor cannot 
+be opened until a new DECLARE statement is issued. Although it's 
+considered standard practice to close a cursor, if you DEALLOCATE the last reference 
+to an open cursor it is automatically closed. The existence of DEALLOCATE 
+is basically a performance optimization. Without it, when would a cursor's 
+resources be cleaned up? How would SQL Server know that you are really done using 
+the cursor? Probably the only alternative would be to do the cleanup anytime 
+a CLOSE is issued. But then all the overhead of a new DECLARE would 
+be necessary before a cursor could be opened again. Although it is yet 
+another command to issue, providing a separate DEALLOCATE command lets you 
+close and reopen a cursor without redeclaring it.</P>
+
+<A NAME="448"><H2>Simplest Cursor Syntax</H2></A>
+
+<P>In its simplest form, with no other options declared, this example cursor 
+is forward-only (a dynamic cursor subtype):</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+DECLARE my_curs CURSOR FOR SELECT au_id, au_lname FROM authors
+</PRE></P>
+</td></tr></table>
+
+<P>If you try any fetch operation other than FETCH NEXT (or simply 
+FETCH, since NEXT is the default if no modifier is specified), you get an error like this:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+Msg 16911, Level 16, State 1
+fetch: The fetch type FETCH_LAST cannot be used with forward-only cursors
+</PRE></P>
+</td></tr></table>
+
+<P>Transact-SQL cursors can scroll only to the NEXT row 
+(forward-only) unless the SCROLL option is explicitly stated or the type of cursor is 
+specified as STATIC, KEYSET, or DYNAMIC, in which case any fetch operation is legal.</P>
+
+<A NAME="449"><H2>Fully Scrollable Transact-SQL Cursors</H2></A>
+
+<P>Here is a an example of a fully scrollable Transact-SQL cursor:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+DECLARE my_curs CURSOR SCROLL FOR SELECT au_id, au_lname
+    FROM authors
+OPEN my_curs
+FETCH ABSOLUTE 6 FROM my_curs
+</PRE></P>
+</td></tr></table>
+
+<P>Here's the output:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+au_id            au_lname 
+------------     --------------
+427-17-2319      Dull
+</PRE></P>
+</td></tr></table>
+
+<P><DIV CLASS="NOTE"><BLOCKQUOTE><b>NOTE</b><HR>
+To keep our examples focused on the central point,
+they don't check @@fetch_status<I> </I>or @@error. Real
+production-caliber code, of course, would check.
+</BLOCKQUOTE></DIV></P>
+
+<P>If the cursor is scrollable, but not every table listed in the SELECT 
+statement has a unique index, the cursor is created as a static (read-only) 
+cursor, although it is still scrollable. The results of the SELECT statement are 
+copied into a temporary table when the cursor is opened. Unless the FOR 
+UPDATE OF clause is used (or the cursor is declared with the option 
+TYPE_WARNING), you receive no indication that this will occur. An error results after the 
+DECLARE cursor statement is issued:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+CREATE TABLE foo
+(col1    int,
+col2     int)
+-- No indexes on this table
+GO
+
+DECLARE my_curs2 SCROLL CURSOR FOR SELECT col1, col2 FROM foo
+FOR UPDATE OF col1
+</PRE></P>
+</td></tr></table>
+
+<P>This returns:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+Msg 16929, Level 16, State 1
+Cursor is read only
+</PRE></P>
+</td></tr></table>
+
+<P><DIV CLASS="warning"><BLOCKQUOTE><b>WARNING</b><HR>
+The error above is a compile-time error, which
+means that the cursor is not created at all. The error message seems
+to indicate that the cursor was created as read-only instead of
+updatable as requested, but that is not what happens. A subsequent attempt
+to open this cursor yields an error message that the cursor does not exist.
+</BLOCKQUOTE></DIV></P>
+
+<P>Some options don't make sense when used together. For example, 
+you can't declare a cursor using FOR UPDATE OF and combine that with 
+either STATIC or READ_ONLY. This generates an error message when the 
+cursor is declared. Remember that the STATIC option and READ_ONLY are not 
+quite equivalent. When STATIC is specified, the results are copied into a 
+temporary table when the cursor is opened. From then on, the results are returned 
+from this temporary table in the server and the updates done by other users are 
+not reflected in the cursor rows. A dynamic or keyset cursor can be 
+READ_ONLY but not STATIC. As you scroll, you might see values that have been 
+changed by other users since the cursor was opened. A cursor declared with 
+these characteristics doesn't allow positioned updates or deletes via the cursor, but 
+it doesn't prevent updates or deletes made by others from being visible.</P>
+
+<P><DIV CLASS="SIDEBAR"><BLOCKQUOTE><b>Beware the Dynamic Cursor</b>
+<P>Because a dynamic cursor has no guaranteed way of keeping track
+of which rows are part of the cursor's result set, you can end up with
+badly behaving dynamic cursors. For example, suppose you have a
+nonunique clustered index on a table for which you have declared a dynamic
+cursor. Internally, SQL Server makes the clustered index keys unique
+if necessary by adding a unique suffix to each duplicate value. If you
+use a positioned update to update the clustered keys to a value that
+already exists, SQL Server adds the next unique suffix in sequence. (That
+is, the second occurrence of any value gets a suffix of 1, the next
+occurrence gets a 2, and so on.) That means that the row has to move to
+a place in the table after the last row with that key in order to
+maintain the clustered ordering sequence. If you fetch through the cursor
+one row at a time and update the keys to values that already exist, you
+can end up revisiting the same row, or rows, over and over. In fact,
+you could end up in an infinite loop. This code does just that:</P>
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+create table bad_cursor_table
+(a char(3), b int identity)
+go
+create clustered index idx on bad_cursor_table(a)
+go
+insert into bad_cursor_table (a)  values ('1')
+insert into bad_cursor_table (a)  values ('2')
+insert into bad_cursor_table (a)  values ('3')
+insert into bad_cursor_table (a)  values ('4')
+go
+declare bad_cursor cursor dynamic for select 
+* from bad_cursor_table
+open bad_cursor
+fetch bad_cursor
+while (@@fetch_status = 0) begin
+    update bad_cursor_table
+    set a = 'new'
+    where current of bad_cursor
+    fetch bad_cursor
+end
+</PRE></P>
+</td></tr></table>
+
+<P>If you execute this code, you'll see the value of column
+<I>b</I>, which you are not changing, cycle through the values 1 to 4 over and
+over as each update moves the updated row to the end of the table.
+The solution to this problem is to always create a clustered index on a
+truly unique column, or else to not create dynamic cursors on tables
+without a declared unique index.</P>
+</BLOCKQUOTE></DIV></P>
+
+<A NAME="450"><H2>Concurrency Control with Transact-SQL Cursors</H2></A>
+
+<P>If you use a cursor that's not in the scope of a transaction, locks are not 
+held for long durations by default. A shared lock is briefly requested for the 
+fetch operation and then immediately released. If you subsequently attempt to 
+update through the cursor, optimistic concurrency control is used to ensure that 
+the row being updated is still consistent with the row you fetched into the cursor.</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+DECLARE my_curs SCROLL CURSOR FOR SELECT au_id, au_lname
+FROM authors 
+OPEN my_curs
+FETCH ABSOLUTE 6 FROM my_curs
+_- This would return: 427-17-2319 Dull
+-- Assume some other user modifies this row between this and
+_- the next statement:
+UPDATE authors SET au_lname='Kronenthal' WHERE CURRENT OF my_curs
+</PRE></P>
+</td></tr></table>
+
+<P>This returns:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+Msg 16934, Level 16, State 1
+Optimistic concurrency check failed, the row was modified outside
+of this cursor
+</PRE></P>
+</td></tr></table>
+
+<P>With optimistic concurrency control, locks are not held on the 
+selected data, so concurrency increases. At the time of the update, the current row 
+in the table is compared to the row that was fetched into the cursor. If 
+nothing has changed, the update occurs. If a change is detected, the update does 
+not occur and error message 16934 is returned. The term &quot;optimistic&quot; is meant 
+to convey that the update is attempted with the 
+<I>hope</I> that nothing has changed. A check is made at the time of the update to ensure that, in fact, nothing 
+has changed. (It's not so optimistic that it forgoes the check.) In this case, 
+although a change is detected and the update is refused, no locks are issued to 
+prevent such a change. You could decide to go ahead and update the row, even 
+though it failed the optimistic concurrency check. To do so, you would fully qualify 
+the update with a normal WHERE clause specifying the unique key instead of 
+issuing a positioned update (<I>WHERE CURRENT 
+OF</I> <I>my_curs</I>). For example:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+UPDATE authors
+SET au_lname='Kronenthal'
+WHERE au_id='427-17-2319'
+</PRE></P>
+</td></tr></table>
+
+<P>Although here we are looking at this situation via the Transact-SQL 
+syntax, in the real world you are much more likely to encounter this situation 
+using API server cursors. In such a case, you might use optimistic 
+concurrency control. If a conflict is encountered, you can display a message to your end 
+user&#8212;something like &quot;The row has subsequently changed. Here is the new value 
+[which you could refetch to get]. Do you still want to go ahead with your update?&quot;</P>
+
+<P>There are actually two types of optimistic concurrency. With 
+Transact-SQL cursors, if the table has a timestamp column defined, a cursor update uses it 
+to determine whether the row has been changed since it was fetched. (Recall 
+that a timestamp column is an automatic increasing value that is updated for 
+any change to the row. It is unique within the database, but it bears no 
+relationship to the system or calendar's date and time.) When the update is attempted, 
+the current timestamp on the row is compared to the timestamp that was 
+present when the row was fetched. The timestamp is automatically and invisibly 
+fetched into the cursor even though it was not declared in the select list. Be aware 
+that an update will fail the optimistic concurrency check even if a column not in 
+the cursor has been updated since the row was fetched. The update to that 
+column (not in the cursor) will increase the timestamp, making the comparison fail. 
+But this happens only if a timestamp column exists on the table being updated.</P>
+
+<P>If there is no timestamp column, optimistic concurrency control 
+silently reverts to a &quot;by-value&quot; mode. Since no timestamp exists to indicate whether 
+the row has been updated, the values for <I>all 
+</I>columns in the row are compared to the current values in the row at the time of the update. If the values are 
+identical, the update is allowed. Notice that an attempt to update a column in a row 
+that is not part of the cursor causes optimistic concurrency control to fail, 
+whether it is timestamp based or value based. You can also use traditional locking 
+in conjunction with a cursor to prevent other users from changing the data 
+that you fetch.</P>
+
+<P>Although optimistic concurrency is the default for updatable cursors, 
+you can designate this kind of locking explicitly by using the keyword 
+OPTIMISTIC in your DECLARE statement.</P>
+<P>Optimistic concurrency control works quite well in environments 
+with relatively low update contention. With high update activity, optimistic 
+concurrency control might not be appropriate; for example, you might not be able to 
+get an update to succeed because the row is being modified by some other 
+user. Whether optimistic or pessimistic (locking) concurrency control is more 
+appropriate depends on the nature of your application. An address book 
+application with few updates is probably well-suited to optimistic concurrency control. 
+An application used to sell a product and keep track of inventory is probably not.</P>
+
+<P>As another example, if you write an application to sell reserved tickets 
+for a flight and sales are brisk, optimistic concurrency control is probably 
+not appropriate. Here is what the telephone conversation between the ticket 
+agent and customer might sound like if you use optimistic concurrency control:</P>
+
+<BLOCKQUOTE>
+<P>Caller: &quot;I'd like two tickets to Honolulu for January 15.&quot;</P>
+<P>Ticket agent: &quot;OK, I have two seats on flight number 1 leaving at 10
+a.m.&quot;</P>
+<P>Caller: &quot;Great, I'll take them.&quot;</P>
+<P>Ticket agent: &quot;Oops. I just tried to reserve them, and they've been
+sold by another agent. Nothing else seems to be available on that date.&quot;</P>
+</BLOCKQUOTE>
+
+<P><DIV CLASS="SEEALSO"><BLOCKQUOTE><b>SEE ALSO</b><HR>
+Locking is discussed in detail in Chapters <A HREF="ch13a.htm">13</A> and <A HREF="ch14a.htm">14</A>.
+</BLOCKQUOTE></DIV></P>
+
+
+<P>If you want to make sure that no other users have changed the data 
+you have fetched, you can force SQL Server to hold update locks on data that 
+is fetched while the cursor is open or until the next fetch. You can do this by 
+specifying the SCROLL_LOCKS option in the cursor's DECLARE statement. 
+These update locks prevent other users from updating the cursor's row or reading 
+the row through another cursor using SCROLL_LOCKS, but they do not 
+prevent other users from reading the data. Update locks are held until the next row 
+is fetched or until the cursor is closed, whichever occurs first. If you need 
+full pessimistic currency control, you should read the cursor row inside a 
+transaction; these locks are held until the transaction is either committed or rolled 
+back. Here is an example of a cursor that holds scroll locks while the cursor is 
+open, ensuring that another user cannot update the fetched row:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+DECLARE my_curs CURSOR SCROLL SCROLL_LOCKS FOR SELECT au_id, au_lname
+    FROM authors
+OPEN my_curs
+FETCH ABSOLUTE 12 FROM my_curs
+-- Pause to create window for other connection.
+-- From other connection, try to update the row. E.g.,
+-- UPDATE authors SET au_lname='Newest val' WHERE au_id='724-80-9391'.
+-- The update will be blocked by a KEY UPDATE lock until this cursor is 
+-- closed. Refetch the row next and see that it has not changed.
+-- The CLOSE cursor will release the SH_PAGE lock.
+WAITFOR DELAY &quot;00:00:20&quot; 
+FETCH RELATIVE 0 FROM my_curs
+-- RELATIVE 0 = &quot;freshen&quot; current row
+CLOSE my_curs
+DEALLOCATE my_curs
+</PRE></P>
+</td></tr></table>
+
+<P>In this example, we are only reading data, not modifying it. When you 
+do positioned updates or deletes, you might want to group all the cursor 
+operations as a single transaction. To do that, you use an explicit BEGIN 
+TRAN statement. The fetch requests a update (scroll) lock, and the lock is retained 
+until the end of the transaction.</P>
+
+<P><DIV CLASS="NOTE"><BLOCKQUOTE><b>NOTE</b><HR>
+Don't get confused between update and scroll locks.
+Scroll locks for cursor processing are a special type of update lock. Both
+scroll and update locks prevent other processes from acquiring
+exclusive locks, update locks, or scroll locks, but they don't prevent simple
+share (read) locks. The real difference between update locks and scroll
+locks is the length of time the lock is held. If there is no surrounding
+transaction, scroll locks are released when a new row is fetched or the
+cursor is closed. If there is a surrounding transaction, the scroll lock is
+held until the end of the transaction. (This is a slight
+oversimplification. We'll discuss the difference between scroll and update locks in
+more detail in <A HREF="ch13a.htm">Chapter 13</A>.)
+</BLOCKQUOTE></DIV></P>
+
+<P>The following example shows optimistic concurrency control within 
+a transaction. This means we do not want to acquire scroll locks. A simple 
+share lock on the row is acquired while the row is being read, but it is released as 
+soon as the row is read. The script includes a couple of delays so that you can go 
+to another connection and watch the locks. You'll see that the shared row 
+locks are not held, although of course the exclusive locks, which are issued to 
+carry out the actual update, are held until the transaction completes. This 
+example also terminates the cursor and rolls back the transaction if either of the 
+two update or fetch operations fail.</P>
+
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+-- Be sure the default setting is in effect
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED
+DECLARE my_curs CURSOR SCROLL FOR SELECT au_id, au_lname
+    FROM authors
+OPEN my_curs
+BEGIN TRAN
+
+FETCH FIRST FROM my_curs
+IF (@@FETCH_STATUS &lt;&gt; 0) -- If not a valid fetch, get out
+    GOTO OnError
+-- Delay for 10 secs so can verify from another connection 
+-- and see no lock held using sp_lock
+WAITFOR DELAY &quot;00:00:10&quot; 
+
+UPDATE authors SET au_lname='Row1 Name' WHERE CURRENT OF my_curs
+
+IF (@@ERROR &lt;&gt; 0)
+    GOTO OnError
+
+FETCH LAST FROM my_curs
+
+IF (@@FETCH_STATUS &lt;&gt; 0) -- If not a valid fetch, get out
+    GOTO OnError
+
+-- Delay for 10 secs so can verify from another connection
+-- and see the exclusive KEY lock from previous update
+WAITFOR DELAY &quot;00:00:10&quot; 
+
+UPDATE authors SET au_lname='LastRow Name' WHERE CURRENT OF my_curs
+IF (@@ERROR &lt;&gt; 0)
+    GOTO OnError
+COMMIT TRAN
+IF (@@ERROR=0)
+PRINT 'Committed Transaction'
+GOTO Done
+OnError:
+PRINT 'Rolling Back Transaction'
+ROLLBACK TRAN
+Done:
+CLOSE my_curs
+DEALLOCATE my_curs
+</PRE></P>
+</td></tr></table>
+
+
+<P>The previous example uses a transaction, but it still uses 
+optimistic concurrency control. If you want to be sure that a row doesn't change once 
+you fetch it, you must hold the shared locks. You can do this using the 
+HOLDLOCK hint in the SELECT statement or by setting the isolation level to 
+Repeatable Read (or Serializable), as in this example:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ
+DECLARE my_curs CURSOR SCROLL FOR SELECT au_id, au_lname
+    FROM authors
+OPEN my_curs
+BEGIN TRAN
+
+FETCH FIRST FROM my_curs
+IF (@@FETCH_STATUS &lt;&gt; 0) -- If not a valid fetch, get out
+    GOTO OnError
+-- Delay for 10 secs so can verify from another connection
+-- and see shared KEY lock is held
+WAITFOR DELAY &quot;00:00:10&quot; 
+
+UPDATE authors SET au_lname='Newer Row1 Name'
+    WHERE CURRENT OF my_curs
+
+IF (@@ERROR &lt;&gt; 0)
+    GOTO OnError
+
+FETCH LAST FROM my_curs
+
+IF (@@FETCH_STATUS &lt;&gt; 0) -- If not a valid fetch, get out
+    GOTO OnError
+
+-- Delay for 10 secs so can verify from another connection
+-- and see the exclusive KEY lock from previous update, and
+-- shared KEY from most recent FETCH
+WAITFOR DELAY &quot;00:00:10&quot; 
+
+UPDATE authors SET au_lname='Newer LastRow Name'
+    WHERE CURRENT OF my_curs
+IF (@@ERROR &lt;&gt; 0)
+    GOTO OnError
+
+COMMIT TRAN
+IF (@@ERROR=0)
+    PRINT 'Committed Transaction'
+GOTO Done
+
+OnError:
+PRINT 'Rolling Back Transaction'
+ROLLBACK TRAN
+
+Done:
+CLOSE my_curs
+DEALLOCATE my_curs
+</PRE></P>
+</td></tr></table>
+
+<P>This example holds onto shared locks on all the rows that have been 
+fetched. You can be sure that once a row is fetched, another user cannot change it 
+while the transaction is in process. However, you cannot be sure that you can 
+update the row. If you take this example and run it simultaneously in two 
+Query Analyzer windows, you almost certainly get the following error in one of the 
+two windows:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+Msg 1205, Level 13, State 1
+Your server command (process id 14) was deadlocked with another
+process and has been chosen as deadlock victim. Re-run your command
+</PRE></P>
+</td></tr></table>
+
+<P>This is a classic <I>conversion deadlock, </I>which occurs when each process 
+holds a shared lock on a row and each needs an exclusive lock on the same row. 
+Neither can get the exclusive lock because of the other process's shared lock. No 
+matter how long the two processes wait, no resolution occurs because neither can 
+get the lock it needs. SQL Server terminates one of the processes so that the 
+other can conclude. (<A HREF="ch13a.htm">Chapter 13</A> describes such deadlocks in more detail. It 
+also differentiates between ROW and KEY locks, which we're treating as the 
+same thing in this discussion.) To avoid conversion deadlocks, you should use 
+scroll locks instead of shared locks for any data you are reading if you intend to 
+update it later. A scroll lock or an update lock does not prevent another process 
+from reading the data, but it ensures that the holder of the update lock is next in 
+line for an exclusive lock for that resource and thus eliminates the conversion 
+deadlock problem by serializing access for the update lock resource.</P>
+
+<P>The following code is a modification of the previous example that uses 
+the SCROLL_LOCKS keyword in the cursor declaration. This forces SQL 
+Server to acquire an update lock on the row being fetched, which is held until the 
+next row is fetched. No other process can acquire another update lock on this 
+same row. Since we are updating the fetched row, the update lock is converted 
+into an exclusive lock, which is held until the end of the transaction. If we run 2 
+(or even 200) instances of this simultaneously, we do not get a deadlock. The 
+scroll (update) lock acquired the first time the row is fetched makes the multiple 
+instances run serially, since they must queue and wait for the update lock to be released:</P>
+
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+-- We will use SCROLL_LOCKS, which are held until the 
+-- next row is fetched or until they convert into EXCLUSIVE locks.
+-- So we do not require REPEATABLE READ. We can use the default isolation 
+-- level of READ COMMITTED.
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED
+
+DECLARE my_curs CURSOR SCROLL SCROLL_LOCKS FOR SELECT au_id, au_lname
+    FROM authors 
+OPEN my_curs
+BEGIN TRAN
+
+FETCH FIRST FROM my_curs
+IF (@@FETCH_STATUS &lt;&gt; 0) -- If not a valid fetch, get out
+    GOTO OnError
+-- Delay for 10 secs to increase chances of deadlocks
+WAITFOR DELAY &quot;00:00:10&quot; 
+
+UPDATE authors SET au_lname='Newer Row1 Name'
+    WHERE CURRENT OF my_curs
+ 
+IF (@@ERROR &lt;&gt; 0)
+    GOTO OnError
+
+FETCH LAST FROM my_curs
+
+IF (@@FETCH_STATUS &lt;&gt; 0) -- If not a valid fetch, get out
+    GOTO OnError
+
+-- Delay for 10 secs to increase chances of deadlocks
+WAITFOR DELAY &quot;00:00:10&quot; 
+UPDATE authors SET au_lname='Newer LastRow Name'
+    WHERE CURRENT OF my_curs
+IF (@@ERROR &lt;&gt; 0)
+    GOTO OnError
+
+COMMIT TRAN
+IF (@@ERROR=0)
+    PRINT 'Committed Transaction'
+GOTO Done
+
+OnError:
+PRINT 'Rolling Back Transaction'
+ROLLBACK TRAN
+
+Done:
+CLOSE my_curs
+DEALLOCATE my_curs
+</PRE></P>
+</td></tr></table>
+
+<P><DIV CLASS="NOTE"><BLOCKQUOTE><b>NOTE</b><HR>
+If we didn't do an explicit BEGIN TRAN in the
+example above, we would still get an UPDATE lock on the most recently
+fetched row. This lock would then move to subsequent rows and be
+released from the earlier ones as we continue to fetch.
+</BLOCKQUOTE></DIV></P>
+
+<A NAME="451"><H3>Optimistic Concurrency Control vs. Locking</H3></A>
+
+<P>Whether you should use optimistic concurrency control, use scroll locks, or 
+hold shared locks depends on the degree to which you experience update 
+conflicts or deadlocks. If the system is lightly updated or the updates tend to be 
+quite dispersed and few conflicts occur, optimistic concurrency control will offer 
+the best concurrency since locks are not held. But some updates will be rejected, 
+and you have to decide how to deal with that. If updates are frequently rejected, 
+you should probably move to the more pessimistic and traditional mode of 
+locking. Holding shared locks prevents rows from being changed by someone else, 
+but it can lead to deadlocks. If you are getting frequent deadlocks, you should 
+probably use scroll locks.</P>
+
+<P>Note that the FOR UPDATE OF modifier of the DECLARE 
+statement does not affect locking behavior, and it does not mean that scroll (update) 
+locks are used. The modifier's only purpose is to allow you to ensure that the 
+cursor is updatable and that the user has the necessary permissions to make 
+updates. Normal optimistic concurrency is used if SCROLL_LOCKS is not 
+specified, which means that a shared lock is acquired on the row being read and is 
+released as soon as the read is completed. If a cursor cannot be updated, you get an 
+error message when a cursor is declared with FOR UPDATE. It might be better 
+that, if FOR UPDATE OF is specified, update locks rather than shared locks 
+would be requested on the fetched data, although there is certainly a case to be 
+made for not doing it this way. Although FOR UPDATE OF is specified, an 
+update might never be made. If no update occurs, using shared locks is best 
+because someone else can still declare the same cursor and there is no need to 
+serialize the running of that batch. Concurrency therefore increases.</P>
+
+<P>You should also realize that you do not have to issue the FOR 
+UPDATE OF modifier to be able to do positioned updates via the cursor. You can 
+update a cursor that does not have the FOR UPDATE OF modifier specified as 
+long as the underlying declared cursor is updatable. A SELECT statement cannot 
+be updated if it uses an aggregate function such as GROUP BY, HAVING, 
+UNION, or CASE. But you do not get an error message stating that the SELECT 
+statement cannot be updated until you actually try to do an update. By 
+specifying FOR UPDATE OF in the DECLARE statement, you find out right away if 
+the SELECT cannot be updated. You should consider always specifying 
+FOR UPDATE OF for any cursor that you might later update.</P>
+
+<P>If you will usually update fetched rows and there is contention for 
+updates, you should use the SCROLL_LOCKS keyword. Yes, this serializes access to 
+that resource, but the alternative is a high incidence of rejected updates with 
+optimistic concurrency control or deadlocks with holding shared locks. Both of these 
+require a lot of retries, which is wasteful. Using scroll locks in this type of scenario 
+probably allows you to write the simplest application and gives you the best 
+throughput for your system.</P>
+
+<P>A final comment regarding concurrency options: if you use FOR 
+UPDATE, you can update any column in the cursor. (You might be able to update 
+any column if you don't specify the option, but you won't know that until you 
+try the positioned update.) But if you use the FOR UPDATE OF 
+<I>column_list</I> syntax and then try to update a column that is not in your specified list, you get 
+error message 16932.</P>
+
+<P>A lot of the discussion of cursor concurrency options ties in to modes 
+and types of locking in SQL Server. You might consider rereading this section 
+after you absorb all the details about locking in <A HREF="ch13a.htm">Chapter 13</A>.</P>
+
+</BODY>
+</HTML>
+
+
+

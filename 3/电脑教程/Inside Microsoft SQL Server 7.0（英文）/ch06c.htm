@@ -1,0 +1,702 @@
+<HTML>
+<HEAD>
+<link rel="STYLESHEET" type="text/css" href="squeal7.css">
+<TITLE>Internal Storage&#8212;The Details</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch06b.htm">[Previous]</A> <A HREF="ch06d.htm">[Next]</A><P>
+
+<A NAME="211"><H1>Internal Storage&#8212;The Details</H1></A>
+
+<p>This section covers system catalogs and the internal data storage of 
+tables. Although you can use SQL Server effectively without understanding 
+the internals, understanding the details of how SQL Server stores data will help you develop efficient applications. (If you don't need this in-depth information, you can skip this discussion and proceed to the section on indexes.)</p>
+
+<p>When you create a table, one or more rows are inserted into a number 
+of system catalogs to manage that table. At a minimum, rows are added to 
+the <i>sysobjects</i>, <i>sysindexes</i>, and <i>syscolumns</i> system catalogs (tables). When you define the new table with one or more constraints, rows are added to the <i>sysreferences</i> and <i>sysconstraints</i> system tables.</p>
+
+<p>For every table created, a single row that contains&#8212;among other 
+things&#8212;the name, object ID, and owner of the new table is added to the 
+<i>sysobjects</i> table. The <i>sysindexes</i> table will gain a single row that contains pointers to the first data page that the new table uses and information regarding the table's size, including the number of pages and rows currently being used. The <i>syscolumns</i> table will gain one row for each column in the new table, and each row will contain information such as the column name, datatype, and length. Each column receives a column ID, which directly corresponds to the order in which you specified the columns when you created the table. That is, the first column listed in the CREATE TABLE statement will have a column ID of 1, the second column will have a column ID of 2, and so on. Figure 6-3 shows the rows added to the <i>sysobjects</i>, <i>sysindexes</i>, and <i>syscolumns</i> system tables when you create a 
+table. (Not all columns are shown for each table.)</p>
+
+<p>Notice in the <i>syscolumns</i> output in the figure that the 
+<i>xoffset</i> column contains negative numbers in some rows. (Ignore the 
+<i>offset</i> column. It's used only to store row structure information for older versions of SQL Server.) Any column that contains variable-length data will have a negative <i>xoffset</i> value in <i>syscolumns</i>. The negative numbers are assigned to the variable-length columns in decreasing order (-1, -2, -3, and so on) in the order in which the column is specified in the CREATE TABLE statement. You can see in Figure 6-3 that the employee last name (<i>emp_lname</i>) is the first variable-length column in the table.</p>
+
+<P>
+<A HREF="javascript:fullSize('f06wh03x.htm')"> <img src="f06wh03.JPG" width=404 height=205 border=0 ALT="Click to view at full size."> </A>
+</P>
+<P>
+<!-- caption --><b>Figure 6-3.</b> <i>Catalog information stored after creating a table.</i><!-- /caption -->
+</P>
+
+
+<A NAME="212"><H2>Data Pages</H2></A>
+
+<p><i>Data pages</i> are the structures that contain all of a table's nontext and image data. As with all other types of pages in SQL Server, data pages have a fixed size of 8 KB, or 8192 bytes. Data pages consist of three major components: the page header, data rows, and the row offset array, as shown in Figure 6-4.</p>
+
+<A NAME="213"><H3>Page Header</H3></A>
+
+<p>As you can see in Figure 6-4, the page header occupies the first 96 bytes of 
+each data page (leaving 8096 bytes for data and row offsets). Table 6-2 shows the information contained in the page header.</p>
+
+<A NAME="214"><H3>Data Rows</H3></A>
+
+<p>Following the page header is the area in which the table's actual data rows 
+are stored. The maximum size of a single data row is 8096 bytes. A data row 
+can't span multiple pages (except for nontext and image columns, which are 
+stored in their own separate pages). The number of rows stored on a given page 
+will vary depending on the structure of the table and on the data being stored. 
+A table that has all fixed-length columns will always store the same number of 
+rows per page; variable-length rows will store as many rows as will fit based on the actual length of the data entered. Keeping row length compact allows more rows to fit on a page, thus reducing I/O and improving the cache-hit ratio.</p>
+
+<P>
+<img src="f06wh04.GIF" width=363 height=399 border=0>
+</P>
+<P>
+<!-- caption --><b>Figure 6-4.</b> <i>The structure of a data page.</i><!-- /caption -->
+</P>
+
+
+<p><b>Table 6-2.</b> <i>Information contained in the page header.</i></p>
+
+<p>
+	<table cellpadding="5" width="95%">
+		<tr>
+			<th>Field</th>
+			<th>Contains</th>
+		</tr>
+
+		<tr>
+			<td valign="top"><i>pageID</i></td>
+			<td valign="top">File number and page number of this page in the database.</td>
+		</tr>
+
+		<tr>
+			<td valign="top"><i>nextPage</i></td>
+			<td valign="top">File number and page number of the next page, if this page is in a page chain.</td>
+		</tr>
+
+		<tr>
+			<td valign="top"><i>prevPage</i></td>
+			<td valign="top">File number and page number of the previous page, if this page is in a page chain.</td>
+		</tr>
+
+		<tr>
+			<td valign="top"><i>objID</i></td>
+			<td valign="top">ID of the object to which this page belongs.</td>
+		</tr>
+
+		<tr>
+			<td valign="top"><i>lsn</i></td>
+			<td valign="top">Log sequence number (LSN) value used for changes and updates to this page.</td>
+		</tr>
+
+		<tr>
+			<td valign="top"><i>slotCnt</i></td>
+			<td valign="top">Total number of slots used on this page.</td>
+		</tr>
+
+		<tr>
+			<td valign="top"><i>level</i></td>
+			<td valign="top">Level of this page in an index (always 0 for leaf pages).</td>
+		</tr>
+
+		<tr>
+			<td valign="top"><i>indexId</i></td>
+			<td valign="top">Index ID of this page (always 0 for data pages).</td>
+		</tr>
+
+		<tr>
+			<td valign="top"><i>freeData</i></td>
+			<td valign="top">Byte offset of the first free space on this page.</td>
+		</tr>
+
+		<tr>
+			<td valign="top"><i>pminlen</i></td>
+			<td valign="top">Number of bytes in fixed-length portion of rows.</td>
+		</tr>
+
+		<tr>
+			<td valign="top"><i>freeCnt</i></td>
+			<td valign="top">Number of free bytes on page.</td>
+		</tr>
+
+		<tr>
+			<td valign="top"><i>reservedCnt </i></td>
+			<td valign="top">Number of bytes reserved by all transactions.</td>
+		</tr>
+
+		<tr>
+			<td valign="top"><i>xactreserved </i></td>
+			<td valign="top">Number of bytes reserved by the most recently 
+started transaction.</td>
+		</tr>
+
+		<tr>
+			<td valign="top"><i>tornBits</i></td>
+			<td valign="top">1 bit per sector for detecting torn page writes (discussed in Chapter 5).</td>
+		</tr>
+
+		<tr>
+			<td valign="top"><i>flagBits</i></td>
+			<td valign="top">2-byte bitmap that contains additional information about the page.</td>
+		</tr>
+	</table></p>
+		
+
+
+<A NAME="215"><H3>Row Offset Array</H3></A>
+
+<p>The row offset array is a block of 2-byte entries, each of which indicates the offset on the page on which the corresponding data row begins. Every row has a 2-byte entry in this array, and these 2 bytes were included in the discussion in &quot;<A HREF="ch06b.htm#209">Variable-Length vs. Fixed-Length Datatypes</A>&quot; in which we mentioned the 10 overhead bytes needed by every row. Although these bytes aren't stored in the row with the data, they do impact the number of rows that will fit on a page.</p>
+
+<p>The row offset array indicates the logical order of rows on a page. 
+For example, if a table has a clustered index, SQL Server will store the rows in the order of the clustered index key. This doesn't mean that the rows will be physically stored on the page in the order of the clustered index key, but that slot 0 in the offset array will refer to the first row in the order, slot 1 will refer to the second row, and so forth. As we'll see shortly when we examine an actual page, the offset of these rows can be anywhere on the page.</p>
+
+<p>There's no internal global row number for every row in a table. You 
+can use the combination of page number and slot number on the page to 
+uniquely identify each row in a table.</p>
+
+<A NAME="216"><H2>Examining Data Pages</H2></A>
+
+<p>You can view the contents of a data page by using the DBCC PAGE 
+statement, which allows you to view the page header, data rows, and row offset table for any given data page in a database. (Only a system administrator can use DBCC PAGE.) But because you typically won't need to view the content of a data page, you won't find much about DBCC PAGE in the SQL Server 
+documentation. Nevertheless, in case you want to use it, here's the syntax:</p>
+
+<p>
+<table cellpadding="5" width="95%">
+	<tr>
+		<td>
+<pre>DBCC PAGE ( {<I>dbid</I> | <I>dbname</I>}, <I>filenum</I>, <I>pagenum</I> [, <I>printopt</I>] [, <I>cache</I>] )
+</pre></td>
+		</tr>
+	</table></p>
+
+<p>The DBCC PAGE command includes the parameters shown in Table 
+6-3. Figure 6-5 shows sample output from DBCC PAGE. 
+Note that DBCC TRACEON (3604) instructs SQL Server to return the results 
+to the client instead of to the error log, as is the default for many of the 
+DBCC commands that deal with internals issues.</p>
+
+<p><b>Table 6-3.</b> <i>Parameters of the DBCC PAGE command.</i></p>
+
+<p>
+	<table cellpadding="5" width="95%">
+		<tr>
+			<th>Parameter</th>
+			<th valign="top" colspan="2">Description</th>
+		</tr>
+
+		<tr>
+			<td valign="top"><i>dbid</i></td>
+			<td valign="top" colspan="2">ID of the database containing the page.</td>
+		</tr>
+
+		<tr>
+			<td valign="top"><i>dbname</i></td>
+			<td valign="top" colspan="2">Name of the database containing the page.</td>
+		</tr>
+
+		<tr>
+			<td valign="top"><i>filenum</i></td>
+			<td valign="top" colspan="2">File number containing the page.</td>
+		</tr>
+
+		<tr>
+			<td valign="top"><i>pagenum</i></td>
+			<td valign="top" colspan="2">Page number within the file.</td>
+		</tr>
+
+		<tr>
+			<td valign="top"><i>printopt</i></td>
+			<td valign="top" colspan="2">Optional print option; takes one of these values:</td>
+		</tr>
+
+		<tr>
+			<td valign="top">&nbsp;</td>
+			<td valign="top">0</td>
+			<td valign="top">Default; print the buffer header and page header.</td>
+		</tr>
+
+		<tr>
+			<td valign="top">&nbsp;</td>
+			<td valign="top">1</td>
+			<td valign="top">Print the buffer header, page header, each row separately, and the row offset table.</td>
+		</tr>
+
+		<tr>
+			<td valign="top">&nbsp;</td>
+			<td valign="top">2</td>
+			<td valign="top">Print the buffer and page headers, page as a whole, and the offset table.</td>
+		</tr>
+
+		<tr>
+			<td valign="top"><i>cache</i></td>
+			<td valign="top" colspan="2">Optional; location of page; takes one of these values:</td>
+		</tr>
+
+		<tr>
+			<td valign="top">&nbsp;</td>
+			<td valign="top">0</td>
+			<td valign="top">Print the page as found on disk.</td>
+		</tr>
+			
+		<tr>
+			<td valign="top">&nbsp;</td>
+			<td valign="top">1</td>
+			<td valign="top">Default; print the page as found in cache (if it resides in cache); otherwise, retrieve and print the page from disk.</td>
+		</tr>
+	</table></p>
+
+
+
+<p>
+<A HREF="javascript:fullSize('f06wh05ax.htm')"> <img src="f06wh05a.JPG" width=404 height=594 border=0 ALT="Click to view at full size."> </A>
+</p><P>
+<A HREF="javascript:fullSize('f06wh05bx.htm')"> <img src="f06wh05b.JPG" width=404 height=516 border=0 ALT="Click to view at full size."> </A>
+</P>
+<P>
+<!-- caption --><b>Figure 6-5.</b> <i>Sample output from DBCC PAGE.</i><!-- /caption -->
+</P>
+
+
+<p>As you can see, the output from DBCC PAGE is divided into four 
+main sections: Buffer, Page Header, Data, and Offset Table (really the Offset 
+Array). The Buffer section shows information about the buffer for the given page. (A <i>buffer</i> in this context is an in-memory structure that manages a page.)</p>
+
+<p>The Page Header section in Figure 6-5 displays the data for all the 
+header fields on the page. (Table 6-2 shows the meaning of most of these fields.) The Data section contains information for each row. For each row, DBCC 
+PAGE indicates the slot position of the row and the offset of the row on the page. The page data is then divided into three parts. The left column indicates the byte position within the row where the displayed data occurs. The next four 
+columns contain the actual data stored on the page, displayed in hexadecimal. The right column contains a character representation of the data. Only character data will be readable in this column, although some of the other data might be displayed.</p>
+
+<p>The Offset Table section shows the contents of the row offset array at 
+the end of the page. In the figure, you can see that this page contains 23 rows, with the first row (indicated by slot 0) beginning at offset 1585 (0x631). The first row physically stored on the page is actually row 6, with an offset in the row offset array of 96. DBCC PAGE displays the rows in slot number order, even though, as you can see by the offset of each of the slots, that isn't the order in which the rows physically exist on the page.</p>
+
+<A NAME="217"><H2>Structure of Data Rows</H2></A>
+
+<p>A table's data rows have the general structure shown in Figure 6-6. The data 
+for all fixed-length columns is stored first, followed by the data for all 
+variable-length columns. Table 6-4 shows the information stored in eachrow.</p>
+
+<p>Status Bits A contains a bitmap indicating properties of the row. The 
+bits have the following meaning:</p>
+<ul>
+<p><li><b>Bit 0</b>  Versioning information; in SQL Server 7, it's always 0.</li></p>
+<p><li><b>Bits 1 through 3</b>  Taken as a 3-bit value, 0 indicates a primary 
+record, 1 indicates a forwarded record, 2 indicates a forwarded stub, 3 
+indicates an index record, 4 indicates a blob fragment, 5 indicates a 
+ghost index record, and 6 indicates a ghost data record. (We'll discuss 
+forwarding and ghost records in Chapter 8.)</li></p>
+<p><li><b>Bit 4</b>  Indicates that a NULL bitmap exists; in SQL Server 7, 
+a NULL bitmap is always present, even if no NULLs are allowed in any column.</li></p>
+<p><li><b>Bit 5</b>  Indicates that variable-length columns exist in the row.</li></p>
+<p><li><b>Bits 6 and 7</b>  Not used in SQL Server 7.</li></p>
+</ul>
+
+<P>
+<A HREF="javascript:fullSize('f06wh06x.htm')"> <img src="f06wh06.JPG" width=404 height=220 border=0 ALT="Click to view at full size."> </A>
+</P>
+<P>
+<!-- caption --><b>Figure 6-6.</b> <i>The structure of data rows.</i><!-- /caption -->
+</P>
+
+
+<p>Within each block of fixed-length or variable-length data, the data is 
+stored in the column order in which the table was created. For example, suppose a table is created with the following statement:</p>
+
+<p>
+<table cellpadding="5" width="95%">
+	<tr>
+		<td>
+<pre>CREATE TABLE Test1   (Col1 int NOT NULL,
+                      Col2 char(25) NOT NULL,
+                      Col3 varchar(60) NULL,
+                      Col4 money NOT NULL,
+                      Col5 varchar(20) NOT NULL)
+</pre></td>
+		</tr>
+	</table></p>
+
+<p>The fixed-length data portion of this row would contain the data for 
+<i>Col1</i>, followed by the data for <i>Col2</i>, followed by the data for 
+<i>Col4</i>. The variable-length data portion would contain the data for 
+<i>Col3</i>, followed by the data for 
+<i>Col5</i>. For rows that contain only fixed-length data, the following is true:</p>
+
+<ul>
+<p><li>The first hexadecimal digit of the first byte of the data row will be 
+1, indicating that no variable-length columns exist. (The first hexadecimal digit is comprised of bits 4 through 7; bits 6 and 7 are <i>always</i> 0, and if no variable-length columns exist, bit 5 is also 0. Bit 4 is <i>always</i> 1, so the value of the four bits is displayed as 1.)</li></p>
+<p><li>The data row ends after the NULL bitmap, which follows the 
+fixed-length data. (That is, the shaded portion shown in Figure 6-6 
+won't exist in rows with only fixed-length data.)</li></p>
+<p><li>The total length of every data row will be the same.</li></p>
+</ul>
+
+<p><b>Table 6-4.</b> <i>Information stored in a table's data rows.</i></p>
+
+<p>
+	<table cellpadding="5" width="95%">
+		<tr>
+			<th>Information</th>
+			<th>Mnemonic</th>
+			<th>Size</th>
+		</tr>
+
+		<tr>
+			<td valign="top">Status Bits A</td>
+			<td valign="top">TagA</td>
+			<td valign="top">1 byte</td>
+		</tr>
+
+		<tr>
+			<td valign="top">Status Bits B (not used in SQL Server 7)</td>
+			<td valign="top">TagB</td>
+			<td valign="top">1 byte</td>
+		</tr>
+
+		<tr>
+			<td valign="top">Fixed-length size</td>
+			<td valign="top">Fsize</td>
+			<td valign="top">2 bytes</td>
+		</tr>
+
+		<tr>
+			<td valign="top">Fixed-length data</td>
+			<td valign="top">Fdata</td>
+			<td valign="top">Fsize - 4</td>
+		</tr>
+			
+		<tr>
+			<td valign="top">Number of columns</td>
+			<td valign="top">Ncol</td>
+			<td valign="top">2 bytes</td>
+		</tr>
+
+		<tr>
+			<td valign="top">NULL bitmap (1 byte for each column in table; a 1 indicates that the corresponding column is NULL)</td>
+			<td valign="top">Nullbits</td>
+			<td valign="top">Ceiling (Ncol / 8)</td>
+		</tr>
+		
+		<tr>	
+			<td valign="top">Number of variable-length columns</td>
+			<td valign="top">VarCount</td>
+			<td valign="top">2 bytes</td>
+		</tr>
+		<tr>
+			<td valign="top">Variable column offset array</td>
+			<td valign="top">VarOffset</td>
+			<td valign="top">2 * VarCount</td>
+		</tr>
+			
+		<tr>
+			<td valign="top">Variable-length data</td>
+			<td valign="top">VarData</td>
+			<td valign="top">VarOff[VarCount] - (fsize + 4 + Ceiling (Ncol / 8) + 2 * VarCount)</td>
+		</tr>
+	</table>
+</p>
+
+
+
+<A NAME="218"><H2>Column Offset Array</H2></A>
+
+<p>A data row that has all fixed-length columns has no <i>variable column count</i> or <i>column offset array</i>. A data row that has variable-length columns has a column offset array in the data row with a 2-byte entry for each variable-length column, indicating the position within the row where each column ends. (The terms <i>offset</i> and <i>position</i> aren't exactly interchangeable. <i>Offset</i> is 0-based, and <i>position</i> is 
+1-based. A byte at an offset of 7 is in the eighth byte position in the row.)</p>
+
+<A NAME="219"><H2>Storage of Fixed-Length and Variable-Length Rows</H2></A>
+
+<p>Two examples follow that illustrate how fixed-length and variable-length 
+data rows are stored. First, the simpler case of an all fixed-length row:</p>
+
+<p>
+<table cellpadding="5" width="95%">
+	<tr>
+		<td>
+<pre>CREATE TABLE Fixed 
+    (Col1 char(5)     NOT NULL,
+     Col2 int         NOT NULL,
+     Col3 char(3)     NULL,
+     Col4 char(6)     NOT NULL,
+     Col5 float       NOT NULL)
+</pre></td>
+		</tr>
+	</table></p>
+
+<p>When this table is created, the following row (or one very much like it) is 
+inserted into the <i>sysindexes</i> system table:</p>
+
+<p>
+<table cellpadding="5" width="95%">
+	<tr>
+		<td>
+<pre>id          name  indid  first          minlen 
+----------- ----- ------ -------------- ------ 
+1797581442  Fixed 0      0xC70000000100 30
+</pre></td>
+		</tr>
+	</table></p>
+
+<p>And these rows are inserted into the <i>syscolumns</i> system table:</p>
+
+<p>
+<table cellpadding="5" width="95%">
+	<tr>
+		<td>
+<pre>name colid  xtype length xoffset 
+---- ------ ----- ------ ------- 
+Col1 1      175   5      4
+Col2 2      56    4      9
+Col3 3      175   3      13
+Col4 4      175   6      16
+Col5 5      62    8      22
+</pre></td>
+		</tr>
+	</table></p>
+
+<p>For tables containing only fixed-length columns, the <i>minlen</i> value in <i>sysindexes</i> will be equal to the sum of the column lengths (from <i>syscolumns</i>.<i>length</i>), plus 4 bytes. It won't include the 2 bytes for the number of columns, or the bytes for the null bitmap.</p>
+
+<p>To look at a specific data row in this table, first insert a new row:</p>
+
+<p>
+<table cellpadding="5" width="95%">
+	<tr>
+		<td>
+<pre>INSERT Fixed VALUES ('ABCDE', 123, null, 'CCCC', 4567.8)
+</pre></td>
+		</tr>
+	</table></p>
+
+<p>Figure 6-7 shows this row's actual contents on 
+the data page. To run the DBCC PAGE command, we had to take the value of 
+<i>first</i> from the <i>syindexes</i> output above (0xC70000000100) and convert it to a file and page address. In hexadecimal notation, each set of two characters represents a byte. We first had to swap the bytes to get 00 01 00 00 00 C7. The first two groups represent the 2-byte file number, and the last four groups represent the page number. So the file is 0x0001, which is 1, and the page number is 0x000000C7, which is 199 in decimal.</p>
+
+<P>
+<A HREF="javascript:fullSize('f06wh07x.htm')"> <img src="f06wh07.JPG" width=404 height=211 border=0 ALT="Click to view at full size."> </A>
+</P>
+<P>
+<!-- caption --><b>Figure 6-7.</b> <i>A data row containing all fixed-length columns (header not shown).</i><!-- /caption -->
+</P>
+
+
+
+<p><div class="note"><blockquote>
+<b>NOTE</b><hr>
+The <i>sysindexes</i> table contains three columns that 
+represent page numbers within a database: 
+<i>first</i>, <i>firstIAM</i>, and <i>root</i>. Each 
+is stored in a byte-swapped format. To convert to a decimal file 
+number and page number, you must first swap the bytes and then 
+convert the values from hexadecimal to decimal. You could use 
+the Windows calculator to do the conversion. However, a script has 
+been provided on the companion CD to create a stored procedure 
+called <i>ConvertPageNums</i>, which will convert all these columns in 
+the <i>sysindexes</i> table for you.
+</blockquote></div></p>
+
+<p><div class="warning"><blockquote>
+<b>WARNING</b><hr>
+Version 7 of SQL Server does not guarantee 
+that the <i>sysindexes.first</i> column will also indicate the first page of a 
+table. We have found that <i>first</i> is reliable until you begin to perform 
+deletes and updates on the data in the table.
+</blockquote></div></p>
+
+
+<p>Reading the output takes a bit of practice. DBCC PAGE displays the 
+data rows in groups of 4 bytes at a time. Within each group of four, the bytes 
+are listed in reverse order. So the first group of four bytes is byte 3, byte 2, byte 1, and byte 0. The shaded area in the figure has been expanded to show the bytes in the actual byte-number sequence.</p>
+
+<p>The first byte is Status Bits A, and its value (0x10) indicates that only 
+bit 4 is on, so the row has no variable-length columns. The second byte in the 
+row remains unused. The third and fourth bytes (1e00) indicate the length of 
+the fixed-length fields, which is also the column offset in which the 
+<i>Ncol</i> value can be found. (The byte-swapped value is 0x001e, which translates to 30.) You can identify the data in the row for each column simply by using the offset value in the <i>syscolumns</i> table: the data for column 
+<i>Col1</i> begins at offset 4, the data for column <i>Col2</i> begins at offset 9, and so on. As an <i>int</i>, the data in Col2 (7b000000) must be byte-swapped to give us the value 0x0000007b, which is equivalent 
+to 123 in decimal.</p>
+
+<p>Note that the 3 bytes of data for <i>Col3</i> are all zeros, representing an 
+actual NULL in the column. Because the row has no variable-length columns, the 
+row ends 3 bytes after the data for column <i>Col5</i>. The 2 bytes starting right after the fixed-length data at offset 30 (0500, which is byte-swapped to yield 0x0005) indicate that five columns are in the row. The last byte is the NULL bitmap. The value of 4 means that only the third bit is on, because in our row, the third column was indeed a NULL.</p>
+
+
+<p><div class="warning"><blockquote>
+<b>WARNING</b><hr>
+Fixed-length columns always use the full number 
+of bytes defined for the table, even if the column holds a NULL 
+value. If you've used previous versions of SQL Server, this might take 
+you by surprise. We know of at least one large database at a 
+manufacturing company that expanded to three or four times its size when 
+upgraded to version 7. This is because they had fields in many 
+tables defined as <i>char(255)</i> and allowing NULLs. Some tables had 10 
+or more such columns, and the vast majority of the data was 
+actually NULL. However, in SQL Server 7, every one of these 
+columns needed a full 255 bytes of storage and the database ballooned in size!
+</blockquote></div></p>
+
+<p>Here's the somewhat more complex case of a table with 
+variable-length data. Each row has three <i>varchar </i>columns:</p>
+
+<p>
+<table cellpadding="5" width="95%">
+	<tr>
+		<td>
+<pre>CREATE TABLE Variable 
+    (Col1 char(3)       NOT NULL,
+     Col2 varchar(250)  NOT NULL,
+     Col3 varchar(5)    NULL,
+     Col4 varchar(20)   NOT NULL,
+     Col5 smallint NULL)</pre></td>
+		</tr>
+	</table></p>
+
+<p>When you create this table, the following row is inserted into the 
+<i>sysindexes</i> system table:</p>
+
+<p>
+<table cellpadding="5" width="95%">
+	<tr>
+		<td>
+<pre>id          name     indid  first          minlen 
+----------- -------- ------ -------------- ------ 
+1333579789  Variable 0      0xC90000000100 9
+</pre></td>
+		</tr>
+	</table></p>
+
+<p>And these rows are inserted into the <i>syscolumns</i> system table:</p>
+
+<p>
+<table cellpadding="5" width="95%">
+	<tr>
+		<td>
+<pre>name colid  xtype length xoffset 
+---- ------ ----- ------ ------- 
+Col1 1      175   3      4
+Col2 2      167   250    -1
+Col3 3      167   5      -2
+Col4 4      167   20     -3
+Col5 5      52    2      7
+</pre></td>
+		</tr>
+	</table></p>
+
+<p>Now insert a row into the table:</p>
+
+<p>
+<table cellpadding="5" width="95%">
+	<tr>
+		<td>
+<pre>INSERT Variable VALUES 
+    ('AAA', REPLICATE('X',250), NULL, 'ABC', 123)
+</pre></td>
+		</tr>
+	</table></p>
+
+<p>The REPLICATE function is used here to simplify populating a column; this function builds a string of 250 <i>X</i>s to be inserted into <i>Col2</i>.</p>
+
+<p>As shown in Figure 6-8, the data for the fixed-length columns is 
+located using the offset value in 
+<i>syscolumns</i>. In this case, <i>Col1</i> begins at offset 4, and 
+<i>Col5</i> begins at offset 7.</p>
+
+<P>
+<A HREF="javascript:fullSize('f06wh08x.htm')"> <img src="f06wh08.JPG" width=404 height=209 border=0 ALT="Click to view at full size."> </A>
+</P>
+<P>
+<!-- caption --><b>Figure 6-8.</b> <i>A data row with variable-length columns (header not shown).</i><!-- /caption -->
+</P>
+
+
+<p>To find the variable-length columns, first locate the column offset 
+tables in the row. Right after the 2-byte field indicating the total number of 
+columns (0500), and the NULL bitmap with the value 0x04, a 2-byte field exists 
+with the value 0x0300 (or 3, decimal) indicating that three variable-length fields exist. Next comes the column offset array. Three 2-byte values indicate the ending position of each of the three variable-length columns: 0e01 is byte-swapped to 0x010e, so the first variable byte column ends at position 270. The next 2-byte offset is also 0e01, so that column has no length and has nothing stored in the variable data area. (Unlike fixed-length fields, if a variable-length field has a NULL value, it takes no room in the data row. SQL Server distinguishes between a <i>varchar</i> containing NULL and an empty string by determining whether the bit for the field is 0 or 1 in the NULL bitmap.) The third 2-byte offset is 1101, which, when byte-swapped, gives us 0x0111. This means the row ends at position 273 (and is a total of 273 bytes in length).</p>
+
+<p>The total storage space needed for a row depends on a number of 
+factors. Variable-length fields add additional overhead to a row, and their actual size is probably unpredictable. Even for fixed-length fields, the number of bytes of overhead can change depending on the number of columns in the table. In the earlier example pertaining to Figure 6-1, we mentioned that 10 bytes of overhead existed if a row contained all fixed-length columns. For that row, 10 is the correct number. The size of the NULL bitmap needs to be long enough to store a bit for every column in the row. In the Figure 6-1 example, the table had 11 columns, so the NULL bitmap needed to be 2 bytes. In the examples illustrated by Figures 6-7 and 6-8, the table had only 5 columns, so the NULL bitmaps needs only a single byte. Don't forget that the total row overhead also needs to include the 2 bytes for each row in the offset table at the bottom of the page.</p>
+
+<A NAME="220"><H2>Page Linkage</H2></A>
+
+<p>Unlike earlier versions of SQL Server, SQL Server 7 doesn't connect the 
+individual data pages of a table in a doubly linked list unless the table has a clustered index. All levels of indexes are linked together, and since the data is considered the leaf level of a clustered index, SQL Server does maintain the linkage. However, for a heap, there is no such linked list connecting the pages to each other. The only way that SQL Server determines which pages belong to a table is by inspecting the IAMs for the table.</p>
+
+<p>If the table has a clustered index, you can use the 
+<i>M_nextPage</i> and <i>M_prevPage</i> values in the page header information to determine the ordering of pages in the list. Alternatively, you can use the DBCC EXTENTINFO command to get a list of all the extents that belong to an object. This example uses the <i>Orders</i> table in the 
+<i>Northwind</i> database:</p>
+
+<p>
+<table cellpadding="5" width="95%">
+	<tr>
+		<td>
+<pre>dbcc extentinfo ('Northwind', 'Orders', 1 )
+</pre></td>
+		</tr>
+	</table></p>
+
+<p>The last argument indicates only extents for index 1, which is the 
+clustered index (and includes the data). Here is the output:</p>
+
+<p>
+<table cellpadding="5" width="95%">
+	<tr>
+		<td>
+<pre>file_id     page_id     pg_alloc    ext_size    obj_id      index_id  avg_used 
+----------- ----------- ----------- ----------- ----------- --------  -------- 
+1           143         1           1           357576312   1         25
+1           145         1           1           357576312   1         25
+1           291         1           1           357576312   1         25
+1           292         1           1           357576312   1         25
+1           293         1           1           357576312   1         25
+1           294         1           1           357576312   1         25
+1           295         1           1           357576312   1         25
+1           296         1           1           357576312   1         25
+1           304         8           8           357576312   1         25
+1           328         5           8           357576312   1         25
+</pre></td>
+		</tr>
+	</table></p>
+
+<p>Notice that the first eight rows indicate an extent size 
+(<i>ext_size</i>) of 1. As discussed in Chapter 5, the first eight pages of a table are allocated from mixed extents. Only after the table has reached eight pages does SQL Server allocate uniform extents of eight pages each. The last two rows in the table show this situation, and the page number (<i>page_id</i>) column gives the page number of the first page of the extent. Note that the last extent (starting on page 328) has used only five of its pages at this time.</p>
+
+<A NAME="221"><H2>Text and Image Data</H2></A>
+
+<p>As mentioned earlier, if a table contains text or image data, the actual data isn't stored on the data pages with the rest of the data for a row. Instead, SQL Server stores a 16-byte pointer in the data row that indicates where the actual data can be found. In SQL Server 7, individual 
+<i>text</i>,<i> ntext</i>, and <i>image</i> pages aren't limited to holding data for only one occurrence of a <i>text</i>,<i> ntext</i>, or<i> image</i> column. A <i>text</i>, <i>ntext</i>, or<i> image</i> page can hold data from multiple columns and from multiple rows; the page can even have a mix of 
+<i>text</i>,<i> ntext</i>, and<i> image</i> data. One text or image page can hold only text or image data from a single table.</p>
+
+<p>Text or image data is stored in a collection of 8-KB pages that 
+aren't necessarily located next to each other. In SQL Server 7, the pages are 
+logically organized in a B-tree structure, while in earlier versions of SQL Server, pages were linked together in a page chain. The advantage of the SQL Server 7 method is that operations starting in the middle of the string are more efficient. SQL Server 7 can quickly navigate the tree, while earlier versions of SQL Server had to scan through the page chain. The structure of the B-tree differs slightly depending on whether the amount of data is less than or more than 32 KB. (See Figure 6-9 for the general structure.) We'll discuss B-trees in more detail in the next section of the chapter.</p>
+
+<P>
+<A HREF="javascript:fullSize('f06wh09x.htm')"> <img src="f06wh09.JPG" width=404 height=277 border=0 ALT="Click to view at full size."> </A>
+</P>
+<P>
+<!-- caption --><b>Figure 6-9.</b> <i>A text column pointing to a B-tree that contains the blocks of data.</i><!-- /caption -->
+</P>
+
+
+<p>If the amount of data is less than 32 KB, the text pointer in the data 
+row points to an 84-byte text root structure. This forms the root node of the 
+B-tree structure. The root node points to the blocks of text or image data. While the data for <i>text</i>,<i> ntext</i>, and<i> image</i> columns is arranged logically in a B-tree, physically both the root node and the individual blocks of data are spread throughout the <i>text</i>,<i> ntext</i>, and<i> image </i>pages for the table. They're placed wherever space is available. The size of each block of data is determined by the size written by an application. Small blocks of data will be combined to fill a page. If the 
+amount of data is less than 64 bytes, it's all stored in the root structure.</p>
+
+<p>If the amount of data for one occurrence of a <i>text</i> or <i>image</i> column exceeds 32 KB, SQL Server starts building intermediate nodes between the data blocks and the root node. The root structure and the data blocks are 
+interleaved throughout the text and image pages in the same manner as described 
+earlier. The intermediate nodes, however, are stored in pages that aren't shared between occurrences of text or image columns. Each page storing intermediate nodes contains only intermediate nodes for one <i>text</i> or <i>image</i> column in one data row.</p>
+
+</BODY>
+</HTML>
+
+
+
+
