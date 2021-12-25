@@ -1,0 +1,250 @@
+<HTML>
+<HEAD>
+<TITLE>The DriverEntry Routine</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch02b.htm">[Previous]</A> <A HREF="ch02d.htm">[Next]</a>
+</p>
+
+<A NAME="40"><H1>The DriverEntry Routine</H1></A>
+
+<p>In the preceding section, I said that the PnP Manager loads the drivers needed for hardware
+and calls their AddDevice functions. A given driver might be used for more than one piece of
+similar hardware, and there's some global initialization that the driver needs to perform
+only once when it's loaded for the first time. That global initialization is the
+responsibility of the <b>DriverEntry</b> routine.</p>
+
+<p>DriverEntry is the name conventionally given to the main entry point to a kernel-mode
+driver. The I/O Manager calls the routine as follows:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+extern &quot;C&quot; NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject,
+  IN PUNICODE_STRING RegistryPath)
+  {
+  ...
+  }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+You call the main entry point to a kernel-mode driver &quot;DriverEntry&quot;
+because the build script&#8212;if you use standard procedures&#8212;will instruct the linker that
+DriverEntry is the entry point, and it's best to make your code match this assumption (or
+else to change the build script, but why bother?).</blockquote></div>
+</p>
+
+<p>Before I describe the code you'd write inside DriverEntry, I want to mention a few
+things about the function prototype itself. Unbeknownst to you and I (unless we look carefully
+at the compiler options used in the build script), kernel-mode functions and the functions in
+your driver use the <b>_ _stdcall</b> calling convention when compiled for an x86 computer. This
+shouldn't affect any of your programming, but it's something to bear in mind when
+you're debugging. I used the <b>extern &quot;C&quot;</b> directive because, as a rule, I
+package my code in a C++ compilation unit&#8212;mostly to gain the freedom to declare variables
+wherever I please instead of only immediately after left braces. This directive suppresses the
+normal C++ decoration of the external name so that the linker can find this function. Thus, an
+x86 compile produces a function whose external name is <b>_DriverEntry@8</b>.</p>
+
+<p>Another point about the prototype of DriverEntry is those &quot;IN&quot; keywords. <b>
+IN</b>, <b>OUT</b>, and <b>INOUT</b> are all noise words that the DDK defines as empty strings.
+By original intention, they perform a documentation function. That is, when you see an IN
+parameter, you're supposed to infer that it's purely input to your function. An OUT
+parameter is output by your function, while an INOUT parameter is used for both input and
+output. As it happens, the DDK headers don't really use these keywords intuitively, and
+there's not a great deal of point to them. To give you just one example out of many:
+DriverEntry claims that the DriverObject pointer is IN; indeed, you don't change the
+pointer, but you will assuredly change the object to which it points.</p>
+
+<p>The last general thing I want you to notice about the prototype is that it declares this
+function as returning an NTSTATUS value. NTSTATUS is actually just a long integer, but you want
+to use the typedef name NTSTATUS instead of LONG so that people understand your code better. A
+great many kernel-mode support routines return NTSTATUS status codes, and you'll find a
+list of them in the DDK header NTSTATUS.H. I'll have a bit more to say about status codes
+in the <a href="ch03a.htm">next chapter</a>; for now, just be aware that your DriverEntry function will be returning a
+status code when it finishes.</p>
+
+<A NAME="41"><H2>Overview of DriverEntry</H2></A>
+
+<p>The first argument to DriverEntry is a pointer to a barely initialized driver object that
+represents your driver. A WDM driver's DriverEntry function will finish initializing this
+object and return. Non-WDM drivers have a great deal of extra work to do&#8212;they must also
+detect the hardware for which they're responsible, create device objects to represent the
+hardware, and do all the configuration and initialization required to make the hardware fully
+functional. The relatively arduous detection and configuration steps are handled automatically
+for WDM drivers by the PnP Manager, as I'll discuss in <a href="ch06a.htm">Chapter 6</a>. If you want to know how a
+non-WDM driver initializes itself, consult Art Baker's <i>The Windows NT Device Driver
+Book</i> (Prentice Hall, 1997) and Viscarola and Mason's <i>Windows NT Device Driver
+Development</i> (Macmillan, 1998).</p>
+
+<p>The second argument to DriverEntry is the name of the service key in the registry. This
+string is not persistent&#8212;you must copy it if you plan to use it later.</p>
+
+<p>A WDM driver's main job in DriverEntry is to fill in the various function pointers in
+the driver object. These pointers indicate to the operating system where to find the
+subroutines you've decided to place in your driver container. They include these pointer
+members of the driver object:</p>
+
+<ul>
+<p><li> <b>DriverUnload</b> Set this to point to whatever cleanup routine you create. The I/O
+Manager will call this routine just prior to unloading the driver. Most of the time, a WDM
+driver doesn't allocate any resources during DriverEntry, so it doesn't need to clean
+anything up.</li></p>
+
+<p><li> <b>DriverExtension-&gt;AddDevice</b> Set this to point to your AddDevice function. The PnP
+Manager will call AddDevice once for each hardware instance you're responsible for. Since
+AddDevice is so important to the way WDM drivers work, I've devoted the next main section
+(&quot;<A HREF="ch02d.htm#44">The AddDevice Routine</A>&quot;) of this chapter to explaining what it does.</li></p>
+
+<p><li> <b>DriverStartIo</b> If your driver uses the standard method of queuing I/O requests,
+you'd set this member of the driver object to point to your StartIo routine. Don't
+worry (yet, that is) if you don't understand what I mean by the &quot;standard&quot;
+queuing method; all will become clear in <a href="ch05a.htm">Chapter 5</a>, where you'll discover that many drivers
+do use it.</li></p>
+
+<p><li> <b>MajorFunction</b> The I/O Manager initializes this vector of function pointers to point
+to a dummy dispatch function that fails every request. You're presumably going to be
+handling certain types of IRPs&#8212;otherwise, your driver is basically going to be deaf and
+dumb&#8212;so you'd set at least some of these pointers to your own dispatch functions.
+<a href="ch05a.htm">Chapter 5</a> discusses IRPs and dispatch functions in detail. For now, all you need to know is
+that you <i>must</i> handle three kinds of IRPs and that you'll <i>probably</i> be handling
+several other kinds as well.</li></p>
+</ul>
+
+
+<p>A nearly complete DriverEntry routine would, then, look like this:</p>
+
+<p>
+<table cellpadding=5 width="95%">
+<tr><td valign=top>
+<pre>
+
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+2 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+3 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+4 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+
+5 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+</pre>
+</td>
+<td valign=top>
+<pre>
+extern &quot;C&quot; NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject,
+  IN PUNICODE_STRING RegistryPath)
+  {
+  DriverObject-&gt;DriverUnload = DriverUnload;
+  DriverObject-&gt;DriverExtension-&gt;AddDevice = AddDevice;
+  DriverObject-&gt;DriverStartIo = StartIo;
+  DriverObject-&gt;MajorFunction[IRP_MJ_PNP] = DispatchPnp;
+  DriverObject-&gt;MajorFunction[IRP_MJ_POWER] = DispatchPower;
+  DriverObject-&gt;MajorFunction[IRP_MJ_SYSTEM_CONTROL] = DispatchWmi;
+  ...
+  servkey.Buffer = (PWSTR) ExAllocatePool(PagedPool,
+    RegistryPath-&gt;Length + sizeof(WCHAR));
+  if (!servkey.Buffer)
+    return STATUS_INSUFFICIENT_RESOURCES;
+  servkey.MaximumLength = RegistryPath-&gt;Length + sizeof(WCHAR);
+  RtlCopyUnicodeString(&amp;servkey, RegistryPath);
+  return STATUS_SUCCESS;
+  }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> These three statements set the function pointers for entry points elsewhere in
+the driver. I elected to give them simple names indicative of their function: DriverUnload,
+AddDevice, and StartIo.</li></p>
+
+<p><li> Every WDM driver must handle PNP, POWER, and SYSTEM_CONTROL I/O requests; this is
+where you'd specify your dispatch functions for these requests. What's now
+IRP_MJ_SYSTEM_CONTROL was called IRP_MJ_WMI in some early beta releases of the Windows 2000 DDK, which is why I called my
+dispatch function <b>DispatchWmi</b>.</li></p>
+
+<p><li> In place of this ellipsis, you'd have code to set several additional
+MajorFunction pointers.</li></p>
+
+<p><li> If you ever need to access the service registry key elsewhere in your driver,
+it's a good idea to make a copy of the <b>RegistryPath</b> string here. If you're going
+to be acting as a WMI (Windows Management Instrumentation) provider (as I discuss in Chapter
+10, &quot;<A HREF="ch10a.htm#330">Windows Management Instrumentation</A>&quot;), you'll need to have this string
+around, for example. I've assumed that you declared a global variable named <b>servkey</b> 
+as a UNICODE_STRING elsewhere. I'll explain the mechanics of working with Unicode strings in the
+<a href="ch03a.htm">next chapter</a>.</li></p>
+
+<p><li> Returning STATUS_SUCCESS is how you indicate success. If you were to discover
+something wrong, you'd return an error code chosen from the standard set in NTSTATUS.H or
+from a set of error codes that you define yourself. STATUS_SUCCESS happens to be numerically
+0.</li></p>
+</ol>
+
+<A NAME="42"><H2>DriverUnload</H2></A>
+
+<p>The purpose of a WDM driver's <b>DriverUnload</b> function is to clean up after any
+global initialization that DriverEntry might have done. There's almost nothing to do. If
+you made a copy of the RegistryPath string in DriverEntry, though, DriverUnload would be the
+place to release the memory used for the copy:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+VOID DriverUnload(PDRIVER_OBJECT DriverObject)
+  {
+  RtlFreeUnicodeString(&amp;servkey);
+  }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>If your DriverEntry routine returns a failure status, the system does not call your
+DriverUnload routine. Therefore, if DriverEntry generates any side effects that need cleaning
+up prior to returning an error status, DriverEntry has to perform the cleanup.</p>
+
+<A NAME="43"><H2>Driver Reinitialization Routine</H2></A>
+
+<p>The I/O Manager provides a service function, <b>IoRegisterDriverReinitialization</b>, that
+solves a peculiar problem for non-WDM drivers, and I want to explain what it does so you'll
+know why you don't need to worry about it. Non-WDM drivers need to enumerate their hardware
+at DriverEntry time. It might happen that a non-WDM driver must load and initialize before all
+possible instances of its own hardware have been identified. This is true for mouse and
+keyboard devices, for example. But, if DriverEntry is supposed to enumerate all the mice or
+keyboards and create device objects for them, these drivers can't do their work properly if
+their DriverEntry routine runs too soon. They use IoRegisterDriverReinitialization to register
+a routine that the I/O Manager will call back the next time someone detects new hardware. The
+reinitialization routine can then try again and, potentially, register itself for even later
+callbacks.</p>
+
+<p>WDM drivers shouldn't need to register reinitialization routines because they don't
+rely on their own resources to detect hardware. The PnP Manager will automatically match up
+newly arrived hardware to the right WDM driver and call that driver's AddDevice routine
+(the subject of the next section) to do all the necessary initialization work.</p>
+
+</BODY>
+</HTML>
+
+
+
+
+

@@ -1,0 +1,1512 @@
+<HTML>
+<HEAD>
+<TITLE>Managing Power Transitions</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch08b.htm">[Previous]</A> <A HREF="ch08d.htm">[Next]</a>
+</p>
+
+<A NAME="271"><H1>Managing Power Transitions</H1></A>
+
+<p>Performing power management tasks correctly requires very accurate coding, and there are
+many complicating factors. For example, your device might have the ability to wake up the
+system from a sleeping state. Deciding whether to succeed or fail a query, and deciding which
+device power state corresponds to a given new system power state, depends on whether your
+wake-up feature is currently armed. You may have powered down your own device because of
+inactivity, and you need to provide for restoring power when a substantive IRP comes along.
+Maybe your device is an &quot;inrush&quot; device that needs a large spike of current to power
+on, in which case the Power Manager treats you specially. And so on.</p>
+
+<p>When I thought about solving all the problems of handling query-power and set-power
+operations in a traditional way&#8212;that is, with normal-looking dispatch and completion
+routines&#8212;I was daunted by the sheer number of different subroutines that would be required
+and that would end up doing fairly similar things. I therefore decided to build my power
+support around a finite state machine that could easily deal with the asynchronous nature of
+the activities.</p>
+
+<p>I'll explain this finite state machine as it appears in GENERIC.SYS, which is a support
+driver that most of the code samples on the companion disc use. Appendix B, &quot;<A HREF="chaba.htm#436">Using GENERIC.SYS</A>,&quot; explains the client interface to GENERIC.SYS in complete detail. GENERIC.SYS
+amounts to a kernel-mode DLL containing helper functions for WDM drivers. You could think of it
+as a generic class driver with broad applicability. Client drivers, including most of my own
+sample drivers, delegate handling of power IRPs to GENERIC.SYS by calling <b>
+GenericDispatchPower</b>. GENERIC.SYS also implements the DEVQUEUE object I discussed in
+Chapter 6, &quot;<A HREF="ch06a.htm#180">Plug and Play</A>.&quot;</p>
+
+<A NAME="272"><H2>Overview of the Finite State Machine</H2></A>
+
+<p>I wrote a function named <b>HandlePowerEvent</b> to implement the finite state machine that
+manages power IRPs. I call this function with two arguments:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>NTSTATUS HandlePowerEvent(PPOWCONTEXT ctx, enum POWEVENT event);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The first argument is a context structure that contains a state variable, among other
+things:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>typedef struct _POWCONTEXT {
+  LONG id;
+  LONG eventcount;
+  PGENERIC_EXTENSION pdx;
+  PIRP irp;
+  enum POWSTATE state;
+  NTSTATUS status;
+  PKEVENT pev;
+  DEVICE_POWER_STATE devstate;
+  UCHAR MinorFunction;
+  BOOLEAN UnstallQueue;
+} POWCONTEXT, *PPOWCONTEXT;</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The <b>id</b> and <b>eventcount</b> fields are for debugging. If you compile POWER.CPP in
+the GENERIC project with the preprocessor macro VERBOSETRACE defined as a nonzero value, the
+POWTRACE macro will produce volumes of trace messages. I used this feature to debug the finite
+state machine. The prebuilt version of GENERIC.SYS on the companion disc was built without
+VERBOSETRACE to cut down on the sheer number of trace messages you'd be confronted with
+when you began to try out my samples.</p>
+
+<p>The <b>pdx</b> member points to GENERIC's portion of the device extension for a given
+device. There are just a couple of members in the device extension that are important for power
+management, and I'll mention them later in &quot;<A HREF="ch08c.htm#273">Initial Handling for a New IRP</A>.&quot; The
+<b>irp</b> member points to the power IRP that the finite state machine is currently working
+on; <b>state</b> is the state variable for the machine. The <b>status</b> member is the ending
+status of an IRP. In some situations, we want to wait while HandlePowerEvent originates and
+completes a device power IRP; we use the event pointed to by <b>pev</b> to await completion in
+those situations. The <b>devstate</b> member holds the device power state we want to use in a
+device IRP, and <b>MinorFunction</b> holds the minor function code (IRP_MN_QUERY_POWER or
+IRP_MN_SET_POWER) we want to use in that IRP. Finally, <b>UnstallQueue</b> indicates whether we
+want the state machine to unstall the substantive IRP queue when it finishes handling the
+current power IRP.</p>
+
+<p>The second argument to HandlePowerEvent is an event code that indicates why we're
+calling the function. There are just these few event codes:</p>
+
+<ul>
+<p><li> <b>NewIrp</b> indicates that we are submitting a new power IRP to the finite state machine
+for processing. The context structure's <b>irp</b> member points to the IRP in
+question.</li></p>
+
+<p><li> <b>MainIrpComplete</b> indicates that an IRP is complete.</li></p>
+
+<p><li> <b>AsyncNotify</b> indicates that some other asynchronous activity has occurred.</li></p>
+</ul>
+
+
+<p>HandlePowerEvent uses the value of the state variable and the event code to determine an
+action to take. See Table 8-3. (In the table, by the way, an empty cell denotes an impossible
+situation that leads to an ASSERT failure in the checked build of GENERIC.SYS.) An action
+corresponds to a series of program steps that advance the power IRP along its processing
+path.</p>
+
+<p><b>Table 8-3.</b> <i>Table giving initial action for each event and state.</i></p>
+
+<p><table cellpadding=5 width="95%"><tr>
+<th><i>State</i></th>
+<th></th>
+<th><i>Event</i></th>
+<th></th>
+</tr><tr>
+<th></th>
+<th>NewIrp</th>
+<th>MainIrpComplete</th>
+<th>AsyncNotify</th>
+</tr><tr>
+<td valign="top">InitialState</td>
+<td valign="top">TriageNewIrp</td>
+<td valign="top"></td>
+<td vAlign="top"></td>
+</tr><tr>
+<td valign="top">SysPowerUpPending</td>
+<td valign="top"></td>
+<td valign="top">SysPowerUpComplete</td>
+<td vAlign="top"></td>
+</tr><tr>
+<td valign="top">SubPowerUpPending</td>
+<td valign="top"></td>
+<td valign="top"></td>
+<td valign="top">SubPowerUpComplete</td>
+</tr><tr>
+<td valign="top">SubPowerDownPending</td>
+<td valign="top"></td>
+<td valign="top"></td>
+<td valign="top">SubPowerDownComplete</td>
+</tr><tr>
+<td valign="top">SysPowerDownPending</td>
+<td valign="top"></td>
+<td valign="top">SysPowerDownComplete</td>
+<td valign="top"></td>
+</tr><tr>
+<td valign="top">DevPowerUpPending</td>
+<td valign="top"></td>
+<td valign="top">DevPowerUpComplete</td>
+<td valign="top"></td>
+</tr><tr>
+<td valign="top">DevPowerDownPending</td>
+<td valign="top"></td>
+<td valign="top">CompleteMainIrp</td>
+<td valign="top"></td>
+</tr><tr>
+<td valign="top">ContextSavePending</td>
+<td valign="top"></td>
+<td valign="top"></td>
+<td valign="top">ContextSaveComplete</td>
+</tr><tr>
+<td valign="top">ContextRestorePending</td>
+<td valign="top"></td>
+<td valign="top"></td>
+<td valign="top">ContextRestoreComplete</td>
+</tr><tr>
+<td valign="top">DevQueryUpPending</td>
+<td valign="top"></td>
+<td valign="top">DevQueryUpComplete</td>
+<td valign="top"></td>
+</tr><tr>
+<td valign="top">DevQueryDownPending</td>
+<td valign="top"></td>
+<td valign="top">DevQueryDownComplete</td>
+<td valign="top"></td>
+</tr><tr>
+<td valign="top">QueueStallPending</td>
+<td valign="top"></td>
+<td valign="top"></td>
+<td valign="top">QueueStallComplete</td>
+</tr><tr>
+<td valign="top">FinalState</td>
+<td valign="top"></td>
+<td valign="top"></td>
+<td valign="top"></td>
+</tr></table></p>
+
+
+
+<p>Since many of the events require multiple actions in some situations, I coded <b>
+HandlePowerEvent</b> in what may seem at first like a peculiar way, as follows:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>NTSTATUS HandlePowerEvent(...)
+  {
+  NTSTATUS status;
+  POWACTION action = ...;
+  while (TRUE)
+    {
+    switch (action)
+      {
+    case <i>&lt;someaction&gt;</i>:
+      action = <i>&lt;someotheraction&gt;</i>;
+      continue;
+    case <i>&lt;anotheraction&gt;</i>:
+      break;
+      }
+    break;
+    }
+  return status;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>That is, the function amounts to a <b>switch</b> on the <b>action</b> code imbedded within
+an infinite loop. An action case that performs a <b>continue</b> statement repeats the loop;
+this is how I string together a series of actions during one call to the function. An action
+case that performs a <b>break</b> from the <b>switch</b> reaches another <b>break</b> statement
+that exits from the loop, whereupon the function returns.</p>
+
+<p>I adopted this coding style for the state machine because I really took to heart the
+structured programming precepts I learned in my youth. I wanted there to be just one return
+statement in this whole function to make it easier to prove that the function worked correctly.
+To aid in the proof, I developed a couple of rules for myself that I could test either by
+inspection or with ASSERT statements at the end of the function. Here are the rules:</p>
+
+<ul>
+<p><li> Every code path eventually leads to a <b>break</b> statement and, hence, to a <b>
+return</b> from the function. Somewhere along the path, someone has to change the <b>status</b> 
+variable (I initialize it to -1 and then test to be sure it got changed) and the <b>state</b> 
+variable (I test to be sure it got changed).</li></p>
+
+<p><li> Any <b>continue</b> statement should be preceded by a change in the <b>action</b> 
+variable.</li></p>
+
+<p><li> Any case that might generate a recursive call to HandlePowerEvent&#8212;for example, by
+calling PoCallDriver, which might cause a completion event to be signalled before it
+returns&#8212;must immediately <b>break</b> from the loop without touching the context structure
+or the IRP.</li></p>
+</ul>
+
+
+<A NAME="273"><H2>Initial Handling for a New IRP</H2></A>
+
+<p>When we receive a new query-power or set-power IRP, we create a context structure to drive
+the finite state machine and call HandlePowerEvent:</p>
+
+<table width="95%" cellpadding="5" valign="TOP" border=0>
+<tr><td valign=top>
+<pre>
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+
+
+
+
+
+2 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+</pre></td>
+<td valign="top">
+<pre>NTSTATUS GenericDispatchPower(PGENERIC_EXTENSION pdx, PIRP Irp)
+  {
+  NTSTATUS status = IoAcquireRemoveLock(pdx-&gt;RemoveLock, Irp);
+  if (!NT_SUCCESS(status))
+    return CompleteRequest(Irp, status);
+  PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
+  ULONG fcn = stack-&gt;MinorFunction;
+  if (fcn == IRP_MN_SET_POWER || fcn == IRP_MN_QUERY_POWER)
+    {
+    PPOWCONTEXT ctx = (PPOWCONTEXT) ExAllocatePool(NonPagedPool,
+      sizeof(POWCONTEXT));
+    RtlZeroMemory(ctx, sizeof(POWCONTEXT));
+    ctx-&gt;pdx = pdx;
+    ctx-&gt;irp = Irp;
+    status = HandlePowerEvent(ctx, NewIrp);
+    }
+  IoReleaseRemoveLock(pdx-&gt;RemoveLock, Irp);
+  return status;
+  }</pre>
+</td></tr>
+</table>
+
+
+<ol>
+<p><li> The client driver provides a remove lock that both it and GENERIC use to guard
+against premature removal of the device object. The actual code in GENERIC is a little more
+complicated than I'm showing you here, in that the remove lock isn't required. The
+actual code therefore tests the <b>RemoveLock</b> pointer for NULL before using it. There are
+other unimportant respects, including error checking, in which GENERIC differs from the
+simplified version I'm showing throughout this chapter.</li></p>
+
+<p><li> For set and query operations, we allocate nonpaged memory for the context
+structure and initialize it. The <b>state</b> variable gets initialized to <b>InitialState</b>,
+which is numerically equal to 0, by the call to <b>RtlZeroMemory</b>.</li></p>
+</ol>
+
+<p>The initial state of the finite state machine is InitialState. When we call HandlePowerEvent
+for the NewIrp event, the first action taken will be the following, which I named <b>
+TriageNewIrp</b>:</p>
+
+
+<table width="95%" cellpadding="5" valign="TOP" border=0>
+<tr><td valign=top>
+<pre>
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+2 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+
+3 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+4 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+5 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+
+
+
+
+
+
+
+
+
+
+
+6 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+
+
+
+7 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+</pre>
+</td>
+<td valign=top>
+<pre>
+case TriageNewIrp:
+  {
+  status = STATUS_PENDING;
+  IoMarkIrpPending(Irp);
+  IoAcquireRemoveLock(pdx-&gt;RemoveLock, Irp);
+  if (stack-&gt;Parameters.Power.Type == SystemPowerState)
+    {        // system IRP
+    if (stack-&gt;Parameters.Power.State.SystemState &lt; pdx-&gt;syspower)
+      {
+      action = ForwardMainIrp;
+      ctx-&gt;state = SysPowerUpPending;
+      }
+    else
+      {
+      action = SelectDState;
+      ctx-&gt;state = SubPowerDownPending;
+      }
+    }        // system IRP
+  else
+    {        // device IRP
+    ctx-&gt;state = QueueStallPending;
+    if (!pdx-&gt;StalledForPower)
+      {
+      ctx-&gt;UnstallQueue = TRUE;
+      pdx-&gt;StalledForPower = TRUE;
+      NTSTATUS qstatus = StallRequestsAndNotify(pdx-&gt;dqReadWrite,
+        GenericSaveRestoreComplete, ctx);
+      if (qstatus == STATUS_PENDING)
+        break;
+      }
+    action = QueueStallComplete;
+    }        // device IRP
+  continue;
+  }</pre>
+</td></tr>
+</table>
+
+
+<ol>
+<p><li> We always pend the power IRPs that come to us. In nearly every case, we need to
+delay completing the IRP until after some asynchronous activity occurs.</li></p>
+
+<p><li> We acquire the remove lock an extra time beyond the acquisition that occurs in
+the dispatch routine. We'll release this instance of the lock when we finally complete the
+IRP.</li></p>
+
+<p><li> If the power state in the IRP is numerically less than the <b>syspower</b> value
+we carry around in the device extension, the IRP relates to a higher system power state.</li></p>
+
+<p><li> This statement illustrates how <b>HandlePowerEvent</b> can perform more than one
+action during a single invocation. Later on we'll execute a <b>continue</b> statement that
+repeats the infinite loop. The <b>action</b> value will be different, however, which will cause
+us to execute a different piece of code.</li></p>
+
+<p><li> This statement illustrates how action cases can alter the state of the finite
+state machine. To simplify the conditional compilation I used for debugging print statements,
+the actual code in GENERIC uses a macro named SETSTATE to perform this assignment, by the
+way.</li></p>
+
+<p><li> We're about to call a function (<b>StallRequestsAndNotify</b> ) that might
+cause recursion into this function. We're not allowed to touch the context structure
+afterwards, so we set this flag now. The flag means that <b>CompleteMainIrp</b> should call <b>
+RestartRequests</b> to unstall the queue.</li></p>
+
+<p><li> This statement illustrates how an action case can cause <b>HandlePowerEvent</b> 
+to return. This <b>break</b> statement exits from the <b>switch</b> on <b>action</b>.
+Immediately after the <b>switch</b> statement is another <b>break</b>, which exits from the <b>
+while</b> loop in which the <b>switch</b> is embedded.</li></p>
+</ol>
+
+<p>Basically, TriageNewIrp is distinguishing between system power IRPs (that is, IRPs whose <b>
+Type</b> is <b>SystemPowerState</b> ) that increase the power level, system power IRPs that
+leave the power level alone or reduce it, and device power IRPs (that is, IRPs whose <b>
+Type</b> is <b>DevicePowerState</b> ), regardless of whether they raise or lower the power
+level. The state machine doesn't distinguish at this stage between QUERY_POWER and
+SET_POWER requests, so they end up being treated very similarly up to a point.</p>
+
+<p>For us to know whether power is rising or falling, our device extension needs two variables
+for keeping track of system power and device power states:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>typedef struct _GENERIC_EXTENSION {
+  ...
+  DEVICE_POWER_STATE devpower; // current dev power state
+  SYSTEM_POWER_STATE syspower; // current sys power state
+  } GENERIC_EXTENSION, *PGENERIC_EXTENSION;</pre>
+</td></tr>
+</table>
+</p>
+
+<p>We initialize these values to <b>PowerDeviceD0</b> and <b>PowerSystemWorking</b>,
+respectively, when the client driver first registers with GENERIC.SYS.</p>
+
+<p>You can guess from context that the device extension also has a BOOLEAN member named <b>
+StalledForPower</b>. This flag, when set, indicates that the substantive IRP queue is presently
+stalled for purposes of power management. Incidentally, you'll notice (if you've got
+the right sort of nasty and suspicious mind to be doing device driver programming, that is)
+that I'm not explicitly synchronizing access to the power state fields or this flag. No
+additional synchronization is required beyond the serialization that the Power Manager already
+imposes.</p>
+
+<p>I'll discuss the three initial categories of IRPs separately now.</p>
+
+<A NAME="274"><H2>System Power IRPs That Increase Power</H2></A>
+
+<p>If a system power IRP implies an increase in the system power level, you'll forward it
+immediately to the next lower driver. In your completion routine for the system power IRP,
+you'll request the corresponding device power IRP and return STATUS_MORE_PROCESSING_REQUIRED 
+to temporarily halt the completion process. In a completion routine
+for the device power IRP, you'll finish the completion processing for the system power IRP.
+Figure 8-5 diagrams the flow of the IRP through all of the drivers. Figure 8-6 is a state
+diagram that shows how our finite state machine handles the IRP.</p>
+
+<p>
+<A HREF="javascript:fullSize('F08wi05x.htm')"> <img src="images/F08wi05.JPG" width=404 height=277 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 8-5.</b> <i>IRP flow when increasing system power.</i><!--/caption-->
+</p>
+
+
+<p>
+<A HREF="javascript:fullSize('F08wi06x.htm')"> <img src="images/F08wi06.JPG" width=404 height=516 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 8-6.</b> <i>State transitions when increasing system power.</i><!--/caption-->
+</p>
+
+
+<p>In terms of how the code works, I showed you earlier that TriageNewIrp puts the machine into
+the <b>SysPowerUpPending</b> state and requests the <b>ForwardMainIrp</b> action, which is as
+follows:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>case ForwardMainIrp:
+  {
+  IoCopyCurrentIrpStackLocationToNext(Irp);
+  IoSetCompletionRoutine(Irp, (PIO_COMPLETION_ROUTINE)
+    MainCompletionRoutine, (PVOID) ctx, TRUE, TRUE, TRUE);
+  PoCallDriver(pdx-&gt;LowerDeviceObject, Irp);
+  break;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>HandlePowerEvent will now return STATUS_PENDING, as mandated by the code we already saw in
+TriageNewIrp. This return value percolates back out through GenericDispatchPower and,
+presumably, the client driver's IRP_MJ_POWER dispatch function.</p>
+
+<p>Our next contact with this IRP is when the bus driver completes it. Our own <b>
+MainCompletionRoutine</b> gets control as part of the completion process, saves the IRP's
+ending status in the context structure's <b>status</b> field, and invokes the finite state
+machine:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>NTSTATUS MainCompletionRoutine(PDEVICE_OBJECT junk, PIRP Irp,
+  PPOWCONTEXT ctx)
+  {
+  ctx-&gt;status = Irp-&gt;IoStatus.Status;
+  return HandlePowerEvent(ctx, MainIrpComplete);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Our initial action will be <b>SysPowerUpComplete</b>:</p>
+
+<table width="95%" cellpadding="5" valign="TOP" border=0>
+<tr><td valign=top>
+<pre>
+
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+
+2 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+
+
+3 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+</pre>
+</td>
+<td valign=top>
+<pre>
+case SysPowerUpComplete:
+  {
+  if (!NT_SUCCESS(ctx-&gt;status))
+    action = CompleteMainIrp;
+  else
+    {
+    if (stack-&gt;MinorFunction == IRP_MN_SET_POWER)
+      pdx-&gt;syspower = stack-&gt;Parameters.Power.State.SystemState;
+    action = SelectDState;
+    ctx-&gt;state = SubPowerUpPending;
+    status = STATUS_MORE_PROCESSING_REQUIRED;
+    }
+  continue;
+  }</pre>
+</td></tr>
+</table>
+
+
+<ol>
+<p><li> If the IRP failed in the lower levels of the driver hierarchy, we're going to
+let it complete without doing any more work on this power event. I'll explain in the next
+section, &quot;<A HREF="ch08c.htm#275">Dealing with Failure</A>,&quot; what <b>CompleteMainIrp</b> does.</li></p>
+
+<p><li> This is where we record the new system power state. We use the <b>syspower</b> 
+value when we check to see whether a new system IRP is raising or lowering power.</li></p>
+
+<p><li> We've been called from <b>MainCompletionRoutine</b> and now want to interrupt
+completion of the system IRP while we process the device IRP we're about to originate.
+Hence, we'll cause MainCompletionRoutine to return STATUS_MORE_PROCESSING_REQUIRED.</li></p>
+</ol>
+
+<A NAME="275"><H3>Dealing with Failure</H3></A>
+
+<p>If the IRP failed, you can see that we'll do the <b>CompleteMainIrp</b> action next:</p>
+
+
+<table width="95%" cellpadding="5" valign="TOP" border=0>
+<tr><td valign=top>
+<pre>
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+2 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+3 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+
+
+
+4 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+5 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+</pre>
+</td>
+<td valign=top>
+<pre>
+case CompleteMainIrp:
+  {
+  PoStartNextPowerIrp(Irp);
+  if (event == MainIrpComplete)
+    status = ctx-&gt;status;
+  else
+    {
+    Irp-&gt;IoStatus.Status = ctx-&gt;status;
+    IoCompleteRequest(Irp, IO_NO_INCREMENT);
+    }
+  IoReleaseRemoveLock(pdx-&gt;RemoveLock, Irp);
+  if (ctx-&gt;UnstallQueue)
+    {
+    pdx-&gt;StalledForPower = FALSE;
+    RestartRequests(pdx-&gt;dqReadWrite, pdx-&gt;DeviceObject);
+    }
+  action = DestroyContext;
+  continue;
+  }</pre>
+</td></tr>
+</table>
+
+
+<ol>
+<p><li> Here's the call to <b>PoStartNextPowerIrp</b> that we must make for each
+power IRP while we still own it.</li></p>
+
+<p><li> If we were entered to handle a <b>MainIrpComplete</b> event, our caller must have
+been <b>MainCompletionRoutine</b>, and the first action routine will have set <b>status</b> 
+equal to STATUS_MORE_PROCESSING_REQUIRED to short-circuit the completion process. Since
+we've decided we want to complete this IRP after all&#8212;that's why we're at <b>
+CompleteMainIrp</b>&#8212;the right thing to do is to return a different status code and allow
+the completion process to take its normal course.</li></p>
+
+<p><li> If we were entered for any other event, we need to explicitly complete the
+IRP.</li></p>
+
+<p><li> This <b>IoReleaseRemoveLock</b> call balances the call to <b>
+IoAcquireRemoveLock</b> that we did during TriageNewIrp.</li></p>
+
+<p><li> I'll explain what this block of code is all about when I talk about device
+IRPs later in this chapter.</li></p>
+</ol>
+
+<p>When handling a system power IRP that increases power, the machine enters CompleteMainIrp
+after a MainIrpComplete event. CompleteMainIrp will therefore arrange to return the error
+status we originally fetched (inside MainCompletionRoutine) from the IRP. That will permit the
+completion process to continue. There are other code paths we haven't studied yet in which
+CompleteMainIrp calls <b>IoCompleteRequest</b> instead. CompleteMainIrp finishes by requesting
+yet another action:</p>
+
+
+<table width="95%" cellpadding="5" valign="TOP" border=0>
+<tr><td valign=top>
+<pre>
+
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+2 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+</pre>
+</td>
+<td valign=top>
+<pre>
+case DestroyContext:
+  {
+  if (ctx-&gt;pev)
+    KeSetEvent(ctx-&gt;pev, IO_NO_INCREMENT, FALSE);
+  else
+    ExFreePool(ctx);
+  break;
+  }</pre>
+</td></tr>
+</table>
+
+
+<ol>
+<p><li> This branch is taken when <b>SendDeviceSetPower</b> calls the state machine
+engine to create and wait for a device IRP.</li></p>
+
+<p><li> This branch is taken when <b>GenericDispatchPower</b> calls the state machine
+engine to process an IRP.</li></p>
+</ol>
+
+<p><b>DestroyContext</b> is, of course, the last action the finite state machine ever
+performs.</p>
+
+<A NAME="276"><H3>Mapping the System State to a Device State</H3></A>
+
+<p>The other possible path out of SysPowerUpComplete generates a device power IRP with a power
+state that corresponds to the system power state. We perform the mapping of system to device
+states in the <b>SelectDState</b> action:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>case SelectDState:
+  {
+  SYSTEM_POWER_STATE sysstate = 
+    stack-&gt;Parameters.Power.State.SystemState;
+  if (sysstate == PowerSystemWorking)
+    ctx-&gt;devstate = PowerDeviceD0;
+  else
+    {
+    DEVICE_POWER_STATE maxstate =
+      pdx-&gt;devcaps.DeviceState[sysstate];
+    DEVICE_POWER_STATE minstate = pdx-&gt;WakeupEnabled ?
+      pdx-&gt;devcaps.DeviceWake : PowerDeviceD3;
+    ctx-&gt;devstate = minstate &gt; maxstate ? minstate : maxsstate;
+    }
+  ctx-&gt;MinorFunction = stack-&gt;MinorFunction;
+  action = SendDeviceIrp;
+  continue;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>By the way, the Power Manager never transitions directly from one low system power state to
+another: it always moves via PowerSystemWorking. That's why I coded SelectDState to choose
+one mapping for PowerSystemWorking and a different mapping for all other system power
+states.</p>
+
+<p>In general, we always want to put our device into the lowest power state that's
+consistent with current device activity, with our own wake-up feature (if any), with device
+capabilities, and with the impending state of the system. These factors can interplay in a
+relatively complex way. To explain them fully, I need to digress briefly and talk about a Plug
+and Play IRP that I avoided discussing in <A HREF="ch06a.htm">Chapter 6</A>: IRP_MN_QUERY_CAPABILITIES.</p>
+
+<p>The PnP Manager sends a capabilities query shortly after starting your device and perhaps at
+other times. The parameter for the request is a DEVICE_CAPABILITIES structure that contains
+several fields relevant to power management. Since this is the only time in this book I'm
+going to discuss this structure, I'm showing you the entire declaration:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>typedef struct _DEVICE_CAPABILITIES {
+    USHORT Size;
+    USHORT Version;
+    ULONG DeviceD1:1;
+    ULONG DeviceD2:1;
+    ULONG LockSupported:1;
+    ULONG EjectSupported:1;
+    ULONG Removable:1;
+    ULONG DockDevice:1;
+    ULONG UniqueID:1;
+    ULONG SilentInstall:1;
+    ULONG RawDeviceOK:1;
+    ULONG SurpriseRemovalOK:1;
+    ULONG WakeFromD0:1;
+    ULONG WakeFromD1:1;
+    ULONG WakeFromD2:1;
+    ULONG WakeFromD3:1;
+    ULONG HardwareDisabled:1;
+    ULONG NonDynamic:1;
+    ULONG Reserved:16;
+
+    ULONG Address;
+    ULONG UINumber;
+
+    DEVICE_POWER_STATE DeviceState[PowerSystemMaximum];
+    SYSTEM_POWER_STATE SystemWake;
+    DEVICE_POWER_STATE DeviceWake;
+    ULONG D1Latency;
+    ULONG D2Latency;
+    ULONG D3Latency;
+} DEVICE_CAPABILITIES, *PDEVICE_CAPABILITIES;</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Table 8-4 describes the fields in this structure that relate to power management.</p>
+
+<p><b>Table 8-4.</b> <i>Power-management fields in DEVICE_CAPABILITIES structure.</i></p>
+
+<p><table cellpadding=5 width="95%"><tr>
+<th><i>Field</i></th>
+<th><i>Description</i></th>
+</tr><tr>
+<td valign="top">DeviceState</td>
+<td valign="top">Array of highest device states possible for each system state</td>
+</tr><tr>
+<td valign="top">SystemWake</td>
+<td valign="top">Lowest system power state from which the device can generate a wake-up signal for the system&#8212;PowerSystemUnspecified indicates that device
+can't wake up the system</td>
+</tr><tr>
+<td valign="top">DeviceWake</td>
+<td valign="top">Lowest power state from which the device can generate a wake-up
+signal&#8212;PowerDeviceUnspecified indicates that device can't generate a wake-up
+signal </td>
+</tr><tr>
+<td valign="top">D1Latency</td>
+<td valign="top">Approximate worst-case time (in 100-microsecond units) required for device to switch
+from D1 to D0 states</td>
+</tr><tr>
+<td valign="top">D2Latency</td>
+<td valign="top">Approximate worst-case time (in 100-microsecond units) required for device to
+switch from D2 to D0 states</td>
+</tr><tr>
+<td valign="top">D3Latency</td>
+<td valign="top">Approximate worst-case time (in 100-microsecond units) required for device to
+switch from D3 to D0 states</td>
+</tr><tr>
+<td valign="top">WakeFromD0</td>
+<td valign="top">Flag indicating whether device's system wake-up feature is operative when the
+device is in the indicated state</td>
+</tr><tr>
+<td valign="top">WakeFromD1</td>
+<td valign="top">Same as above</td>
+</tr><tr>
+<td valign="top">WakeFromD2</td>
+<td valign="top">Same as above</td>
+</tr><tr>
+<td valign="top">WakeFromD3</td>
+<td valign="top">Same as above</td>
+</tr></table></p>
+
+
+
+<p>You normally handle the query capabilities IRP synchronously by passing it down and waiting
+for the lower layers to complete it. After the pass-down, you'll make any desired changes
+to the capabilities recorded by the bus driver. Your subdispatch routine would look like this
+one:</p>
+
+
+<table width="95%" cellpadding="5" valign="TOP" border=0>
+<tr><td valign=top>
+<pre>
+
+
+
+
+
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+
+
+
+
+
+2 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+3 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+</pre>
+</td>
+<td valign=top>
+<pre>
+NTSTATUS HandleQueryCapabilities(IN PDEVICE_OBJECT fdo,
+  IN PIRP Irp)
+  {
+  PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+  PDEVICE_CAPABILITIES pdc = stack-&gt;
+    Parameters.DeviceCapabilities.Capabilities;
+  if (pdc-&gt;Version &lt; 1)
+    return DefaultPnpHandler(fdo, Irp);
+  NTSTATUS status = ForwardAndWait(fdo, Irp);
+  if (NT_SUCCESS(status))
+    {
+    stack = IoGetCurrentIrpStackLocation(Irp);
+    pdc = stack-&gt;Parameters.DeviceCapabilities.Capabilities;
+    <i>&lt;stuff&gt;</i>
+    pdx-&gt;devcaps = *pdc;
+    }
+  return CompleteRequest(Irp, status);
+  }</pre>
+</td></tr>
+</table>
+
+
+<ol>
+<p><li> The device capabilities structure has a version number member, which is currently
+always equal to 1. The structure is designed to always be upward compatible, so you'll be
+able to work with the version defined in the DDK that you build your driver with <i>and</i>
+with any later incarnation of the structure. If, however, you're confronted with a
+structure that's older than you're able to work with, you should just ignore this IRP
+by passing it along.</li></p>
+
+<p><li> Here's where you can override any capabilities that were set by the bus
+driver.</li></p>
+
+<p><li> It's a good idea to make a copy of the capabilities structure. I already
+described how you'll use the <b>DeviceState</b> map when you receive a system power IRP.
+You might have occasion to consult other fields in the structure, too.</li></p>
+</ol>
+
+<p>Don't bother altering the characteristics structure before you pass this IRP down: the
+bus driver will completely reinitialize it. When you regain control, you can modify <b>
+SystemWake</b> and <b>DeviceWake</b> to specify a higher power state than the bus driver
+thought was appropriate. You can't specify a lower power state for the wake-up fields, and
+you can't override the bus driver's decision that your device is incapable of waking
+the system. If your device is ACPI-compliant, the ACPI filter will set the <b>
+LockSupported</b>, <b>EjectSupported</b>, and <b>Removable</b> flags automatically based on the
+ACPI Source Language (ASL) description of the device&#8212;you won't need to worry about
+these capabilities.</p>
+
+<p>You might want to set the <b>SurpriseRemovalOK</b> flag at point &quot;2&quot; in the
+capabilities handler. Setting the flag suppresses the dialog box that Windows 2000 normally
+presents when it detects the sudden and unexpected removal of a device. It's normally okay
+for the end user to remove a universal serial bus (USB) or 1394 device without first telling
+the system, and the function driver should set this flag to avoid annoying the user.</p>
+
+<p>To return to our discussion of SelectDState, suppose we're dealing with a set-power
+request that will take the computer from Working to Sleeping1; we'll therefore execute the
+second branch of the <b>if</b> statement in SelectDState. Let's suppose that the bus driver
+knows that our device can be in any of the states D0, D1, D2, or D3 when the system is in
+Sleeping1. When it answered the PnP capabilities query it would therefore have filled in <b>
+DeviceState [PowerSystemSleeping1]</b> in the device capabilities structure with the value
+PowerDeviceD0 because D0 is the <i>highest</i> power state our device can occupy for this
+system state. We'll initially record PowerDeviceD0, then, as the value of <b>
+maxstate</b>.</p>
+
+<p>Our device might also have a wake-up feature. I'll say more about wake-up later on. If
+so, the bus driver will have set the DeviceWake member of the capabilities structure equal to
+the <i>lowest</i> power state from which wake-up can occur. Let's suppose that value is <b>
+PowerDeviceD1</b>. If our wake-up feature happens to be enabled right now, we'll set <b>
+minstate</b> to PowerDeviceD1.</p>
+
+<p>If we don't have a wake-up feature, however, or if we have one and it's not
+currently enabled, we're free to choose any device power state lower than the <b>
+maxstate</b> value we derived from the device capabilities structure. We could blindly choose
+D3, but that wouldn't be right for every type of device because generally speaking it takes
+longer to resume from D3 to D0 than from D2 or D1. The choice you make in this case therefore
+depends on factors for which I can't give you cut-and-dried guidance. If your device is
+capable of the D2 state, for example, you might decide to enter D2 for any of the system
+sleeping states and reserve D3 for the hibernate and shutdown states.</p>
+
+<p>It seems reasonable to leave your device in a low power state when the system resumes from a
+sleeping state. The DDK suggests you do this, and so does good sense. There are two situations
+in which you would need to restore your device to D0 when the system goes to Working. The first
+situation is when your device has the INRUSH characteristic. In this case, the Power Manager
+won't send power IRPs to any other INRUSH device until you've powered on your device.
+The second situation is when you've got substantive IRPs queued and waiting to run once
+power is back. Notwithstanding what a good idea it seems to be to just leave your device in a
+low power state, you'll notice that the code fragment I just showed you for SelectDState
+unconditionally picks the D0 state. In my testing, Windows 2000 seemed to hang coming out of
+standby if I didn't do that. Maybe there's a mistake in my code or in the operating
+system. Stay tuned to my errata page for more information about this.</p>
+
+<A NAME="277"><H3>Requesting a Device Power IRP</H3></A>
+
+<p>In Chapter 5, &quot;<A HREF="ch05a.htm#147">The I/O Request Packet</A>,&quot; I discussed support functions such as <b>
+IoAllocateIrp</b> that you can use to build IRPs. You don't use those functions when you
+want to create power IRPs, though. (Actually, you <i>would</i> use one of those functions for
+an IRP_MN_POWER_SEQUENCE request, but not for the other IRP_MJ_POWER requests.) Instead, you
+use <b>PoRequestPowerIrp</b>, as shown here in the code for the <b>SendDeviceIrp</b> action
+we'd perform after SelectDState:</p>
+
+
+<table width="95%" cellpadding="5" valign="TOP" border=0>
+<tr><td valign=top>
+<pre>
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+
+
+
+
+
+
+2 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+
+3 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+4 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+</pre>
+</td>
+<td valign=top>
+<pre>
+case SendDeviceIrp:
+  {
+  if (win98 &amp;&amp; ctx-&gt;devstate == pdx-&gt;devpower)
+    {
+    ctx-&gt;status = STATUS_SUCCESS;
+    action = actiontable[ctx-&gt;state][AsyncNotify];
+    continue;
+    }
+  POWER_STATE powstate;
+  powstate.DeviceState = ctx-&gt;devstate;
+  NTSTATUS postatus = PoRequestPowerIrp(pdx-&gt;Pdo,
+    ctx-&gt;MinorFunction, powstate, (PREQUEST_POWER_COMPLETE)
+    PoCompletionRoutine, ctx, NULL);
+  if (NT_SUCCESS(postatus))
+    break;
+  action = CompleteMainIrp;
+  ctx-&gt;status = postatus;
+  continue;
+  }</pre>
+</td></tr>
+</table>
+
+
+<ol>
+<p><li> Refer to &quot;<A HREF="ch02e.htm#60">Windows 98 Compatibility Notes</A>&quot; at the end of this chapter
+for an explanation of what this section of code is all about.</li></p>
+
+<p><li> The first argument to <b>PoRequestPowerIrp</b> is the address of the physical
+device object (PDO) for our device. Note that the IRP we're requesting will actually get
+sent to the topmost filter device object (FiDO) anyway. The second argument is the minor
+function code for the IRP we want to send. This will either be IRP_MN_QUERY_POWER or
+IRP_MN_SET_POWER in our case. The third argument is a POWER_STATE that should contain a device
+power state value when we're requesting a query or set operation. The fourth and fifth
+arguments are, respectively, the address of a callback routine for when the IRP finishes and a
+context parameter for that function. The last argument is an optional address of a PIRP
+variable to receive the address of the IRP that PoRequestPowerIrp creates.</li></p>
+
+<p><li> <b>PoRequestPowerIrp</b> normally returns STATUS_PENDING after creating and
+launching the power IRP you've requested. This, and any success code, in fact, mean that
+our callback function will eventually be called. It will generate another call to <b>
+HandlePowerEvent</b>, so we're done with this invocation of the engine.</li></p>
+
+<p><li> If <b>PoRequestPowerIrp</b> fails, it never created the IRP and our callback
+function will never be called. We therefore want to fail the system IRP with whatever status
+code we've gotten.</li></p>
+</ol>
+
+<p>In the system power-up scenario I'm currently discussing, our state machine will be in
+the <b>SubPowerUpPending</b> state when we get to SendDeviceIrp. The status variable will be
+STATUS_MORE_PROCESSING_REQUIRED, which is the right value for MainCompletionRoutine to return
+if we're going to wait for the device IRP to finish. Normally, then, when we break from
+SendDeviceIrp, we'll interrupt the completion processing for the system power IRP for the
+time being.</p>
+
+<p>I'll discuss what happens to the device IRP we request via PoRequestPowerIrp later
+on.</p>
+
+<A NAME="278"><H3>Finishing the System IRP</H3></A>
+
+<p>Eventually, the device IRP that SendDeviceIrp requests will finish, whereupon the Power
+Manager will call the <b>PoCompletionRoutine</b> callback routine. It in turn calls
+HandlePowerEvent with the event code <b>AsyncNotify</b>. Our first action in the
+SubPowerUpPending state will be <b>SubPowerUpComplete</b>:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>case SubPowerUpComplete:
+  {
+  if (status == -1)
+    status = STATUS_SUCCESS;
+  action = CompleteMainIrp;
+  continue;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The only job performed by this action routine is to alter the <b>status</b> variable. The
+reason we do that is that we have an ASSERT statement at the end of HandlePowerEvent to make
+sure someone changes <b>status</b>. In this exact scenario, it doesn't matter what status
+value we return because PoCompletionRoutine is a void function. But you don't want to
+trigger an ASSERT and a BSOD unless something is really wrong.</p>
+
+<p>The next action after SubPowerUpComplete is CompleteMainIrp, which leads to DestroyContext.
+You've already seen what those action routines do.</p>
+
+<A NAME="279"><H2>System Power IRPs That Decrease Power</H2></A>
+
+<p>If the system power IRP implies no change or a reduction in the system power level,
+you'll request a device power IRP with the same minor function code (set or query) and a
+device power state that corresponds to the system state. When the device power IRP completes,
+you'll forward the system power IRP to the next lower driver. You'll need a completion
+routine for the system power IRP so that you can make the requisite call to PoStartNextPowerIrp
+and so that you can perform some additional cleanup. See Figure 8-7 for an illustration of how
+the IRPs flow through the system in this case.</p>
+
+<p>
+<A HREF="javascript:fullSize('F08wi07x.htm')"> <img src="images/F08wi07.JPG" width=404 height=277 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 8-7.</b> <i>IRP flow when decreasing system power.</i><!--/caption-->
+</p>
+
+
+<p>Figure 8-8 diagrams how our finite state machine handles this type of IRP. TriageNewIrp puts
+the state machine into the <b>SubPowerDownPending</b> state and jumps to the SelectDState
+action. You already saw that SelectDState selects a device power state and leads to a
+SendDeviceIrp action to request a device power IRP. In the system power-down scenario,
+we'll be specifying a lower power state in this device IRP.</p>
+
+<p>
+<A HREF="javascript:fullSize('F08wi08x.htm')"> <img src="images/F08wi08.JPG" width=404 height=536 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 8-8.</b> <i>State transitions when decreasing system power.</i><!--/caption-->
+</p>
+
+
+<p>When the device IRP finishes, we execute <b>SubPowerDownComplete</b>:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>case SubPowerDownComplete:
+  {
+  if (status == -1)
+    status = STATUS_SUCCESS;
+  if (NT_SUCCESS(ctx-&gt;status))
+    {
+    ctx-&gt;state = SysPowerDownPending;
+    action = ForwardMainIrp;
+    }
+  else
+    action = CompleteMainIrp;
+  continue;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>As you can see, if the device IRP fails, we fail the system IRP too. If the device IRP
+succeeds, we enter the <b>SysPowerDownPending</b> state and exit via ForwardMainIrp. When the
+system IRP finishes, and MainCompletionRoutine runs, we'll execute <b>
+SysPowerDownComplete</b>:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>case SysPowerDownComplete:
+  {
+  if (stack-&gt;MinorFunction == IRP_MN_SET_POWER)
+    pdx-&gt;syspower = stack-&gt;Parameters.Power.State.SystemState;
+  action = CompleteMainIrp;
+  continue;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The only purpose of this action is to record the new system power state in our device
+extension and then to exit via CompleteMainIrp and DestroyContext.</p>
+
+<A NAME="280"><H2>Device Power IRPs</H2></A>
+
+<p>All we actually do with system power IRPs is act as a conduit for them and request a device
+IRP either as the system IRP travels down the driver stack or as it travels back up. We have
+more work to do with device power IRPs, however.</p>
+
+<p>To begin with, we don't want our device occupied by any substantive I/O operations while
+a change in the device power state is under way. As early as we can in a sequence that leads to
+powering down our device, therefore, we wait for any outstanding operation to finish, and we
+stop processing new operations. Since we're not allowed to block the system thread in which
+we receive power IRPs, an asynchronous mechanism is required. Once the current IRP finishes,
+we'll continue processing the device IRP.</p>
+
+<p>If the device power IRP implies an increase in the device power level, we'll forward it
+to the next lower driver. Refer to Figure 8-9 for an illustration of how the IRP flows through
+the system. The bus driver will process a device set-power IRP by, for example, using whatever
+bus-specific mechanism is appropriate to turn on the flow of electrons to your device, and it
+will complete the IRP. Your completion routine will initiate whatever operations are required
+to restore context information to the device, and it will return
+STATUS_MORE_PROCESSING_REQUIRED to interrupt the completion process for the device IRP. When
+the context restore operation finishes, you'll resume processing substantive IRPs and
+finish completing the device IRP.</p>
+
+<p>
+<A HREF="javascript:fullSize('F08wi09x.htm')"> <img src="images/F08wi09.JPG" width=404 height=277 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 8-9.</b> <i>IRP flow when increasing device power.</i><!--/caption-->
+</p>
+
+
+<p>If the device power IRP implies no change or a reduction in the device power level, you
+perform any device-specific processing (asynchronously, as we've discussed) and then
+forward the device IRP to the next lower driver. See Figure 8-10. The &quot;device-specific
+processing&quot; for a set operation includes saving device context information, if any, in
+memory so that you can restore it later. There probably isn't any device-specific
+processing for a query operation beyond deciding whether to succeed or fail the query. The bus
+driver completes the request. In the case of a query operation, you can expect the bus driver
+to complete the request with STATUS_SUCCESS to indicate acquiescence in the proposed power
+change. In the case of a set operation, you can expect the bus driver to take whatever
+bus-dependent steps are required to put your device into the specified device power state. Your
+completion routine cleans up by calling PoStartNextPowerIrp, among other things.</p>
+
+<p>
+<A HREF="javascript:fullSize('F08wi10x.htm')"> <img src="images/F08wi10.JPG" width=404 height=277 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 8-10.</b> <i>IRP flow when decreasing device power.</i><!--/caption-->
+</p>
+
+
+<p>I invented <b>StallRequestsAndNotify</b> for use in TriageNewIrp. (It's so new that
+<A HREF="ch06a.htm">Chapter 6</A>, where all the other DEVQUEUE functions are described, was already beyond my reach
+when I created it.) The first step it performs is to stall the request queue. If the device is
+currently busy, it records a callback routine address&#8212;in this case, <b>
+GenericSaveRestoreComplete</b>, which I'm overloading for purposes of receiving a
+notification&#8212;and returns STATUS_PENDING. TriageNewIrp will then exit in the <b>
+QueueStallPending</b> state.</p>
+
+<p>If the device isn't busy, StallRequestsAndNotify returns STATUS_SUCCESS without
+arranging any callback; the device can't become busy now because the queue is stalled.
+TriageNewIrp will then go directly to the <b>QueueStallComplete</b> action.</p>
+
+<p>We reach the QueueStallComplete routine either directly from TriageNewIrp (when the device
+is idle or if the queue was previously stalled for some other power-related reason) or when the
+client driver calls <b>StartNextPacket</b> to indicate that it's finished processing the
+current IRP. StartNextPacket calls the notification routine we gave to StallRequestsAndNotify,
+and that routine signals an AsyncNotify event to the state machine. QueueStallComplete now
+separates the device IRP into one of four categories, as follows:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>case QueueStallComplete:
+  {
+  if (stack-&gt;MinorFunction == IRP_MN_SET_POWER)
+    {
+    if (stack-&gt;Parameters.Power.State.DeviceState &lt; pdx-&gt;devpower)
+      {
+      action = ForwardMainIrp;
+      SETSTATE(DevPowerUpPending);
+      }
+    else
+      action = SaveContext;
+    }
+  else
+    {
+    if (stack-&gt;Parameters.Power.State.DeviceState &lt; pdx-&gt;devpower)
+      {
+      action = ForwardMainIrp;
+      SETSTATE(DevQueryUpPending);
+      }
+    else
+      action = DevQueryDown;
+    }
+  continue;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The upshot of QueueStallComplete is that we perform the next action indicated in Table 8-5
+for the type of IRP we're dealing with.</p>
+
+<p><b>Table 8-5.</b> <i>Next action for device IRPs.</i></p>
+
+<p><table cellpadding=5 width="95%"><tr>
+<th><i>Minor Function</i></th>
+<th><i>More or Less Power?</i></th>
+<th><i>Next Action</i></th>
+</tr><tr>
+<td valign="top">IRP_MN_QUERY_POWER</td>
+<td valign="top">More power<br>Less or same power</td>
+<td valign="top">ForwardMainIrp<br>DevQueryDown</td>
+</tr><tr>
+</tr><tr>
+<td valign="top">IRP_MN_SET_POWER</td>
+<td valign="top">More power<br>Less or same power</td>
+<td valign="top">ForwardMainIrp<br>SaveContext</td>
+</tr></table></p>
+
+
+
+<A NAME="281"><H3>Setting a Higher Device Power State</H3></A>
+
+<p>Figure 8-11 diagrams the state transitions that occur for an IRP_MN_SET_POWER that specifies
+a higher device power state than that which is current.</p>
+
+<p>
+<A HREF="javascript:fullSize('F08wi11x.htm')"> <img src="images/F08wi11.JPG" width=404 height=596 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 8-11.</b> <i>State transitions when setting a higher device power state.</i><!--/caption-->
+</p>
+
+
+<p>ForwardMainIrp will install a completion routine and send the IRP down the driver stack.
+When MainCompletionRoutine eventually gains control, it signals a <b>MainIrpComplete</b> event.
+We will be in the <b>DevPowerUpPending</b> state, so we'll execute the <b>
+DevPowerUpComplete</b> action:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>case DevPowerUpComplete:
+  {
+  if (!NT_SUCCESS(ctx-&gt;status) || stack-&gt;MinorFunction !=
+    IRP_MN_SET_POWER)
+    {
+    action = CompleteMainIrp;
+    continue;
+    }
+  status = STATUS_MORE_PROCESSING_REQUIRED;
+  DEVICE_POWER_STATE oldpower = pdx-&gt;devpower;
+  pdx-&gt;devpower = stack-&gt;Parameters.Power.State.DeviceState;
+  if (pdx-&gt;RestoreContext)
+    {
+    ctx-&gt;state = ContextRestorePending;
+    (*pdx-&gt;RestoreDeviceContext)(pdx-&gt;DeviceObject, oldpower,
+      pdx-&gt;devpower, ctx);
+    break;
+    }
+  action = ContextRestoreComplete;
+  continue;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The main task we need to accomplish is restoring any device context that was lost during the
+previous power-down transition. Since we're not allowed to block our thread, we initiate
+whatever operations are required and return STATUS_MORE_PROCESSING_REQUIRED to interrupt the 
+completion of the device IRP. When the restore operations finish, the client driver calls 
+GenericSaveRestoreComplete, which signals an AsyncNotify event. We'll be in the 
+<b>ContextRestorePending</b> state at that point, so we'll perform the
+<b>ContextRestoreComplete</b> action:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>case ContextRestoreComplete:
+  {
+  if (event == AsyncNotify)
+    status = STATUS_SUCCESS;
+  action = CompleteMainIrp;
+  if (!NT_SUCCESS(ctx-&gt;status) || pdx-&gt;devpower != PowerDeviceD0)
+    continue;
+  ctx-&gt;UnstallQueue = TRUE;
+  continue;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The main result of this action routine is that we unstall the queue of substantive IRPs at
+the conclusion of an IRP_MN_SET_POWER to the D0 state. We exit via CompleteMainIrp and
+DestroyContext.</p>
+
+<A NAME="282"><H3>Querying for a Higher Device Power State</H3></A>
+
+<p>You shouldn't expect to receive an IRP_MN_QUERY_POWER that refers to a higher power
+state than your device is already in, but you shouldn't crash the system if you happen to
+receive one. The following code shows what GENERIC does when such a query completes in the
+lower level drivers. (Refer to Figure 8-12 for a state diagram.)</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>case DevQueryUpComplete:
+  {
+  if (NT_SUCCESS(ctx-&gt;status) &amp;&amp; pdx-&gt;QueryPower)
+    if (!(*pdx-&gt;QueryPower)(pdx-&gt;DeviceObject, pdx-&gt;devpower,
+      stack-&gt;Parameters.Power.State.DeviceState))
+      ctx-&gt;status = STATUS_UNSUCCESSFUL;
+  action = CompleteMainIrp;
+  continue;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>That is, GENERIC allows the client driver to accept or veto the query by calling its <b>
+QueryPower</b> function, and then it exits via CompleteMainIrp and DestroyContext.</p>
+
+<p>
+<A HREF="javascript:fullSize('F08wi12x.htm')"> <img src="images/F08wi12.JPG" width=404 height=596 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 8-12.</b> <i>State transitions for a query about a higher device power state.</i><!--/caption-->
+</p>
+
+
+
+<A NAME="283"><H3>Setting a Lower Device Power State</H3></A>
+
+<p>If the IRP is an IRP_MN_SET_POWER for the same or a lower device power state than current,
+the finite state machine goes through the state transitions diagrammed in Figure 8-13.</p>
+
+<p>
+<A HREF="javascript:fullSize('F08wi13x.htm')"> <img src="images/F08wi13.JPG" width=404 height=539 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 8-13.</b> <i>State transitions when setting a lower device power state.</i><!--/caption-->
+</p>
+
+
+<p><b>SaveContext</b> will initiate an asynchronous process to save any device context that
+will be lost when the device loses power:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>case SaveContext:
+  {
+  DEVICE_POWER_STATE devpower = 
+    stack-&gt;Parameters.Power.State.DeviceState;
+  if (pdx-&gt;SaveDeviceContext &amp;&amp; devpower &gt; pdx-&gt;devpower)
+    {
+    ctx-&gt;state = ContextSavePending;
+    (*pdx-&gt;SaveDeviceContext)(pdx-&gt;DeviceObject, pdx-&gt;devpower,
+      devpower, ctx);
+    break;
+    }
+  action = ContextSaveComplete;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>When the save operations finish, the client driver calls GenericSaveRestoreComplete, which
+signals an AsyncNotify event. We'll be in the <b>ContextSavePending</b> state at that
+point, so we'll perform the <b>ContextSaveComplete</b> action:</p>
+
+
+<table width="95%" cellpadding="5" valign="TOP" border=0>
+<tr><td valign=top>
+<pre>
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+
+
+
+
+2 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+3 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+4 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+</pre>
+</td>
+<td valign=top>
+<pre>
+case ContextSaveComplete:
+  {
+  if (event == AsyncNotify)
+    status = STATUS_SUCCESS;
+  ctx-&gt;state = DevPowerDownPending;
+  action = ForwardMainIrp;
+  DEVICE_POWER_STATE devpower =
+    stack-&gt;Parameters.Power.State.DeviceState;
+  if (devpower &lt;= pdx-&gt;devpower)
+    continue;
+  pdx-&gt;devpower = devpower;
+  if (devpower &gt; PowerDeviceD0)
+    ctx-&gt;UnstallQueue = FALSE;
+  continue;
+  }</pre>
+</td></tr>
+</table>
+
+
+<ol>
+<p><li> We'll come directly here from <b>GenericSaveRestoreComplete</b>, and we need
+to change status to prevent an ASSERT failure (but not for any other reason).</li></p>
+
+<p><li> If we didn't actually change power, there's no more work to do here.</li></p>
+
+<p><li> This is where we record the new device power state when we're powering
+down.</li></p>
+
+<p><li> If the device is now in a low-power or no-power state, we want to leave the
+substantive IRP queue stalled.</li></p>
+</ol>
+
+<p>The next action, ForwardMainIrp, sends the device IRP down the driver stack. The bus driver
+will turn the physical flow of current off and complete the IRP. We'll see it next when
+MainCompletionRoutine signals a MainIrpComplete event, which takes us directly to
+CompleteMainIrp and thence to DestroyContext.</p>
+
+<A NAME="284"><H3>Querying for a Lower Device Power State</H3></A>
+
+<p>An IRP_MN_QUERY_POWER that specifies the same or a lower device power state than current is
+the basic vehicle by which a function driver gets to vote on changes in power levels. Although
+the DDK doesn't specifically say you should create one of these requests when you handle a
+system query, it's a good idea to do so. You have to handle device queries anyway and might
+as well put all the query logic in one place. Figure 8-14 shows how our state machine will
+handle such a query.</p>
+
+<p>The <b>DevQueryDown</b> action follows QueueStallComplete for this kind of IRP:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>case DevQueryDown:
+  {
+  DEVICE_POWER_STATE devpower = 
+    stack-&gt;Parameters.Power.State.DeviceState;
+  if (devpower &gt; pdx-&gt;devpower 
+    &amp;&amp; pdx-&gt;QueryPower 
+    &amp;&amp; !(*pdx-&gt;QueryPower)(pdx-&gt;DeviceObject,
+    pdx-&gt;devpower, devpower))
+    {
+    ctx-&gt;status = STATUS_UNSUCCESSFUL;
+    action = DevQueryDownComplete;
+    continue;
+    }
+  ctx-&gt;state = DevQueryDownPending);
+  action = ForwardMainIrp;
+  continue;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>
+<A HREF="javascript:fullSize('F08wi14x.htm')"> <img src="images/F08wi14.JPG" width=404 height=509 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 8-14.</b> <i>State transitions for a query about a lower device power state.</i><!--/caption-->
+</p>
+
+<p>GENERIC basically lets the client driver decide whether the query should succeed. If the
+client driver says &quot;Yes,&quot; we enter the <b>DevQueryDownPending</b> state and exit via
+ForwardMainIrp to send the query down the driver stack. Completion of the IRP sends us to the
+<b>DevQueryDownComplete</b> action:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>case DevQueryDownComplete:
+  {
+  if (NT_SUCCESS(ctx-&gt;status))
+    ctx-&gt;UnstallQueue = FALSE;
+  action = CompleteMainIrp;
+  continue;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The basic action we take is to leave the substantive IRP queue stalled if the query
+succeeds. (CompleteMainIrp will unstall the queue if it sees the <b>UnstallQueue</b> flag set
+in the context structure. Clearing the flag causes this step to be skipped.) Recall that we
+first stalled the queue when we received the query. We'll leave it stalled until someone
+eventually sends us a set-power IRP to put the device into D0.</p>
+
+</BODY>
+</HTML>
+
+
+
+
+

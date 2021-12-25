@@ -1,0 +1,169 @@
+<HTML>
+<HEAD>
+<LINK REL=StyleSheet HREF="basicIE4.css" TYPE="text/css">
+<TITLE>The EX26B Example -- OLE Drag and Drop</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY>
+<A NAME="575"><H1><B>The EX26B Example&#151;OLE Drag and Drop</B></H1></A>
+<P>This example picks up where the EX26A example leaves off. It adds drag-and-drop support, using the existing <I>SaveDib</I> and <I>DoPasteDib</I> helper functions. All of the clipboard code is the same. You should be able to adapt EX26B to other applications that require drag and drop for data objects.
+
+<P>To prepare EX26B, open the \vcpp32\ex26b\ex26b.dsw workspace and build the project. Run the application, and test drag and drop between child windows and between instances of the program.
+
+<A NAME="576"><H2><B>The <I>CEx26bDoc</I> Class</B></H2></A>
+<P>This class is just like the EX26A version except for an added flag data member, <I>m_bDragHere</I>. This flag is <I>TRUE</I> when a drag-and-drop operation is in progress for this document. The flag is in the document and not in the view because it is possible to have multiple views attached to the same document. It doesn't make sense to drag a DIB from one view to another when both views reflect the document's <I>m_dib</I> member.
+
+<A NAME="577"><H2><B>The <I>CEx26bView</I> Class</B></H2></A>
+<P>To start with, this class has three additional data members and a constructor that initializes all the data members, as shown here:
+
+<P><pre>
+CRect m_rectTrackerEnter; // original logical coordinates
+COleDropTarget m_dropTarget;
+CSize m_dragOffset; // device coordinates
+
+CEx26bView::CEx26bView() : m_sizeTotal(800, 1050), // 8-by-10.5 inches
+                                                   //  when printed
+    m_rectTracker(50, 50, 250, 250),
+    m_dragOffset(0, 0),
+    m_rectTrackerEnter(50, 50, 250, 250)
+{
+}
+</pre>
+
+<P>The <I>OnInitialUpdate</I> function needs one additional line to register the drop target:
+
+<P><pre>
+m_dropTarget.Register(this);
+</pre>
+
+<P>Following are the drag-and-drop virtual override functions. Note that <I>OnDrop</I> replaces the DIB only if the document's <I>m_bDragHere</I> flag is <I>TRUE</I>, so if the user drops the DIB in the same window or in another window connected to the same document, nothing happens.
+
+<P><pre>
+DROPEFFECT CEx26bView::OnDragEnter(COleDataObject* pDataObject,
+    DWORD dwKeyState, CPoint point)
+{
+    TRACE(&quot;Entering CEx26bView::OnDragEnter, point = (%d, %d)\n&quot;,
+        point.x, point.y);
+    m_rectTrackerEnter = m_rectTracker; // save original coordinates
+                                        //  for cursor leaving
+                                        //  rectangle
+    CClientDC dc(this);
+    OnPrepareDC(&amp;dc);
+    dc.DrawFocusRect(m_rectTracker); // will be erased in OnDragOver
+    return OnDragOver(pDataObject, dwKeyState, point);
+}
+
+DROPEFFECT CEx26bView::OnDragOver(COleDataObject* pDataObject,
+    DWORD dwKeyState, CPoint point)
+{
+    if (!pDataObject-&gt;IsDataAvailable(CF_DIB)) {
+        return DROPEFFECT_NONE;
+    }
+    MoveTrackRect(point);
+    if ((dwKeyState &amp; MK_CONTROL) == MK_CONTROL) {
+        return DROPEFFECT_COPY;
+    }
+    // Check for force move
+    if ((dwKeyState &amp; MK_ALT) == MK_ALT) {
+        return DROPEFFECT_MOVE;
+    }
+    // default -- recommended action is move
+    return DROPEFFECT_MOVE;
+}
+
+void CEx26bView::OnDragLeave()
+{
+    TRACE(&quot;Entering CEx26bView::OnDragLeave\n&quot;);
+    CClientDC dc(this);
+    OnPrepareDC(&amp;dc);
+    dc.DrawFocusRect(m_rectTracker);
+    m_rectTracker = m_rectTrackerEnter; // Forget it ever happened
+}
+
+BOOL CEx26bView::OnDrop(COleDataObject* pDataObject, 
+    DROPEFFECT dropEffect, CPoint point)
+{
+    TRACE(&quot;Entering CEx26bView::OnDrop --
+  dropEffect = %d\n&quot;, dropEffect);
+    BOOL bRet;
+    CEx26bDoc* pDoc = GetDocument();
+    MoveTrackRect(point);
+    if (pDoc-&gt;m_bDragHere) {
+        pDoc-&gt;m_bDragHere = FALSE;
+        bRet = TRUE;
+    }
+    else {
+        bRet = DoPasteDib(pDataObject);
+    }
+    return bRet;
+}
+</pre>
+
+<P>The handler for the WM_LBUTTONDOWN message needs substantial overhaul. It must call <I>DoDragDrop</I> if the cursor is inside the rectangle and <I>Track</I> if it is on the rectangle border. The revised code is shown here:
+
+<P><pre>
+void CEx26bView::OnLButtonDown(UINT nFlags, CPoint point) 
+{
+    CEx26bDoc* pDoc = GetDocument();
+    if (m_tracker.HitTest(point) == CRectTracker::hitMiddle) {
+        COleDataSource* pSource = SaveDib();
+        if (pSource) {
+            // DoDragDrop returns only after drop is complete
+            CClientDC dc(this);
+            OnPrepareDC(&amp;dc);
+            CPoint topleft = m_rectTracker.TopLeft();
+            dc.LPtoDP(&amp;topleft);
+            // `point' here is not the same as the point parameter in 
+            //   OnDragEnter, so we use this one to compute the offset
+            m_dragOffset = point - topleft;  // device coordinates
+            pDoc-&gt;m_bDragHere = TRUE;
+            DROPEFFECT dropEffect = pSource-&gt;DoDragDrop(
+                DROPEFFECT_MOVE | DROPEFFECT_COPY, CRect(0, 0, 0, 0));
+            TRACE(&quot;after DoDragDrop -- dropEffect = %ld\n&quot;, dropEffect);
+            if (dropEffect == DROPEFFECT_MOVE &amp;&amp; pDoc-&gt;m_bDragHere) {
+                pDoc&gt;OnEditClearAll();
+            }
+            pDoc-&gt;m_bDragHere = FALSE;
+            delete pSource;
+        }
+    }
+    else {
+        if (m_tracker.Track(this, point, FALSE, NULL)) {
+            CClientDC dc(this);
+            OnPrepareDC(&amp;dc);
+            // should have some way to prevent it going out of bounds
+            m_rectTracker = m_tracker.m_rect;
+            dc.DPtoLP(m_rectTracker); // update logical coordinates
+        }
+    }
+    Invalidate();
+}
+</pre>
+
+<P>Finally, the new <I>MoveTrackRect</I> helper function, shown here, moves the tracker's focus rectangle each time the <I>OnDragOver</I> function is called. This job was done by <I>CRectTracker::Track</I> in the EX26A example.
+
+<P><pre>
+void CEx26bView::MoveTrackRect(CPoint point)
+{
+    CClientDC dc(this);
+    OnPrepareDC(&amp;dc);
+    dc.DrawFocusRect(m_rectTracker);
+    dc.LPtoDP(m_rectTracker);
+    CSize sizeTrack = m_rectTracker.Size();
+    CPoint newTopleft = point - m_dragOffset;  // still device
+    m_rectTracker = CRect(newTopleft, sizeTrack);
+    m_tracker.m_rect = m_rectTracker;
+    dc.DPtoLP(m_rectTracker);
+    dc.DrawFocusRect(m_rectTracker);
+}
+</pre>
+
+</BODY>
+</HTML>
+
+
+

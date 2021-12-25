@@ -1,0 +1,1648 @@
+<HTML>
+<HEAD><LINK REL="STYLESHEET" TYPE="text/css" HREF="Library.css">
+<TITLE>Multithreading</TITLE>
+
+
+</HEAD>
+<BODY BGCOLOR="#FFFFFF" TEXT="#000000">
+<SCRIPT LANGUAGE="JavaScript">
+<!--
+
+function fullSize(sURL){
+	window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+
+function LibraryHeaderNav(sBackward, sForward, sImgLeftOff, sImgLeftOn, sImgRightOff, sImgRightOn, iH, iW, sImgLeftStyle, sImgRightStyle, sImgRuleStyle, sRuleColor, sRuleSize){
+	var tableStr;
+	//validate questionable args for defs
+	tableStr = "<TABLE BORDER=0 CELLPADDING=0 CELLSPACING=0 border=0 width=100%>";
+	tableStr += "<TR VALIGN=top ALIGN=right>";
+
+	tableStr += "<TD align=right class=" + sImgRuleStyle + ">&nbsp;</TD>";	
+	
+	tableStr += "<TD width=34 align=right class=" + sImgLeftStyle + ">";
+	tableStr += "<A href='" + sBackward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgLeftOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgLeftOff + '\'\"';
+	tableStr += " SRC='" + sImgLeftOff + "' vspace=0 hspace=0></a></TD>";
+	
+	tableStr += "<TD width=34 align=left class=" + sImgRightStyle + ">";
+	tableStr += "<A href='" + sForward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgRightOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgRightOff + '\'\"';
+	tableStr += " SRC='" + sImgRightOff + "' vspace=0 hspace=0></a></TD></TR>";
+
+	tableStr += "<TR VALIGN=top>";
+	tableStr += "<TD height=3 align=center colspan=3 class=" + sImgRuleStyle + ">";
+	tableStr += "<HR color=" + sRuleColor + " size=" + sRuleSize + "></TD></TR></TABLE>";
+	//alert(tableStr);
+	document.write(tableStr);
+}
+
+ 																						     //purple is: #aa22aa   orange is: #ff9900
+LibraryHeaderNav("ch10b.htm", "ch10d.htm", "images/unit_o_a1.gif", "images/unit_o_a2.gif", "images/unit_o_b1.gif", "images/unit_o_b2.gif", 18, 34, "unit01", "unit02", "headerrule", "#ff9900", "2");
+//--></SCRIPT>
+<A NAME="309"><H1>Multithreading</H1></A>
+
+<p>Visual J++ provides another set of capabilities through the 
+<I>com.ms.wfc.app</I> package together with the standard Java classes: multithreading. This section will 
+demonstrate different ways of implementing multithreading and provide some guidelines for 
+when to use each approach. In addition, I will touch on some of the dangers of 
+multithreading. Let me begin by explaining the attraction of multithreading.
+
+<A NAME="310"><H2>What is Multithreading?</H2></A>
+
+<p>There are many times when you want your program to do more than one thing 
+at the same time. You saw a hint of that in the previous TimerDemo application. 
+While the clock was being updated in the upper box, the user was able to turn the stopwatch on and 
+off. Even though both controls are tightly bound by the working of the 
+<I>handleClockTick()</I> method, to the user the two windows appear to function 
+independently.
+
+<p>To understand multithreading, you should first understand why 
+TimerDemo works this way. It's critical that the event handler, 
+<I>handleClockTick()</I>, perform its task and return control to WFC quickly. During the time 
+<I>handleClockTick() </I>is running, the TimerDemo program is unresponsive to all other input&#8212;that is, if the user 
+clicks one of the buttons during the time that the program is in the middle of 
+the <I>handleClockEvent() </I>method, the click event is queued up. This event isn't 
+processed until <I>handleClockEvent() </I>completes and returns control
+to the program.
+
+<div class="note"><blockquote><b>NOTE</b><hr>
+Of course, all events originate from Windows messages that 
+are queued up and handled by the event loop. When the timer expires, for 
+example, it generates a WM_TIMER message that is queued up with any other 
+messages for processing. Once the timer message bubbles to the top of the queue, 
+WFC creates the timer event and passes it to the 
+<I>handleClockEvent() </I>method for processing.</blockquote></div>
+
+
+<p>As long as <I>handleClockEvent() </I>doesn't take too long, the user won't 
+perceive any delay between clicking the mouse button and the program responding. The 
+user would suddenly become aware of unresponsiveness on the part of the 
+program, however, if <I>handleClockEvent()</I> were to go off and perform some extended 
+processing such as read a file or perform an extended calculation. The user will think that 
+the program has crashed if the delay is long enough. It's important that an event 
+handler not perform any function that will take very long.
+
+<p>Another way that TimerDemo performs its magic is by placing both the 
+clock and timer capabilities in the single 
+<I>handleClockEvent()</I> method. This programming practice is justifiable in simple cases, especially when two features are closely 
+related. When the features are unrelated, however&#8212;a word processor might have 
+methods to perform text entry, spell checking, and reformatting of text&#8212;placing them into 
+a single method is both difficult and error prone.
+
+<p>So what do you do if a user action results in a request for a feature that 
+takes a long time to perform? The best tactic is to branch off to a new thread of 
+execution. This new thread appears to execute parallel to the original thread. The original 
+thread can return to Visual J++ to continue processing event requests while the new 
+thread performs the lengthy operation. These secondary threads are commonly called 
+<I>background</I> <I>threads</I>, because they continue to execute behind the user interface thread.
+
+<p><div class="note"><blockquote>
+<b>NOTE</b><hr>
+Several background threads already exist in your Visual 
+J++ application without your creating any. One is the garbage collection thread, which 
+searches for objects that are no longer in use and returns them to the memory pool.
+</blockquote></div>
+
+<A NAME="311"><H3>How does multithreading work?</H3></A>
+
+<p>A thread that has control of the CPU is said to be in the RUNNING state. Realize 
+that multiple threads only <I>appear</I> to work in parallel. Since there is only one CPU, in 
+reality only a single thread can execute at any given time. Therefore, only one thread 
+can be in the RUNNING state.
+
+<p><div class="note"><blockquote>
+<b>NOTE</b><hr>
+Machines running under 
+Microsoft Windows NT can have more than one CPU. Because each CPU can run only a single thread, there can be 
+as many threads in the RUNNING state as there are CPUs in the machine.
+</blockquote></div>
+
+<p>A thread waiting for something to happen, like for a file read request to 
+complete, is said to be BLOCKED.
+
+<div class="note"><blockquote><b>NOTE</b><hr>
+The thread that reads the Windows message queue is in 
+effect BLOCKED on the message queue.</blockquote></div>
+
+
+<p>A thread that is neither BLOCKED nor RUNNING is said to be READY.
+
+<p>In Visual J++, each thread is assigned a priority ranging from 9 (high 
+priority) to 1 (low priority). A thread in the RUNNING state retains control of
+the CPU until one of three things happens:
+
+<UL>
+<P><LI>The RUNNING thread becomes BLOCKED. This happens when the 
+current thread reads a file, for example. In this event, another READY 
+thread of the same priority is given control. If no READY threads have the 
+same priority, control passes to the highest-priority READY thread.
+<P><LI>A higher-priority thread that was BLOCKED becomes READY. This 
+happens when a BLOCKED thread's file read request is completed, for 
+example. In this event, control passes to the higher-priority thread, 
+leaving the current thread in the READY state.
+<P><LI>The RUNNING thread has had control of the CPU for a given amount 
+of time, and there are other READY threads of the same priority. In this 
+event, control passes to the next thread. Control passes between threads of 
+the same priority in circular fashion, giving each thread equal access 
+to the CPU.
+</UL>
+
+<p>As an example, Figure 10-3 shows three threads running concurrently on 
+one CPU. Each thread is allowed a certain amount of time to run. When time is up 
+for the running thread, any thread with the same priority runs until its time slice is 
+over. You can see in Figure 10-3 that Thread 1 runs until its time is up, and then 
+control moves to Thread 2 because Thread 2 has the same priority as Thread 1. This 
+process continues in a loop until either Thread 1 or Thread 2 is BLOCKED. If Thread 
+1 is BLOCKED, Thread 2 runs continuously until Thread 1 is unBLOCKED and 
+Thread 2's time runs out. 
+
+<p><A HREF="javascript:fullSize('F10gh03x.htm')"> <img src="images/F10gh03.JPG" width=404 height=208 border=0 ALT="Click to view at full size."> </A>
+<P><!-- caption --><B>Figure 10-3.</b> <i>An example of two high-priority threads and one lower-priority 
+thread sharing the CPU.</I><!-- /caption -->
+
+<p>If Threads 1 and 2 are both BLOCKED, the lower-priority Thread 3 finally gets 
+its chance to run. Thread 3 stops running and returns to the READY state as soon as 
+a higher-priority thread is unBLOCKED.
+
+<p>When a thread loses control of the CPU&#8212;meaning it changes from the 
+state RUNNING to any other state&#8212;it's said to be 
+<I>suspended</I>.
+
+<p>Each thread has associated with it a data structure that can hold all the 
+information needed to store the state of a thread. (This information consists mostly of 
+the contents of the CPU registers.) When the thread is suspended, this data structure 
+stores the CPU data. When the thread next gains control of the CPU, this data is 
+restored and the thread continues executing from where it left off the last time it lost 
+control. The thread is completely unaware of the break in execution.
+
+<A NAME="312"><H3>What multithreading is not</H3></A>
+
+<p>Multithreading isn't a way to gain extra performance from your CPU. If a given 
+process is slow, breaking it into multiple threads won't make it faster. It will actually 
+make the process slower, because using multiple threads adds the extra overhead of 
+switching control from one thread to another. Multithreading is a way to do these things:
+<UL>
+<P><LI>Give control to a higher-priority thread while relatively lengthy 
+threads execute in the background.
+<P><LI>Allow the program to respond quickly to user input while relatively 
+lengthy threads execute in the background.
+</UL>
+
+<p>The second item is of course a special case of the first item.
+
+<A NAME="313"><H3>The dangers of multithreading</H3></A>
+
+<p>Multithreading does carry with it certain dangers. Consider the following unlikely 
+but possible banking example.
+
+<p>Suppose I have a balance in my checking account of $1000 (this is a 
+purely fictional example, I assure you). I am at an ATM with my bank card in hand, 
+making my usual $40 quick cash withdrawal. I put in my card, type in the password, 
+and choose the quick cash button. The bank computer registers my request, reads 
+my balance, and subtracts $40. Before the program can store the results back into 
+my account, however, the thread handling my transaction is suspended.
+
+<p>Unbeknownst to me, my wife is at this moment in the bank making a 
+deposit of $1000 to the checking account. A separate bank computer program now 
+gets control from my suspended thread. It reads my bank balance and adds the 
+deposit, leaving a bank balance of $2000.
+
+<p>What happens next will leave me very happy and the bank distressed, or 
+will leave me quite distressed and the bank happy, depending on the vagaries of 
+thread timing. If my wife's program continues, my bank balance will be updated to 
+$2000 in the bank's database. Once her program terminates or is suspended, my ATM 
+thread will continue and store the post-withdrawal result of $960 into the database, 
+thereby wiping out any record of my wife's deposit. (Unless I can find her deposit slip, 
+which is very unlikely, I am very unhappy.)
+
+<p>If, on the other hand, my wife's program is somehow 
+suspended&#8212;perhaps because it has used up its time slice&#8212;and my ATM thread gets control, then my 
+balance of $960 is written to the bank's database only to be overwritten with the 
+$2000 balance calculated by my wife's program. (The bank is now very unhappy, and 
+I'm delirious.)
+
+<P>Such so-called <I>race conditions</I> or <I>thread 
+collisions</I> are common occurrences 
+in multithreaded programs. An area where a race condition can occur is called 
+a <I>critical</I><B> </b> <i>section</I>.<B> </B>In our example, the critical section in both the withdrawal and 
+deposit programs begins when the program reads the balance from the accounts 
+database and ends when the program completes writing the balance back.
+
+<p><div class="note"><blockquote>
+<b>NOTE</b><hr>
+For a race condition to occur, all that has to happen is for more 
+than one thread to update a resource such as a memory location. If only one 
+thread writes to the memory location&#8212;even if multiple threads read from it&#8212;there 
+is no race condition.
+</blockquote></div>
+
+<A NAME="314"><H3>How Java handles race conditions</H3></A>
+
+<p>The Java language contains built-in support to avoid race conditions. Marking 
+a method as <I>synchronized</I> means that only one thread can execute the method at 
+a time. If thread A is suspended while in the middle of executing a synchronized 
+method and thread B attempts to invoke that method, thread B will instantly 
+become BLOCKED until thread A can regain control and exit from the method.
+
+<p>If the critical section involves only a small part of the method, say the
+updating of a data member, you might mark a block of code in the method as
+synchronized in the following way:
+
+<p><pre>
+int pay;
+
+void calculateRaise(float evaluation)
+{
+    // use some method to calculate the raise
+    // based on the evaluation
+	.
+	.
+	.	
+  	
+    // entering a critical section; synchronize it to
+    // avoid a collision; obj is some object
+    synchronized (obj)
+    {
+        pay = pay * raise;
+    }
+
+    // method continues unsynchronized
+}
+</PRE>
+
+<p><div class="sidebar"><blockquote>
+<p><b>HOW DOES JAVA SYNCHRONIZE METHODS?</b><hr>
+Visual J++ implements the synchronization of methods through a mutex. 
+The mutex is checked and set upon entry into the method and cleared upon 
+exit. Java maintains one mutex per object and another for the entire class. 
+Method objects use the object mutex, and static methods use the class mutex.
+
+<p>Suppose that <I>obj1</I> and <I>obj2</I> are objects of the same class and 
+<I>m()</I> is a non-static synchronized method in that class. When thread A makes the call 
+<I>obj1.m()</I>, thread A grabs the object mutex before entering 
+<I>m()</I>. When thread B calls <I>obj1.m()</I> (or any other nonstatic synchronized method using the same 
+object <I>obj1</I>), it's BLOCKED as it attempts to grab the object's mutex. Since object 
+<I>obj2</I> has it's own mutex, it's perfectly okay for thread A to call 
+<I>obj1.m()</I> while thread B calls 
+<I>obj2.m()</I>. If <I>m()</I> were a static method, only one thread would be 
+able to call it, no matter which object it's calling from.
+
+<p>Mutexes are counters: it's okay for thread A to call one 
+synchronized method from within another synchronized method. Synchronized methods are also recursive. Each time a synchronized method is invoked, the 
+mutex is incremented. Upon each return, the mutex is decremented. The mutex 
+isn't unBLOCKED until it returns to 0.
+
+<P>If an exception occurs from within a synchronized method, the mutex 
+is decremented automatically as control passes from the method.
+</blockquote></div>
+
+<P>Here we can see that only the section updating the 
+<I>pay</I> variable is synchronized. The mutex of the object 
+<I>obj</I> is used to implement the synchronization. (A 
+<I>mutex</I>&#8212;or mutual exclusion flag&#8212;is a special flag that allows one thread mutually exclusive access to critical areas.) In general, the 
+object <I>this</I> can be used as the synchronizing object as long as 
+<I>this</I> doesn't refer to the <I>Thread</I> object 
+(since each thread has its own <I>Thread</I> object).
+
+<A NAME="315"><h3>Using the <I>Thread</I> class</h3></A>
+<p>The easiest way to create a new thread is to create a class that extends the 
+class <I>Thread</I>. To start the new thread, the parent thread must first create an object of 
+the new class and then invoke the <I>start() 
+</I>method<I>. </I>The <I>start()</I> method causes 
+execution to begin with the method <I>run()</I>.
+
+<p><pre>
+/**
+ * Start a new thread.
+ */
+ void parentMethod()
+ {
+     Thread thread = new MyThread();
+     thread.start();
+ }
+
+ /**
+  * Implement a new thread of execution.
+  */
+ class MyThread extends Thread
+ {
+     // execution starts here as soon as
+     // the parent thread calls start()
+     public void run()
+     {
+     }
+ }
+</PRE>
+
+<p>Extending the class <I>Thread</I> means that 
+<I>MyThread</I> can't extend some other class. To avoid this unfortunate side
+effect, the Java standard library defines a 
+second mechanism for creating new threads. Any class that implements the interface 
+<I>Runnable</I> can have a thread wrapped around it. The 
+<I>Runnable</I> interface has only one 
+member&#8212;the method <I>public void run()</I>. In practice, this thread
+creation mechanism appears as follows:
+
+<p><pre>
+/**
+ * Start a new thread.
+ */
+ void parentMethod()
+ {
+     // wrap my class in a thread
+     Thread thread = new Thread(new MyClass());
+
+     // now start the thread
+     thread.start();
+ }
+
+ /**
+  * Implement a class that can be wrapped in a thread.
+  */
+ class MyClass extends MyBaseClass implements Runnable
+ {
+     // execution starts here as soon as
+     // the parent thread calls start()
+     public void run()
+     {
+     }
+ }
+</PRE>
+
+<p>The following demonstration program uses the Java 
+<I>Thread</I> class to implement a common multithreading problem.
+
+<A NAME="316"><H2>The MultiThread1 Application</H2></A>
+
+<p>The following MultiThread1 demonstration application continuously calculates 
+prime numbers while remaining responsive to user input. Just to prove the point, 
+this application calculates two sets of prime numbers &quot;simultaneously.&quot;
+
+<A NAME="317"><H3>The Forms Designer work</H3></A>
+
+<p>The Forms Designer work for MultiThread1 consists primarily of creating two sets 
+of matching output Edit controls, each with a label, a start button, and a stop 
+button. (See Figure 10-4.) Start the forms work with the first Edit control. 
+Set the name to <I>outputEdit1</I>. Clear the 
+<I>text</I> property value box. Now anchor the Edit 
+control to the left, top, and right edges of the form. Add a Label control above the 
+Edit control, and set the label text to <I>Last Prime Number Calculated 
+(#)</I>. The program will replace the pound sign with the priority of the background task. Anchor the label 
+to the left, top, and right edges of the form. Below the 
+<I>outputEdit1</I> control, add two buttons: one labeled 
+<I>Start</I> and one labeled <I>Stop</I>. Anchor the Start button to the 
+top and left, and anchor the Stop button to the top and right edges of the form. 
+Double-click each button to create the click<I> 
+</I>event handlers.
+
+<p>Now repeat the process for a second set of controls immediately below the first.
+
+<A NAME="318"><H3>The Background.java code</H3></A>
+
+<p>The code for MultiThread1 consists of two 
+<I>.</I>java files, the usual Form1.java and 
+also the file Background.java. (Select Add Class from the Project menu to 
+add Background.java.) The Background.java file appears below.
+
+<p><pre>
+import com.ms.wfc.ui.*;
+
+/**
+ * Thread that calculates primes and reports
+ * them to output control.
+ */
+public class Background extends Thread
+{
+    // number of primes
+    int numberOfPrimes = 0;
+    
+    // output control
+    Control output;
+    
+    // stopped == true -&gt; thread stopped
+    boolean stopped;
+
+    /**
+     * Create a background process in the stopped state.
+     */
+    public Background(Control output)
+    {
+        this.output = output;
+        stopped = true;
+    }
+
+    /**
+     * Test next number for prime.
+     */
+    boolean isPrime(long number)
+    {
+        // test all the multiples from 2 to the
+        // square root of the number (increment
+        // to handle potential round-off problems)
+        long max = (long)Math.sqrt(number)+ 1;
+        for (long test = 2; test &lt;= max; test++)
+        {
+            // if number is evenly divisible by test&#8230;
+            long remainder = number % test;
+            if (remainder == 0)
+            {
+                // then it can't be prime
+                return false;
+            }
+        }
+        
+        // made it through; it must be prime
+        return true;
+    }
+    
+    /**
+     * Start the Background thread.
+     */
+    public void run()
+    {
+        try
+        {
+            // keep calculating prime numbers
+            // until we wrap around
+            for (long i = 0; i &gt;= 0; i++)
+            {
+                // give up control
+                Thread.yield();
+                
+                // while stopped, keep giving up control
+                while (stopped)
+                {
+                    Thread.sleep(100);
+                }
+                
+                // now calculate a new prime
+                if (isPrime(i))
+                {
+                    // count it
+                    numberOfPrimes++;
+                    
+                    // output prime number to control
+                    // specified
+                    output.setText(&quot;#&quot; +
+                                   toString(numberOfPrimes) +
+                                   &quot;- &quot; +
+                                   toString(i));
+                }
+            }
+        }
+        catch(Exception e)
+        {
+            output.setText(e.getMessage());
+        }
+    }
+
+    /**
+     * Convert a number into a string with commas.
+     */
+    private String toString(long value)
+    {
+        // convert the long into a string
+        String s = Long.toString(value);
+        
+        // now add commas to that string
+        StringBuffer sb = new StringBuffer(20);
+        int offset = 0;
+        for(int length = s.length();
+            length &gt; 0;
+            length--)
+        {
+            // every 3 digits from the right side&#8230;
+            if ((length % 3) == 0)
+            {
+                // but not at the beginning&#8230;
+                if (offset != 0)
+                {
+                    // put a comma
+                    sb.append(',');
+                }
+            }
+            
+            // now add another digit
+            sb.append(s.charAt(offset++));
+        }
+        return sb.toString();
+    }
+    
+    /**
+     * Activate the background process.
+     */
+    public void activate(boolean active)
+    {
+        stopped = !active;
+    }
+}
+</PRE>
+
+<p>The class <I>Background</I> extends the class 
+<I>Thread</I>. The constructor for 
+<I>Background</I> takes one argument, the WFC control to which 
+<I>Background</I> will output its prime numbers as it calculates them. The program sets one other variable, 
+<I>stopped</I>, to <I>true</I>. This flag will be used later to signal 
+<I>Background</I> to stop calculating primes.
+
+<p>The parent thread creates an object of class 
+<I>Background</I> and then calls the object's <I>start() 
+</I>method. (See the <I>Form1</I> code that follows.) As soon as it does, 
+Visual J++ creates a new thread. After some setup, this new thread will 
+call <I>Background.run()</I>. The <I>Background.run() 
+</I>method sits in an essentially infinite loop. (The loop increments a long variable and terminates when the variable contains 
+a negative number).
+
+<p>The new thread immediately invokes the rescheduler by calling 
+<I>Thread.yield()</I>. If this is the only thread that is ready to run, it will instantly get control back.
+
+<p>Once it has given another thread a chance, 
+<I>run()</I> then enters another loop. As long as 
+<I>stopped</I> is <I>true</I>, <I>run()</I> continues to call 
+<I>Thread.sleep()</I> in a loop. (The 
+<I>stopped</I> variable gets changed in the 
+<I>Background.active()</I> method, explained below.) The argument 100 indicates that the 
+thread should block for 100 milliseconds.
+
+<p>Once <I>stopped</I> is <I>false</I>, <I>run()</I> continues by calling 
+<I>isPrime(i)</I> to check whether <I>i</I> (the counter in the 
+<I>for</I> loop) is prime or not. If it is, 
+<I>run()</I> increments the prime number count and outputs both the prime number count and the prime number 
+to the <I>output</I> WFC control that was passed to the 
+<I>Background()</I> constructor. The method 
+<I>Background.toString()</I> does nothing more than insert commas every three digits 
+from the end to increase the readability of the resulting number.
+
+<p>The <I>Background.isPrime()</I> method uses a different algorithm than does 
+the Sieve of Eratosthenes benchmark presented in Chapter 1. This version 
+checks 
+the candidate <I>number</I> by calculating the modulo of 
+<I>number</I> with respect to each whole number from 2 up through the square root of 
+<I>number</I>. If the modulo is zero, 
+<I>number</I> is evenly divisible by that number and therefore can't be a prime 
+number. If <I>isPrime()</I> makes it all the way through the loop without finding an even 
+denominator, <I>number</I> must be prime and 
+<I>isPrime()</I> returns <I>true</I>.
+
+<p>The <I>Background</I> method 
+<I>activate(boolean)</I> sets the <I>stopped</I> variable to 
+<I>true</I> or <I>false</I>. (The <I>activate() 
+</I>method is called from the parent program, in this case 
+<I>Form1</I>.) By referring to <I>run()</I>, you can see that setting this variable in effect turns the 
+<I>Background</I> thread off and on.
+
+<A NAME="319"><H3>The Form1.java code</H3></A>
+
+<p>Most of the real work for the MultiThread1 application is done in the 
+<I>Background</I> class; the <I>Form1</I> class is straightforward:
+
+<p><pre>
+import com.ms.wfc.app.*;
+import com.ms.wfc.core.*;
+import com.ms.wfc.ui.*;
+import com.ms.wfc.html.*;
+
+/**
+ * This class demonstrates background processing using threads.
+ */
+public class Form1 extends Form
+{
+    // define two background threads
+    Background bg1;
+    Background bg2;
+    
+    public Form1()
+    {
+        // Required for Visual J++ Form Designer support
+        initForm();
+
+        // create a thread of normal priority
+        bg1 = new Background(outputEdit1);
+        bg1.setPriority(Thread.NORM_PRIORITY);
+        
+        // update the label to reflect the priority
+        setLabel(bg1, label1);
+        
+        // repeat for a second thread
+        bg2 = new Background(outputEdit2);
+        bg2.setPriority(Thread.NORM_PRIORITY - 1);
+        setLabel(bg2, label2);
+        
+        // start both processes (note that both
+        // start in the inactive state)
+        bg1.start();
+        bg2.start();
+    }
+
+    /**
+     * Update the specified label with the priority of thread.
+     */
+    private void setLabel(Thread thread, Label label)
+    {
+        int priority = thread.getPriority();
+        String priString = Integer.toString(priority);
+        char priChar = priString.charAt(0);
+        label.setText(label.getText().replace('#', priChar));
+    }
+	.
+	.
+	.
+
+   
+
+    private void button1_click(Object source, Event e)
+    {
+        bg1.activate(true);
+    }
+
+    private void button2_click(Object source, Event e)
+    {
+        bg1.activate(false);
+    }
+
+    private void button3_click(Object source, Event e)
+    {
+        bg2.activate(true);
+    }
+
+    private void button4_click(Object source, Event e)
+    {
+        bg2.activate(false);
+    }
+
+    /**
+     * NOTE: The following code is required by the Visual J++ form
+     * designer.  It can be modified using the form editor.  Do not
+     * modify it using the code editor.
+     */
+    Container components = new Container();
+    Edit outputEdit1 = new Edit();
+    Label label1 = new Label();
+    Button button1 = new Button();
+    Button button2 = new Button();
+    Edit outputEdit2 = new Edit();
+    Label label2 = new Label();
+    Button button3 = new Button();
+    Button button4 = new Button();
+
+    private void initForm()
+    {
+        // &#8230;created by the Forms Designer&#8230;
+    }
+
+    /**
+     * The main entry point for the application. 
+     */
+    public static void main(String args[])
+    {
+        Application.run(new Form1());
+    }
+}
+</PRE>
+
+<p>Once control returns from the <I>initForm() 
+</I>method, the <I>Form1</I> constructor creates a 
+<I>Background</I> object <I>bg1</I> and passes it the 
+<I>outputEdit1</I> object for output. The constructor then sets the priority to the normal priority for a Visual J++ thread. 
+<I>Form1()</I> then updates the <I>label1</I> Label control text with this priority. The 
+<I>setLabel()</I> method replaces the # character in the label with an ANSI representative of the priority.
+
+<p><div class="note"><blockquote>
+<b>NOTE</b><hr>
+Visual J++ thread priorities range from 1 to 9, with 5 being a 
+normal priority.
+</blockquote></div>
+
+<p>The<I> Form1()</I> constructor repeats this process to create a second 
+<I>Background</I> object called <I>bg2 </I>and to attach it to the 
+<I>outputEdit2 </I>Edit control. The 
+<I>Form1()</I> 
+constructor sets the priority of the <I>bg2</I> thread to be one less than the priority of 
+<I>bg1</I>. Next <I>Form1()</I> calls 
+<I>bg1.start()</I> and <I>bg2.start()</I> to start the two 
+<I>Background</I> threads running on their own.
+
+<p>The <I>button_click()</I> methods simply call 
+<I>Background.activate()</I> and pass <I>true</I> or 
+<I>false</I> to <I>bg1</I> or <I>bg2,</I> depending on which thread the button is trying to 
+stop or start.
+
+<p>Executing MultiThread1 generates output as shown in Figure 
+10-4. What doesn't come across in this static screen capture is the dynamic aspect of the application. 
+With both threads enabled, the upper box updates so rapidly that the user can't 
+possibly read individual values, and the lower box updates slowly if at all. While the 
+upper box is updating, however, the user can resize and move the form window 
+without much apparent effect. (The main window repaints slightly slower; you can see 
+that rapidly moving the window generates window trails similar to mouse trails).
+
+<p>As soon as the user pauses the higher-priority thread, however, the lower-
+priority thread snaps into gear and updates at the same high rate as the higher-
+priority thread did previously.
+
+<p><div class="note"><blockquote>
+<b>NOTE</b><hr>
+When you pause the higher priority thread 
+(<I>bg1</I>), the priority of the lower priority thread 
+(<I>bg2</I>) doesn't change. If you had other threads at the same 
+priority as <I>bg1</I> that were not BLOCKED, the increase in 
+<I>bg2</I>'s performance would not be that pronounced.
+</blockquote></div>
+
+<p><img src="images/F10gh04.JPG" width=221 height=232 border="0">
+<P><!-- caption --><B>Figure 10-4.</b> <i>The two boxes in the MultiThread1 application update rapidly with 
+the calculated prime number, while still allowing the user to perform routine actions 
+like minimizing, maximizing, and moving the window.</I><!-- /caption -->
+
+<A NAME="320"><h2>Using the WFC <I>createThread()</I> Method</h2></A>
+<p>One inconvenience of the approach demonstrated in MultiThread1 is the 
+requirement to create a separate class in order to create a new thread. WFC supports an 
+alternative approach by enabling you to create a new thread around a delegate. (Refer 
+back to <A HREF="ch05a.htm">Chapter 5</A> for a discussion of delegates.) The following MultiThread2 
+application demonstrates the use of this strategy. Since this application is a minor variation 
+on MultiThread1, the Forms Designer work is the same.
+
+<A NAME="321"><H3>The MultiThread2 code</H3></A>
+
+<p>The code for MultiThread2 is as follows. (Methods duplicated from MultiThread1 
+are partially or completely removed from this listing; the entire version of 
+MultiThread2 appears on the companion CD-ROM.)
+
+<p><pre>
+import com.ms.wfc.app.*;
+import com.ms.wfc.core.*;
+import com.ms.wfc.ui.*;
+import com.ms.wfc.html.*;
+
+/**
+ * This class demonstrates the Application.createThread() method.
+ */
+public class Form1 extends Form
+{
+    /**
+     * Control the flow of the threads we form.
+     */
+    class FlowControl
+    {
+        private boolean active = false;
+        
+        boolean isActive()
+        {
+            return active;
+        }
+        
+        void setActive(boolean active)
+        {
+            this.active = active;
+        }
+    }
+    
+    // create a flow control for each thread
+    // (this is used to start and stop the calculation)
+    FlowControl flowControl1 = new FlowControl();
+    FlowControl flowControl2 = new FlowControl();
+
+    /**
+     * Delegate is used to create background thread.
+     * 
+     * @param flowControl - starts and stops background thread
+     * @param control - control to accept primes
+     */
+    delegate void Background(FlowControl flowControl,
+                             Control     control);
+    
+    public Form1()
+    {
+        // Required for Visual J++ Form Designer support
+        initForm();
+
+        // execute delegate in its own thread
+        Thread thread1 =
+          Application.createThread(new Background(this.run),
+                                   new Object[]{flowControl1,
+                                                outputEdit1},
+                                   Thread.NORM_PRIORITY);
+        setLabel(thread1, label1);
+        
+
+        // repeat the process for the second thread at
+        // a lower priority
+        Thread thread2 =
+          Application.createThread(new Background(this.run),
+                                   new Object[]{flowControl2,
+                                                outputEdit2},
+                                   Thread.NORM_PRIORITY - 1);
+        setLabel(thread2, label2);
+    }
+    
+    /**
+     * Increment the prime number counter.
+     */
+    synchronized void countPrimeNumber()
+    {
+        numberOfPrimes++;
+    }
+    
+    /**
+     * Start the Background thread.
+     */
+    public void run(FlowControl flowControl, Control output)
+    {
+        try
+        {
+            // keep calculating prime numbers
+            // until we wrap around
+            for (long i = 0; i &gt;= 0; i++)
+            {
+                // give up control
+                Thread.yield();
+                
+                // while not active, keep giving up control
+                while (!flowControl.isActive())
+                {
+                    Thread.sleep(100);
+                }
+                
+                // now calculate a new prime
+                if (isPrime(i))
+                {
+                    // count it
+                    countPrimeNumber();
+                    
+                    // output prime number to control
+                    // specified
+                    output.setText(&quot;#&quot; +
+                                   toString(numberOfPrimes) +
+                                   &quot;- &quot; +
+                                   toString(i));                
+                }
+            }
+        }
+        catch(Exception e)
+        {
+            output.setText(e.getMessage());
+        }
+    }
+
+    private String toString(long value)
+    {
+	.
+	.
+	.
+        
+    }
+
+    private void button1_click(Object source, Event e)
+    {
+        flowControl1.setActive(true);
+    }
+
+    private void button2_click(Object source, Event e)
+    {
+        flowControl1.setActive(false);
+    }
+
+    private void button3_click(Object source, Event e)
+    {
+        flowControl2.setActive(true);
+    }
+
+    private void button4_click(Object source, Event e)
+    {
+        flowControl2.setActive(false);
+    }
+
+    // &#8230;from here the same as MultiThread1&#8230;
+}
+</PRE>
+
+<p>The most important difference between MultiThread2 and its MultiThread1 cousin is 
+the use of the <I>Application.createThread()</I> method to create the new threads.
+
+<P>The first argument to <I>createThread()</I> is a delegate object of class 
+<I>Background</I>. The delegate declaration of 
+<I>Background</I> defines two arguments: an object of the 
+inner class <I>FlowControl</I> and an output WFC 
+<I>Control</I> object. These arguments are 
+necessary since there is no thread class constructor to save the values these arguments 
+contain. The <I>Background</I> delegate returns a 
+<I>void</I> as a requirement for being called by 
+<I>createThread()</I>. Any delegate used with 
+<I>createThread()</I> must return a <I>void</I> 
+because <I>createThread() </I>doesn't return to the caller.
+
+<P>In this case, the delegate is created using the method 
+<I>Form1.run()</I>. It is at this method where execution of the new thread begins. The number and type of 
+arguments plus the return type of <I>run()</I> must match the declaration of the delegate 
+<I>Background</I>. If they don't, an error is generated at compile time.
+
+<P>The second argument to <I>createThread()</I> is an array of objects to be passed 
+to <I>run()</I>. Again, the number and type of these arguments must match the 
+declaration of <I>run()</I>,<I> </I>which means they also match the declaration of the delegate 
+<I>Background</I>. If they don't, a run-time exception is generated as soon as the new thread tries 
+to start.
+
+<P>The final argument to <I>createThread()</I> is the priority.
+
+<p><div class="note"><blockquote>
+<b>NOTE</b><hr>
+When you use 
+<I>createThread()</I>, there is no need to call 
+<I>start()</I>. The thread is created in an active state.
+</blockquote></div>
+
+<p>It's necessary to create the inner class 
+<I>FlowControl</I> to contain the <I>active</I> 
+flag. This is because <I>run()</I> needs a reference back to the same 
+<I>active</I> flag that the <I>button_click()</I> methods are accessing. Had the program passed 
+<I>active</I> directly, <I>run()</I> would have simply received the value of the member, either 
+<I>true</I> or <I>false</I>.
+
+<A NAME="322"><h3>Is <I>createThread() </I>worth the trouble?</h3></A>
+<p>After comparing the two versions of MultiThread, we are left with the question 
+of whether it's actually worth it to use 
+<I>createThread()</I> to avoid creating a new 
+subclass of <I>Thread</I> (or a new class that implements 
+<I>Runnable</I>). I tend to think no. After all, the delegate 
+<I>Background</I> is a new class.
+
+<P>Although I haven't seen the inner workings of the 
+<I>Thread </I>class, I imagine that it invokes 
+<I>createThread()</I>. Or perhaps <I>Thread</I> and 
+<I>createThread()</I> both access the same Windows API functions to create a Windows thread. Either way, the net 
+effect of the two techniques is the same. Using the 
+<I>Thread</I> class seems the simpler of the two approaches to me.
+
+<A NAME="323"><h3>Synchronizing access to <I>numberOfPrimes</I></h3></A>
+<p>Notice how MultiThread2 allows both threads to use the same variable, 
+<I>numberOfPrimes</I>. I did this as a demonstration rather than because of any overriding 
+requirements of the program.
+
+<P>Since both threads in MultiThread2 update the same 
+<I>numberOfPrimes</I> variable by incrementing it, access to 
+<I>numberOfPrimes</I> must be controlled. The program does this by defining a new 
+synchronized method, <I>countPrimeNumber()</I>, to perform the incrementation. The statement 
+that incremented <I>numberOfPrimes</I> in 
+<I>run()</I> is replaced in this example by a call to 
+<I>countPrimeNumber()</I>. Since 
+<I>countPrimeNumber()</I> is synchronized, the race condition problem is avoided.
+
+<P>Notice that a few statements later, 
+<I>run()</I> accesses <I>numberOfPrimes</I> directly when it passes 
+its value to <I>toString()</I>. This doesn't represent a race condition because the statement doesn't 
+update the value, it only reads it. It's possible for the 
+<I>numberOfPrimes</I> variable to be updated by some 
+other thread between the time that it's incremented and the time that it's read. The following subset 
+of <I>run()</I> uses a synchronized block to avoid this possibility. (Both variations appear in the version 
+of MultiThread2 on the companion CD-ROM, with one commented out):
+
+<p><pre>
+// now calculate a new prime
+if (isPrime(i))
+{
+    // count it
+    synchronized(mutex)
+    {
+        numberOfPrimes++;
+        
+        // output prime number to the control
+        // specified
+        output.setText(&quot;#&quot; +
+                       toString(numberOfPrimes) +
+                       &quot;- &quot; +
+                       toString(i));
+    }
+}
+</PRE>
+
+<p>Here the object <I>mutex</I> is defined to be of the empty inner class 
+<I>Mutex</I> as follows:
+
+<p><pre>
+/**
+ * Define a dummy class to use as a mutex.
+ */
+class Mutex
+{
+}
+Mutex mutex = new Mutex();
+</PRE>
+
+<p>Defining a class object <I>mutex</I> provides the block of code with a unique 
+mutex to synchronize on.
+
+<p><div class="note"><blockquote>
+<b>NOTE</b><hr>
+In this example, I could not use the 
+<I>this </I>object. Each thread is a separate instance of 
+<I>Background</I>. Thus, each thread has a different mutex. 
+Synchronizing on the <I>this</I> object would not keep one thread from interfering with another.
+</blockquote></div>
+
+<A NAME="324"><H2>The MDIThread Application</H2></A>
+
+<p>Although you can create a Multiple Document Interface (MDI) application without 
+creating multiple threads, using multiple threads is common.
+
+<p><div class="note"><blockquote>
+<b>NOTE</b><hr>
+An MDI interface has several child forms residing within a single parent 
+form. These child forms might refer to different documents&#8212;hence the 
+name MDI&#8212;but this isn't required. A common example of an MDI application 
+is Microsoft Word.
+</blockquote></div>
+
+<p>When the different child forms within an MDI application don't refer to the 
+same document, it's convenient to operate them in separate threads. This allows them 
+to operate independently of each other.
+
+<P>To demonstrate the point, I created an application, MDIThread, in which 
+each thread operates in its own child form.
+
+<A NAME="325"><H3>The Forms Designer work</H3></A>
+
+<p>The trick in laying out MDIThread is to modify 
+<I>Form1</I> so that it contains a single label, output control, start button, and stop button, instead of two sets of controls as 
+defined in the MultiThread applications above. In addition, you double-click the 
+active property <I>closing</I> to create the method 
+<I>Form1_closing().</I> (I'll explain this method 
+later.) <I>Form1</I> will be the child form.
+
+<p>In addition to <I>Form1</I>, it's necessary to create a new form to act as the MDI 
+parent. To do so, click the Add Item toolbar button or choose Add Form on the 
+Project menu. Select Form from the list of objects to add and give it the name 
+<I>MDIParent</I> before clicking the Open button. This creates a new form class, 
+<I>MDIParent</I>, contained in the file MDIParent.java. Visual J++ adds the new 
+<I>.</I>java file to the project 
+automatically.
+
+<p>Change the <I>text</I> property of the 
+<I>MDIParent</I> form to <I>Calc</I> <I>Primes</I> 
+<I>Parent</I> or something equally meaningful. Now add a MainMenu control from the Toolbox. 
+To the main menu, add the menu item PrimeCalc. Under the PrimeCalc menu, add 
+the menu items New and Exit, in that order. Change the 
+<I>name</I> property of the New item to 
+<I>newMI</I> and the Exit item to <I>exitMI</I>. Now double-click both of these menu items 
+to create the menu item event handlers.
+
+<p>Since the <I>Background</I> class is unchanged from the MultiThread1 example, 
+simply copy the Background.java file from the MultiThread1 directory to the 
+MDIThread directory. Visual J++ automatically adds the file to the project.
+
+<p>Finally, choose MDIThread Properties from the Project menu. Select the 
+Launch tab, and under the label When Project Runs, Load, select MDIParent from the 
+dropdown list. Now select OK. Since 
+<I>MDIParent</I> is the main form, execution starts there.
+
+<A NAME="326"><H3>The code for Form1</H3></A>
+
+<p>The code for the Form1.java file appears as follows:
+
+<p><pre>
+import com.ms.wfc.app.*;
+import com.ms.wfc.core.*;
+import com.ms.wfc.ui.*;
+import com.ms.wfc.html.*;
+
+/**
+ * Implement a child form to the MDI parent MDIParent.
+ */
+public class Form1 extends Form
+{
+    // the background Thread object
+    Background bg;
+    
+    public Form1(Form parent,
+                 int bgPriority)
+    {
+        // Required for Visual J++ Form Designer support
+        initForm();
+        
+        // attach this form to our parent form
+        this.setMDIParent(parent);
+        
+        // make ourselves visible
+        this.setVisible(true);
+        
+        // create a thread of specified priority
+        bg = new Background(outputEdit1);
+        bg.setPriority(bgPriority);
+        
+        // update the label to reflect the priority
+        setLabel(bg, label1);
+        
+        // start the background thread
+        bg.start();
+    }
+
+    /**
+     * Update the specified label with the priority of thread.
+     */
+    private void setLabel(Thread thread, Label label)
+    {
+        // &#8230;same as in MultiThread examples&#8230;
+    }
+
+    private void button1_click(Object source, Event e)
+    {
+        bg.activate(true);
+    }
+
+    private void button2_click(Object source, Event e)
+    {
+        bg.activate(false);
+    }
+
+    private void Form1_closing(Object source, CancelEvent e)
+    {
+        // don't close the entire application
+        e.cancel = true;
+    
+        // but do kill the background thread&#8230;
+        bg.stop();
+        
+        // and dispose of the current form
+        this.dispose();
+    }
+
+    /**
+     * NOTE: The following code is required by the Visual J++ form
+     * designer.  It can be modified using the form editor.  Do not
+     * modify it using the code editor.
+     */
+    Container components = new Container();
+    Edit outputEdit1 = new Edit();
+    Label label1 = new Label();
+    Button button1 = new Button();
+    Button button2 = new Button();
+
+    private void initForm()
+    {
+        // &#8230;created by Forms Designer&#8230;
+    }
+}
+</PRE>
+
+<p>This version of <I>Form1</I> has been modified in several ways. First, there is 
+no <I>main()</I> method anymore. The application starts with the 
+<I>MDIParent</I> class.
+
+<P>In addition, this program adds two arguments to the 
+<I>Form1()</I> constructor: 
+a reference to the MDI parent form, and the priority of the background 
+thread. After the form has set itself up by calling 
+<I>initForm()</I>, <I>Form1()</I> calls the method 
+<I>setMDIParent(parent)</I>. This establishes the current form as an MDI child of the 
+parent form <I>parent</I>. Next the form makes itself visible by calling 
+<I>setVisible(true)</I>. Visual J++ creates forms as invisible so that the user won't see the individual objects 
+get added to the form. The 
+<I>Application.run()</I> call in <I>main()</I> normally saves you 
+the trouble of making the form visible.
+
+<P>Finally, <I>Form1()</I> sets up the background thread using the same 
+<I>Background</I> thread class as in MultiThread1.
+
+<P>The remainder of <I>Form1</I> is unchanged from the previous version except for the addition 
+of the <I>Form1_closing()</I> method. This method is invoked before the form closes. Unfortunately, 
+the default action of a form when closing is to dispose of itself and then call 
+<I>Thread.exit(),</I> which terminates the entire application. All we want is the form to close itself. Setting the 
+<I>cancel</I> flag in the <I>CancelEvent</I> object 
+<I>e</I> to <I>true</I> (the default is 
+<I>false</I>) tells the <I>Form.closing()</I> method not to do 
+anything&#8212;that we will do it all. The next thing that 
+<I>Form1_closing()</I> does is call 
+<I>bg.stop()</I>. This kills the background thread and disposes of its resources. Finally, 
+<I>Form1_closing()</I> calls 
+<I>dispose()</I> to close the current form and dispose of its resources.
+
+<A NAME="327"><H3>The MDIParent code</H3></A>
+
+<p>The code for the <I>MDIParent</I> class is reasonably straightforward:
+
+<p><pre>
+import com.ms.wfc.app.*;
+import com.ms.wfc.core.*;
+import com.ms.wfc.ui.*;
+import com.ms.wfc.html.*;
+
+/**
+ * Act as an MDI parent to Form1.
+ */
+public class MDIParent extends Form
+{
+    public MDIParent()
+    {
+        // Required for Visual J++ Form Designer support
+        initForm();
+
+        // set this form to be an MDI container
+        setIsMDIContainer(true);
+    }
+	.
+	.
+	.
+
+   
+    private void newMI_click(Object source, Event e)
+    {
+        // create a child form object of slightly
+        // less priority than we are
+        Thread thread = Thread.currentThread();
+        int priority = thread.getPriority() - 1;
+        Form form = new Form1(this, priority);
+    }
+
+    private void exitMI_click(Object source, Event e)
+    {
+        Application.exit();
+    }
+
+    /**
+     * NOTE: The following code is required by the Visual J++ form
+     * designer.  It can be modified using the form editor.  Do not
+     * modify it using the code editor.
+     */
+    Container components = new Container();
+    MainMenu mainMenu1 = new MainMenu();
+    MenuItem menuItem1 = new MenuItem();
+    MenuItem newMI = new MenuItem();
+    MenuItem exitMI = new MenuItem();
+
+    private void initForm()
+    {
+        // &#8230;created by the Forms Designer&#8230;
+    }
+
+    /**
+     * The main entry point for the application. 
+     * &#8230;
+     */
+    public static void main(String args[])
+    {
+        Application.run(new MDIParent());
+    }
+}
+</PRE>
+
+<p>The method <I>main()</I> executes the 
+<I>MDIParent</I> form in the usual way. The constructor for 
+<I>MDIParent</I> invokes <I>initForm() </I>and then calls 
+<I>setIsMDIContainer(true)</I> to designate this form as an MDI container form.
+
+<p>The interesting code is in the two menu click event handlers. The 
+<I>newMI_click() </I>method is invoked when the user chooses New from the PrimeCalc menu. 
+The <I>newMI_click()</I> method creates a new 
+<I>Form1</I> child form with a background thread priority that is one less than the priority of the current thread. The 
+<I>exitMI_click()</I> method terminates the current application by calling 
+<I>Application.exit()</I>.
+
+<A NAME="328"><H3>The result</H3></A>
+
+<p>I find the result of this relatively simple program to be quite interesting. Figure 
+10-5 shows MDIThread after I have selected New from the PrimeCalc menu three 
+times to create three independent child forms. Each of the child forms executes 
+independently of the rest. You can also see that one of the child forms (the first one 
+created) is currently the active child.
+
+<P>The user can close any one of the child forms&#8212;by clicking on the close 
+icon in the upper right corner of that form&#8212;with no noticeable effect on the other 
+two forms (except for a slight acceleration in both of them). In addition, since the 
+background threads are executing at a lower priority than the parent thread,
+the child threads have no noticeable effect on the responsiveness of the parent form; the child threads 
+tend to slow down or stop running as soon as the user moves the parent window.
+
+<P><A HREF="javascript:fullSize('F10gh05x.htm')"> <img src="images/F10gh05.JPG" width=404 height=278 border=0 ALT="Click to view at full size."> </A>
+<P><!-- caption --><B>Figure 10-5.</b> <i>The MDIThread application executing with three active child
+forms.</I><!-- /caption -->
+
+
+<A NAME="329"><H2>Using the idle Event to Perform Background Processing</H2></A>
+
+<p>Setting the priority of a thread lower than the main application's priority ensures that the 
+background threads will have minimal negative impact on the performance of the main 
+thread. However, the <I>Application</I> class offers a technique for creating a &quot;thread&quot; that is guaranteed to 
+have no impact on the performance of any other thread.
+
+<P>As I have mentioned earlier, all user input is conveyed to the application in 
+the form of Windows messages that Visual J++ converts into events. When the 
+message queue is completely empty&#8212;that is, when there is absolutely no user input to 
+process&#8212;Visual J++ invokes the idle<I> </I>event.
+
+<P>You can use the idle<I> </I>event to perform simple functions that you don't want 
+to impact system performance. Since the idle<I> 
+</I>event is a &quot;one-shot&quot; event (that is, 
+it occurs once), it's basically not suitable for running in a loop such as our prime 
+numbers loop. We can get around this one-shot problem relatively cleanly, however. 
+(In any event, the problem will be fixed in an even better way in the next chapter.)
+
+<P>The following IdleEvent1 application uses the 
+idle<I> </I>event to calculate prime numbers when there is no user input to process. In addition, IdleEvent1 adds a 
+crude drawing program like that shown in <A HREF="ch09a.htm">Chapter 9</A> to demonstrate that the idle 
+process has no deleterious effect on the responsiveness of the system to user input.
+
+<A NAME="330"><H3>The Forms Designer work</H3></A>
+
+<p>First create the application IdleEvent1. Using the Forms Designer, update 
+<I>Form1</I> to look much like the child form in the MDIThread application. Now add a large panel on the bottom of the 
+form below the buttons. Set the <I>name</I> property of the panel to 
+<I>paintPanel</I>. Set the <I>borderStyle</I> 
+property to <I>Fixed 3D</I> to enhance the appearance. Switch to the active properties, and double click the 
+<I>paint</I> property to create the<I> 
+</I>paint<I> </I>event handler 
+<I>paintPanel_paint()</I>.
+
+<A NAME="331"><H3>The Form1 code</H3></A>
+
+<p>The code for Form1 appears as follows:
+
+<p><pre>
+import com.ms.wfc.app.*;
+import com.ms.wfc.core.*;
+import com.ms.wfc.ui.*;
+import com.ms.wfc.html.*;
+
+import com.ms.wfc.util.*;
+
+/**
+ * This class demonstrates the use of idle processing using
+ * the onIdle() process.
+ */
+public class Form1 extends Form
+{
+    // define holder for the idle process handler
+    IdleProcess idle;
+    
+    public Form1()
+    {
+        // Required for Visual J++ Form Designer support
+        initForm();
+
+        // Create an onIdle process
+        idle = new IdleProcess(outputEdit);
+    }
+	.
+	.
+	.
+
+    
+
+    private void button1_click(Object source, Event e)
+    {
+        idle.setActive(true);
+    }
+
+    private void button2_click(Object source, Event e)
+    {
+        idle.setActive(false);
+    }
+
+    // The code from this point forward that handles
+    // the drawing of squiggles in the panel is not
+    // shown in this listing in the interest of brevity.
+    // The complete program appears on the companion CD-ROM.
+
+    /**
+     * NOTE: The following code is required by the Visual J++ form
+     * designer.  It can be modified using the form editor.  Do not
+     * modify it using the code editor.
+     */
+    Container components = new Container();
+    Edit outputEdit = new Edit();
+    Label label1 = new Label();
+    Button button1 = new Button();
+    Button button2 = new Button();
+    Panel paintPanel = new Panel(components);
+
+    private void initForm()
+    {
+        // &#8230;created by the Forms Designer&#8230;
+    }
+
+    /**
+     * The main entry point for the application. 
+     */
+    public static void main(String args[])
+    {
+        Application.run(new Form1());
+    }
+}
+</PRE>
+
+<p>The majority of the source code to <I>Form1</I> pertains to handling the painting 
+of squiggles in the panel. Since this is similar to the FreeDraw application in 
+<A HREF="ch09a.htm">Chapter 9</A>, this code is not shown here in the interest of saving space.
+
+<p>The relevant section of <I>Form1</I> is in the 
+<I>Form1()</I> constructor where the 
+<I>IdleProcess</I> object is passed. The 
+<I>outputEdit</I> argument indicates the object to which prime 
+numbers are to be written.
+
+<p>The start and stop button<I> </I>click<I> </I>event handlers turn the idle process on and off.
+
+<A NAME="332"><H3>The IdleProcess code</H3></A>
+
+<p>Add a class named IdleProcess to your project. Here is the code for that class:
+
+<p><pre>
+import com.ms.wfc.app.*;
+import com.ms.wfc.core.*;
+import com.ms.wfc.ui.*;
+
+/**
+ * Calculate primes &quot;in the background&quot; by attaching
+ * to the idle event.
+ */
+public class IdleProcess
+{
+    // the WFC control to use for outputting primes
+    Control output;
+    
+    // note whether idle loop is active or not
+    boolean active = false;
+
+    // the following timer is used to periodically &quot;kick&quot;
+    // the system into invoking the idle loop
+    Timer timer;
+    
+    // number of primes found and the last
+    // candidate for 'primehood'
+    int     numberOfPrimes = 0;
+    int     lastCandidate  = 0;
+
+    /**
+     * Create an idle process that reports primes back
+     * to the parent through the output control.
+     */
+    public IdleProcess(Control output)
+    {
+        // save the parent
+        this.output = output;
+        
+        // assign an on idle event handler
+        Application.addOnIdle(new EventHandler(this.onIdle));
+
+        // set a timer to prompt system
+        timer = new Timer();
+        timer.setInterval(20);
+        timer.setEnabled(true);
+    }
+ 
+    /**
+     * Turn the idle process on and off.
+     */
+    public void setActive(boolean active)
+    {
+        this.active = active;
+    }
+    
+    /**
+     * Invoked when the system is idle.
+     */
+    public void onIdle(Object sender, Event e)
+    {
+        // if we're active&#8230;
+        if (active)
+        {
+            // note the start time
+            Time startTime = new Time();
+            Time endTime = startTime.addMillis(10);
+            
+            // work until timer exits the loop
+            while(true)
+            {
+                // if current time is greater than end time&#8230;
+                Time currentTime = new Time();
+                if (Time.compare(currentTime, endTime) &gt; 0)
+                {
+                    // get out of the loop and return
+                    break;
+                }
+                
+                // loop for 100 candidates or so
+                for (int i = 0; i &lt; 100; i++)
+                {
+                    // try the next number
+                    if (isPrime(++lastCandidate))
+                    {
+                        // it's prime - count it
+                        numberOfPrimes++;
+
+                        // report results back to parent
+                        output.setText(
+                            toString(numberOfPrimes) +
+                            &quot;-&quot; +
+                            toString(lastCandidate));
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * Test next number for prime.
+     */
+    boolean isPrime(long number)
+    {
+        // &#8230;identical to earlier versions&#8230;
+    }
+    
+    /**
+     * Convert a number into a string with commas.
+     */
+    private String toString(long value)
+    {
+        // &#8230;identical to earlier versions&#8230;
+    }
+}
+</PRE>
+
+<p>The <I>isPrime()</I> and <I>toString()</I> methods are identical to earlier versions. The 
+remainder of the <I>IdleProcess</I> class has a completely different flavor.
+
+<P>The constructor for <I>IdleProcess()</I> saves the WFC 
+<I>Control</I> object to which prime numbers are to be written. That done, 
+<I>IdleProcess()</I> creates an 
+<I>EventHandler</I> around the <I>onIdle()</I> method and assigns it to process the idle event. Finally, the 
+constructor sets a <I>Timer</I> object to trigger every 20 milliseconds for reasons I'll explain later.
+
+<P>The actual <I>onIdle()</I> method is structured differently than the 
+<I>run()</I> methods of the previous multithreaded examples. This is because the calculation of prime 
+numbers in this example is occurring in the same thread as the main program; it's 
+just that at the moment the main thread has nothing else to do. This has two implications:
+<UL>
+<P><LI>The <I>onIdle()</I> handler can't attempt to do too much. During the time 
+that <I>onIdle()</I> is executing, the program thread is unresponsive to user input.
+<P><LI>The <I>onIdle()</I> handler must be able to remember where it was the last 
+time it executed. In this case, that means it must save the last number 
+candidate it passed to <I>isPrime()</I> to be checked.
+</UL>
+
+<p>The <I>onIdle()</I> method begins by first checking the 
+<I>active</I> flag. If <I>active</I> is 
+<I>false</I>, the prime calculation process is suspended and the 
+<I>onIdle()</I> method returns without taking any action. If 
+<I>active</I> is <I>true</I>, <I>onIdle()</I> continues by noting the current 
+time and calculating an <I>endTime</I> some 10 milliseconds into the future. I arbitrarily 
+decided that the <I>onIdle()</I> processor could work for 10 milliseconds at a time without any-
+one noticing.
+
+<P>The <I>onIdle()</I> method then enters a loop that periodically checks the time 
+until the <I>currentTime</I> exceeds the 
+<I>endTime</I>. As long as the <I>endTime</I> isn't 
+exceeded, <I>onIdle()</I> calculates and reports prime numbers using the same algorithm as in 
+earlier versions. The program checks 100 prime number candidates before 
+rechecking the time, to increase performance. The computer can check 100 candidates in 
+much less than 10 milliseconds. It's a waste to check the time after every candidate.
+
+<P>Once 10 milliseconds have gone by, <I>onIdle()</I> returns control to the application, 
+saving the position in <I>lastCandidate</I> and the number of primes found so far 
+in <I>numberOfPrimes</I>.
+
+<p><div class="note"><blockquote>
+<b>NOTE</b><hr>
+It's critical that the 
+<I>onIdle() </I>event handler finish processing, or be able to 
+save sufficient information to allow it to pick up where it left off the next time it runs. 
+Saving its position is called <I>saving</I> 
+<I>the</I> <I>state</I>. 
+</blockquote></div>
+
+<A NAME="333"><H3>Why set a timer?</H3></A>
+
+<p>One curious feature of IdleEvent1 is the 
+<I>Timer</I> object created in the 
+<I>IdleProcess</I> constructor. This is especially interesting since I never defined a 
+<I>timerEvent</I> handler to do anything with the 
+timer<I> </I>event once it occurred.
+
+<P>This <I>Timer</I> object solves a problem inherent with any repetitive 
+idle<I> </I>event handler. Each time the process goes idle, the 
+idle<I> </I>event occurs only once. Once the 
+<I>onIdle()</I> method returns to the caller (after the first 10 milliseconds), the main 
+thread is blocked to give time to other, lower-priority threads. For many applications, 
+this is okay. In our case, however, we want to continue to calculate primes as long 
+as the system isn't busy.
+
+<P>The <I>Timer</I> object sort of &quot;kicks&quot; the main thread by forcing the thread to 
+process a &quot;do nothing&quot; timer<I> 
+</I>event<I>. </I>After every timer<I> </I>event, if the application is still 
+idle, the system passes control to the <I>onIdle()</I>
+ process again.
+
+<P>So if the <I>onIdle()</I> process executes for 10 milliseconds, why is  
+<I>Timer</I> set for 20 milliseconds? If  
+<I>Timer</I> were set for the same 10 milliseconds that 
+<I>onIdle() </I>uses, the <I>onIdle()</I> method would keep the main thread busy all the time, thereby 
+never giving control to any lower-priority threads.
+
+</BODY>
+</HTML>
+
+
+
+

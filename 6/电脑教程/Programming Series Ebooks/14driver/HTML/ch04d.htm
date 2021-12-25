@@ -1,0 +1,133 @@
+<HTML>
+<HEAD>
+<TITLE>Spin Locks</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch04c.htm">[Previous]</A> <A HREF="ch04e.htm">[Next]</a>
+</p>
+
+<A NAME="117"><H1>Spin Locks</H1></A>
+
+<p>Since IRQL is a per-CPU concept, it doesn't help you safeguard data against interference
+by code running on another processor in the same multiprocessor computer. A primitive object
+known as a <i>spin lock</i> serves that purpose. To acquire a spin lock, code on one CPU
+executes an atomic operation that tests and then sets some memory variable in such a way that
+no other CPU can access the variable until the operation completes. If the test indicates that
+the lock was previously free, the program continues. If the test indicates that the lock was
+previously busy, the program repeats the test-and-set in a tight loop: it &quot;spins.&quot;
+Eventually the owner releases the lock by resetting the variable, whereupon one of the waiting
+CPUs' test-and-set operations will report the lock as free.</p>
+
+<p>Two facts about spin locks are probably obvious but still worth stating. First of all, if a
+CPU already owns a spin lock and tries to obtain it a second time, the CPU will deadlock. No
+usage counter or owner identifier is associated with a spin lock; the lock is either owned by
+somebody or not. If you try to acquire it when it's owned, you will wait until the owner
+releases it. If your CPU happens to already be the owner, the code which would release the lock
+can never execute because you're spinning in a tight loop testing and setting the lock
+variable.</p>
+
+<p>The second fact about spin locks is that no useful work occurs on a CPU that's waiting
+for a spin lock. Therefore, to avoid harming performance, you need to minimize the amount of
+work you do while holding a spin lock that some other CPU is likely to want.</p>
+
+<p>There's another important fact about spin locks that's not obvious but still pretty
+important: you can only request a spin lock when you're running at or below DISPATCH_LEVEL,
+and the kernel will raise the IRQL to DISPATCH_LEVEL for the duration of your ownership of the
+lock. Internally, the kernel is able to acquire spin locks at an IRQL higher than
+DISPATCH_LEVEL, but you and I are unable to accomplish that feat.</p>
+
+<A NAME="118"><H2>Working with Spin Locks</H2></A>
+
+<p>To use a spin lock explicitly, allocate storage for a KSPIN_LOCK object in nonpaged memory.
+Then call <b>KeInitializeSpinLock</b> to initialize the object. Later, while running at or
+below DISPATCH_LEVEL, acquire the lock, perform the work that needs to be protected from
+interference, and then release the lock. For example, suppose that your device extension
+contains a spin lock named <b>QLock</b> that you use for guarding access to a special IRP queue
+you've set up. You'd initialize this lock in your AddDevice function:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>typedef struct _DEVICE_EXTENSION {
+  ...
+  KSPIN_LOCK QLock;
+  } DEVICE_EXTENSION, *PDEVICE_EXTENSION;
+
+...
+
+NTSTATUS AddDevice(...)
+  {
+  ...
+  PDEVICE_EXTENSION pdx = ...;
+  KeInitializeSpinLock(&amp;pdx-&gt;QLock);
+  ...
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Elsewhere in your driver, say in the dispatch function for some type of IRP, you could claim
+(and quickly release) the lock around some queue manipulation that you needed to perform. Note
+that this function must be in nonpaged memory because it executes for some period of time at an
+elevated IRQL.</p>
+
+<p>
+<table cellpadding=5 width="95%"><TR><td valign="top">
+<PRE>
+
+
+
+
+1<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+2<img src="images/arorite2.jpg" width=17 height=10 border="0"></PRE>
+</TD>
+
+<td valign="top">
+<pre>NTSTATUS DispatchSomething(...)
+  {
+  KIRQL oldirql;
+  PDEVICE_EXTENSION pdx = ...;
+  KeAcquireSpinLock(&amp;pdx-&gt;QLock, &amp;oldirql);
+  ...
+  KeReleaseSpinLock(&amp;pdx-&gt;QLock, oldirql);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> When <b>KeAcquireSpinLock</b> acquires the spin lock, it also raises IRQL to
+DISPATCH_LEVEL and returns the current (that is, preacquisition) level to us wherever the
+second argument points.</li></p>
+
+<p><li> When <b>KeReleaseSpinLock</b> releases the spin lock, it also lowers IRQL back to
+the value specified in the second argument.</li></p>
+</ol>
+
+<p>If you know you're already executing at DISPATCH_LEVEL, you can save a little time by
+calling two special routines. This technique is appropriate, for example, in DPC, StartIo, and
+other driver routines that execute at DISPATCH_LEVEL:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>KeAcquireSpinLockAtDpcLevel(&amp;pdx-&gt;QLock);
+...
+KeReleaseSpinLockFromDpcLevel(&amp;pdx-&gt;QLock);</pre>
+</td></tr>
+</table>
+</p>
+
+</BODY>
+</HTML>
+
+
+
+
+

@@ -1,0 +1,426 @@
+<HTML>
+<HEAD>
+<TITLE>System Threads</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch09d.htm">[Previous]</A> <A HREF="ch09f.htm">[Next]</a>
+</p>
+
+<A NAME="319"><H1>System Threads</H1></A>
+
+<p>In all the device drivers considered so far in the book, we haven't been overly
+concerned about the thread context in which our driver subroutines have executed. Much of the
+time, our subroutines run in an arbitrary thread context, which means we can't block and
+can't directly access user-mode virtual memory. Some devices are very difficult to program
+when faced with the first of these constraints.</p>
+
+<p>Some devices are best handled by <i>polling</i>. A device that can't asynchronously
+interrupt the CPU, for example, needs to be interrogated from time to time to check its state.
+In other cases, the natural way to program the device might be to perform an operation in steps
+with waits in between. A floppy disk driver, for example, goes through a series of steps to
+perform an operation. In general, the driver has to command the drive to spin up to speed, wait
+for the spin-up to occur, commence the transfer, wait a short while, and then spin the drive
+back down. You could design a driver that operates as a finite state machine to allow a
+callback function to properly sequence operations. It would be much easier, though, if you
+could just insert event and timer waits at the appropriate spots of a straight-line
+program.</p>
+
+<p>Dealing with situations that require you to periodically interrogate a device is easy with the
+help of a <i>system thread</i> belonging to the driver. A system thread is a thread that
+operates within the overall umbrella of a process belonging to the operating system as a whole.
+I'll be talking exclusively about system threads that execute solely in kernel mode. In the
+next section, I'll describe the mechanism by which you create and destroy your own system
+threads. Then I'll give an example of how to use a system thread to manage a polled input
+device.</p>
+
+<A NAME="320"><H2>Creating and Terminating System Threads</H2></A>
+
+<p>To launch a system thread, you call <b>PsCreateSystemThread</b>. One of the arguments to
+this service function is the address of a <i>thread procedure</i> that acts as the main program
+for the new thread. When the thread procedure is going to terminate the thread, it calls <b>
+PsTerminateSystemThread</b>, which does not return. Generally speaking, you need to provide a
+way for a PnP event to tell the thread to terminate and to wait for the termination to occur.
+Combining all these factors, you'll end up with code that performs the functions of these
+three subroutines:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr>
+<td valign=top>
+<pre>
+
+
+
+
+
+
+
+
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+2 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+3 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+4 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+
+5 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+6 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+7 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+
+8 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+9 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+</pre>
+</td>
+
+<td valign="top">
+<pre>typedef struct _DEVICE_EXTENSION {
+  ...
+  KEVENT evKill;
+  PKTHREAD thread;
+  };
+
+NTSTATUS StartThread(PDEVICE_EXTENSION pdx)
+  {
+  NTSTATUS status;
+  HANDLE hthread;
+  KeInitializeEvent(&amp;pdx-&gt;evKill, NotificationEvent, FALSE);
+  status = PsCreateSystemThread(&amp;hthread, THREAD_ALL_ACCESS,
+    NULL, NULL, NULL, (PKSTART_ROUTINE) ThreadProc, pdx);
+  if (!NT_SUCCESS(status))
+    return status;
+  ObReferenceObjectByHandle(hthread, THREAD_ALL_ACCESS, NULL,
+    KernelMode, (PVOID*) &amp;pdx-&gt;thread, NULL);
+  ZwClose(hthread);
+  return STATUS_SUCCESS;
+  }
+
+VOID StopThread(PDEVICE_EXTENSION pdx)
+  {
+  KeSetEvent(&amp;pdx-&gt;evKill, 0, FALSE);
+  KeWaitForSingleObject(pdx-&gt;thread, Executive, KernelMode, FALSE, NULL);
+  ObDereferenceObject(pdx-&gt;thread);
+  }
+
+VOID ThreadProc(PDEVICE_EXTENSION pdx)
+  {
+  ...
+  KeWaitFor<i>Xxx</i>(<i>&lt;at least pdx-&gt;evKill&gt;</i>);
+  ...
+  PsTerminateSystemThread(STATUS_SUCCESS);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> Declare a KEVENT named <b>evKill</b> in the device extension to provide a way for
+a PnP event to signal the thread to terminate. This is the appropriate time to initialize the
+event.</li></p>
+
+<p><li> This statement launches the new thread. The return value for a successful call is
+a thread handle that appears at the location pointed to by the first argument. The second
+argument specifies the access rights you require to the thread; THREAD_ALL_ACCESS is the
+appropriate value to supply here. The next three arguments pertain to threads that are part of
+user-mode processes and should be NULL when a WDM driver calls this function. The next-to-last
+argument (<b>ThreadProc</b>) designates the main program for the thread. The last argument
+(<b>pdx</b>) is a context argument that will be the one and only argument to the thread
+procedure.</li></p>
+
+<p><li> To wait for the thread to terminate, you need the address of the underlying
+KTHREAD object instead of the handle you get back from PsCreateSystemThread. This call to <b>
+ObReferenceObjectByHandle</b> gives you that address.</li></p>
+
+<p><li> We don't actually need the handle once we have the address of the KTHREAD, so
+we call <b>ZwClose</b> to close that handle.</li></p>
+
+<p><li> A routine such as <b>StopDevice</b>&#8212;which performs the device-specific part
+of IRP_MN_STOP_DEVICE in my scheme of driver modularization&#8212;can call <b>StopThread</b> to
+halt the system thread. The first step is to set the <b>evKill</b> event.</li></p>
+
+<p><li> This call illustrates how to wait for the thread to finish. A kernel thread
+object is one of the dispatcher objects on which you can wait. It assumes the signalled state
+when the thread finally finishes. In Windows 2000, you always perform this wait to avoid the
+embarrassment of having your driver's image unmapped while one of your system threads
+executes the last few instructions of its shutdown processing. That is, don't just wait for
+a special &quot;kill acknowledgment&quot; event that the thread sets just before it
+exits&#8212;the thread has to execute PsTerminateSystemThread before your driver can safely
+unload. <i>Refer also to an important Windows 98 compatibility note (&quot;<A HREF="ch09h.htm#329">Waiting for System Threads to Finish</A>&quot;) at the end of this chapter.</i></li></p>
+
+<p><li> This call to <b>ObDereferenceObject</b> balances the call to
+ObReferenceObjectByHandle that we made when we created the thread in the first place. It's
+necessary to allow the Object Manager to release the memory used by the KTHREAD object that
+formerly described our thread.</li></p>
+
+<p><li> The thread procedure will contain miscellaneous logic that depends on the exact
+goal you're trying to accomplish. If you block while waiting for some external event, you
+should call <b>KeWaitForMultipleObjects</b> and specify the <b>evKill</b> event as one of the
+objects.</li></p>
+
+<p><li> When you detect that evKill has been signalled, you call the <b>
+PsTerminateSystemThread</b> function, which terminates the thread. Consequently, it doesn't
+return. Note that you can't terminate a system thread except by calling this function in
+the context of the thread itself.</li></p>
+</ol>
+
+<A NAME="321"><H2>Using a System Thread for Device Polling</H2></A>
+
+<p>If you had to write a driver for a device that can't interrupt the CPU to demand
+service, a system thread devoted to polling the device may be the way to go. I'll show you
+one way to use a system thread for this purpose. This example is based on a hypothetical device
+with two input ports. One port acts as a control port; it delivers a 0 byte when no input data
+is ready and a 1 byte when input data is ready. The other port delivers a single byte of data
+and resets the control port.</p>
+
+<p>In the sample I'll show you, we spawn the system thread when we process the
+IRP_MN_START_DEVICE request. We terminate the thread when we receive a Plug and Play request
+such as IRP_MN_STOP_DEVICE or IRP_MN_REMOVE_DEVICE that requires us to release our I/O
+resources. The thread spends most of its time blocked. When the <b>StartIo</b> routine begins
+to process an IRP_MJ_READ request, it sets an event that the polling thread has been waiting
+for. The polling thread then enters a loop to service the request. In the loop, the polling
+thread first blocks for a fixed polling interval. After the interval expires, the thread reads
+the control port. If the control port is 1, the thread reads a data byte. The thread then
+repeats the loop until the request is satisfied, whereupon it goes back to sleep until StartIo
+receives another request.</p>
+
+<p>The thread routine in the POLLING sample is as follows:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr>
+<td valign="top">
+<pre>
+
+
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+2 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+3 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+4 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+
+
+
+5 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+6 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+7 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+
+
+
+8 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+
+
+
+
+
+
+
+
+
+9 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+</pre>
+</td>
+<td valign="top">
+<pre>VOID PollingThreadRoutine(PDEVICE_EXTENSION pdx)
+  {
+  NTSTATUS status;
+  KTIMER timer;
+  KeInitializeTimerEx(&amp;timer, SynchronizationTimer);
+
+  PVOID mainevents[] = {
+    (PVOID) &amp;pdx-&gt;evKill,
+    (PVOID) &amp;pdx-&gt;evRequest,
+    };
+
+  PVOID pollevents[] = {
+    (PVOID) &amp;pdx-&gt;evKill,
+    (PVOID) &amp;timer,
+    };
+
+  ASSERT(arraysize(mainevents) &lt;= THREAD_WAIT_OBJECTS);
+  ASSERT(arraysize(pollevents) &lt;= THREAD_WAIT_OBJECTS);
+
+  BOOLEAN kill = FALSE;
+
+  while (!kill)
+    {    // until told to quit
+    status = KeWaitForMultipleObjects(arraysize(mainevents),
+      mainevents, WaitAny, Executive, KernelMode, FALSE,
+      NULL, NULL);
+    if (!NT_SUCCESS(status) || status == STATUS_WAIT_0)
+      break;
+    ULONG numxfer = 0;
+    LARGE_INTEGER duetime = {0};
+    #define POLLING_INTERVAL 500
+    KeSetTimerEx(&amp;timer, duetime, POLLING_INTERVAL, NULL);
+
+    PIRP Irp = GetCurrentIrp(&amp;pdx-&gt;dqReadWrite);
+
+    while (TRUE)
+      {    // read next byte
+      if (Irp-&gt;Cancel)
+        {
+        status = STATUS_CANCELLED;
+        break;
+        }
+      status = AreRequestsBeingAborted(&amp;pdx-&gt;dqReadWrite);
+      if (!status)
+        break;
+      status = KeWaitForMultipleObjects(arraysize(pollevents),
+        pollevents, WaitAny, Executive, KernelMode, FALSE,
+        NULL, NULL);
+      if (!NT_SUCCESS(status))
+        {
+        kill = TRUE;
+        break;
+        {
+      if (status == STATUS_WAIT_0)
+        {
+        status = STATUS_DELETE_PENDING;
+        kill = TRUE;
+        break;
+        }
+      if (pdx-&gt;nbytes)
+        {
+        if (READ_PORT_UCHAR(pdx-&gt;portbase) == 1)
+          {
+          *pdx-&gt;buffer++ = READ_PORT_UCHAR(pdx-&gt;portbase + 1);
+          --pdx-&gt;nbytes;
+          ++numxfer;
+          }
+        }
+      if (!pdx-&gt;nbytes)
+        break;
+      }    // read next byte
+    KeCancelTimer(&amp;timer);
+    StartNextPacket(&amp;pdx-&gt;dqReadWrite, pdx-&gt;DeviceObject);
+    if (Irp)
+      {
+      IoReleaseRemoveLock(&amp;pdx-&gt;RemoveLock, Irp);
+      CompleteRequest(Irp, STATUS_SUCCESS, numxfer);
+      }
+    }    // until told to quit
+
+  PsTerminateSystemThread(STATUS_SUCCESS);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> We'll be using this kernel timer later to control the frequency with which we
+poll the device.</li></p>
+
+<p><li> We'll call <b>KeWaitForMultipleObjects</b> twice in this function to block
+the polling thread until something of note happens. These two arrays provide the addresses of
+the dispatcher objects on which we'll wait. The <b>ASSERT</b> statements verify that
+we're waiting for few enough events such that we can use the array of wait blocks
+that's built in to the thread object.</li></p>
+
+<p><li> This loop terminates when an error occurs or when <b>evKill</b> becomes
+signalled. We'll then terminate the entire polling thread.</li></p>
+
+<p><li> This wait terminates when either <b>evKill</b> or <b>evRequest</b> becomes
+signalled. Our StartIo routine will signal evRequest to indicate that an IRP exists for us to
+service.</li></p>
+
+<p><li> The call to <b>KeSetTimerEx</b> starts our timer counting. This is a repetitive
+timer that expires once based on the due time and periodically thereafter. We're specifying
+a 0 due time, which will cause us to poll the device immediately. The POLLING_INTERVAL is
+measured in milliseconds.</li></p>
+
+<p><li> This inner loop terminates when either the kill event becomes signalled or
+we're done with the current IRP.</li></p>
+
+<p><li> While we're going about our business in this loop, the current IRP might get
+cancelled, or we might receive a PnP or power IRP that requires us to abort this IRP.</li></p>
+
+<p><li> In this call to <b>KeWaitForMultipleObjects</b>, we take advantage of the fact
+that a kernel timer acts like an event object. The call finishes when either <b>evKill</b> is
+signalled (meaning we should terminate the polling thread altogether) or the timer expires
+(meaning we should execute another poll).</li></p>
+
+<p><li> This is the actual polling step in this driver. We read the control port, whose
+address is the base port address given to us by the PnP Manager. If the value indicates that
+data is available, we read the data port.</li></p>
+</ol>
+
+<p>The StartIo routine that works with this polling routine first sets the <b>buffer</b> and
+<b>nbytes</b> fields in the device extension; you saw the polling routine use them to sequence
+through an input request. Then it sets the <b>evRequest</b> event to wake up the polling
+thread.</p>
+
+<p>You can organize a polling driver in other ways besides the one I just showed you. For example,
+you could spawn a new polling thread each time an arriving request finds the device idle. The
+thread services requests until the device becomes idle, whereupon it terminates. This strategy
+would be better than the one I illustrated if long periods elapse between spurts of activity on
+the device, because the polling thread wouldn't be occupying virtual memory during the long
+intervals of quiescence. If, however, your device is more or less continuously busy, the first
+strategy might be better because it avoids repeating the overhead of starting and stopping the
+polling thread.</p>
+
+
+<p><div class="sidebar"><blockquote>
+<b>Exercising the POLLING Sample</b>
+<p>You can test the POLLING sample driver on Windows 98 only. Follow the directions on the
+companion disc for launching the DEVTEST simulator for the fake hardware that POLLING manages.
+Then launch the user-mode TEST program to perform a read operation.</p>
+</blockquote></div>
+</p>
+
+</BODY>
+</HTML>
+
+
+
+
+

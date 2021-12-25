@@ -1,0 +1,476 @@
+<HTML>
+<HEAD>
+<TITLE>Sending Data with Messages</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch26e.htm">[Previous]</A> <A HREF="ch26g.htm">[Next]</A><P>
+
+<A NAME="356"><H1>Sending Data with Messages</H1></A>
+
+<p>In this section, we'll examine how the system transfers data
+between processes using window messages. Some window messages specify
+the address of a block of memory in their <i>lParam</i> parameter. For
+example, the WM_SETTEXT message uses the <i>lParam</i> parameter as a
+pointer to a zero-terminated string that identifies the new text for
+the window. Consider the following call:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+SendMessage(FindWindow(NULL, &quot;Calculator&quot;), WM_SETTEXT,
+   0, (LPARAM) &quot;A Test Caption&quot;);
+</pre></td></tr></table></p>
+
+<p>This call seems harmless enough&#8212;it determines the window handle
+of the Calculator application's window and attempts to change its
+caption to <i>A Test Caption</i>. But let's take a closer look at
+what happens here.</p>
+
+<p>The string of the new title is contained in your process's address
+space. So the address of this string in your process space will be
+passed as the <i>lParam</i> parameter. When the window procedure for
+Calculator's window receives this message, it looks at the 
+<i>lParam</i> parameter and attempts to manipulate what it thinks is a
+zero-terminated string in order to make it the new title.</p>
+
+<p>But the address in <i>lParam</i> points to a string in your
+process's address space&#8212;not in Calculator's address space.
+This is a big problem because a memory access violation is sure to
+occur. But if you execute the line above, you'll see that it works
+successfully. How can this be?</p>
+
+<p>The answer is that the system looks specifically for the WM_SETTEXT
+message and handles it differently from the way it handles most other
+messages. When you call <i>SendMessage</i>, the code in the function
+checks whether you are trying to send a WM_SETTEXT message. If you are,
+it packs the zero-terminated string from your address space into a
+memory-mapped file that it is going to share with the other process.
+Then it sends the message to the thread in the other process. When the
+receiving thread is ready to process the WM_SETTEXT message, 
+it determines the location, in its own address
+space, of the shared memory-mapped file that contains a copy of the new
+window text. The <i>lParam</i> parameter is initialized to point to
+this address, and the WM_SETTEXT message is dispatched to the
+appropriate window procedure. After the message is processed, the
+memory-mapped file is destroyed. Boy, doesn't this seem like a lot
+of work?</p>
+
+<p>Fortunately, most messages don't require this type of
+processing&#8212;it takes place only when an application sends
+interprocess messages. Special processing such as this has to be
+performed for any message whose <i>wParam</i> or <i>lParam</i>
+parameters represent a pointer to a data structure.</p>
+
+<p>Let's look at another case that requires special handling by the
+system&#8212;the WM_GETTEXT message. Suppose your application contains
+the following code:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+char szBuf[200];
+SendMessage(FindWindow(NULL, &quot;Calculator&quot;), WM_GETTEXT,
+   sizeof(szBuf), (LPARAM) szBuf);
+</pre></td></tr></table></p>
+
+<p>The WM_GETTEXT message requests that Calculator's window
+procedure fill the buffer pointed to by <i>szBuf</i> with the title of
+its window. When you send this message to a window in another process,
+the system must actually send two messages. First the system sends a
+WM_GETTEXTLENGTH message to the window. The window procedure responds
+by returning the number of characters required to hold the window's
+title. The system can use this count to create a memory-mapped file
+that will end up being shared between the two processes.</p>
+
+<p>Once the memory-mapped file has been created, the system can send the
+WM_GETTEXT message to fill it. Then the system switches back to the
+process that called <i>SendMessage</i> in the first place, copies the
+data from the shared memory-mapped file into the buffer pointed to by
+<i>szBuf</i>, and returns from the call to <i>SendMessage</i>.</p>
+
+<p>Well, all this is fine and good if you are sending messages that the
+system is aware of. But what if you create your own (WM_USER + 
+<i>x</i>) message that you want to send from one process to a window in
+another? The system will not know that you want it to use memory-mapped
+files and to update pointers when sending. However, Microsoft has
+created a special window message, WM_COPYDATA, for exactly this purpose:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+COPYDATASTRUCT cds;
+SendMessage(hwndReceiver, WM_COPYDATA,
+   (WPARAM) hwndSender, (LPARAM) &amp;cds);
+</pre></td></tr></table></p>
+
+<p>COPYDATASTRUCT is a structure defined in WinUser.h, and it looks
+like this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+typedef struct tagCOPYDATASTRUCT {
+   ULONG_PTR dwData;
+   DWORD cbData;
+   PVOID lpData;
+} COPYDATASTRUCT;
+</pre></td></tr></table></p>
+
+<p>When you're ready to send some data to a window in another
+process, you must first initialize the COPYDATASTRUCT structure. The
+<i>dwData</i> member is reserved for your own use. You can place any
+value in it. For example, you might have occasion to send different
+types or categories of data to the other process. You can use this
+value to indicate the content of the data you are sending.</p>
+
+<p>The <i>cbData</i> member specifies the number of bytes that you want
+to transfer to the other process, and the <i>lpData</i> member points
+to the first byte of the data. The address pointed to by <i>lpData</i>
+is, of course, in the sender's address space.</p>
+
+<p>When <i>SendMessage</i> sees that you are sending a WM_COPYDATA
+message, it creates a memory-mapped file <i>cbData</i> bytes in size
+and copies the data from your address space to the memory-mapped file.
+It then sends the message to the destination window. When the receiving
+window procedure processes this message, the <i>lParam</i> parameter
+points to a COPYDATASTRUCT that exists in the address space of the
+receiving process. The <i>lpData</i> member of this structure points to
+the view of the shared memory-mapped file in the receiving
+process's address space.</p>
+
+<p>You should remember three important things about the WM_COPYDATA
+message:</p>
+
+<ul>
+<p><li>Always send this message; never post it. You can't post a
+WM_COPYDATA message because the system must free the memory-mapped
+file after the receiving window procedure has processed the message. If
+you post the message, the system doesn't know when the WM_COPYDATA
+message is processed, and therefore it can't free the copied block
+of memory.</li></p>
+
+<p><li>It takes some time for the system to make a copy of the data in
+the other process's address space. This means that you
+shouldn't have another thread that modifies the contents of the
+memory block running in the sending application until the call to 
+<i>SendMessage</i> returns.</li></p>
+
+<p><li>The WM_COPYDATA message allows a 16-bit application to
+communicate with a 32-bit application and vice versa. It also allows a
+32-bit application to talk to a 64-bit application and vice versa. This
+is an incredibly easy way to have newer applications talk to older
+applications. Also note that WM_COPYDATA is fully supported on Windows
+2000 and Windows 98. Unfortunately, if you are still writing 16-bit
+Windows applications, Microsoft Visual C++ 1.52 does not have a
+definition for the WM_COPYDATA message or the COPYDATASTRUCT structure.
+You will need to add them manually:</li></p>
+</ul>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// Manually include this in your 16-bit Windows source code.
+#define WM_COPYDATA   0x004A
+
+typedef VOID FAR* PVOID;
+typedef struct tagCOPYDATASTRUCT {
+   DWORD dwData;
+   DWORD cbData;
+   PVOID lpData;
+} COPYDATASTRUCT, FAR* PCOPYDATASTRUCT; 
+</pre></td></tr></table></p>
+
+<p>The WM_COPYDATA message is an incredible device that could save many
+developers hours of time when trying to solve interprocess
+communication problems. It's a shame it's not used more
+frequently. For an example that demonstrates an excellent use of the
+WM_COPYDATA message, see the LastMsgBoxInfo sample application
+presented in <A HREF="ch22a.htm">Chapter 22</A>.</p>
+
+<A NAME="357"><H2>The CopyData Sample Application</H2></A>
+
+<p>The CopyData application (&quot;26 CopyData.exe&quot;), listed in
+Figure 26-3, demonstrates how to use the WM_COPYDATA message to send a
+block of data from one application to another. The source code and
+resource files for the application are in the 26-CopyData directory on
+the companion CD-ROM. You'll need to have at least two copies of
+CopyData running to see it work. Each time you start a copy of
+CopyData, it presents a dialog box that looks like this.</p>
+
+<p>
+<img src="images/g26si01.JPG" width=336 height=93 border=0 >
+</p>
+
+<p>To see data copied from one application to another, first change the
+text in the Data1 and Data2 edit controls. Then click on one of the two
+Send Data* To Other Windows buttons, and the program sends the data to
+all the running instances of CopyData. Each instance updates the
+contents of its own edit box to reflect the new data.</p>
+
+<p>The list below describes how CopyData works. When a user clicks on one
+of the two buttons, CopyData performs the following actions.</p>
+
+<ol>
+<p><li>Initializes the <i>dwData</i> member of COPYDATASTRUCT with 0 if
+the user clicked on the Send Data1 To Other Windows button, or with 1
+if the user clicked on the Send Data2 To Other Windows button.</li></p>
+
+<p><li>Retrieves the length of the text string (in characters) from the
+appropriate edit box and adds 1 for a zero-terminating character. This
+value is converted from a number of characters to a number of bytes by
+multiplying by <i>sizeof(TCHAR)</i>. The result is then placed in the
+<i>cbData</i> member of COPYDATASTRUCT.</li></p>
+
+<p><li>Calls <i>_alloca</i> to allocate a block of memory large enough
+to hold the length of the string in the edit box plus its
+zero-terminating character. The address of this block is stored in the
+<i>lpData</i> member of COPYDATASTRUCT.</li></p>
+
+<p><li>Copies the text from the edit box into this memory block.</li></p>
+</ol>
+
+<p>At this point, everything is ready to be sent to the other windows.
+To determine which windows to send the WM_COPYDATA message to, CopyData
+calls <i>FindWindowEx</i> passing the caption of its dialog box so that
+only other instances of the CopyData application are enumerated. As
+each instance's window is found, the WM_COPYDATA message is
+forwarded so that each instance updates its edit controls.</p>
+
+<p><b>Figure 26-3.</b> <i>The CopyData sample application</i></p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+
+<p><b>CopyData.cpp</b></p>
+
+<PRE>
+/******************************************************************************
+Module:  CopyData.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#include &quot;..\CmnHdr.h&quot;     /* See Appendix A. */
+#include &lt;windowsx.h&gt;
+#include &lt;tchar.h&gt;
+#include &lt;malloc.h&gt;
+#include &quot;Resource.h&quot;
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+// WindowsX.h doesn't have a prototype for Cls_OnCopyData, so here it is.
+/* BOOL Cls_OnCopyData(HWND hwnd, HWND hwndFrom, PCOPYDATASTRUCT pcds) */
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL Dlg_OnCopyData(HWND hwnd, HWND hwndFrom, PCOPYDATASTRUCT cds) {
+   
+   Edit_SetText(GetDlgItem(hwnd, cds-&gt;dwData ? IDC_DATA2 : IDC_DATA1), 
+      (PTSTR) cds-&gt;lpData);
+
+   return(TRUE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL Dlg_OnInitDialog(HWND hwnd, HWND hwndFocus, LPARAM lParam) {
+
+   chSETDLGICONS(hwnd, IDI_COPYDATA);
+
+   // Initialize the edit controls with some test data.
+   Edit_SetText(GetDlgItem(hwnd, IDC_DATA1), TEXT(&quot;Some test data&quot;));
+   Edit_SetText(GetDlgItem(hwnd, IDC_DATA2), TEXT(&quot;Some more test data&quot;));
+   return(TRUE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify) {
+
+   switch (id) {
+      case IDCANCEL:
+         EndDialog(hwnd, id);
+         break;
+
+      case IDC_COPYDATA1:
+      case IDC_COPYDATA2:
+         if (codeNotify != BN_CLICKED)
+            break;
+
+         HWND hwndEdit = GetDlgItem(hwnd, 
+            (id == IDC_COPYDATA1) ? IDC_DATA1 : IDC_DATA2);
+
+         // Prepare the COPYDATASTRUCT.
+         COPYDATASTRUCT cds;
+
+         // Indicate which data field we're sending (0=ID_DATA1, 1=ID_DATA2)
+         cds.dwData = (DWORD) ((id == IDC_COPYDATA1) ? 0 : 1);
+
+         // Get the length (in bytes) of the data block we're sending.
+         cds.cbData = (Edit_GetTextLength(hwndEdit) + 1) * sizeof(TCHAR);
+
+         // Allocate a block of memory to hold the string.
+         cds.lpData = _alloca(cds.cbData);
+
+         // Put the edit control's string in the data block.
+         Edit_GetText(hwndEdit, (PTSTR) cds.lpData, cds.cbData);
+
+         // Get the caption of our window.
+         TCHAR szCaption[100];
+         GetWindowText(hwnd, szCaption, chDIMOF(szCaption));
+
+         // Enumerate through all the top-level windows with the same caption.
+         HWND hwndT = NULL;
+         do {
+            hwndT = FindWindowEx(NULL, hwndT, NULL, szCaption);
+            if (hwndT != NULL) {
+               FORWARD_WM_COPYDATA(hwndT, hwnd, &amp;cds, SendMessage);
+            }
+         } while (hwndT != NULL);
+         break;
+   }
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+INT_PTR WINAPI Dlg_Proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+   
+   switch (uMsg) {
+      chHANDLE_DLGMSG(hwnd, WM_INITDIALOG, Dlg_OnInitDialog);
+      chHANDLE_DLGMSG(hwnd, WM_COMMAND,    Dlg_OnCommand);
+      chHANDLE_DLGMSG(hwnd, WM_COPYDATA,   Dlg_OnCopyData);
+   }
+   return(FALSE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+int WINAPI _tWinMain(HINSTANCE hinstExe, HINSTANCE, PTSTR pszCmdLine, int) {
+
+   DialogBox(hinstExe, MAKEINTRESOURCE(IDD_COPYDATA), NULL, Dlg_Proc);
+   return(0);
+}
+
+//////////////////////////////// End of File //////////////////////////////////
+</pre></td></tr></table></p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+
+<p><b>CopyData.rc</b></p>
+
+<PRE>
+//Microsoft Developer Studio generated resource script.
+//
+#include &quot;Resource.h&quot;
+
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+/////////////////////////////////////////////////////////////////////////////
+// English (U.S.) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+#ifdef _WIN32
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(1252)
+#endif //_WIN32
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
+
+IDD_COPYDATA DIALOG DISCARDABLE  38, 36, 220, 42
+STYLE WS_MINIMIZEBOX | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
+CAPTION &quot;CopyData Application&quot;
+FONT 8, &quot;MS Sans Serif&quot;
+BEGIN
+    LTEXT           &quot;Data&amp;1:&quot;,IDC_STATIC,4,4,24,12
+    EDITTEXT        IDC_DATA1,28,4,76,12
+    PUSHBUTTON      &quot;&amp;Send Data1 to other windows&quot;,IDC_COPYDATA1,112,4,104,
+                    14,WS_GROUP
+    LTEXT           &quot;Data&amp;2:&quot;,IDC_STATIC,4,24,24,12
+    EDITTEXT        IDC_DATA2,28,24,76,12
+    PUSHBUTTON      &quot;Send &amp;Data2 to other windows&quot;,IDC_COPYDATA2,112,24,104,
+                    14,WS_GROUP
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+// Icon with lowest ID value placed first to ensure application icon
+// remains consistent on all systems.
+IDI_COPYDATA            ICON    DISCARDABLE     &quot;CopyData.Ico&quot;
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// TEXTINCLUDE
+//
+
+1 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;Resource.h\0&quot;
+END
+
+2 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;#include &quot;&quot;afxres.h&quot;&quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+3 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+#endif    // APSTUDIO_INVOKED
+
+#endif    // English (U.S.) resources
+/////////////////////////////////////////////////////////////////////////////
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 3 resource.
+//
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED
+
+
+
+</pre></td></tr></table></p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

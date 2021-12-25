@@ -1,0 +1,477 @@
+<HTML>
+<HEAD>
+<TITLE>EXCEPTION_EXECUTE_HANDLER</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch24b.htm">[Previous]</A> <A HREF="ch24d.htm">[Next]</A><P>
+
+<A NAME="320"><H1>EXCEPTION_EXECUTE_HANDLER</H1></A>
+
+<p>In <i>Funcmeister2</i>, the exception filter expression evaluates to
+EXCEPTION_EXECUTE_HANDLER. This value basically says to the system, &quot;I recognize the exception. That is, I had a feeling that this exception might occur some time, and I've written some code to deal with it that I'd like to execute now.&quot; At this point, the system
+performs a global unwind (discussed later in this chapter) and then
+execution jumps to the code inside the <i>except</i> block (the
+exception handler code). After the code in the <i>except</i> block has
+executed, the system considers the exception to be handled and allows
+your application to continue executing. This mechanism allows Windows
+applications to trap errors, handle them, and continue running without
+the user ever knowing that the error happened.</p>
+
+<p>But, once the <i>except</i> block has executed, where in the code
+should execution resume? With a little bit of thought, we can easily
+imagine several possibilities.</p>
+
+<p>The first possibility would be for execution to resume after the CPU
+instruction that generates the exception. In <i>Funcmeister2</i>,
+execution would resume with the instruction that adds 10 to <i>
+dwTemp</i>. This might seem like a reasonable thing to do, but in
+reality, most programs are written so that they cannot continue
+executing successfully if one of the earlier instructions fails to
+execute.</p>
+
+<p>In <i>Funcmeister2</i>, the code can continue to execute normally;
+however, <i>Funcmeister2</i> is not the normal situation. Most likely,
+your code will be structured so that the CPU instructions following the
+instruction that generates the exception will expect a valid return
+value. For example, you might have a function that allocates memory, in
+which case a whole series of instructions will be executed to
+manipulate that memory. If the memory cannot be allocated, all the
+lines will fail, making the program generate exceptions repeatedly.</p>
+
+<p>Here is another example of why execution cannot continue after the
+failed CPU instruction. Let's replace the C statement that
+generated the exception in <i>Funcmeister2</i> with the following
+line:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+malloc(5 / dwTemp);
+</pre></td></tr></table></p>
+
+<p>For the line above, the compiler generates CPU instructions to
+perform the division, pushes the result on the stack, and calls the <i>
+malloc</i> function. If the division fails, the code can't continue
+executing properly. The system has to push something on the stack; if
+it doesn't, the stack gets corrupted.</p>
+
+<p>Fortunately, Microsoft has not made it possible for us to have the
+system resume execution on the instruction following the instruction
+that generates the exception. This decision saves us from potential
+problems like these.</p>
+
+<p>The second possibility would be for execution to resume with the
+instruction that generated the exception. This is an interesting
+possibility. What if inside the <i>except</i> block you had this
+statement:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+dwTemp = 2;
+</pre></td></tr></table></p>
+
+<p>With this assignment in the <i>except</i> block, you could resume
+execution with the instruction that generated the exception. This time,
+you would be dividing 5 by 2, and execution would continue just fine
+without raising another exception. You can alter something and have the
+system retry the instruction that generated the exception. However, you
+should be aware that this technique could result in some subtle
+behaviors. We'll discuss this technique in the
+&quot;<A HREF="ch24d.htm#324">EXCEPTION_CONTINUE_EXECUTION</A>&quot; section.</p>
+
+<p>The third and last possibility would be for execution to pick up
+with the first instruction following the <i>except</i> block. This is
+actually what happens when the exception filter expression evaluates to
+EXCEPTION_EXECUTE_HANDLER. After the code inside the <i>except</i> block finishes executing, control resumes at the first instruction after the <i>except</i> block.</p>
+
+<A NAME="321"><H2>Some Useful Examples</H2></A>
+
+<p>Let's say that you want to implement a totally robust
+application that needs to run 24 hours a day, 7 days a week. In
+today's world, with software so complex and so many variables and
+factors to affect an application's performance, I think that
+it's impossible to implement a totally robust application without
+the use of SEH. Let's look at a simple example: the C run-time
+function <i>strcpy</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+char* strcpy(
+   char* strDestination, 
+   const char* strSource); 
+</pre></td></tr></table></p>
+
+<p>This is a pretty simple function, huh? How could little old <i>
+strcpy</i> ever cause a process to terminate? Well, if the caller ever
+passes NULL (or any bad address) for either of these parameters, <i>
+strcpy</i> raises an access violation and the whole process is
+terminated.</p>
+
+<p>Using SEH, it's possible to create a totally robust <i>
+strcpy</i> function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+char* RobustStrCpy(char* strDestination, const char* strSource) {
+
+   _ _try {
+      strcpy(strDestination, strSource);
+   }
+   _ _except (EXCEPTION_EXECUTE_HANDLER) {
+      // Nothing to do here
+   }
+
+   return(strDestination);
+}
+</pre></td></tr></table></p>
+
+<p>All this function does is place the call to <i>strcpy</i> inside a
+structured exception-handling frame. If <i>strcpy</i> executes
+successfully, the function just returns. If <i>strcpy</i> raises an
+access violation, the exception filter returns
+EXCEPTION_EXECUTE_HANDLER, causing the thread to execute the handler
+code. In this function, the handler code does nothing and so again, <i>
+RobustStrCpy</i> just returns to its caller. <i>RobustStrCpy</i> will
+never cause the process to terminate!</p> 
+
+<p>Let's look at another example. Here's a function that returns
+the number of space-delimited tokens in a string:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+int RobustHowManyToken(const char* str) {
+
+   int nHowManyTokens = -1;  // -1 indicates failure
+   char* strTemp = NULL;     // Assume failure
+
+   _ _try {
+
+      // Allocate a temporary buffer
+      strTemp = (char*) malloc(strlen(str) + 1);
+
+      // Copy the original string to the temporary buffer
+      strcpy(strTemp, str);
+
+      // Get the first token
+      char* pszToken = strtok(strTemp, &quot; &quot;);
+
+      // Iterate through all the tokens
+      for (; pszToken != NULL; pszToken = strtok(NULL, &quot; &quot;))
+         nHowManyTokens++;
+
+      nHowManyTokens++;      // Add 1 since we started at -1
+   }
+   _ _except (EXCEPTION_EXECUTE_HANDLER) {
+      // Nothing to do here
+   }
+
+   // Free the temporary buffer (guaranteed)
+   free(strTemp);
+
+   return(nHowManyTokens);
+}
+</pre></td></tr></table></p>
+
+<p>This function allocates a temporary buffer and copies a string into
+it. Then the function uses the C run-time function <i>strtok</i> to
+obtain the tokens within the string. The temporary buffer is necessary
+because <i>strtok</i> modifies the string it's tokenizing.</p> 
+
+<p>Thanks to SEH, this deceptively simple function handles all kinds of
+possibilities. Let's see how this function performs under a few
+different circumstances.</p> 
+
+<p>First, if the caller passes NULL (or any bad memory address) to the
+function, <i>nHowManyTokens</i> is initialized to -1. The call to <i>
+strlen,</i> inside the <i>try</i> block, raises an access violation.
+The exception filter gets control and passes it to the <i>except</i>
+block, which does nothing. After the <i>except</i> block, <i>free</i>
+is called to release the temporary block of memory. However, this
+memory was never allocated, so we end up calling <i>free</i><b>,</b>
+passing it NULL. ANSI C explicitly states that it is legal to call <i>
+free,</i> passing it NULL, in which case <i>free</i> does
+nothing&#8212;so this is not an error. Finally, the function returns -1,
+indicating failure. Note that the process is not terminated.</p> 
+
+<p>Second, the caller might pass a good address to the function but the
+call to <i>malloc</i> (inside the <i>try</i> block) can fail and return
+NULL. This will cause the call to <i>strcpy</i> to raise an access
+violation. Again, the exception filter is called, the <i>except</i>
+block executes (which does nothing), <i>free</i> is called passing it
+NULL (which does nothing), and -1 is returned, indicating to the caller
+that the function failed. Note that the process is not terminated.</p>
+ 
+<p>Finally, let's assume that the caller passes a good address to the
+function and the call to <i>malloc</i> also succeeds. In this case, the
+remaining code will also succeed in calculating the number of tokens in
+the <i>nHowManyTokens</i> variable. At the end of the <i>try</i> block,
+the exception filter will not be evaluated, the code in the <i>
+except</i> block will not be executed, the temporary memory buffer will
+be freed, and <i>nHowManyTokens</i> will be returned to the caller.</p> 
+
+<p>Using SEH is pretty cool. The <i>RobustHowManyToken</i> function
+demonstrates how to have guaranteed cleanup of a resource without using
+<i>try-finally</i>. Any code that comes after an exception handler is
+also guaranteed to be executed (assuming that the function does not
+return from within a <i>try</i> block&#8212;a practice that should be
+avoided).</p> 
+
+<p>Let's look at one last and particularly useful example of SEH.
+Here's a function that duplicates a block of memory:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+PBYTE RobustMemDup(PBYTE pbSrc, size_t cb) {
+
+   PBYTE pbDup = NULL;       // Assume failure
+
+   _ _try {
+
+      // Allocate a buffer for the duplicate memory block
+      pbDup = (PBYTE) malloc(cb);
+
+      memcpy(pbDup, pbSrc, cb);
+   }
+   _ _except (EXCEPTION_EXECUTE_HANDLER) {
+      free(pbDup);
+      pbDup = NULL;
+   }
+
+   return(pbDup);
+}
+</pre></td></tr></table></p>
+
+<p>This function allocates a memory buffer and copies the bytes from
+the source block into the destination block. Then the function returns
+the address of the duplicate memory buffer to the caller (or NULL if
+the function fails). The caller is expected to free the buffer when it
+no longer needs it. This is the first example in which we actually have
+some code inside the <i>except</i> block. Let's see how this
+function performs under different circumstances.</p>
+
+<ul>
+<p><li>If the caller passes a bad address in the <i>pbSrc</i> parameter
+or if the call to <i>malloc</i> fails (returning NULL), <i>memcpy</i>
+will raise an access violation. The access violation executes the
+filter, which passes control to the <i>except</i> block. Inside the <i>
+except</i> block, the memory buffer is freed and <i>pbDup</i> is set to
+NULL so that the caller will know that the function failed. Again, note
+that ANSI C allows <i>free</i> to be passed NULL.</li></p>
+
+<p><li>If the caller passes a good address to the function and if the
+call to <i>malloc</i> is successful, the address of the newly allocated
+memory block is returned to the caller.</li></p>
+</ul>
+
+
+<A NAME="322"><H2>Global Unwinds</H2></A>
+
+<p>When an exception filter evaluates to EXCEPTION_EXECUTE_HANDLER, the
+system must perform a <i>global unwind</i>. The global unwind causes
+all of the outstanding <i>try-finally</i> blocks that started executing
+below the <i>try-except</i> block that handles the exception to resume
+execution. Figure 24-2 shows a flowchart that describes how the system
+performs a global unwind. Please refer to this figure while I explain
+the following example.</p> 
+ 
+<p>
+<A HREF="javascript:fullSize('F24si02x.htm')"> <img src="images/F24si02.JPG" width=404 height=493 border=0 ALT="Click to view at full size."> </A>
+</p><p>
+<b>Figure 24-2.</b> <i>How the system performs a global unwind</i>
+</p>
+
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+void FuncOStimpy1() {
+
+   // 1. Do any processing here.
+
+   <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+
+   _ _try {
+      // 2. Call another function.
+      FuncORen1();
+
+      // Code here never executes.
+   }
+
+   _ _except ( /* 6. Evaluate filter. */ EXCEPTION_EXECUTE_HANDLER) {
+      // 8. After the unwind, the exception handler executes.
+      MessageBox(&#8230;);
+   }
+
+   // 9. Exception handled--continue execution.
+
+   <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+
+}
+void FuncORen1() {
+   DWORD dwTemp = 0;
+
+   // 3. Do any processing here.
+
+   <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+
+   _ _try { 
+      // 4. Request permission to access protected data.
+      WaitForSingleObject(g_hSem, INFINITE);
+
+      // 5. Modify the data.
+      //    An exception is generated here.
+      g_dwProtectedData = 5 / dwTemp;
+   }
+   _ _finally {
+      // 7. Global unwind occurs because filter evaluated
+      //    to EXCEPTION_EXECUTE_HANDLER.
+
+      // Allow others to use protected data.
+      ReleaseSemaphore(g_hSem, 1, NULL);
+   }
+
+   // Continue processing--never executes.
+
+   <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+
+}
+</pre></td></tr></table></p>
+
+<p>Together, <i>FuncOStimpy1</i> and <i>FuncORen1</i> illustrate the
+most confusing aspects of SEH. The numbers that begin the comments show
+the order of execution, but let's hold hands and walk through it
+together anyway.</p> 
+
+<p><i>FuncOStimpy1</i> begins execution by entering its <i>try</i> block and calling <i>FuncORen1</i>. <i>FuncORen1</i> starts by entering its
+own <i>try</i> block and waiting to obtain a semaphore. Once it has the
+semaphore, <i>FuncORen1</i> tries to alter the global data variable <i>
+g_dwProtectedData</i>. However, the division by 0 causes an exception
+to be generated. The system grabs control now and searches for a <i>
+try</i> block matched with an <i>except</i> block. Since the <i>try</i>
+block in <i>FuncORen1</i> is matched by a <i>finally</i> block, the
+system searches upward for another <i>try</i> block. This time, it
+finds the <i>try</i> block in <i>FuncOStimpy1</i>, and it sees that <i>
+FuncOStimpy1</i>'s <i>try</i> block is matched by an <i>except</i>
+block.</p> 
+
+<p>The system now evaluates the exception filter associated with <i>
+FuncOStimpy1</i>'s <i>except</i> block and waits for the return
+value. When the system sees that the return value is
+EXCEPTION_EXECUTE_HANDLER, the system begins a global unwind in <i>
+FuncORen1</i>'s <i>finally</i> block. Note that the unwind takes
+place <i>before</i> the system begins execution of the code in <i>
+FuncOStimpy1</i>'s <i>except</i> block. For a global unwind, the
+system starts back at the bottom of all outstanding <i>try</i> blocks
+and searches this time for <i>try</i> blocks associated with <i>
+finally</i> blocks. The <i>finally</i> block that the system finds here
+is the one contained inside <i>FuncORen1</i>.</p> 
+
+<p>When the system executes the code in <i>FuncORen1</i>'s <i>
+finally</i> block, you can clearly see the power of SEH. Because <i>
+FuncORen1</i>'s <i>finally</i> block releases the semaphore,
+another thread is allowed to resume execution. If the call to <i>
+ReleaseSemaphore</i> were not contained inside the <i>finally</i>
+block, the semaphore would never be released.</p> 
+
+<p>After the code contained in the <i>finally</i> block has executed, the
+system continues walking upward, looking for outstanding <i>finally</i>
+blocks that need to be executed. This example has none. The system
+stops walking upward when it reaches the <i>try-except</i> block that
+decided to handle the exception. At this point, the global unwind is
+complete, and the system can execute the code contained inside the <i>
+except</i> block.</p>
+
+<p>That's how structured exception handling works. SEH can be
+difficult to understand because the system gets quite involved with the
+execution of your code. No longer does the code flow from top to
+bottom&#8212;the system makes sections of code execute according to its
+notions of order. This order of execution is complex but predictable,
+and by following the flowcharts in Figure 24-1 and Figure 24-2, you
+should be able to use SEH with confidence.</p>
+ 
+<p>To better understand the order of execution, let's look at what
+happened from a slightly different perspective. When a filter returns
+EXCEPTION_ EXECUTE_HANDLER, the filter is telling the operating system that the
+thread's instruction pointer should be set to the code inside the
+<i>except</i> block. However, the instruction pointer was inside <i>
+FuncORen1</i>'s <i>try</i> block. From <A HREF="ch23a.htm">Chapter 23</A>, you'll
+recall that whenever a thread leaves the <i>try</i> portion of a <i>
+try-finally</i> block, the code in the <i>finally</i> block is
+guaranteed to execute. The global unwind is the mechanism that ensures
+this rule when exceptions are raised.</p>
+
+<A NAME="323"><H2>Halting Global Unwinds</H2></A>
+
+<p>It's possible to stop the system from completing a global unwind
+by putting a <i>return</i> statement inside a <i>finally</i> block.
+Let's look at the code here:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+void FuncMonkey() {
+   _ _try {
+      FuncFish();
+   }
+   _ _except (EXCEPTION_EXECUTE_HANDLER) {
+      MessageBeep(0);
+   }
+   MessageBox(&#8230;);
+}
+
+void FuncFish() {
+   FuncPheasant();
+   MessageBox(&#8230;);
+}
+
+void FuncPheasant() {
+
+   _ _try {
+      strcpy(NULL, NULL);
+   }
+
+   _ _finally {
+      return;
+   }
+}
+</pre></td></tr></table></p>
+
+<p>When the <i>strcpy</i> function is called in <i>
+FuncPheasant</i>'s <i>try</i> block, a memory access violation
+exception is raised. When this happens, the system starts scanning to
+see whether any exception filters exist that can handle the exception.
+The system will find that the exception filter in <i>FuncMonkey</i>
+wants to handle the exception, and the system initiates a global
+unwind.</p>
+
+<p>The global unwind starts by executing the code inside <i>
+FuncPheasant</i>'s <i>finally</i> block. However, this block of
+code contains a <i>return</i> statement. The <i>return</i> statement
+causes the system to stop unwinding, and <i>FuncPheasant</i> will
+actually end up returning to <i>FuncFish. FuncFish</i> will continue
+executing and will display a message box on the screen. <i>FuncFish</i>
+will then return to <i>FuncMonkey</i>. The code in <i>FuncMonkey</i>
+continues executing by calling <i>MessageBox</i>.</p>
+
+<p>Notice that the code inside <i>FuncMonkey</i>'s exception block
+never executes the call to <i>MessageBeep</i>. The <i>return</i>
+statement in <i>FuncPheasant</i>'s <i>finally</i> block causes the
+system to stop unwinding altogether, and execution continues as though
+nothing ever happened.</p>
+
+<p>Microsoft deliberately designed SEH to work this way. You might
+occasionally want to stop unwinding and allow execution to continue.
+This method allows you to do so, although it usually isn't the sort
+of thing you want to do. As a rule, be careful to avoid putting <i>
+return</i> statements inside <i>finally</i> blocks.</p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

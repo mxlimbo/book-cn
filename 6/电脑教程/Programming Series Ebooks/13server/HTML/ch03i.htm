@@ -1,0 +1,177 @@
+<HTML>
+<HEAD>
+<TITLE>The TimeClient Sample Application</TITLE>
+<link rel="STYLESHEET" type="text/css" href="prosrvwin.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR = "#ffffff">
+<A HREF="ch03h.htm">[Previous]</A> <A HREF="ch04a.htm">[Next]</A><P>
+
+<A NAME="63"><H1>The TimeClient Sample Application</H1></A>
+<p>The TimeClient sample application (&quot;03 TimeClient.exe&quot;), shown in 
+Listing 3-2, tests the TimeService service. The source code and resource files for 
+the application are in the 03-TimeClient directory on the companion CD. 
+When you start the program, the dialog box in Figure 3-8 appears.</p>
+
+<p>
+<img src="images/F03FJ08.JPG" width=234 height=144 border="0">
+</p><p>
+<!-- caption --><b>Figure 3-8.</b> <i>Initial dialog box in the TimeClient sample application</i><!-- /caption -->
+</p>
+
+<p>To see the client/server communication work, you must type the 
+server name in the edit control at the top of the dialog box. If you are running 
+the client and the server process on the same machine, type a period as the 
+server name (as shown in Figure 3-8). When you click the Request Server's 
+Time button, the client application calls 
+<I>CreateFile</I>, which connects the client to 
+the server, causing the server to wake up and process the client's request. If the 
+server is not running, <I>CreateFile </I>fails and a message box similar to the one shown 
+in Figure 3-9 appears.</p>
+
+<p>
+<A HREF="javascript:fullSize('F03FJ09x.htm')"> <img src="images/F03FJ09.JPG" width=404 height=76 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!-- caption --><b>Figure 3-9.</b> <i>Message box displayed by TimeClient when the TimeService service isn't running</i><!-- /caption -->
+</p>
+
+<p>If the service is up and running, <I>CreateFile </I>returns a valid handle, and the client 
+waits for the time data to come across the pipe by placing a 
+synchronous call to <I>ReadFile</I>. After the client has the data, the client's pipe handle is 
+closed, the time from the server (which came across in universal time) is 
+converted to the client's local time, and the initial dialog box is updated to look 
+like Figure 3-10.</p>
+
+<p>
+<img src="images/F03FJ10.JPG" width=234 height=144 border="0">
+</p><p>
+<!-- caption --><b>Figure 3-10.</b> <i>The updated dialog box for the TimeClient sample application</i><!-- /caption -->
+</p>
+
+<p><b>Listing 3-2.</b> <i>The TimeClient sample application</i></p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+<p><b>TimeClient.cpp</b></p>
+/******************************************************************************
+Module:  TimeClient.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#include &quot;..\CmnHdr.h&quot;                    // See Appendix A
+#include &lt;WindowsX.h&gt;
+#include &quot;..\ClassLib\EnsureCleanup.h&quot;    // See Appendix B
+#include &quot;Resource.h&quot;
+
+
+//////////////////////////////////////////////////////////////////////////////
+
+
+BOOL Dlg_OnInitDialog(HWND hwnd, HWND hwndFocus, LPARAM lParam) {
+
+   chSETDLGICONS(hwnd, IDI_TIMECLIENT);
+
+   // Assume that the server is on the same machine as the client
+   SetDlgItemText(hwnd, IDC_SERVER, TEXT(&quot;.&quot;));
+   return(TRUE);
+}
+
+
+//////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify) {
+
+   switch (id) {
+   case IDCANCEL:
+      EndDialog(hwnd, id); 
+      break;
+
+   case IDOK:
+      // Construct the pathname of the pipe
+      TCHAR sz[500];
+      sz[0] = sz[1] = TEXT(`\\');
+      GetDlgItemText(hwnd, IDC_SERVER, &amp;sz[2], chDIMOF(sz) - 2);
+      lstrcat(sz, TEXT(&quot;\\pipe\\TimeService&quot;));
+
+      // Attempt to connect to the pipe 
+      // Get a handle to use to talk to the pipe
+      CEnsureCloseFile hpipe = 
+         CreateFile(sz, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
+
+      if (hpipe.IsValid()) {
+         // Valid handle, read time from pipe
+         SYSTEMTIME st;
+         DWORD cbRead = 0;
+         ReadFile(hpipe, &amp;st, sizeof(st), &amp;cbRead, NULL);
+
+         // Convert UTC time to client machine's local time and display it
+         SystemTimeToTzSpecificLocalTime(NULL, &amp;st, &amp;st);
+
+         GetDateFormat(LOCALE_USER_DEFAULT, DATE_LONGDATE, &amp;st, NULL, sz, 
+            chDIMOF(sz));
+         SetDlgItemText(hwnd, IDC_DATE, sz);
+
+         GetTimeFormat(LOCALE_USER_DEFAULT, LOCALE_NOUSEROVERRIDE, &amp;st, NULL, 
+            sz, chDIMOF(sz));
+         SetDlgItemText(hwnd, IDC_TIME, sz);
+
+      } else {
+         // Invalid handle, report an error
+         SetDlgItemText(hwnd, IDC_DATE, TEXT(&quot;Error&quot;));
+         SetDlgItemText(hwnd, IDC_TIME, TEXT(&quot;Error&quot;));
+
+         // Get the error code's textual description
+         HLOCAL hlocal = NULL;   // Buffer that gets the error message string
+         FormatMessageA(
+
+            FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_ALLOCATE_BUFFER,
+            NULL, GetLastError(), 
+            MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US), (PSTR) &amp;hlocal, 
+            0, NULL);
+         if (hlocal != NULL) {
+            chMB((PCSTR) LocalLock(hlocal));
+            LocalFree(hlocal);
+         }
+      }
+      break;
+   }
+}
+
+
+//////////////////////////////////////////////////////////////////////////////
+
+
+INT_PTR WINAPI Dlg_Proc (HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+
+   switch (uMsg) {
+   chHANDLE_DLGMSG(hwnd, WM_INITDIALOG, Dlg_OnInitDialog);
+   chHANDLE_DLGMSG(hwnd, WM_COMMAND,    Dlg_OnCommand);
+   }
+   return(FALSE);
+}
+
+
+//////////////////////////////////////////////////////////////////////////////
+
+
+int WINAPI _tWinMain(HINSTANCE hinstExe, HINSTANCE, PTSTR pszCmdLine, int) {
+
+   DialogBox(hinstExe, MAKEINTRESOURCE(IDD_TIMECLIENT), NULL, Dlg_Proc);
+   return(0);
+}
+
+
+//////////////////////////////// End Of File /////////////////////////////////
+</pre></td></tr></table>
+</p>
+</BODY>
+</HTML>
+
+
+
+

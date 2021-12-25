@@ -1,0 +1,118 @@
+<HTML>
+<HEAD>
+<TITLE>Binding Modules</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch20h.htm">[Previous]</A> <A HREF="ch21a.htm">[Next]</A><P>
+
+<A NAME="280"><H1>Binding Modules</H1></A>
+
+<p>Rebasing is very important and greatly improves the performance of the entire system. However, you can do even more to improve performance. Let's say that you have properly rebased all of your application's modules. Recall from <A HREF="ch19a.htm">Chapter 19</A> our discussion about how the loader looks up the address of all the imported symbols. The loader writes the symbol's virtual address into the executable module's import section. This allows references to the imported symbols to actually get to the correct memory location.</p>
+
+<p>Let's think about this for a second. If the loader is writing the virtual addresses of the imported symbol into the .exe module's import section, the pages that back the import section are written to. Since these pages are copy-on-write, the pages are backed by the paging file. So we have a problem that is similar to the rebasing problem: portions of the image file are swapped to and from the system's paging file instead of being discarded and reread from the file's disk image when necessary. Also, the loader has to resolve the addresses of all the imported symbols (for all modules), which can be time-consuming.</p>
+
+<p>You can use the technique of binding a module so your application can initialize faster and use less storage. Binding a module prepares that module's import section with the virtual address of all the imported symbols. To improve initialization time and to use less storage, you must do this before loading the module, of course.</p>
+
+<p>Visual Studio ships with another utility called Bind.exe, which outputs the following information when you run it with no command-line arguments:</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<PRE>
+usage: BIND [switches] image-names...
+            [-?] display this message
+            [-c] no caching of import dlls
+            [-o] disable new import descriptors
+            [-p dll search path]
+            [-s Symbol directory] update any associated .DBG file
+            [-u] update the image
+            [-v] verbose output
+            [-x image name] exclude this image from binding
+            [-y] allow binding on images located above 2G
+</PRE>
+</TD></TR></TABLE></P>
+
+<p>The Bind utility is described in the Platform SDK documentation, so I won't go into detail here. However, like Rebase, this utility isn't magical. Internally, it calls the <i>BindImageEx</i> function repeatedly for each file specified:</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<PRE>
+BOOL BindImageEx(
+   DWORD dwFlags,       // Flags giving fine control over the function
+   PSTR pszImageName,   // Pathname of file to be bound
+   PSTR pszDllPath,     // Search path used for locating image files
+   PSTR pszSymbolPath,  // Search path used to keep debug info accurate
+   PIMAGEHLP_STATUS_ROUTINE StatusRoutine);  // Callback function
+</PRE>
+</TD></TR></TABLE></P>
+
+<p>The last parameter, <i>StatusRoutine</i>, is the address of a callback function that is called periodically by <i>BindImageEx</i> so that you can monitor the bind process. Here is the prototype of the function:</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<PRE>
+BOOL WINAPI StatusRoutine(
+   IMAGEHLP_STATUS_REASON Reason, // Module/procedure not found, etc.
+   PSTR pszImageName,       // Pathname of file being bound
+   PSTR pszDllName,         // Pathname of DLL
+   ULONG_PTR VA,            // Computed virtual address
+   ULONG_PTR Parameter);    // Additional info depending on Reason
+</PRE>
+</TD></TR></TABLE></P>
+
+<p>When you execute Bind, passing it an image name, it does the following:</p>
+
+<ol>
+<P><LI>It opens the specified image file's import section.</LI></P>
+
+<P><LI>For every DLL listed in the import section, it opens the DLL file and looks in its header to determine its preferred base address.</LI></P>
+
+<P><LI>It looks up each imported symbol in the DLL's export section.</LI></P>
+
+<P><LI>It takes the RVA of the symbol and adds to it the module's preferred base address. It writes the resulting expected virtual address of the imported symbol to the image file's import section.</LI></P>
+
+<P><LI>It adds some additional information to the image file's import section. This information includes the name of all DLL modules that the image is bound to and the timestamp of those modules.</LI></P>
+</ol>
+
+<p>In <A HREF="ch19a.htm">Chapter 19</A>, we used the DumpBin utility to examine Calc.exe's import section. The bottom of this output showed the bound import information added in step 5. Here is the relevant portion of the output again:</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<PRE>
+Header contains the following bound import information:
+  Bound to SHELL32.dll [36E449E0] Mon Mar 08 14:06:24 1999
+  Bound to MSVCRT.dll [36BB8379] Fri Feb 05 15:49:13 1999
+  Bound to ADVAPI32.dll [36E449E1] Mon Mar 08 14:06:25 1999
+  Bound to KERNEL32.dll [36DDAD55] Wed Mar 03 13:44:53 1999
+  Bound to GDI32.dll [36E449E0] Mon Mar 08 14:06:24 1999
+  Bound to USER32.dll [36E449E0] Mon Mar 08 14:06:24 1999
+</PRE>
+</TD></TR></TABLE></P>
+
+<p>You can see which modules Calc.exe was bound to, and the number in square brackets indicates when Microsoft built each DLL module. This 32-bit timestamp value is expanded and shown as a human-readable string after the square brackets.</p>
+
+<p>During this whole process, Bind makes two important assumptions:</p>
+
+<ul>
+<P><LI>When the process initializes, the required DLLs actually load at their preferred base address. You can ensure this by using the Rebase utility described earlier.</LI></P>
+
+<P><LI>The location of the symbol referenced in the DLL's export section has not changed since binding was performed. The loader verifies this by checking each DLL's timestamp with the timestamp saved in step 5 above.</LI></P>
+</ul>
+
+<p>Of course, if the loader determines that either of these assumptions is false, Bind has not done anything useful and the loader must manually fix up the executable module's import section, just as it normally would. But if the loader sees that the module is bound, the required DLLs did load at their preferred base address, and the timestamps match, it actually has nothing to do. It doesn't have to relocate any modules, and it doesn't have to look up the virtual address of any imported functions. The application can simply start executing!</p>
+
+<p>In addition, no storage is required from the system's paging file. This is fantastic&#8212;we have the best of all worlds here. It's amazing how many commercial applications ship today without proper rebasing and binding.</p>
+
+<p>OK, so now you know that you should bind all the modules that you ship with your application. But when should you perform the bind? If you bind your modules at your company, you would bind them to the system DLLs that you've installed, which are unlikely to be what the user has installed. Since you don't know if your user is running Windows 98, Windows NT, or Windows 2000, or whether these have service packs installed, you should perform binding as part of your application's setup.</p>
+
+<p>Of course, if the user dual-boots Windows 98 and Windows 2000, the bound modules will be incorrect for one of the operating systems. Also, if the user installs your application under Windows 2000 and then upgrades to a service pack, the bind is also incorrect. There isn't much you or the user can do in these situations. Microsoft should ship a utility with the operating system that automatically rebinds every module after an operating system upgrade. But alas, no such utility exists.</p>
+
+</body>
+</html>
+
+
+
+
+
+
+

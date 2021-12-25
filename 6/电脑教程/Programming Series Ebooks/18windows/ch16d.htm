@@ -1,0 +1,1955 @@
+<HTML>
+<HEAD>
+	<LINK REL=StyleSheet HREF="petzoldi.css" TYPE="text/css">
+<title>Palettes and Real-World Images</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="547"><h1>Palettes and Real-World Images</h1></A>
+<P>Of course, despite the fun we've been having displaying continuous shades of color and doing palette animation, the real purpose of the Palette Manager is to allow the display of real-world images under 8-bit video modes. For the remainder of the chapter, we'll be exploring precisely that. As you might have already anticipated, you must use palettes differently when using packed DIBs, GDI bitmap objects, and DIB sections. The next six programs illustrate various techniques for using palettes with bitmaps.
+
+<A NAME="548"><h2>Palettes and Packed DIBs</h2></A>
+<P>Assisting us in the next three programs will be a set of functions that work with packed-DIB memory blocks. These functions are in the PACKEDIB files shown in Figure 16-13.
+
+
+
+<P><B>Figure 16-13.</b> <i>The PACKEDIB files.</I>
+<table cellpadding=5 width="95%"><tr><td>
+<A NAME="549"><h3>PACKEDIB.H</h3></A>
+<P><pre>
+/*------------------------------------------
+   PACKEDIB.H -- Header file for PACKEDIB.C
+                 (c) Charles Petzold, 1998
+  ------------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+BITMAPINFO * PackedDibLoad (PTSTR szFileName) ;
+int PackedDibGetWidth (BITMAPINFO * pPackedDib) ;
+int PackedDibGetHeight (BITMAPINFO * pPackedDib) ;
+int PackedDibGetBitCount (BITMAPINFO * pPackedDib) ;
+int PackedDibGetRowLength (BITMAPINFO * pPackedDib) ;
+int PackedDibGetInfoHeaderSize (BITMAPINFO * pPackedDib) ;
+int PackedDibGetColorsUsed (BITMAPINFO * pPackedDib) ;
+int PackedDibGetNumColors (BITMAPINFO * pPackedDib) ;
+int PackedDibGetColorTableSize (BITMAPINFO * pPackedDib) ;
+RGBQUAD * PackedDibGetColorTablePtr (BITMAPINFO * pPackedDib) ;
+RGBQUAD * PackedDibGetColorTableEntry (BITMAPINFO * pPackedDib, int i) ;
+BYTE * PackedDibGetBitsPtr (BITMAPINFO * pPackedDib) ;
+int PackedDibGetBitsSize (BITMAPINFO * pPackedDib) ;
+HPALETTE PackedDibCreatePalette (BITMAPINFO * pPackedDib) ;
+</pre>
+</td></tr></table>
+
+
+<table cellpadding=5 width="95%"><tr><td>
+<A NAME="550"><h3>PACKEDIB.C</h3></A>
+<P><pre>
+/*----------------------------------------------
+   PACKEDIB.C -- Routines for using packed DIBs
+                 (c) Charles Petzold, 1998
+  ----------------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+/*---------------------------------------------------------
+   PackedDibLoad: Load DIB File as Packed-Dib Memory Block
+  ---------------------------------------------------------*/
+
+BITMAPINFO * PackedDibLoad (PTSTR szFileName)
+{
+     BITMAPFILEHEADER bmfh ;
+     BITMAPINFO     * pbmi ;
+     BOOL             bSuccess ;
+     DWORD            dwPackedDibSize, dwBytesRead ;
+     HANDLE           hFile ;
+
+          // Open the file: read access, prohibit write access
+
+     hFile = CreateFile (szFileName, GENERIC_READ, FILE_SHARE_READ, NULL, 
+                         OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL) ;
+
+     if (hFile == INVALID_HANDLE_VALUE)
+          return NULL ;
+
+          // Read in the BITMAPFILEHEADER
+
+     bSuccess = ReadFile (hFile, &amp;bmfh, sizeof (BITMAPFILEHEADER), 
+                          &amp;dwBytesRead, NULL) ;
+
+     if (!bSuccess || (dwBytesRead != sizeof (BITMAPFILEHEADER))         
+                   || (bmfh.bfType != * (WORD *) &quot;BM&quot;))
+     {
+          CloseHandle (hFile) ;
+          return NULL ;
+     }
+
+          // Allocate memory for the packed DIB &amp; read it in
+
+     dwPackedDibSize = bmfh.bfSize - sizeof (BITMAPFILEHEADER) ;
+
+     pbmi = malloc (dwPackedDibSize) ;
+
+     bSuccess = ReadFile (hFile, pbmi, dwPackedDibSize, &amp;dwBytesRead, NULL) ;
+     CloseHandle (hFile) ;
+
+     if (!bSuccess || (dwBytesRead != dwPackedDibSize))
+     {
+          free (pbmi) ;
+          return NULL ;
+     }
+
+     return pbmi ;
+}
+
+/*----------------------------------------------
+   Functions to get information from packed DIB
+  ----------------------------------------------*/
+int PackedDibGetWidth (BITMAPINFO * pPackedDib)
+{
+     if (pPackedDib-&gt;bmiHeader.biSize == sizeof (BITMAPCOREHEADER))
+          return ((PBITMAPCOREINFO)pPackedDib)-&gt;bmciHeader.bcWidth ;
+     else
+          return pPackedDib-&gt;bmiHeader.biWidth ;
+}
+
+int PackedDibGetHeight (BITMAPINFO * pPackedDib)
+{
+     if (pPackedDib-&gt;bmiHeader.biSize == sizeof (BITMAPCOREHEADER))
+          return ((PBITMAPCOREINFO)pPackedDib)-&gt;bmciHeader.bcHeight ;
+     else
+          return abs (pPackedDib-&gt;bmiHeader.biHeight) ;
+}
+
+int PackedDibGetBitCount (BITMAPINFO * pPackedDib)
+{
+     if (pPackedDib-&gt;bmiHeader.biSize == sizeof (BITMAPCOREHEADER))
+          return ((PBITMAPCOREINFO)pPackedDib)-&gt;bmciHeader.bcBitCount ;
+     else
+          return pPackedDib-&gt;bmiHeader.biBitCount ;
+}
+
+int PackedDibGetRowLength (BITMAPINFO * pPackedDib)
+{
+     return ((PackedDibGetWidth (pPackedDib) * 
+              PackedDibGetBitCount (pPackedDib) + 31) &amp; ~31) &gt;&gt; 3 ;
+}
+
+/*-----------------------------------------------------------
+   PackedDibGetInfoHeaderSize includes possible color masks!
+  -----------------------------------------------------------*/
+
+int PackedDibGetInfoHeaderSize (BITMAPINFO * pPackedDib)
+{
+     if (pPackedDib-&gt;bmiHeader.biSize == sizeof (BITMAPCOREHEADER))
+          return ((PBITMAPCOREINFO)pPackedDib)-&gt;bmciHeader.bcSize ;
+
+     else if (pPackedDib-&gt;bmiHeader.biSize == sizeof (BITMAPINFOHEADER))
+          return pPackedDib-&gt;bmiHeader.biSize + 
+                    (pPackedDib-&gt;bmiHeader.biCompression == 
+                                        BI_BITFIELDS ? 12 : 0) ;
+
+     else return pPackedDib-&gt;bmiHeader.biSize ;
+}
+
+/*-------------------------------------------------------------
+   PackedDibGetColorsUsed returns value in information header;
+          could be 0 to indicate non-truncated color table!
+  -------------------------------------------------------------*/
+
+int PackedDibGetColorsUsed (BITMAPINFO * pPackedDib)
+{
+     if (pPackedDib-&gt;bmiHeader.biSize == sizeof (BITMAPCOREHEADER))
+          return 0 ;
+     else
+          return pPackedDib-&gt;bmiHeader.biClrUsed ;
+}
+
+/*------------------------------------------------------------------
+   PackedDibGetNumColors is actual number of entries in color table
+  ------------------------------------------------------------------*/
+
+int PackedDibGetNumColors (BITMAPINFO * pPackedDib)
+{
+     int iNumColors ;
+
+     iNumColors = PackedDibGetColorsUsed (pPackedDib) ;
+
+     if (iNumColors == 0 &amp;&amp; PackedDibGetBitCount (pPackedDib) &lt; 16)
+          iNumColors = 1 &lt;&lt; PackedDibGetBitCount (pPackedDib) ;
+
+     return iNumColors ;
+}
+
+int PackedDibGetColorTableSize (BITMAPINFO * pPackedDib)
+{
+     if (pPackedDib-&gt;bmiHeader.biSize == sizeof (BITMAPCOREHEADER))
+          return PackedDibGetNumColors (pPackedDib) * sizeof (RGBTRIPLE) ;
+     else
+          return PackedDibGetNumColors (pPackedDib) * sizeof (RGBQUAD) ;
+}
+
+RGBQUAD * PackedDibGetColorTablePtr (BITMAPINFO * pPackedDib)
+{
+     if (PackedDibGetNumColors (pPackedDib) == 0)
+          return 0 ;
+     return (RGBQUAD *) (((BYTE *) pPackedDib) + 
+                                   PackedDibGetInfoHeaderSize (pPackedDib)) ;
+}
+
+RGBQUAD * PackedDibGetColorTableEntry (BITMAPINFO * pPackedDib, int i)
+{
+     if (PackedDibGetNumColors (pPackedDib) == 0)
+          return 0 ;
+
+     if (pPackedDib-&gt;bmiHeader.biSize == sizeof (BITMAPCOREHEADER))
+          return (RGBQUAD *) 
+               (((RGBTRIPLE *) PackedDibGetColorTablePtr (pPackedDib)) + i) ;
+     else
+          return PackedDibGetColorTablePtr (pPackedDib) + i ;
+}
+
+/*------------------------------
+   PackedDibGetBitsPtr finally!
+  ------------------------------*/
+
+BYTE * PackedDibGetBitsPtr (BITMAPINFO * pPackedDib)
+{
+     return ((BYTE *) pPackedDib) + PackedDibGetInfoHeaderSize (pPackedDib) +
+                                    PackedDibGetColorTableSize (pPackedDib) ;
+}
+
+/*----------------------------------------------------------------------- 
+   PackedDibGetBitsSize can be calculated from the height and row length
+          if it's not explicitly in the biSizeImage field
+  -----------------------------------------------------------------------*/
+
+int PackedDibGetBitsSize (BITMAPINFO * pPackedDib)
+{
+     if ((pPackedDib-&gt;bmiHeader.biSize != sizeof (BITMAPCOREHEADER)) &amp;&amp;
+         (pPackedDib-&gt;bmiHeader.biSizeImage != 0))
+         return pPackedDib-&gt;bmiHeader.biSizeImage ;
+
+     return PackedDibGetHeight (pPackedDib) * 
+            PackedDibGetRowLength (pPackedDib) ;
+}
+
+/*----------------------------------------------------------------
+   PackedDibCreatePalette creates logical palette from PackedDib
+  ----------------------------------------------------------------*/
+
+HPALETTE PackedDibCreatePalette (BITMAPINFO * pPackedDib)
+{
+     HPALETTE     hPalette ;
+     int          i, iNumColors ;
+     LOGPALETTE * plp ;
+     RGBQUAD    * prgb ;
+
+     if (0 == (iNumColors = PackedDibGetNumColors (pPackedDib)))
+          return NULL ;
+
+     plp = malloc (sizeof (LOGPALETTE) * 
+                         (iNumColors - 1) * sizeof (PALETTEENTRY)) ;
+
+     plp-&gt;palVersion    = 0x0300 ;
+     plp-&gt;palNumEntries = iNumColors ;
+
+     for (i = 0 ; i &lt; iNumColors ; i++)
+     {
+          prgb = PackedDibGetColorTableEntry (pPackedDib, i) ;
+
+          plp-&gt;palPalEntry[i].peRed   = prgb-&gt;rgbRed ;
+          plp-&gt;palPalEntry[i].peGreen = prgb-&gt;rgbGreen ;
+          plp-&gt;palPalEntry[i].peBlue  = prgb-&gt;rgbBlue ;
+          plp-&gt;palPalEntry[i].peFlags = 0 ;
+     }
+
+     hPalette = CreatePalette (plp) ;
+     free (plp) ;
+
+     return hPalette ;
+}
+</pre>
+</td></tr></table>
+
+<P>The first function is <I>PackedDibLoad</I>, which takes as its single argument a file name and returns a pointer to a packed DIB in memory. All the other functions take this packed-DIB pointer as their first argument and return information about the DIB. These functions are arranged in the file in a &quot;bottom-up&quot; order. Each function uses information obtained from earlier functions.
+
+<P>I don't pretend that this is a &quot;complete&quot; set of functions that might be useful for working with packed DIBs. I have not attempted to assemble a really extensive collection because I don't think that working with packed DIBs in this way is a good approach. This will be quite obvious to you when you try to write a function such as
+
+<p><pre>
+dwPixel = PackedDibGetPixel (pPackedDib, x, y) ;
+</PRE>
+
+<P>This kind of function involves so many nested function calls that it becomes horribly inefficient and slow. I'll describe what I believe to be a better approach later in this chapter.
+
+<P>Also, as you'll note, many of these functions require different processing for OS/2-compatible DIBs; thus, the functions frequently check if the first field of the BITMAPINFO structure is the size of the BITMAPCOREHEADER structure.
+
+<P>Of particular interest here is the final function, named <I>PackedDibCreatePalette</I>. This function uses the color table in the DIB to create a palette. If the DIB does not have a color table (which means that the DIB has 16, 24, or 32 bits per pixel), then no palette is created. A palette created from the DIB color table is sometimes called the DIB's <I>native</I> palette.
+
+<P>The PACKEDIB files are put to use in SHOWDIB3, shown in Figure 16-14.
+
+
+
+<P><B>Figure 16-14.</b> <i>The SHOWDIB3 program.</I>
+<table cellpadding=5 width="95%"><tr><td>
+<A NAME="551"><h3>SHOWDIB3.C</h3></A>
+<P><pre>
+/*------------------------------------------------
+   SHOWDIB3.C -- Displays DIB with native palette
+                 (c) Charles Petzold, 1998
+  ------------------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &quot;PackeDib.h&quot;
+#include &quot;resource.h&quot;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+TCHAR szAppName[] = TEXT (&quot;ShowDib3&quot;) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     HWND     hwnd ;
+     MSG      msg ;
+     WNDCLASS wndclass ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = szAppName ;
+     wndclass.lpszClassName = szAppName ;
+
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;), 
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Show DIB #3: Native Palette&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT, 
+                          NULL, NULL, hInstance, NULL) ;
+
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static BITMAPINFO * pPackedDib ;
+     static HPALETTE     hPalette ;
+     static int          cxClient, cyClient ;
+     static OPENFILENAME ofn ;
+     static TCHAR        szFileName [MAX_PATH], szTitleName [MAX_PATH] ;
+     static TCHAR        szFilter[] = TEXT (&quot;Bitmap Files (*.BMP)\0*.bmp\0&quot;)
+                                      TEXT (&quot;All Files (*.*)\0*.*\0\0&quot;) ;
+     HDC                 hdc ;
+     PAINTSTRUCT         ps ;
+
+     switch (message)
+     {
+     case WM_CREATE:
+          ofn.lStructSize       = sizeof (OPENFILENAME) ;
+          ofn.hwndOwner         = hwnd ;
+          ofn.hInstance         = NULL ;
+          ofn.lpstrFilter       = szFilter ;
+          ofn.lpstrCustomFilter = NULL ;
+          ofn.nMaxCustFilter    = 0 ;
+          ofn.nFilterIndex      = 0 ;
+          ofn.lpstrFile         = szFileName ;
+          ofn.nMaxFile          = MAX_PATH ;
+          ofn.lpstrFileTitle    = szTitleName ;
+          ofn.nMaxFileTitle     = MAX_PATH ;
+          ofn.lpstrInitialDir   = NULL ;
+          ofn.lpstrTitle        = NULL ;
+          ofn.Flags             = 0 ;
+          ofn.nFileOffset       = 0 ;
+          ofn.nFileExtension    = 0 ;
+          ofn.lpstrDefExt       = TEXT (&quot;bmp&quot;) ;
+          ofn.lCustData         = 0 ;
+          ofn.lpfnHook          = NULL ;
+          ofn.lpTemplateName    = NULL ;
+
+          return 0 ;
+
+     case WM_SIZE:
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+          return 0 ;
+
+     case WM_COMMAND:
+          switch (LOWORD (wParam))
+          {
+          case IDM_FILE_OPEN:
+
+                    // Show the File Open dialog box
+
+               if (!GetOpenFileName (&amp;ofn))
+                    return 0 ;
+               
+                    // If there's an existing packed DIB, free the memory
+
+               if (pPackedDib)
+               {
+                    free (pPackedDib) ;
+                    pPackedDib = NULL ;
+               }
+               
+                    // If there's an existing logical palette, delete it
+
+               if (hPalette)
+               {
+                    DeleteObject (hPalette) ;
+                    hPalette = NULL ;
+               }
+
+                    // Load the packed DIB into memory
+
+               SetCursor (LoadCursor (NULL, IDC_WAIT)) ;
+               ShowCursor (TRUE) ;
+
+               pPackedDib = PackedDibLoad (szFileName) ;
+
+               ShowCursor (FALSE) ;
+               SetCursor (LoadCursor (NULL, IDC_ARROW)) ;
+
+               if (pPackedDib)
+               {
+                         // Create the palette from the DIB color table
+
+                    hPalette = PackedDibCreatePalette (pPackedDib) ;
+               }
+               else
+               {
+                    MessageBox (hwnd, TEXT (&quot;Cannot load DIB file&quot;), 
+                                szAppName, 0) ;
+               }
+               InvalidateRect (hwnd, NULL, TRUE) ;
+               return 0 ;
+          }
+          break ;
+
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+
+          if (hPalette)
+          {
+               SelectPalette (hdc, hPalette, FALSE) ;
+               RealizePalette (hdc) ;
+          }
+          
+          if (pPackedDib)
+               SetDIBitsToDevice (hdc, 
+                                  0,   
+                                  0,   
+                                  PackedDibGetWidth (pPackedDib), 
+                                  PackedDibGetHeight (pPackedDib),
+                                  0,                            
+                                  0,                            
+                                  0,                            
+                                  PackedDibGetHeight (pPackedDib),  
+                                  PackedDibGetBitsPtr (pPackedDib), 
+                                  pPackedDib, 
+                                  DIB_RGB_COLORS) ;
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+
+     case WM_QUERYNEWPALETTE:
+          if (!hPalette)
+               return FALSE ;
+
+          hdc = GetDC (hwnd) ;
+          SelectPalette (hdc, hPalette, FALSE) ;
+          RealizePalette (hdc) ;
+          InvalidateRect (hwnd, NULL, TRUE) ;
+
+          ReleaseDC (hwnd, hdc) ;
+          return TRUE ;
+
+     case WM_PALETTECHANGED:
+          if (!hPalette || (HWND) wParam == hwnd)
+               break ;
+
+          hdc = GetDC (hwnd) ;
+          SelectPalette (hdc, hPalette, FALSE) ;
+          RealizePalette (hdc) ;
+          UpdateColors (hdc) ;
+
+          ReleaseDC (hwnd, hdc) ;
+          break ;
+
+          
+     case WM_DESTROY:
+          if (pPackedDib)
+               free (pPackedDib) ;
+
+          if (hPalette)
+               DeleteObject (hPalette) ;
+
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</pre>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="552"><h3>SHOWDIB3.RC (excerpts)</h3></A>
+<P><pre>
+//Microsoft Developer Studio generated resource script.
+
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+// Menu
+
+SHOWDIB3 MENU DISCARDABLE 
+BEGIN
+    POPUP &quot;&amp;File&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Open&quot;,                       IDM_FILE_OPEN
+    END
+END
+</pre>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="553"><h3>RESOURCE.H (excerpts)</h3></A>
+<P><pre>
+// Microsoft Developer Studio generated include file.
+// Used by ShowDib3.rc
+
+#define IDM_FILE_OPEN                   40001
+</pre>
+</td></tr></table>
+
+<P>The window procedure in SHOWDIB3 maintains the packed-DIB pointer as a static variable that it obtains when it calls the <I>PackedDibLoad</I> function in PACKEDIB.C during the File Open command. During processing of this command, SHOWDIB3 also calls <I>PackedDibCreatePalette</I> to obtain a possible palette for the DIB. Notice that whenever SHOWDIB3 is ready to load in a new DIB, it first frees the memory of the previous DIB and also deletes the palette of the previous DIB. The last DIB is eventually freed and the last palette is eventually deleted during processing the WM_DESTROY message.
+
+<P>Processing of the WM_PAINT message is straightforward: If the palette exists, SHOWDIB3 selects it into the device context and realizes it. It then calls <I>SetDIBitsToDevice</I>, passing to the function information about the DIB (such as width, height, a pointer to the DIB pixel bits) that it obtains from functions in PACKEDIB.
+
+<P>Again, keep in mind that SHOWDIB3 creates a palette based on the color table in the DIB. If there is no color table in the DIB&#8212;as is almost always the case with 16-bit, 24-bit, and 32-bit DIBs&#8212;then no palette is created. When the DIB is displayed in an 8-bit video mode, it's displayed with only the standard reserved 20 colors.
+
+<P>There are two solutions to this problem. The first is to simply use an &quot;all-purpose&quot; palette that can be applicable for a large number of images. You can construct such a palette yourself. The second solution is to dig into the pixel bits of the DIB and determine the optimum colors required to display the image. Obviously this involves more work (both for the programmer and the processor), but I'll show you how to do it before this chapter has concluded.
+
+<A NAME="554"><h2>The All-Purpose Palette</h2></A>
+<P>The SHOWDIB4 program, shown in Figure 16-15, constructs an all-purpose palette that it uses for displaying all DIBs loaded into the program. SHOWDIB4 is otherwise very similar to SHOWDIB3.
+
+
+<P><B>Figure 16-15.</b> <i>The SHOWDIB4 program.</I>
+<table cellpadding=5 width="95%"><tr><td>
+<A NAME="555"><h3>SHOWDIB4.C</h3></A>
+<P><pre>
+/*-------------------------------------------------------
+   SHOWDIB4.C -- Displays DIB with &quot;all-purpose&quot; palette
+                 (c) Charles Petzold, 1998
+  -------------------------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &quot;..\\ShowDib3\\PackeDib.h&quot;
+#include &quot;resource.h&quot;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+TCHAR szAppName[] = TEXT (&quot;ShowDib4&quot;) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     HWND     hwnd ;
+     MSG      msg ;
+     WNDCLASS wndclass ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = szAppName ;
+     wndclass.lpszClassName = szAppName ;
+
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;), 
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Show DIB #4: All-Purpose Palette&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT, 
+                          NULL, NULL, hInstance, NULL) ;
+
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+/*------------------------------------------------------------------------
+   CreateAllPurposePalette: Creates a palette suitable for a wide variety
+          of images; the palette has 247 entries, but 15 of them are 
+          duplicates or match the standard 20 colors.
+  ------------------------------------------------------------------------*/
+
+HPALETTE CreateAllPurposePalette (void)
+{
+     HPALETTE hPalette ;
+     int          i, incr, R, G, B ;
+     LOGPALETTE * plp ;
+
+     plp = malloc (sizeof (LOGPALETTE) + 246 * sizeof (PALETTEENTRY)) ;
+
+     plp-&gt;palVersion    = 0x0300 ;
+     plp-&gt;palNumEntries = 247 ;
+
+          // The following loop calculates 31 gray shades, but 3 of them
+          //        will match the standard 20 colors
+     for (i = 0, G = 0, incr = 8 ; G &lt;= 0xFF ; i++, G += incr)
+     {
+          plp-&gt;palPalEntry[i].peRed   = (BYTE) G ;
+          plp-&gt;palPalEntry[i].peGreen = (BYTE) G ;
+          plp-&gt;palPalEntry[i].peBlue  = (BYTE) G ;
+          plp-&gt;palPalEntry[i].peFlags = 0 ;
+
+          incr = (incr == 9 ? 8 : 9) ;
+     }
+
+          // The following loop is responsible for 216 entries, but 8 of 
+          //        them will match the standard 20 colors, and another
+          //        4 of them will match the gray shades above.
+
+     for (R = 0 ; R &lt;= 0xFF ; R += 0x33)
+     for (G = 0 ; G &lt;= 0xFF ; G += 0x33)
+     for (B = 0 ; B &lt;= 0xFF ; B += 0x33)
+     {
+          plp-&gt;palPalEntry[i].peRed   = (BYTE) R ;
+          plp-&gt;palPalEntry[i].peGreen = (BYTE) G ;
+          plp-&gt;palPalEntry[i].peBlue  = (BYTE) B ;
+          plp-&gt;palPalEntry[i].peFlags = 0 ;
+
+          i++ ;
+     }
+     hPalette = CreatePalette (plp) ;
+
+     free (plp) ;
+     return hPalette ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static BITMAPINFO * pPackedDib ;
+     static HPALETTE     hPalette ;
+     static int          cxClient, cyClient ;
+     static OPENFILENAME ofn ;
+     static TCHAR        szFileName [MAX_PATH], szTitleName [MAX_PATH] ;
+     static TCHAR        szFilter[] = TEXT (&quot;Bitmap Files (*.BMP)\0*.bmp\0&quot;)
+                                      TEXT (&quot;All Files (*.*)\0*.*\0\0&quot;) ;
+     HDC                 hdc ;
+     PAINTSTRUCT         ps ;
+
+     switch (message)
+     {
+     case WM_CREATE:
+          ofn.lStructSize       = sizeof (OPENFILENAME) ;
+          ofn.hwndOwner         = hwnd ;
+          ofn.hInstance         = NULL ;
+          ofn.lpstrFilter       = szFilter ;
+          ofn.lpstrCustomFilter = NULL ;
+          ofn.nMaxCustFilter    = 0 ;
+          ofn.nFilterIndex      = 0 ;
+          ofn.lpstrFile         = szFileName ;
+          ofn.nMaxFile          = MAX_PATH ;
+          ofn.lpstrFileTitle    = szTitleName ;
+          ofn.nMaxFileTitle     = MAX_PATH ;
+          ofn.lpstrInitialDir   = NULL ;
+          ofn.lpstrTitle        = NULL ;
+          ofn.Flags             = 0 ;
+          ofn.nFileOffset       = 0 ;
+          ofn.nFileExtension    = 0 ;
+          ofn.lpstrDefExt       = TEXT (&quot;bmp&quot;) ;
+          ofn.lCustData         = 0 ;
+          ofn.lpfnHook          = NULL ;
+          ofn.lpTemplateName    = NULL ;
+
+               // Create the All-Purpose Palette
+
+          hPalette = CreateAllPurposePalette () ;
+          return 0 ;
+
+     case WM_SIZE:
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+          return 0 ;
+
+     case WM_COMMAND:
+          switch (LOWORD (wParam))
+          {
+          case IDM_FILE_OPEN:
+
+                    // Show the File Open dialog box
+
+               if (!GetOpenFileName (&amp;ofn))
+                    return 0 ;
+               
+                    // If there's an existing packed DIB, free the memory
+               if (pPackedDib)
+               {
+                    free (pPackedDib) ;
+                    pPackedDib = NULL ;
+               }
+               
+                    // Load the packed DIB into memory
+
+               SetCursor (LoadCursor (NULL, IDC_WAIT)) ;
+               ShowCursor (TRUE) ;
+
+               pPackedDib = PackedDibLoad (szFileName) ;
+
+               ShowCursor (FALSE) ;
+               SetCursor (LoadCursor (NULL, IDC_ARROW)) ;
+
+               if (!pPackedDib)
+               {
+                    MessageBox (hwnd, TEXT (&quot;Cannot load DIB file&quot;), 
+                                szAppName, 0) ;
+               }
+               InvalidateRect (hwnd, NULL, TRUE) ;
+               return 0 ;
+          }
+          break ;
+
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+
+          if (pPackedDib)
+          {
+               SelectPalette (hdc, hPalette, FALSE) ;
+               RealizePalette (hdc) ;
+          
+               SetDIBitsToDevice (hdc, 
+                                  0,   
+                                  0,   
+                                  PackedDibGetWidth (pPackedDib), 
+                                  PackedDibGetHeight (pPackedDib),
+                                  0,                            
+                                  0,                            
+                                  0,                            
+                                  PackedDibGetHeight (pPackedDib),  
+                                  PackedDibGetBitsPtr (pPackedDib), 
+                                  pPackedDib, 
+                                  DIB_RGB_COLORS) ;
+          }
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+
+     case WM_QUERYNEWPALETTE:
+          hdc = GetDC (hwnd) ;
+          SelectPalette (hdc, hPalette, FALSE) ;
+          RealizePalette (hdc) ;
+          InvalidateRect (hwnd, NULL, TRUE) ;
+
+          ReleaseDC (hwnd, hdc) ;
+          return TRUE ;
+
+     case WM_PALETTECHANGED:
+          if ((HWND) wParam != hwnd)
+
+          hdc = GetDC (hwnd) ;
+          SelectPalette (hdc, hPalette, FALSE) ;
+          RealizePalette (hdc) ;
+          UpdateColors (hdc) ;
+
+          ReleaseDC (hwnd, hdc) ;
+          break ;
+          
+     case WM_DESTROY:
+          if (pPackedDib)
+               free (pPackedDib) ;
+
+          DeleteObject (hPalette) ;
+
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</pre>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="556"><h3>SHOWDIB4.RC (excerpts)</h3></A>
+<P><pre>
+//Microsoft Developer Studio generated resource script.
+
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+/////////////////////////////////////////////////////////////////////////////
+// Menu
+
+SHOWDIB4 MENU DISCARDABLE 
+BEGIN
+    POPUP &quot;&amp;Open&quot;
+    BEGIN
+        MENUITEM &quot;&amp;File&quot;,                       IDM_FILE_OPEN
+    END
+END
+</pre>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="557"><h3>RESOURCE.H (excerpts)</h3></A>
+<P><pre>
+// Microsoft Developer Studio generated include file.
+// Used by ShowDib4.rc
+
+#define IDM_FILE_OPEN                   40001
+</pre>
+</td></tr></table>
+
+<P>While processing the WM_CREATE message, SHOWDIB4 calls <I>CreateAllPurposePalette</I>. It retains this palette throughout the course of the program and destroys it during the WM_DESTROY message. Because the program knows that the palette is always around, it needn't check for its existence while processing the WM_PAINT, WM_QUERYNEWPALETTE, or WM_PALETTECHANGED messages.
+
+<P>The <I>CreateAllPurposePalette</I> function seems to create a logical palette with 247 entries, which is more than the 236 entries in the system palette that programs normally have access to. Indeed, it does, but this is just a matter of convenience. Fifteen of these entries are either duplicated or will map to colors in the standard 20 reserved colors.
+
+<P><I>CreateAllPurposePalette</I> begins by creating 31 gray shades, with red, green, and blue values of 0x00, 0x09, 0x11, 0x1A, 0x22, 0x2B, 0x33, 0x3C, 0x44, 0x4D, 0x55, 0x5E, 0x66, 0x6F, 0x77, 0x80, 0x88, 0x91, 0x99, 0xA2, 0xAA, 0xB3, 0xBB, 0xC4, 0xCC, 0xD5, 0xDD, 0xE6, 0xEE, 0xF9, and 0xFF. Notice that the first, last, and middle entries are in the standard 20 reserved colors. Next the function creates colors with all combinations of red, green, and blue values of 0x00, 0x33, 0x66, 0x99, 0xCC, and 0xFF. That's a total of 216 colors, but eight of them duplicate colors in the standard 20, and another four duplicate previously calculated gray shades. Windows will not put duplicate entries in the system palette if you set the <I>peFlags</I> field of the PALETTEENTRY structure to 0.
+
+<P>Obviously, a real program that didn't wish to calculate optimum palettes for 16-bit, 24-bit, or 32-bit DIBs would probably still continue to use the DIB color table for displaying 8-bit DIBs. SHOWDIB4 does not do this but instead uses its all-purpose palette for everything. This is because SHOWDIB4 is a demonstration program, and you can use it to compare SHOWDIB3's display of 8-bit DIBs. If you look at some color DIBs of people, you'll probably conclude that SHOWDIB4 does <I>not</I> have sufficient colors for the accurate rendering of flesh tones.
+
+<P>If you experiment with the <I>CreateAllPurposePalette</I> function in SHOWDIB4, perhaps by reducing the size of the logical palette to just a few entries, you'll discover that when a palette is selected into a device context, Windows will use only the colors in the palette and none of the colors from the standard 20-color palette.
+
+<A NAME="558"><h2>The Halftone Palette</h2></A>
+<P>The Windows API includes an all-purpose palette that programs can obtain by calling <I>CreateHalftonePalette</I>. You can use this in the same way you used the palette obtained from <I>CreateAllPurposePalette</I> in SHOWDIB4, or you can use it in conjunction with the bitmap stretching mode&#8212;set with <I>SetStretchBltMode</I>&#8212;known as HALFTONE. The SHOWDIB5 program in Figure 16-16 demonstrates how to use the halftone palette.
+
+
+
+<P><B>Figure 16-16.</b> <i>The SHOWDIB5 program.</I><table cellpadding=5 width="95%"><tr><td>
+<A NAME="559"><h3>SHOWDIB5.C</h3></A>
+<P><pre>
+/*--------------------------------------------------
+   SHOWDIB5.C -- Displays DIB with halftone palette
+                 (c) Charles Petzold, 1998
+  --------------------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &quot;..\\ShowDib3\\PackeDib.h&quot;
+#include &quot;resource.h&quot;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+TCHAR szAppName[] = TEXT (&quot;ShowDib5&quot;) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     HWND     hwnd ;
+     MSG      msg ;
+     WNDCLASS wndclass ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = szAppName ;
+     wndclass.lpszClassName = szAppName ;
+
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;), 
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Show DIB #5: Halftone Palette&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT, 
+                          NULL, NULL, hInstance, NULL) ;
+
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static BITMAPINFO * pPackedDib ;
+     static HPALETTE     hPalette ;
+     static int          cxClient, cyClient ;
+     static OPENFILENAME ofn ;
+     static TCHAR        szFileName [MAX_PATH], szTitleName [MAX_PATH] ;
+     static TCHAR        szFilter[] = TEXT (&quot;Bitmap Files (*.BMP)\0*.bmp\0&quot;)
+                                      TEXT (&quot;All Files (*.*)\0*.*\0\0&quot;) ;
+     HDC                 hdc ;
+     PAINTSTRUCT         ps ;
+
+     switch (message)
+     {
+     case WM_CREATE:
+          ofn.lStructSize       = sizeof (OPENFILENAME) ;
+          ofn.hwndOwner         = hwnd ;
+          ofn.hInstance         = NULL ;
+          ofn.lpstrFilter       = szFilter ;
+          ofn.lpstrCustomFilter = NULL ;
+          ofn.nMaxCustFilter    = 0 ;
+          ofn.nFilterIndex      = 0 ;
+          ofn.lpstrFile         = szFileName ;
+          ofn.nMaxFile          = MAX_PATH ;
+          ofn.lpstrFileTitle    = szTitleName ;
+          ofn.nMaxFileTitle     = MAX_PATH ;
+          ofn.lpstrInitialDir   = NULL ;
+          ofn.lpstrTitle        = NULL ;
+          ofn.Flags             = 0 ;
+          ofn.nFileOffset       = 0 ;
+          ofn.nFileExtension    = 0 ;
+          ofn.lpstrDefExt       = TEXT (&quot;bmp&quot;) ;
+          ofn.lCustData         = 0 ;
+          ofn.lpfnHook          = NULL ;
+          ofn.lpTemplateName    = NULL ;
+
+               // Create the All-Purpose Palette
+
+          hdc = GetDC (hwnd) ;
+          hPalette = CreateHalftonePalette (hdc) ;
+          ReleaseDC (hwnd, hdc) ;
+          return 0 ;
+
+     case WM_SIZE:
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+          return 0 ;
+
+     case WM_COMMAND:
+          switch (LOWORD (wParam))
+          {
+          case IDM_FILE_OPEN:
+
+                    // Show the File Open dialog box
+
+               if (!GetOpenFileName (&amp;ofn))
+                    return 0 ;
+               
+                    // If there's an existing packed DIB, free the memory
+               if (pPackedDib)
+               {
+                    free (pPackedDib) ;
+                    pPackedDib = NULL ;
+               }
+               
+                    // Load the packed DIB into memory
+
+               SetCursor (LoadCursor (NULL, IDC_WAIT)) ;
+               ShowCursor (TRUE) ;
+
+               pPackedDib = PackedDibLoad (szFileName) ;
+
+               ShowCursor (FALSE) ;
+               SetCursor (LoadCursor (NULL, IDC_ARROW)) ;
+
+               if (!pPackedDib)
+               {
+                    MessageBox (hwnd, TEXT (&quot;Cannot load DIB file&quot;), 
+                                szAppName, 0) ;
+               }
+               InvalidateRect (hwnd, NULL, TRUE) ;
+               return 0 ;
+          }
+          break ;
+
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+
+          if (pPackedDib)
+          {
+                   // Set halftone stretch mode
+
+               SetStretchBltMode (hdc, HALFTONE) ;
+               SetBrushOrgEx (hdc, 0, 0, NULL) ;
+
+                    // Select and realize halftone palette
+
+               SelectPalette (hdc, hPalette, FALSE) ;
+               RealizePalette (hdc) ;
+
+                    // StretchDIBits rather than SetDIBitsToDevice
+
+              StretchDIBits (hdc, 
+                              0,   
+                              0,   
+                              PackedDibGetWidth (pPackedDib), 
+                              PackedDibGetHeight (pPackedDib),
+                              0,                            
+                              0,                            
+                              PackedDibGetWidth (pPackedDib),
+                              PackedDibGetHeight (pPackedDib),  
+                              PackedDibGetBitsPtr (pPackedDib), 
+                              pPackedDib, 
+                              DIB_RGB_COLORS, 
+                              SRCCOPY) ;
+          }
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+
+     case WM_QUERYNEWPALETTE:
+          hdc = GetDC (hwnd) ;
+          SelectPalette (hdc, hPalette, FALSE) ;
+          RealizePalette (hdc) ;
+          InvalidateRect (hwnd, NULL, TRUE) ;
+
+          ReleaseDC (hwnd, hdc) ;
+          return TRUE ;
+
+     case WM_PALETTECHANGED:
+          if ((HWND) wParam != hwnd)
+
+          hdc = GetDC (hwnd) ;
+          SelectPalette (hdc, hPalette, FALSE) ;
+          RealizePalette (hdc) ;
+          UpdateColors (hdc) ;
+
+          ReleaseDC (hwnd, hdc) ;
+          break ;
+          
+     case WM_DESTROY:
+          if (pPackedDib)
+               free (pPackedDib) ;
+
+          DeleteObject (hPalette) ;
+
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</pre>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="560"><h3>SHOWDIB5.RC (excerpts)</h3></A>
+<P><pre>
+//Microsoft Developer Studio generated resource script.
+
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+// Menu
+
+SHOWDIB5 MENU DISCARDABLE 
+BEGIN
+    POPUP &quot;&amp;Open&quot;
+    BEGIN
+        MENUITEM &quot;&amp;File&quot;,                       IDM_FILE_OPEN
+    END
+END
+</pre>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="561"><h3>RESOURCE.H (excerpts)</h3></A>
+<P><pre>
+// Microsoft Developer Studio generated include file.
+// Used by ShowDib5.rc
+
+#define IDM_FILE_OPEN                   40001
+</pre>
+</td></tr></table>
+
+<P>The SHOWDIB5 program is similar to SHOWDIB4 in that it doesn't use the color table in the DIB but instead uses a palette that is appropriate for a wide range of images. SHOWDIB5 uses the logical palette supplied by Windows for this purpose, a handle to which can be obtained from the <I>CreateHalftonePalette</I> function.
+
+<P>This halftone palette is hardly more sophisticated than the palette created by the <I>CreateAllPurposePalette</I> function in SHOWDIB4. And indeed, if you use it by itself, the results will be similar. However, if you call these two functions,
+
+<p><pre>
+               SetStretchBltMode (hdc, HALFTONE) ;
+               SetBrushOrgEx (hdc, x, y, NULL) ;
+</PRE>
+
+<P>where <I>x</I> and <I>y</I> are the device coordinates of the upper left corner of the DIB, and if you display the DIB with <I>StretchDIBits</I> rather <I>SetDIBitsToDevice</I>, the results will surprise you. Color flesh tones are much more accurate than with <I>CreateAllPurposePalette</I> or with <I>CreateHalftonePalette</I> used without setting the bitmap stretching mode. Windows uses a type of dithering pattern with the colors of the halftone palette to better approximate the colors of the original image on 8-bit video boards. As you might expect, the drawback is that it takes more processing time.
+
+<A NAME="562"><h2>Indexing Palette Colors</h2></A>
+<P>The time has come to tackle the <I>fClrUse</I> argument to <I>SetDIBitsToDevice</I>, <I>StretchDIBits</I>, <I>CreateDIBitmap</I>, <I>SetDIBits</I>, <I>GetDIBits</I>, and <I>CreateDIBSection</I>. Normally, you set this argument to DIB_RGB_COLORS, which equals 0. However, you can also set it to DIB_PAL_COLORS. In this case, the color table in the BITMAPINFO structure is assumed to consist not of RGB color values but of 16-bit indices into a logical palette. This logical palette is the one currently selected in the device context given as the first argument to the function. Indeed, in <I>CreateDIBSection</I>, the use of DIB_PAL_COLORS is the only reason that you would need to specify a non-NULL device context handle as the first argument.
+
+<P>What does DIB_PAL_COLORS do for you? It gives you some performance improvement. Consider an 8-bit DIB that you're displaying in an 8-bit video mode by calling <I>SetDIBitsToDevice</I>. Windows must first do a nearest-color search of all the colors in the DIB color table with the colors available on the device. It can then set up a little table that lets it map DIB pixel values to the device pixels. At most, this means 256 nearest-color searches, but they can be skipped if the DIB color table contains instead indices into a logical palette selected in a device context.
+
+<P>The SHOWDIB6 program shown in Figure 16-17 is similar to SHOWDIB3 except that it uses palette indices.
+
+
+
+<P><B>Figure 16-17.</b> <i>The SHOWDIB6 program.</I>
+<table cellpadding=5 width="95%"><tr><td>
+<A NAME="563"><h3>SHOWDIB6.C</h3></A>
+<P><pre>
+/*------------------------------------------------
+   SHOWDIB6.C -- Display DIB with palette indices
+                 (c) Charles Petzold, 1998
+  ------------------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &quot;..\\ShowDib3\\PackeDib.h&quot;
+#include &quot;resource.h&quot;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+TCHAR szAppName[] = TEXT (&quot;ShowDib6&quot;) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     HWND     hwnd ;
+     MSG      msg ;
+     WNDCLASS wndclass ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = szAppName ;
+     wndclass.lpszClassName = szAppName ;
+
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;), 
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Show DIB #6: Palette Indices&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT, 
+                          NULL, NULL, hInstance, NULL) ;
+
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static BITMAPINFO * pPackedDib ;
+     static HPALETTE     hPalette ;
+     static int          cxClient, cyClient ;
+     static OPENFILENAME ofn ;
+     static TCHAR        szFileName [MAX_PATH], szTitleName [MAX_PATH] ;
+     static TCHAR        szFilter[] = TEXT (&quot;Bitmap Files (*.BMP)\0*.bmp\0&quot;)
+                                      TEXT (&quot;All Files (*.*)\0*.*\0\0&quot;) ;
+
+     HDC                 hdc ;
+     int                 i, iNumColors ;
+     PAINTSTRUCT         ps ;
+     WORD              * pwIndex ;
+
+     switch (message)
+     {
+     case WM_CREATE:
+          ofn.lStructSize       = sizeof (OPENFILENAME) ;
+          ofn.hwndOwner         = hwnd ;
+          ofn.hInstance         = NULL ;
+          ofn.lpstrFilter       = szFilter ;
+          ofn.lpstrCustomFilter = NULL ;
+          ofn.nMaxCustFilter    = 0 ;
+          ofn.nFilterIndex      = 0 ;
+          ofn.lpstrFile         = szFileName ;
+          ofn.nMaxFile          = MAX_PATH ;
+          ofn.lpstrFileTitle    = szTitleName ;
+          ofn.nMaxFileTitle     = MAX_PATH ;
+          ofn.lpstrInitialDir   = NULL ;
+          ofn.lpstrTitle        = NULL ;
+          ofn.Flags             = 0 ;
+          ofn.nFileOffset       = 0 ;
+          ofn.nFileExtension    = 0 ;
+          ofn.lpstrDefExt       = TEXT (&quot;bmp&quot;) ;
+          ofn.lCustData         = 0 ;
+          ofn.lpfnHook          = NULL ;
+          ofn.lpTemplateName    = NULL ;
+
+          return 0 ;
+
+     case WM_SIZE:
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+          return 0 ;
+
+     case WM_COMMAND:
+          switch (LOWORD (wParam))
+          {
+          case IDM_FILE_OPEN:
+
+                    // Show the File Open dialog box
+               if (!GetOpenFileName (&amp;ofn))
+                    return 0 ;
+               
+                    // If there's an existing packed DIB, free the memory
+
+               if (pPackedDib)
+               {
+                    free (pPackedDib) ;
+                    pPackedDib = NULL ;
+               }
+               
+                    // If there's an existing logical palette, delete it
+
+               if (hPalette)
+               {
+                    DeleteObject (hPalette) ;
+                    hPalette = NULL ;
+               }
+               
+                    // Load the packed DIB into memory
+
+               SetCursor (LoadCursor (NULL, IDC_WAIT)) ;
+               ShowCursor (TRUE) ;
+
+               pPackedDib = PackedDibLoad (szFileName) ;
+
+               ShowCursor (FALSE) ;
+               SetCursor (LoadCursor (NULL, IDC_ARROW)) ;
+
+               if (pPackedDib)
+               {
+                         // Create the palette from the DIB color table
+
+                    hPalette = PackedDibCreatePalette (pPackedDib) ;
+
+                         // Replace DIB color table with indices
+
+                    if (hPalette)
+                    {
+                         iNumColors = PackedDibGetNumColors (pPackedDib) ;
+                         pwIndex = (WORD *) 
+                                        PackedDibGetColorTablePtr (pPackedDib) ;
+
+                         for (i = 0 ; i &lt; iNumColors ; i++)
+                              pwIndex[i] = (WORD) i ;
+                    }
+               }
+
+               else
+               {
+                    MessageBox (hwnd, TEXT (&quot;Cannot load DIB file&quot;), 
+                                szAppName, 0) ;
+               }
+               InvalidateRect (hwnd, NULL, TRUE) ;
+               return 0 ;
+          }
+          break ;
+
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+
+          if (hPalette)
+          {
+               SelectPalette (hdc, hPalette, FALSE) ;
+               RealizePalette (hdc) ;
+          }
+          
+          if (pPackedDib)
+               SetDIBitsToDevice (hdc, 
+                                  0,   
+                                  0,   
+                                  PackedDibGetWidth (pPackedDib), 
+                                  PackedDibGetHeight (pPackedDib),
+                                  0,                            
+                                  0,                            
+                                  0,                            
+                                  PackedDibGetHeight (pPackedDib),  
+                                  PackedDibGetBitsPtr (pPackedDib), 
+                                  pPackedDib, 
+                                  DIB_PAL_COLORS) ;
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+
+     case WM_QUERYNEWPALETTE:
+          if (!hPalette)
+               return FALSE ;
+
+          hdc = GetDC (hwnd) ;
+          SelectPalette (hdc, hPalette, FALSE) ;
+          RealizePalette (hdc) ;
+          InvalidateRect (hwnd, NULL, TRUE) ;
+
+          ReleaseDC (hwnd, hdc) ;
+          return TRUE ;
+     case WM_PALETTECHANGED:
+          if (!hPalette || (HWND) wParam == hwnd)
+               break ;
+
+          hdc = GetDC (hwnd) ;
+          SelectPalette (hdc, hPalette, FALSE) ;
+          RealizePalette (hdc) ;
+          UpdateColors (hdc) ;
+
+          ReleaseDC (hwnd, hdc) ;
+          break ;
+
+          
+     case WM_DESTROY:
+          if (pPackedDib)
+               free (pPackedDib) ;
+
+          if (hPalette)
+               DeleteObject (hPalette) ;
+
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</pre>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="564"><h3>SHOWDIB6.RC (excerpts)</h3></A>
+<P><pre>
+//Microsoft Developer Studio generated resource script.
+
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+// Menu
+
+SHOWDIB6 MENU DISCARDABLE 
+BEGIN
+    POPUP &quot;&amp;File&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Open&quot;,                       IDM_FILE_OPEN
+    END
+END
+</pre>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="565"><h3>RESOURCE.H (excerpts)</h3></A>
+<P><pre>
+// Microsoft Developer Studio generated include file.
+// Used by ShowDib6.rc
+//
+#define IDM_FILE_OPEN                   40001
+</pre>
+</td></tr></table>
+
+<P>After SHOWDIB6 loads the DIB into memory and creates a palette from it, it simply replaces the colors in the DIB color table with WORD indices beginning at 0. The <I>PackedDibGetNumColors</I> function indicates how many colors there are, and the <I>PackedDibGetColorTablePtr</I> function returns a pointer to the beginning of the DIB color table.
+
+<P>Notice that this technique is feasible only when you create a palette directly from the color table of the DIB. If you're using an all-purpose palette, you would need to perform a nearest-color search yourself to derive the indices you put into the DIB. That wouldn't make much sense.
+
+<P>If you do use palette indices, be sure to replace the color table in the DIB before you save the DIB to disk. Also, don't put a DIB containing palette indices in the clipboard. In fact, it would be much safer to put palette indices in the DIB right before displaying it and then put the RGB color values back in afterward.
+
+<A NAME="566"><h2>Palettes and Bitmap Objects</h2></A>
+<P>The SHOWDIB7 program in Figure 16-18 shows how to use palettes in connection with DIBs that you convert to GDI bitmap objects using the <I>CreateDIBitmap</I> function.
+
+
+
+<P><B>Figure 16-18.</b> <i>The SHOWDIB7 program.</I>
+<table cellpadding=5 width="95%"><tr><td>
+<A NAME="567"><h3>SHOWDIB7.C</h3></A>
+<P><pre>
+/*------------------------------------------
+   SHOWDIB7.C -- Shows DIB converted to DDB 
+                 (c) Charles Petzold, 1998
+  ------------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &quot;..\\ShowDib3\\PackeDib.h&quot;
+#include &quot;resource.h&quot;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+TCHAR szAppName[] = TEXT (&quot;ShowDib7&quot;) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+
+{
+     HWND     hwnd ;
+     MSG      msg ;
+     WNDCLASS wndclass ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = szAppName ;
+     wndclass.lpszClassName = szAppName ;
+
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;), 
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Show DIB #7: Converted to DDB&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT, 
+                          NULL, NULL, hInstance, NULL) ;
+
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static HBITMAP      hBitmap ;
+     static HPALETTE     hPalette ;
+     static int          cxClient, cyClient ;
+     static OPENFILENAME ofn ;
+     static TCHAR        szFileName [MAX_PATH], szTitleName [MAX_PATH] ;
+     static TCHAR        szFilter[] = TEXT (&quot;Bitmap Files (*.BMP)\0*.bmp\0&quot;)
+                                      TEXT (&quot;All Files (*.*)\0*.*\0\0&quot;) ;
+     BITMAP              bitmap ;
+     BITMAPINFO        * pPackedDib ;
+     HDC                 hdc, hdcMem ;
+     PAINTSTRUCT         ps ;
+
+     switch (message)
+     {
+     case WM_CREATE:
+          ofn.lStructSize       = sizeof (OPENFILENAME) ;
+          ofn.hwndOwner         = hwnd ;
+          ofn.hInstance         = NULL ;
+          ofn.lpstrFilter       = szFilter ;
+          ofn.lpstrCustomFilter = NULL ;
+          ofn.nMaxCustFilter    = 0 ;
+          ofn.nFilterIndex      = 0 ;
+          ofn.lpstrFile         = szFileName ;
+          ofn.nMaxFile          = MAX_PATH ;
+          ofn.lpstrFileTitle    = szTitleName ;
+          ofn.nMaxFileTitle     = MAX_PATH ;
+          ofn.lpstrInitialDir   = NULL ;
+          ofn.lpstrTitle        = NULL ;
+          ofn.Flags             = 0 ;
+          ofn.nFileOffset       = 0 ;
+          ofn.nFileExtension    = 0 ;
+          ofn.lpstrDefExt       = TEXT (&quot;bmp&quot;) ;
+          ofn.lCustData         = 0 ;
+          ofn.lpfnHook          = NULL ;
+          ofn.lpTemplateName    = NULL ;
+
+          return 0 ;
+
+     case WM_SIZE:
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+          return 0 ;
+
+     case WM_COMMAND:
+          switch (LOWORD (wParam))
+          {
+          case IDM_FILE_OPEN:
+
+                    // Show the File Open dialog box
+               if (!GetOpenFileName (&amp;ofn))
+                    return 0 ;
+               
+                    // If there's an existing packed DIB, free the memory
+
+               if (hBitmap)
+               {
+                    DeleteObject (hBitmap) ;
+                    hBitmap = NULL ;
+               }
+               
+                    // If there's an existing logical palette, delete it
+
+               if (hPalette)
+               {
+                    DeleteObject (hPalette) ;
+                    hPalette = NULL ;
+               }
+               
+                    // Load the packed DIB into memory
+
+               SetCursor (LoadCursor (NULL, IDC_WAIT)) ;
+               ShowCursor (TRUE) ;
+
+               pPackedDib = PackedDibLoad (szFileName) ;
+
+               ShowCursor (FALSE) ;
+               SetCursor (LoadCursor (NULL, IDC_ARROW)) ;
+
+               if (pPackedDib)
+               {
+                         // Create palette from the DIB and select it into DC
+
+                    hPalette = PackedDibCreatePalette (pPackedDib) ;
+
+                    hdc = GetDC (hwnd) ;
+                    
+                    if (hPalette)
+                    {
+                         SelectPalette (hdc, hPalette, FALSE) ;
+                         RealizePalette (hdc) ;
+                    }
+                         // Create the DDB from the DIB
+
+                    hBitmap = CreateDIBitmap (hdc,
+                                              (PBITMAPINFOHEADER) pPackedDib,
+                                              CBM_INIT,
+                                              PackedDibGetBitsPtr (pPackedDib),
+                                              pPackedDib,
+                                              DIB_RGB_COLORS) ;
+                    ReleaseDC (hwnd, hdc) ;
+
+                         // Free the packed-DIB memory
+
+                    free (pPackedDib) ;
+               }
+               else
+               {
+                    MessageBox (hwnd, TEXT (&quot;Cannot load DIB file&quot;), 
+                                szAppName, 0) ;
+               }
+               InvalidateRect (hwnd, NULL, TRUE) ;
+               return 0 ;
+          }
+          break ;
+
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+
+          if (hPalette)
+          {
+               SelectPalette (hdc, hPalette, FALSE) ;
+               RealizePalette (hdc) ;
+          }
+          if (hBitmap)
+          {
+               GetObject (hBitmap, sizeof (BITMAP), &amp;bitmap) ;
+
+               hdcMem = CreateCompatibleDC (hdc) ;
+               SelectObject (hdcMem, hBitmap) ;
+
+               BitBlt (hdc,    0, 0, bitmap.bmWidth, bitmap.bmHeight, 
+                       hdcMem, 0, 0, SRCCOPY) ;
+
+               DeleteDC (hdcMem) ;
+          }
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+
+     case WM_QUERYNEWPALETTE:
+          if (!hPalette)
+               return FALSE ;
+
+          hdc = GetDC (hwnd) ;
+          SelectPalette (hdc, hPalette, FALSE) ;
+          RealizePalette (hdc) ;
+          InvalidateRect (hwnd, NULL, TRUE) ;
+
+          ReleaseDC (hwnd, hdc) ;
+          return TRUE ;
+
+     case WM_PALETTECHANGED:
+          if (!hPalette || (HWND) wParam == hwnd)
+               break ;
+
+          hdc = GetDC (hwnd) ;
+          SelectPalette (hdc, hPalette, FALSE) ;
+          RealizePalette (hdc) ;
+          UpdateColors (hdc) ;
+
+          ReleaseDC (hwnd, hdc) ;
+          break ;
+
+          
+     case WM_DESTROY:
+          if (hBitmap)
+               DeleteObject (hBitmap) ;
+
+          if (hPalette)
+               DeleteObject (hPalette) ;
+
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</pre>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="568"><h3>SHOWDIB7.RC (excerpts)</h3></A>
+<P><pre>
+//Microsoft Developer Studio generated resource script.
+
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+// Menu
+
+SHOWDIB7 MENU DISCARDABLE 
+BEGIN
+    POPUP &quot;&amp;File&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Open&quot;,                       IDM_FILE_OPEN
+    END
+END
+</pre>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="569"><h3>RESOURCE.H (excerpts)</h3></A>
+<P><pre>
+// Microsoft Developer Studio generated include file.
+// Used by ShowDib7.rc
+
+#define IDM_FILE_OPEN                   40001
+</pre>
+</td></tr></table>
+
+<P>As in the earlier programs, SHOWDIB7 obtains a pointer to the packed DIB in response to a File Open command from the menu. It also creates a palette from the packed DIB. Then&#8212;still in WM_COMMAND message processing&#8212;it obtains a device context for the video display, selects the palette into it, and realizes the palette. SHOWDIB7 then calls <I>CreateDIBitmap</I> to create a DDB from the DIB. If the palette were not selected and realized into the device context, the DDB that <I>CreateDIBitmap</I> creates would not use the additional colors in the logical palette.
+
+<P>After calling <I>CreateDIBitmap</I>, the program can then free the memory occupied by the packed DIB. The <I>pPackedDib</I> variable is not a static variable. Instead, the SHOWDIB7 retains the bitmap handle (<I>hBitmap</I>) and the logical palette handle (<I>hPalette</I>) as static variables.
+
+<P>During the WM_PAINT message, the palette is selected into the device context again and realized. The width and height of the bitmap is obtained from the <I>GetObject</I> function. The program can then display the bitmap on the client area by creating a compatible memory device context, selecting the bitmap into it, and doing a <I>BitBlt</I>. You must use the same palette when displaying the DDB as you used when creating it from the <I>CreateDIBitmap</I> call.
+
+<P>If you copy a bitmap to the clipboard, it's best that it be in a packed-DIB format. Windows can then provide bitmap objects to programs that want them. However, if you need to copy a bitmap object to the clipboard, get a video device context first and select and realize the palette. This will allow Windows to convert the DDB to a DIB based on the current system palette.
+
+<A NAME="570"><h2>Palettes and DIB Sections</h2></A>
+<P>Finally, SHOWDIB8 in Figure 16-19 shows how to use a palette with the DIB section.
+
+
+
+<P><B>Figure 16-19.</b> <i>The SHOWDIB8 program.</i>
+<table cellpadding=5 width="95%"><tr><td>
+<A NAME="571"><h3>SHOWDIB8.C</h3></A>
+<P><pre>
+/*--------------------------------------------------
+   SHOWDIB8.C -- Shows DIB converted to DIB section
+                 (c) Charles Petzold, 1998
+  --------------------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &quot;..\\ShowDib3\\PackeDib.h&quot;
+#include &quot;resource.h&quot;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+TCHAR szAppName[] = TEXT (&quot;ShowDib8&quot;) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     HWND     hwnd ;
+     MSG      msg ;
+     WNDCLASS wndclass ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = szAppName ;
+     wndclass.lpszClassName = szAppName ;
+
+    if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;), 
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Show DIB #8: DIB Section&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT, 
+                          NULL, NULL, hInstance, NULL) ;
+
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static HBITMAP      hBitmap ;
+     static HPALETTE     hPalette ;
+     static int          cxClient, cyClient ;
+     static OPENFILENAME ofn ;
+     static PBYTE        pBits ;
+     static TCHAR        szFileName [MAX_PATH], szTitleName [MAX_PATH] ;
+     static TCHAR        szFilter[] = TEXT (&quot;Bitmap Files (*.BMP)\0*.bmp\0&quot;)
+                                      TEXT (&quot;All Files (*.*)\0*.*\0\0&quot;) ;
+     BITMAP              bitmap ;
+     BITMAPINFO        * pPackedDib ;
+     HDC                 hdc, hdcMem ;
+     PAINTSTRUCT         ps ;
+
+     switch (message)
+     {
+     case WM_CREATE:
+          ofn.lStructSize       = sizeof (OPENFILENAME) ;
+          ofn.hwndOwner         = hwnd ;
+          ofn.hInstance         = NULL ;
+          ofn.lpstrFilter       = szFilter ;
+          ofn.lpstrCustomFilter = NULL ;
+          ofn.nMaxCustFilter    = 0 ;
+          ofn.nFilterIndex      = 0 ;
+          ofn.lpstrFile         = szFileName ;
+          ofn.nMaxFile          = MAX_PATH ;
+          ofn.lpstrFileTitle    = szTitleName ;
+          ofn.nMaxFileTitle     = MAX_PATH ;
+          ofn.lpstrInitialDir   = NULL ;
+          ofn.lpstrTitle        = NULL ;
+          ofn.Flags             = 0 ;
+          ofn.nFileOffset       = 0 ;
+          ofn.nFileExtension    = 0 ;
+          ofn.lpstrDefExt       = TEXT (&quot;bmp&quot;) ;
+          ofn.lCustData         = 0 ;
+          ofn.lpfnHook          = NULL ;
+          ofn.lpTemplateName    = NULL ;
+
+          return 0 ;
+
+     case WM_SIZE:
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+          return 0 ;
+
+     case WM_COMMAND:
+          switch (LOWORD (wParam))
+          {
+          case IDM_FILE_OPEN:
+
+                    // Show the File Open dialog box
+
+               if (!GetOpenFileName (&amp;ofn))
+                    return 0 ;
+               
+                    // If there's an existing packed DIB, free the memory
+
+               if (hBitmap)
+               {
+                    DeleteObject (hBitmap) ;
+                    hBitmap = NULL ;
+               }
+
+                    // If there's an existing logical palette, delete it
+
+               if (hPalette)
+               {
+                    DeleteObject (hPalette) ;
+                    hPalette = NULL ;
+               }
+
+                    // Load the packed DIB into memory
+
+               SetCursor (LoadCursor (NULL, IDC_WAIT)) ;
+               ShowCursor (TRUE) ;
+
+               pPackedDib = PackedDibLoad (szFileName) ;
+
+               ShowCursor (FALSE) ;
+               SetCursor (LoadCursor (NULL, IDC_ARROW)) ;
+
+               if (pPackedDib)
+               {
+                         // Create the DIB section from the DIB
+
+                    hBitmap = CreateDIBSection (NULL,
+                                             pPackedDib, 
+                                             DIB_RGB_COLORS,
+                                             &amp;pBits, 
+                                             NULL, 0) ;
+
+                         // Copy the bits
+
+                    CopyMemory (pBits, PackedDibGetBitsPtr  (pPackedDib),
+                                       PackedDibGetBitsSize (pPackedDib)) ;
+
+                         // Create palette from the DIB
+
+                    hPalette = PackedDibCreatePalette (pPackedDib) ;
+
+                         // Free the packed-DIB memory
+
+                    free (pPackedDib) ;
+               }
+               else
+               {
+                    MessageBox (hwnd, TEXT (&quot;Cannot load DIB file&quot;), 
+                                szAppName, 0) ;
+               }
+               InvalidateRect (hwnd, NULL, TRUE) ;
+               return 0 ;
+          }
+          break ;
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+
+          if (hPalette)
+          {
+               SelectPalette (hdc, hPalette, FALSE) ;
+               RealizePalette (hdc) ;
+          }
+          if (hBitmap)
+          {
+               GetObject (hBitmap, sizeof (BITMAP), &amp;bitmap) ;
+
+               hdcMem = CreateCompatibleDC (hdc) ;
+               SelectObject (hdcMem, hBitmap) ;
+
+               BitBlt (hdc,    0, 0, bitmap.bmWidth, bitmap.bmHeight, 
+                       hdcMem, 0, 0, SRCCOPY) ;
+
+               DeleteDC (hdcMem) ;
+          }
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+
+     case WM_QUERYNEWPALETTE:
+          if (!hPalette)
+               return FALSE ;
+
+          hdc = GetDC (hwnd) ;
+          SelectPalette (hdc, hPalette, FALSE) ;
+          RealizePalette (hdc) ;
+          InvalidateRect (hwnd, NULL, TRUE) ;
+
+          ReleaseDC (hwnd, hdc) ;
+          return TRUE ;
+
+     case WM_PALETTECHANGED:
+          if (!hPalette || (HWND) wParam == hwnd)
+               break ;
+
+          hdc = GetDC (hwnd) ;
+          SelectPalette (hdc, hPalette, FALSE) ;
+          RealizePalette (hdc) ;
+          UpdateColors (hdc) ;
+
+          ReleaseDC (hwnd, hdc) ;
+          break ;
+
+          
+     case WM_DESTROY:
+          if (hBitmap)
+               DeleteObject (hBitmap) ;
+
+          if (hPalette)
+               DeleteObject (hPalette) ;
+
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</pre>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="572"><h3>SHOWDIB8.RC (excerpts)</h3></A>
+<P><pre>
+//Microsoft Developer Studio generated resource script.
+
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+// Menu
+
+SHOWDIB8 MENU DISCARDABLE 
+BEGIN
+    POPUP &quot;&amp;File&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Open&quot;,                       IDM_FILE_OPEN
+    END
+END
+</pre>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="573"><h3>RESOURCE.H (excerpts)</h3></A>
+<P><pre>
+// Microsoft Developer Studio generated include file.
+// Used by ShowDib8.rc
+
+#define IDM_FILE_OPEN                   40001
+</pre>
+</td></tr></table>
+
+<P>The WM_PAINT processing in SHOWDIB7 and SHOWDIB8 are identical: Both programs retain as static variables a bitmap handle (<I>hBitmap</I>) and a logical palette handle (<I>hPalette</I>). The palette is selected into the device context and realized, the width and height of the bitmap are obtained from the <I>GetObject</I> function, the program creates a memory device context and selects the bitmap into it, and the bitmap is displayed to the client area by a call to <I>BitBlt</I>.
+
+<P>The big difference between the two programs is in the processing of the File Open menu command. After obtaining a pointer to the packed DIB and creating a palette, SHOWDIB7 must select the palette into a video device context and realize it before calling <I>CreateDIBitmap</I>. SHOWDIB8 calls <I>CreateDIBSection</I> after obtaining the packed-DIB pointer. Selecting the palette into a device context isn't necessary because <I>CreateDIBSection</I> does not convert a DIB to a device-dependent format. Indeed, the only purpose of the first argument to <I>CreateDIBSection</I> (that is, the device context handle) is if you use the DIB_PAL_COLORS flag.
+
+<P>After calling <I>CreateDIBSection</I>, SHOWDIB8 copies the pixel bits from the packed DIB to the memory location returned from the <I>CreateDIBSection</I> function. It then calls <I>PackedDibCreatePalette</I>. Although this function is convenient for the program to use, SHOWDIB8 could have created a palette based on information returned from the <I>GetDIBColorTable</I> function.
+
+</BODY>
+</HTML>
+
+
+
+
+
+

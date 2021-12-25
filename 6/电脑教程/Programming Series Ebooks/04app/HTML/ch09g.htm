@@ -1,0 +1,836 @@
+<HTML>
+<HEAD>
+<TITLE>Mutex Kernel Objects</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch09f.htm">[Previous]</A> <A HREF="ch09h.htm">[Next]</A><P>
+
+<A NAME="132"><H1>Mutex Kernel Objects</H1></A>
+
+<p>Mutex kernel objects ensure that a thread has mutual exclusive
+access to a single resource. In fact, this is how the mutex got its
+name. A mutex object contains a usage count, a thread ID, and a
+recursion counter. Mutexes behave identically to critical sections, but
+mutexes are kernel objects, while critical sections are user-mode
+objects. This means that mutexes are slower than critical sections. But
+it also means that threads in different processes can access a single
+mutex, and it means that a thread can specify a timeout value while
+waiting to gain access to a resource.</p>
+
+<p>The thread ID identifies which thread in the system currently owns the
+mutex, and the recursion counter indicates the number of times that
+this thread owns the mutex. Mutexes have many uses and are among the
+most frequently used kernel objects. Typically, they are used to guard
+a block of memory that is accessed by multiple threads. If multiple
+threads were to access the memory block simultaneously, the data in the
+block would be corrupted. Mutexes ensure that any thread accessing the
+memory block has exclusive access to the block so that the integrity of
+the data is maintained.</p>
+
+<p>The rules for a mutex are as follows:</p>
+
+<ul>
+
+<p><li>If the thread ID is 0 (an invalid thread ID), the mutex is not
+owned by any thread and is signaled.</li></p>
+
+<p><li>If the thread ID is nonzero, a thread owns the mutex and the
+mutex is nonsignaled.</li></p>
+
+<p><li>Unlike all the other kernel objects, mutexes have special code in
+the operating system that allows them to violate the normal rules.
+(I'll explain this exception shortly.)</li></p>
+
+</ul>
+
+<p>To use a mutex, one process must first create the mutex by calling
+<i>CreateMutex</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HANDLE CreateMutex(
+   PSECURITY_ATTRIBUTES psa, 
+   BOOL fInitialOwner,
+   PCTSTR pszName);
+</pre></td></tr></table></p>
+
+<p>The <i>psa</i> and <i>pszName</i> parameters are discussed in
+<A HREF="ch03a.htm">Chapter 3</A>. Of course, another process can obtain its own process
+relative handle to an existing mutex by calling <i>OpenMutex</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HANDLE OpenMutex(
+   DWORD fdwAccess, 
+   BOOL bInheritHandle, 
+   PCTSTR pszName);
+</pre></td></tr></table></p>
+
+<p>The <i>fInitialOwner</i> parameter controls the initial state of the
+mutex. If you pass FALSE (the usual case), both the mutex object's
+thread ID and recursion counter are set to 0. This means that the mutex
+is unowned and is therefore signaled.</p>
+
+<p>If you pass TRUE for <i>fInitialOwner</i>, the object's thread
+ID is set to the calling thread's ID and the recursion counter is
+set to 1. Since the thread ID is nonzero, the mutex is initially
+nonsignaled.</p>
+
+<p>A thread gains access to the shared resource by calling a wait
+function, passing the handle of the mutex guarding the resource.
+Internally, the wait function checks the thread ID to see if it is 0
+(the mutex is signaled). If the thread ID is 0, the thread ID is set to
+the calling thread's ID, the recursion counter is set to 1, and the
+calling thread remains schedulable.</p>
+
+<p>If the wait function detects that the thread ID is not 0 (the mutex is
+nonsignaled), the calling thread enters a wait state. The system
+remembers this and when the mutex's thread ID is set back to 0, the
+system sets the thread ID to the waiting thread's ID, sets the
+recursion counter to 1, and allows the waiting thread to be schedulable
+again. As always, these checks and changes to the mutex kernel object
+are performed atomically.</p>
+
+<p>For mutexes, there is one special exception to the normal kernel
+object signaled/nonsignaled rules. Let's say that a thread attempts
+to wait on a nonsignaled mutex object. In this case, the thread is
+usually placed in a wait state. However, the system checks to see
+whether the thread attempting to acquire the mutex has the same thread
+ID as recorded inside the mutex object. If the thread IDs match, the
+system allows the thread to remain schedulable&#8212;even though the
+mutex was nonsignaled. We don't see this &quot;exceptional&quot;
+behavior applied to any other kernel object anywhere in the system.
+Every time a thread successfully waits on a mutex, the object's
+recursion counter is incremented. The only way the recursion counter
+can have a value greater than 1 is if the thread waits on the same
+mutex multiple times, taking advantage of this rule exception.</p>
+
+<p>Once a thread has successfully waited on a mutex, the thread knows
+that it has exclusive access to the protected resource. Any other
+threads that attempt to gain access to the resource (by waiting on the
+same mutex) are placed in a wait state. When the thread that currently
+has access to the resource no longer needs its access, it must release
+the mutex by calling the <i>ReleaseMutex</i> function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL ReleaseMutex(HANDLE hMutex);
+</pre></td></tr></table></p>
+
+<p>This function decrements the object's recursion counter by 1. If
+a thread successfully waits on a mutex object multiple times, that
+thread has to call <i>ReleaseMutex</i> the same number of times before
+the object's recursion counter becomes 0. When the recursion
+counter hits 0, the thread ID is also set to 0 and the object becomes
+signaled.</p>
+
+<p>When the object becomes signaled, the system checks to see whether
+any other threads are waiting on the mutex. If so, the system
+&quot;fairly&quot; selects one of the waiting threads and gives it
+ownership of the mutex. This means, of course, that the thread ID is
+set to the selected thread's ID and the recursion counter is set to
+1. If no other thread is waiting on the mutex, the mutex stays in the
+signaled state so that the next thread that waits on the mutex
+immediately gets it.</p>
+
+
+<A NAME="133"><H2>Abandonment Issues</H2></A>
+
+<p>Mutex objects are different from all other kernel objects because
+they have a notion of &quot;thread ownership.&quot; None of the other
+kernel objects that we've discussed in this chapter remembers which
+thread successfully waited on it; only mutexes keep track of this. This
+thread ownership concept for mutexes is the reason why mutexes have the
+special rule exception that allows a thread to acquire the mutex even
+when it is nonsignaled.</p>
+
+<p>This exception applies not only to a thread that is attempting to
+acquire a mutex, it also applies to threads attempting to release a
+mutex. When a thread calls <i>ReleaseMutex</i>, the function checks to
+see whether the calling thread's ID matches the thread ID in the
+mutex object. If the IDs match, the recursion counter is decremented as
+described earlier. If the thread IDs don't match, <i>
+ReleaseMutex</i> does nothing and returns FALSE (indicating failure)
+back to the caller. Making a call to <i>GetLastError</i> at this time
+will return ERROR_NOT_OWNER (attempt to release mutex not owned by caller).</p>
+
+<p>So if a thread owning a mutex terminates (using <i>ExitThread,
+TerminateThread, ExitProcess</i>, or <i>TerminateProcess</i>) before
+releasing the mutex, what happens to the mutex and the other threads
+that are waiting on it? The answer is that the system considers the
+mutex to be <i>abandoned</i>&#8212;the thread that owns it can never
+release it because the thread has died.</p>
+
+<p>Because the system keeps track of all mutex and thread kernel objects,
+it knows exactly when mutexes become abandoned. When a mutex becomes
+abandoned, the system automatically resets the mutex object's
+thread ID to 0 and its recursion counter to 0. Then the system checks
+to see whether any threads are currently waiting for the mutex. If so,
+the system &quot;fairly&quot; selects a waiting thread, sets the thread
+ID to the selected thread's ID, and sets the recursion counter to
+1; the selected thread becomes schedulable.</p>
+
+<p>This is the same as before except that the wait function does not
+return the usual WAIT_OBJECT_0 value to the thread. Instead, the wait
+function returns the special value of WAIT_ABANDONED. This special
+return value (which applies only to mutex objects) indicates that the
+mutex the thread was waiting on was owned by another thread that was
+terminated before it finished using the shared resource. This is not
+the best situation to be in. The newly scheduled thread has no idea
+what state the resource is currently in&#8212;the resource might be
+totally corrupt. You have to decide for yourself what your application
+should do in this case.</p>
+
+<p>In real life, most applications never check explicitly for the
+WAIT_ABANDONED return value because a thread is rarely just terminated.
+(This whole discussion provides another great example of why you should
+never call the <i>TerminateThread</i> function.)</p>
+
+
+<A NAME="134"><H2>Mutexes vs. Critical Sections</H2></A>
+
+<p>Mutexes and critical section have identical semantics with respect
+to scheduling waiting threads. However, they differ in some of their
+other attributes. The following table compares them.</p>
+
+<P>
+	<TABLE CELLPADDING=5 WIDTH="95%">
+	
+		<TR>
+			<TH>Characteristic</TH>
+			<TH>Mutex</TH>
+			<TH>Critical Section</TH>			
+		</TR>
+
+		<TR>
+			<TD VALIGN="TOP">Performance</TD>
+			<TD VALIGN="TOP">Slow</TD>
+			<TD VALIGN="TOP">Fast</TD>
+		</TR>
+		
+		<TR>
+			<TD VALIGN="TOP">Can be used across process boundaries</TD>
+			<TD VALIGN="TOP">Yes</TD>
+			<TD VALIGN="TOP">No</TD>
+		</TR>
+
+		<TR>
+			<TD VALIGN="TOP">Declaration</TD>
+			<TD VALIGN="TOP">HANDLE <i>hmtx;</i></TD>
+			<TD VALIGN="TOP">CRITICAL_SECTION <i>cs;</i></TD>		
+		</TR>
+		
+		<TR>
+			<TD VALIGN="TOP">Initialization</TD>
+			<TD VALIGN="TOP"><i>hmtx= CreateMutex (NULL, FALSE, NULL);</i></TD>
+			<TD VALIGN="TOP"><i>InitializeCriticalSection(&amp;cs);</i></TD>		
+		</TR>
+		
+		<TR>
+			<TD VALIGN="TOP">Cleanup</TD>
+			<TD VALIGN="TOP"><i>CloseHandle(hmtx);</i></TD>
+			<TD VALIGN="TOP"><i>DeleteCriticalSection(&amp;cs);</i></TD>		
+		</TR>
+		
+		<TR>
+			<TD VALIGN="TOP">Infinite wait</TD>
+			<TD VALIGN="TOP"><i>WaitForSingleObject (hmtx, INFINITE);</i></TD>
+			<TD VALIGN="TOP"><i>EnterCriticalSection(&amp;cs);</i></TD>		
+		</TR>
+		
+		<TR>
+			<TD VALIGN="TOP">0 wait</TD>
+			<TD VALIGN="TOP"><i>WaitForSingleObject (hmtx, 0);</i></TD>
+			<TD VALIGN="TOP"><i>TryEnterCriticalSection(&amp;cs);</i></TD>		
+		</TR>
+		
+		<TR>
+			<TD VALIGN="TOP">Arbitrary wait</TD>
+			<TD VALIGN="TOP"><i>WaitForSingleObject (hmtx, dwMilliseconds);</i></TD>		
+			<TD VALIGN="TOP">Not possible</TD>
+		</TR>
+		
+		<TR>
+			<TD VALIGN="TOP">Release</TD>		
+			<TD VALIGN="TOP"><i>ReleaseMutex(hmtx);</i></TD>
+			<TD VALIGN="TOP"><i>LeaveCriticalSection(&amp;cs);</i></TD>
+		</TR>
+		
+		<TR>
+			<TD VALIGN="TOP">Can be waited on with other kernel objects</TD>
+			<TD VALIGN="TOP">Yes (use <i>WaitForMultipleObjects</i> or similar function)</TD>
+			<TD VALIGN="TOP">No</TD>
+		</TR>
+		
+	</TABLE>
+</P>
+
+
+<A NAME="135"><H2>The Queue Sample Application</H2></A>
+
+<p>The Queue (&quot;09 Queue.exe&quot;) application, listed in Figure
+9-2, uses a mutex and a semaphore to control a queue of data elements.
+The source code and resource files for the application are in the
+09-Queue directory on the companion CD-ROM. When you run Queue, the
+following dialog box appears.</p>
+
+<p>
+<A HREF="javascript:fullSize('G09si04x.htm')"> <img src="images/G09si04.JPG" width=404 height=349 border=0 ALT="Click to view at full size."> </A>
+</p>
+
+<p>When Queue initializes, it creates four client threads and two server
+threads. Each client thread sleeps for some period of time and then
+appends a request element to a queue. As each element is queued, the
+Client Threads list box is updated. Each entry indicates which client
+thread appended the entry and which entry it was. For example, the
+first entry in the list box indicates that client thread 0 appended its
+first request. Then client threads 1 through 3 appended their first
+request, followed by client thread 0 appending its second request, and
+so on.</p>
+
+<p>The server threads have nothing to do until at least one element
+appears in the queue. When an element appears, a single server thread
+wakes up to process the request. The Server Threads list box shows the
+status of the server threads. The first entry shows that server thread
+0 is processing a request from client thread 0. The request being
+processed is the client thread's first request. The second entry
+shows server thread 1 processing client thread 1's first request,
+and so on.</p>
+
+<p>In this example, the server threads cannot process the client's
+requests quickly enough and the queue fills to maximum capacity. I
+initialize the queue data structure so it can hold no more than 10
+elements at a single time; this causes the queue to fill quickly. Plus,
+there are four client threads and only two server threads. We see that
+the queue is full when client thread 3 attempts to append its fifth
+request to the queue.</p>
+
+<p>OK, so that's what you see; what's more interesting is how it
+works. The queue is managed and controlled by a C++ class, CQueue:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+class CQueue {
+public:
+   struct ELEMENT {
+      int m_nThreadNum, m_nRequestNum;
+      // Other element data should go here.
+   };
+   typedef ELEMENT* PELEMENT;
+
+private:
+   PELEMENT m_pElements;        // Array of elements to be processed
+   int      m_nMaxElements;     // # of elements in the array
+   HANDLE   m_h[2];             // Mutex &amp; semaphore handles
+   HANDLE   &amp;m_hmtxQ;           // Reference to m_h[0]
+   HANDLE   &amp;m_hsemNumElements; // Reference to m_h[1]
+
+public:
+   CQueue(int nMaxElements);
+   ~CQueue();
+
+   BOOL Append(PELEMENT pElement, DWORD dwMilliseconds);
+   BOOL Remove(PELEMENT pElement, DWORD dwMilliseconds);
+};
+</pre></td></tr></table></p>
+
+<p>The public ELEMENT structure inside this class defines what a queue
+data element looks like. The actual content is not particularly
+important. For this sample application, clients place their client
+thread number and their request number in this element so that the
+servers can display this information in their list box when they
+process the retrieved element. A real-life application would generally
+not require this information.</p>
+
+<p>For the private members, we have <i>m_pElements</i>, which points to
+a fixed-size array of ELEMENT structures. This is the data that needs
+protecting from the multiple client/server threads. The <i>
+m_nMaxElements</i> member indicates how large this array is initialized
+to when the CQueue object is constructed. The next member, <i>m_h</i>,
+is an array of two kernel object handles. To properly protect the
+queue's data elements, you need two kernel objects: a mutex and a
+semaphore. In the CQueue constructor, these two objects are created and
+their handles are placed in this array.</p>
+
+<p>As you'll see shortly, the code sometimes calls <i>
+WaitForMultipleObjects</i>, passing the address to the handle array.
+You'll also see that sometimes the code needs to refer to just one
+of these kernel object handles. To make the code more readable and
+maintainable, I also declare two handle reference members, <i>
+m_hmtxQ</i> and <i>m_hsemNumElements</i>. When the CQueue constructor
+executes, it initializes these handle reference members to <i>
+m_h[0]</i> and <i>m_h[1]</i>, respectively.</p>
+
+<p>You should now have no trouble understanding CQueue's constructor
+and destructor methods, so let's turn our attention to the <i>
+Append</i> method. This method attempts to append an ELEMENT to the
+queue. But first, the thread must make sure that it has exclusive
+access to the queue. The <i>Append</i> method does this by calling <i>
+WaitForSingleObject</i>, passing the handle of the <i>m_hmtxQ</i>
+mutex. If WAIT_OBJECT_0 is returned, the thread has exclusive access to
+the queue.</p>
+
+<p>Next, the <i>Append</i> method must attempt to increment the number
+of elements in the queue by calling <i>ReleaseSemaphore</i> and passing
+a release count of 1. If <i>ReleaseSemaphore</i> is successful, the
+queue is not full and the new element can be appended. Fortunately, <i>
+ReleaseSemaphore</i> also returns the previous count of queue elements
+in the <i>lPreviousCount</i> variable. This tells you exactly which
+array index the new element should be placed in. After copying the
+element into the queue's array, the function returns. Once the
+element is completely appended to the queue, <i>Append</i> calls <i>
+ReleaseMutex</i> so that other threads can access the queue. The
+remaining parts of the <i>Append</i> function have to do with failure
+cases and error handling.</p>
+
+<p>Now let's look at how a server thread calls the <i>Remove</i>
+method to extract an element from the queue. First, the thread must
+make sure that it has exclusive access to the queue, and the queue must
+have at least one element in it. Certainly, a server thread has no
+reason to wake if no elements are in the queue. So the <i>Remove</i>
+method first calls <i>WaitForMultipleObjects</i>, passing both the
+mutex and the semaphore's handles. Only when both of these objects
+are signaled should a server thread wake up.</p>
+
+<p>If WAIT_OBJECT_0 is returned, the thread has exclusive access to the
+queue and at least one element must be in the queue. At this point, the
+code extracts the element at index 0 in the array and then shifts the
+remaining elements in the array down one. This is not the most
+efficient way to implement a queue because memory copies like this are
+expensive, but our purpose here is to demonstrate thread
+synchronization. Finally, <i>ReleaseMutex</i> is called so that other
+threads can safely access the queue.</p>
+
+<p>Note that the semaphore object keeps track of how many elements are
+in the queue at any given time. You can see how this number is
+incremented: the <i>Append</i> method calls <i>ReleaseSemaphore</i>
+when a new element is appended to the queue. But you don't
+immediately see how this count is decremented when an element is
+removed from the queue. The decrementing is done by the <i>Remove</i>
+method's call to <i>WaitForMultipleObjects</i>. Remember that the
+side effect of successfully waiting on a semaphore is that its count is
+decremented by one. This is very convenient for us.</p>
+
+<p>Now that you understand how the CQueue class works, the rest of the
+source code is easy to understand.</p>
+
+<p><b>Figure 9-2.</b> <i>The Queue sample application</i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><b>Queue.cpp</b></p>
+<PRE>
+/******************************************************************************
+Module:  Queue.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#include &quot;..\CmnHdr.h&quot;     /* See Appendix A. */
+#include &lt;windowsx.h&gt;
+#include &lt;tchar.h&gt;
+#include &lt;process.h&gt;       // For _beginthreadex
+#include &quot;Resource.h&quot;
+
+///////////////////////////////////////////////////////////////////////////////
+
+class CQueue {
+public:
+   struct ELEMENT {
+      int m_nThreadNum, m_nRequestNum;
+      // Other element data should go here
+   };
+   typedef ELEMENT* PELEMENT;
+
+private:
+   PELEMENT m_pElements;        // Array of elements to be processed
+   int      m_nMaxElements;     // Maximum # of elements in the array
+   HANDLE   m_h[2];             // Mutex &amp; semaphore handles
+   HANDLE   &amp;m_hmtxQ;           // Reference to m_h[0]
+   HANDLE   &amp;m_hsemNumElements; // Reference to m_h[1]
+
+public:
+   CQueue(int nMaxElements);
+   ~CQueue();
+
+   BOOL Append(PELEMENT pElement, DWORD dwMilliseconds);
+   BOOL Remove(PELEMENT pElement, DWORD dwMilliseconds);
+};
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+CQueue::CQueue(int nMaxElements) 
+   : m_hmtxQ(m_h[0]), m_hsemNumElements(m_h[1]) {
+
+   m_pElements = (PELEMENT) 
+      HeapAlloc(GetProcessHeap(), 0, sizeof(ELEMENT) * nMaxElements);
+   m_nMaxElements = nMaxElements;
+   m_hmtxQ = CreateMutex(NULL, FALSE, NULL);
+   m_hsemNumElements = CreateSemaphore(NULL, 0, nMaxElements, NULL);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+CQueue::~CQueue() {
+
+   CloseHandle(m_hsemNumElements);
+   CloseHandle(m_hmtxQ);
+   HeapFree(GetProcessHeap(), 0, m_pElements);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL CQueue::Append(PELEMENT pElement, DWORD dwTimeout) {
+
+   BOOL fOk = FALSE;
+   DWORD dw = WaitForSingleObject(m_hmtxQ, dwTimeout);
+
+   if (dw == WAIT_OBJECT_0) {
+      // This thread has exclusive access to the queue
+
+      // Increment the number of elements in the queue
+      LONG lPrevCount;
+      fOk = ReleaseSemaphore(m_hsemNumElements, 1, &amp;lPrevCount);
+      if (fOk) {
+         // The queue is not full; append the new element
+         m_pElements[lPrevCount] = *pElement;
+      } else {
+
+         // The queue is full; set the error code and return failure
+         SetLastError(ERROR_DATABASE_FULL);
+      }
+
+      // Allow other threads to access the queue
+      ReleaseMutex(m_hmtxQ);
+
+   } else {
+      // Timeout, set error code and return failure
+      SetLastError(ERROR_TIMEOUT);
+   }
+
+   return(fOk);   // Call GetLastError for more info
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL CQueue::Remove(PELEMENT pElement, DWORD dwTimeout) {
+
+   // Wait for exclusive access to queue and for queue to have element.
+   BOOL fOk = (WaitForMultipleObjects(chDIMOF(m_h), m_h, TRUE, dwTimeout) 
+      == WAIT_OBJECT_0);
+
+   if (fOk) {
+      // The queue has an element; pull it from the queue
+      *pElement = m_pElements[0];
+
+      // Shift the remaining elements down
+      MoveMemory(&amp;m_pElements[0], &amp;m_pElements[1], 
+         sizeof(ELEMENT) * (m_nMaxElements - 1));
+
+      // Allow other threads to access the queue
+      ReleaseMutex(m_hmtxQ);
+
+   } else {
+      // Timeout, set error code and return failure
+      SetLastError(ERROR_TIMEOUT);
+   }
+
+   return(fOk);   // Call GetLastError for more info
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+CQueue g_q(10);                     // The shared queue
+volatile BOOL g_fShutdown = FALSE;  // Signals client/server threads to die
+HWND g_hwnd;                        // How client/server threads give status
+
+
+// Handles to all client/server threads &amp; number of client/server threads
+HANDLE g_hThreads[MAXIMUM_WAIT_OBJECTS];  
+int    g_nNumThreads = 0;
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+DWORD WINAPI ClientThread(PVOID pvParam) {
+
+   int nThreadNum = PtrToUlong(pvParam);
+   HWND hwndLB = GetDlgItem(g_hwnd, IDC_CLIENTS);
+
+   for (int nRequestNum = 1; !g_fShutdown; nRequestNum++) {
+
+      TCHAR sz[1024];
+      CQueue::ELEMENT e = { nThreadNum, nRequestNum };
+
+      // Try to put an element on the queue
+      if (g_q.Append(&amp;e, 200)) {
+
+         // Indicate which thread sent it and which request
+         wsprintf(sz, TEXT(&quot;Sending %d:%d&quot;), nThreadNum, nRequestNum);
+      } else {
+
+         // Couldn't put an element on the queue
+         wsprintf(sz, TEXT(&quot;Sending %d:%d (%s)&quot;), nThreadNum, nRequestNum,
+            (GetLastError() == ERROR_TIMEOUT) 
+               ? TEXT(&quot;timeout&quot;) : TEXT(&quot;full&quot;));
+      }
+
+      // Show result of appending element
+      ListBox_SetCurSel(hwndLB, ListBox_AddString(hwndLB, sz));
+      Sleep(2500);   // Wait before appending another element
+   }
+   
+   return(0);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+DWORD WINAPI ServerThread(PVOID pvParam) {
+
+   int nThreadNum = PtrToUlong(pvParam);
+   HWND hwndLB = GetDlgItem(g_hwnd, IDC_SERVERS);
+
+   while (!g_fShutdown) {
+
+      TCHAR sz[1024];
+      CQueue::ELEMENT e;
+
+      // Try to get an element from the queue
+      if (g_q.Remove(&amp;e, 5000)) {
+
+         // Indicate which thread is processing it, which thread
+         // sent it, and which request we're processing
+         wsprintf(sz, TEXT(&quot;%d: Processing %d:%d&quot;), 
+            nThreadNum, e.m_nThreadNum, e.m_nRequestNum);
+
+         // The server takes some time to process the request
+         Sleep(2000 * e.m_nThreadNum);
+
+      } else {
+         // Couldn't get an element from the queue
+         wsprintf(sz, TEXT(&quot;%d: (timeout)&quot;), nThreadNum);
+      }
+
+      // Show result of processing element
+      ListBox_SetCurSel(hwndLB, ListBox_AddString(hwndLB, sz));
+   }
+
+   return(0);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL Dlg_OnInitDialog(HWND hwnd, HWND hwndFocus, LPARAM lParam) {
+
+   chSETDLGICONS(hwnd, IDI_QUEUE);
+
+   g_hwnd = hwnd; // Used by client/server threads to show status
+
+   DWORD dwThreadID;
+
+   // Create the client threads
+   for (int x = 0; x &lt; 4; x++)
+      g_hThreads[g_nNumThreads++] = 
+         chBEGINTHREADEX(NULL, 0, ClientThread, (PVOID) (INT_PTR) x, 
+            0, &amp;dwThreadID);
+
+   // Create the server threads
+   for (x = 0; x &lt; 2; x++)
+      g_hThreads[g_nNumThreads++] = 
+         chBEGINTHREADEX(NULL, 0, ServerThread, (PVOID) (INT_PTR) x, 
+            0, &amp;dwThreadID);
+
+   return(TRUE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify) {
+
+   switch (id) {
+      case IDCANCEL:
+         EndDialog(hwnd, id);
+         break;
+   }
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+INT_PTR WINAPI Dlg_Proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+   
+   switch (uMsg) {
+      chHANDLE_DLGMSG(hwnd, WM_INITDIALOG, Dlg_OnInitDialog);
+      chHANDLE_DLGMSG(hwnd, WM_COMMAND,    Dlg_OnCommand);
+   }
+   return(FALSE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+int WINAPI _tWinMain(HINSTANCE hinstExe, HINSTANCE, PTSTR pszCmdLine, int) {
+
+   DialogBox(hinstExe, MAKEINTRESOURCE(IDD_QUEUE), NULL, Dlg_Proc);
+   InterlockedExchangePointer((PVOID*) &amp;g_fShutdown, (PVOID) TRUE);
+
+   // Wait for all the threads to terminate &amp; then cleanup
+   WaitForMultipleObjects(g_nNumThreads, g_hThreads, TRUE, INFINITE);
+   while (g_nNumThreads&#8212;)
+      CloseHandle(g_hThreads[g_nNumThreads]);
+
+   return(0);
+}
+
+
+//////////////////////////////// End of File //////////////////////////////////
+</PRE>
+</TD></TR></TABLE>
+</P>
+
+<P>
+<TABLE CELLPADDING=5 WIDTH ="95%">
+<TR><TD>
+<p><b>Queue.rc</b></p>
+<PRE>
+//Microsoft Developer Studio generated resource script.
+//
+#include &quot;Resource.h&quot;
+
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+/////////////////////////////////////////////////////////////////////////////
+// English (U.S.) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+#ifdef _WIN32
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(1252)
+#endif //_WIN32
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
+
+IDD_QUEUE DIALOG DISCARDABLE  38, 36, 298, 225
+STYLE WS_MINIMIZEBOX | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
+CAPTION &quot;Queue&quot;
+FONT 8, &quot;MS Sans Serif&quot;
+BEGIN
+    GROUPBOX        &quot;&amp;Client threads&quot;,IDC_STATIC,4,4,140,216
+    LISTBOX         IDC_CLIENTS,8,16,132,200,NOT LBS_NOTIFY | 
+                    LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP
+    GROUPBOX        &quot;&amp;Server threads&quot;,IDC_STATIC,156,4,140,216
+    LISTBOX         IDC_SERVERS,160,16,132,200,NOT LBS_NOTIFY | 
+                    LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP
+END
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+// Icon with lowest ID value placed first to ensure application icon
+// remains consistent on all systems.
+IDI_QUEUE               ICON    DISCARDABLE     &quot;Queue.Ico&quot;
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// TEXTINCLUDE
+//
+
+1 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;Resource.h\0&quot;
+END
+
+2 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;#include &quot;&quot;afxres.h&quot;&quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+3 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+#endif    // APSTUDIO_INVOKED
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// DESIGNINFO
+//
+
+#ifdef APSTUDIO_INVOKED
+GUIDELINES DESIGNINFO DISCARDABLE 
+BEGIN
+    IDD_QUEUE, DIALOG
+    BEGIN
+        RIGHTMARGIN, 244
+        BOTTOMMARGIN, 130
+    END
+END
+#endif    // APSTUDIO_INVOKED
+
+#endif    // English (U.S.) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 3 resource.
+//
+
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED
+
+</pre></td></tr></table></p>
+
+
+</BODY>
+</HTML>
+
+
+
+
+
+

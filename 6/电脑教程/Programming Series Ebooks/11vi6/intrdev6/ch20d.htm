@@ -1,0 +1,622 @@
+<HTML>
+<HEAD>
+<LINK REL=StyleSheet HREF="Library.css" TYPE="text/css">
+<TITLE>The Internet Banking Example</TITLE>
+
+
+</HEAD>
+<BODY BGCOLOR="#FFFFFF" TEXT="#000000">
+<SCRIPT LANGUAGE="JavaScript">
+<!--
+
+function fullSize(sURL){
+	window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+
+function LibraryHeaderNav(sBackward, sForward, sImgLeftOff, sImgLeftOn, sImgRightOff, sImgRightOn, iH, iW, sImgLeftStyle, sImgRightStyle, sImgRuleStyle, sRuleColor, sRuleSize){
+	var tableStr;
+	//validate questionable args for defs
+	tableStr = "<TABLE BORDER=0 CELLPADDING=0 CELLSPACING=0 border=0 width=100%>";
+	tableStr += "<TR VALIGN=top ALIGN=right>";
+
+	tableStr += "<TD align=right class=" + sImgRuleStyle + ">&nbsp;</TD>";	
+	
+	tableStr += "<TD width=34 align=right class=" + sImgLeftStyle + ">";
+	tableStr += "<A href='" + sBackward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgLeftOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgLeftOff + '\'\"';
+	tableStr += " SRC='" + sImgLeftOff + "' vspace=0 hspace=0></a></TD>";
+	
+	tableStr += "<TD width=34 align=left class=" + sImgRightStyle + ">";
+	tableStr += "<A href='" + sForward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgRightOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgRightOff + '\'\"';
+	tableStr += " SRC='" + sImgRightOff + "' vspace=0 hspace=0></a></TD></TR>";
+
+	tableStr += "<TR VALIGN=top>";
+	tableStr += "<TD height=3 align=center colspan=3 class=" + sImgRuleStyle + ">";
+	tableStr += "<HR color=" + sRuleColor + " size=" + sRuleSize + "></TD></TR></TABLE>";
+	//alert(tableStr);
+	document.write(tableStr);
+}
+
+ 																						     //purple is: #aa22aa   orange is: #ff9900
+LibraryHeaderNav("ch20c.htm", "ch20e.htm", "images/unit_o_a1.gif", "images/unit_o_a2.gif", "images/unit_o_b1.gif", "images/unit_o_b2.gif", 18, 34, "unit01", "unit02", "headerrule", "#ff9900", "2");
+//--></SCRIPT>
+<A NAME="367"><H1>The Internet Banking Example</H1></A>
+<P>Throughout this chapter, we've seen several short examples of how to 
+create transactional components and how to call them from within ASP Web 
+pages. In this section, we'll consolidate what we've learned in this and earlier 
+chapters by taking a look at an example that combines all of these techniques in 
+a practical and fully functioning application. 
+
+</P>
+<P>We'll again use the VI-Bank sample application, which is located on 
+the CD-ROM under the VI-Bank folder. Remember that the Visual Basic files 
+are located under the VI-Bank/VB98 folder and the Visual InterDev files are 
+located under the VI-Bank/VIntDev98 folder. The necessary Microsoft SQL Server 
+6.5 database for this example is also on the CD-ROM under the VI-Bank/SQL 
+folder. Complete installation instructions are included on the CD-ROM.
+
+</P>
+<P>The example that we'll look at is the part of the VI-Bank application 
+that allows for the transfer of funds. A customer at the bank is able to transfer 
+funds between any of his or her existing accounts. Figure 20-11 shows the initial screen.
+
+</P>
+<P>
+<A HREF="javascript:fullSize('f20lh11x.htm')"> <IMG SRC="images/f20lh11.jpg" width=404 height=303 border=0 ALT="Click to view at full size."> </A>
+
+</P>
+<P>
+<!-- CAPTION --><B>Figure 20-11.</B> <I>The Transfer Funds page of the VI-Bank sample application.</I><!-- /CAPTION -->
+
+</P>
+<P>There are two parts to this application: 
+
+</P>
+<UL>
+<P><LI><B>Server-side ActiveX components</B>  These are installed into MTS and perform the actual transfer of funds and interact with the database. 
+</LI>
+</P>
+<P><LI><B>The ASP presentation layer</B> This displays the names of the accounts available to the user, captures user input, and presents the results of the transaction to the user.
+</LI></P>
+</UL>
+
+
+
+
+<A NAME="368"><H2>Visual Basic Components</H2></A><P>The source code for the transfer.cls file appears below. This file is part of 
+the VI-Bank.vbp project and has a method named 
+<I>Transfer</I> that is called from within the ASP code.
+
+</P>
+<P><PRE>
+' Filename: VI-Bank.vbp (Transfer.cls)
+'
+' Description:  Transfer Class
+'
+' This file is provided as part of the &quot;Programming Visual
+' InterDev 6.0&quot; CD-ROM.
+'
+' THIS CODE AND INFORMATION IS PROVIDED &quot;AS IS&quot; WITHOUT
+' WARRANTY OF ANY KIND, EITHER EXPRESSED OR IMPLIED,
+' INCLUDING BUT NOT LIMITED TO THE IMPLIED WARRANTIES
+' OF MERCHANTABILITY AND/OR FITNESS FOR A PARTICULAR
+' PURPOSE.
+'
+' Copyright (C) 1998 Microsoft Corporation. All rights reserved
+
+Option Explicit
+
+Private Const ERROR_NUMBER = vbObjectError + 0
+Private Const APP_ERROR = -2147467008
+
+Public Function Transfer(ByVal lngAmount As Long, _
+    ByVal lngAccountTo As Long, ByVal lngAccountFrom As Long) _
+    As String
+
+    Dim strResult As String
+    
+    On Error GoTo ErrorHandler
+    
+    ' Check for security.
+    If (lngAmount &gt; 500 Or lngAmount &lt; -500) Then
+        If Not GetObjectContext.IsCallerInRole(&quot;Administrator&quot;) Then
+            Err.Raise Number:=APP_ERROR, Description:= _
+                &quot;Need 'Administrator' role for amounts over $500&quot;
+        End If
+    End If
+    
+    ' Create the account object using our context.
+    Dim objAccount As VIBank.Account
+    Set objAccount = GetObjectContext.CreateInstance(&quot;VIBank.Account&quot;)
+    
+    If objAccount Is Nothing Then
+        Err.Raise ERROR_NUMBER, _
+            Description:=&quot;Could not create account object&quot;
+    End If
+
+    ' Call the Transaction function.
+    Dim strCredit As String, strDebit As String
+    
+    ' Apply the credit to the &quot;To&quot; account.
+    strCredit = objAccount.Transaction(lngAccountTo, lngAmount)
+    
+    If strCredit = &quot;&quot; Then
+        Err.Raise ERROR_NUMBER, Description:=strCredit
+    Else
+        ' Apply the debit to the &quot;From&quot; account.
+        strDebit = objAccount.Transaction(lngAccountFrom, _
+            0 - lngAmount)
+        If strDebit = &quot;&quot; Then
+            Err.Raise ERROR_NUMBER, _
+                Description:=strDebit    ' Debit failed
+        Else
+            strResult = strCredit + &quot;  &quot; + strDebit
+        End If
+    End If
+    
+    GetObjectContext.SetComplete
+    
+    ' Return the results of the transfer.
+    Transfer = strResult
+     
+    Exit Function
+ 
+ErrorHandler:
+
+    GetObjectContext.SetAbort
+    
+    Transfer = &quot;&quot;     ' Indicate that an error occurred.
+    
+    Err.Raise Err.Number, &quot;VIBank.Transfer.Transfer&quot;, _
+        Err.Description
+    
+End Function
+</PRE>
+
+</P>
+<P>You can see from the above code that the <I>Transfer</I> method is passed the amount for the transfer and the relevant account numbers to credit and debit. The first thing the code does is ensure that the caller of the method is in the correct role. Only callers in the Administrator role are allowed to perform transfers of more than $500. This code is a great way to secure your 
+server-side components and to make sure that only authorized callers can execute 
+their methods. You'll remember that the roles can be set up from within the 
+Transaction Server Explorer.
+
+</P>
+<P>The next step for the code is to create an instance of the 
+<I>Account</I> object. This object is used to perform the actual database access, as we shall see 
+later in the chapter. After instantiating the <I>Account</I> object, the code calls its 
+<I>Transaction</I> method twice: once for the credit and once for the debit. If all is 
+successful, the code calls the <I>SetComplete</I> method to commit the transaction 
+and returns a string to the calling application.
+ 
+</P>
+<P>The source code for the account.cls file begins beneath the note 
+below. This class contains the <I>Transaction</I> function. You'll notice within the code 
+that the File DSN, VI-Bank, of the SQL Server database is set in the 
+<I>strConnect</I> constant. The <I>Transaction</I> function takes an account number and a dollar 
+amount as input. It again checks to see that the caller is in the appropriate role by 
+using the <I>IsCallerInRole</I> method of the context object. 
+
+</P>
+<P><div class="note"><blockquote>
+<B>NOTE</B><HR>If you want to make your code a little more flexible, you 
+should externalize the role names so they are not hard-coded in your 
+components. One way to externalize the role names is to place them in 
+the database and have your code perform a query. This way you can 
+make changes to the security of your components 
+without having to rewrite and recompile your code.
+</blockquote></div>
+
+</P>
+<P><PRE>
+' Filename: Account.cls (VI-Bank.vbp)
+'
+' Description:  Account Class
+'
+' This file is provided as part of the &quot;Programming Visual
+' InterDev 6.0&quot; CD-ROM.
+'
+' THIS CODE AND INFORMATION IS PROVIDED &quot;AS IS&quot; WITHOUT
+' WARRANTY OF ANY KIND, EITHER EXPRESSED OR IMPLIED,
+' INCLUDING BUT NOT LIMITED TO THE IMPLIED WARRANTIES
+' OF MERCHANTABILITY AND/OR FITNESS FOR A PARTICULAR
+' PURPOSE.
+'
+' Copyright (C) 1998 Microsoft Corporation. All rights reserved
+
+Option Explicit
+
+Private Const ERROR_NUMBER = vbObjectError + 0
+Private Const APP_ERROR = -2147467008
+Private Const strConnect = &quot;FILEDSN=VI-Bank&quot;
+
+Public Function Transaction(ByVal lngAccountNo As Long, _
+    ByVal lngAmount As Long) As String
+    
+    Dim strResult As String
+    
+    On Error GoTo ErrorHandler
+    
+    ' Check for security.
+    If (lngAmount &gt; 500 Or lngAmount &lt; -500) Then
+        If Not GetObjectContext.IsCallerInRole(&quot;Administrator&quot;) Then
+            Err.Raise Number:=APP_ERROR, Description:= _
+                &quot;Need 'Administrator' role for amounts over $500&quot;
+           End If
+    End If
+    
+    ' Obtain the ADO environment and connection.
+
+    Dim adoConn As New ADODB.Connection
+    Dim varRows As Variant
+    
+    adoConn.Open strConnect
+   
+    ' Update the Account_Balance table given the Account Number.
+    Dim strSQL As String
+    strSQL = &quot;UPDATE Account_Balance SET Balance = Balance + &quot; _
+        + Str$(lngAmount) + &quot; WHERE Account_No = &quot; + _
+        Str$(lngAccountNo)
+    
+TryAgain:
+
+    adoConn.Execute strSQL, varRows
+
+    ' If anything else happens,
+    On Error GoTo ErrorHandler
+
+    ' Get resulting balance.
+    strSQL = &quot;SELECT Balance FROM Account_Balance WHERE &quot; + _
+        &quot;Account_No = &quot; + Str$(lngAccountNo)
+    
+    Dim adoRS As ADODB.Recordset
+    Set adoRS = adoConn.Execute(strSQL)
+    If adoRS.EOF Then
+        Err.Raise Number:=APP_ERROR, Description:= _
+            &quot;Error. Account &quot; + Str$(lngAccountNo) + _
+            &quot; not on file.&quot;
+    End If
+
+    Dim lngBalance As Long
+    lngBalance = adoRS.Fields(&quot;Balance&quot;).Value
+    
+    ' Check if account is overdrawn.
+    If (lngBalance) &lt; 0 Then
+        Err.Raise Number:=APP_ERROR, Description:= _
+            &quot;Error. Account &quot; + Str$(lngAccountNo) + _
+            &quot; would be overdrawn by &quot; + _
+            Str$(lngBalance) + &quot;. Balance is still &quot; + _
+            Str$(lngBalance - lngAmount) + &quot;.&quot;
+    Else
+        If lngAmount &lt; 0 Then
+            strResult = strResult &amp; &quot;Debit from account &quot; &amp; _
+                lngAccountNo &amp; &quot;, &quot;
+        Else
+            strResult = strResult &amp; &quot;Credit to account &quot; &amp; _
+                lngAccountNo &amp; &quot;, &quot;
+        End If
+        
+        ' Now insert the transaction into the Account_Transaction 
+        ' table. Use the strResult variable as the entry for the 
+        ' transaction description.
+        strSQL = &quot;INSERT INTO Account_Transaction &quot; + _
+            &quot; (account_no, description, check_no, &quot; + _
+            &quot;transaction_code_id, amount, date) VALUES (&quot; + _
+            Str$(lngAccountNo) + &quot;, '&quot; + strResult + _
+            &quot;','T', 3,&quot; + Str$(lngAmount) + &quot;, GETDATE())&quot;
+        Set adoRS = adoConn.Execute(strSQL)
+        
+        strResult = strResult + &quot;balance is $&quot; &amp; _
+            Str$(lngBalance) &amp; &quot;.&quot;
+    End If
+
+    ' Clean up.
+    Set adoRS = Nothing
+    Set adoConn = Nothing
+    
+    GetObjectContext.SetComplete
+    
+    Transaction = strResult
+    
+Exit Function
+
+ErrorHandler:
+    
+    ' Clean up.
+    If Not adoRS Is Nothing Then
+        Set adoRS = Nothing
+    End If
+    If Not adoConn Is Nothing Then
+        Set adoConn = Nothing
+    End If
+    
+    GetObjectContext.SetAbort
+    
+    Transaction = &quot;&quot;     ' Indicate that an error occurred.
+    
+    Err.Raise Err.Number, &quot;VIBank.Account.Transaction&quot;, _
+        Err.Description
+    
+End Function
+</PRE>
+
+</P>
+<P>Using ADO, the code first performs a SQL update to the 
+Account_Balance table and then checks to ensure that the account is not overdrawn. Finally, 
+it performs a SQL insert into the Account_Transaction table, which keeps a 
+log of all account activity. It then calls the <I>SetComplete</I> method to commit the transaction and returns a result string to the calling component&#8212;in this case, the <I>Transfer</I> function in the <I>Transfer</I> object.
+
+</P>
+<P>In a real-life banking application, you'd probably want to issue a 
+receipt number to the end user to provide a way of tracing the transaction. For the 
+sake of brevity, we omitted this step in our example.
+
+</P>
+<A NAME="369"><H2>Visual InterDev Components</H2></A><P>We'll now turn our attention to the Visual InterDev portion of this 
+application. We'll look at the ASP Web page that drives the entire transfer of funds 
+process. You saw the initial screen in Figure 20-11. This ASP Web page is 
+self-posting and has two states. The first state occurs when the page is first loaded into 
+the browser. The second state occurs after the user has entered data and 
+submitted the funds transfer. The state of the page is determined by using 
+the <I>REQUEST_METHOD</I> environment variable. The entire source code for the 
+ASP Web page named transfer.asp appears below. This page is part of the 
+VI-Bank Web project.
+
+</P>
+<P><PRE>
+&lt;%@ TRANSACTION=Required Language=VBScript%&gt;
+&lt;% ' VI 6.0 Scripting Object Model Enabled %&gt;
+&lt;!--#include file=&quot;_ScriptLibrary/pm.asp&quot;--&gt;
+&lt;% if StartPageProcessing() Then Response.End() %&gt;
+&lt;FORM name=thisForm METHOD=post&gt;
+
+&lt;html&gt;
+&lt;head&gt;
+&lt;meta NAME=&quot;GENERATOR&quot; Content=&quot;Microsoft Visual Studio 6.0&quot;&gt;
+&lt;title&gt;VI-Bank - Transfer Funds&lt;/title&gt;
+&lt;LINK REL=&quot;stylesheet&quot; TYPE=&quot;text/css&quot; 
+    HREF=&quot;_Themes/blueprnt/THEME.CSS&quot; VI6.0THEME=&quot;Blueprint&quot;&gt;
+&lt;LINK REL=&quot;stylesheet&quot; TYPE=&quot;text/css&quot; 
+    HREF=&quot;_Themes/blueprnt/GRAPH0.CSS&quot; VI6.0THEME=&quot;Blueprint&quot;&gt;
+&lt;LINK REL=&quot;stylesheet&quot; TYPE=&quot;text/css&quot; 
+    HREF=&quot;_Themes/blueprnt/COLOR0.CSS&quot; VI6.0THEME=&quot;Blueprint&quot;&gt;
+&lt;LINK REL=&quot;stylesheet&quot; TYPE=&quot;text/css&quot; 
+    HREF=&quot;_Themes/blueprnt/CUSTOM.CSS&quot; VI6.0THEME=&quot;Blueprint&quot;&gt;
+&lt;/head&gt;
+&lt;body&gt;
+
+&lt;%
+RequestMethod = Request.ServerVariables(&quot;REQUEST_METHOD&quot;)
+%&gt;
+
+&lt;!-- Recordset DTC Control (SQL shown below) --&gt;
+&lt;!--METADATA TYPE=&quot;DesignerControl&quot; startspan
+&lt;OBJECT classid=&quot;clsid:9CF5D7C2-EC10-11D0-9862-0000F8027CA0&quot; 
+    id=rsAccountCode style=&quot;LEFT: 0px; TOP: 0px&quot;&gt;
+...
+&lt;/OBJECT&gt;
+--&gt;
+...     
+cmdTmp.CommandText = 'SELECT Account_Code.Account_Description, 
+    Account_Balance.account_no, Customer.ssn FROM Account_Code 
+    INNER JOIN Account_Balance ON Account_Code.Account_Id = 
+    Account_Balance.account_id INNER JOIN Customer ON 
+    Account_Balance.ssn = Customer.ssn WHERE 
+    (Customer.ssn = 123456789)';
+...
+&lt;!--METADATA TYPE=&quot;DesignerControl&quot; endspan--&gt;
+
+&lt;!-- Table used for general page formatting --&gt;
+&lt;table&gt;
+&lt;tr valign=top&gt;
+&lt;td width=125&gt;
+&lt;!--#INCLUDE FILE=&quot;menu.htm&quot;--&gt;
+&lt;/td&gt;
+&lt;td&gt;
+
+&lt;h2&gt;&lt;FONT COLOR=&quot;navy&quot;&gt;&lt;I&gt;VI-Bank - Transfer Funds&lt;/I&gt;&lt;/FONT&gt;&lt;/h2&gt;
+&lt;HR color=navy&gt;
+&lt;p&gt;
+&lt;form METHOD=&quot;post&quot; ACTION=&quot;transfer.asp&quot;&gt;
+
+&lt;table border=&quot;1&quot; cellPadding=&quot;3&quot; cellSpacing=&quot;1&quot; width=&quot;350&quot;&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;font face =&quot;&quot; size=&quot;2&quot;&gt;From:&lt;/font&gt;&lt;/td&gt;
+&lt;td&gt;
+
+&lt;!-- Data-Bound ListBox DTC Control (AccountFrom) --&gt;
+&lt;!--METADATA TYPE=&quot;DesignerControl&quot; startspan
+&lt;OBJECT classid=&quot;clsid:B5F0E450-DC5F-11D0-9846-0000F8027CA0&quot; 
+    height=21 id=AccountFrom style=&quot;HEIGHT: 21px; LEFT: 0px; TOP: 
+    0px; WIDTH: 96px&quot; width=96&gt;
+...
+&lt;/OBJECT&gt;
+--&gt;
+...
+&lt;!--METADATA TYPE=&quot;DesignerControl&quot; endspan--&gt;
+
+&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;font face =&quot;&quot; size=&quot;2&quot;&gt;To:&lt;/font&gt;&lt;/td&gt;
+&lt;td&gt;
+
+&lt;!-- Data-Bound ListBox DTC Control (AccountTo) --&gt;
+&lt;!--METADATA TYPE=&quot;DesignerControl&quot; startspan
+&lt;OBJECT classid=&quot;clsid:B5F0E450-DC5F-11D0-9846-0000F8027CA0&quot; 
+    height=21 id=AccountTo style=
+    &quot;HEIGHT: 21px; LEFT: 0px; TOP: 0px; WIDTH: 96px&quot; width=96&gt;
+&lt;/OBJECT&gt;
+--&gt;
+...
+&lt;!--METADATA TYPE=&quot;DesignerControl&quot; endspan--&gt;
+
+&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;&lt;font face =&quot;&quot; size=&quot;2&quot;&gt;Amount:&lt;/font&gt;&lt;/td&gt;
+&lt;td&gt;
+&lt;% If RequestMethod = &quot;POST&quot; Then %&gt;
+    &lt;!-- Show the previously entered amount. --&gt;
+    &lt;input id=&quot;Amount&quot; name=&quot;Amount&quot; value= 
+        &lt;%=Request.Form(&quot;Amount&quot;)%&gt; size=&quot;15&quot;&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;% Else %&gt;
+    &lt;input id=&quot;Amount&quot; name=&quot;Amount&quot; size=&quot;15&quot;&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;% End If %&gt;
+&lt;/table&gt;
+&lt;p&gt;
+
+&lt;table width=&quot;350&quot;&gt;
+&lt;tr&gt;&lt;td&gt;
+&lt;div align=&quot;center&quot;&gt;&lt;input id=&quot;submit&quot; name=&quot;submit&quot; 
+    type=&quot;submit&quot; value=&quot;Submit&quot;&gt;&lt;/div&gt;
+&lt;/td&gt;&lt;/tr&gt;
+&lt;/table&gt;
+
+&lt;/form&gt;
+&lt;hr&gt;
+
+&lt;% 
+' Ensure that this page has been submitted.
+If RequestMethod = &quot;POST&quot; THEN 
+%&gt;
+&lt;P&gt;
+&lt;table BORDER=&quot;1&quot; width=&quot;350&quot;&gt;
+&lt;tr&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;
+&lt;I&gt;
+&lt;font face =&quot;&quot; size=&quot;2&quot;&gt;
+&lt;%
+' Check that the From and the To accounts are different.
+If AccountFrom.getText() = AccountTo.getText() Then
+    Response.Write (&quot;&lt;P&gt;&quot;)
+    Response.Write (&quot;Please choose different accounts &quot; + _
+        &quot;to transfer money between.&quot;)
+    Response.Write (&quot;&lt;P&gt;&quot;)
+Else
+    ' Check that the user has entered a value in the Amount field.
+    If Request.Form(&quot;Amount&quot;) &lt;&gt; &quot;&quot; Then
+        ' Set a variable to indicate the transaction 
+        ' is taking place.
+        Transaction_Flag = &quot;Y&quot;
+
+        ' Write out some summary information about the transfer.
+        Response.Write &quot;&lt;P&gt;&quot;
+        Response.Write &quot;Transfer &quot; + _
+            FormatCurrency(Request.Form(&quot;Amount&quot;))
+        Response.Write &quot; from &quot; + AccountFrom.getText() + _
+            &quot;(&quot; + CStr(AccountFrom.getValue()) + &quot;)&quot;
+        Response.Write &quot; to &quot; + AccountTo.getText() + _
+            &quot;(&quot; + CStr(AccountTo.getValue()) + &quot;)&lt;P&gt;&quot;
+        %&gt;
+        &lt;OBJECT id=oTransfer PROGID =VIBank.Transfer RUNAT=Server&gt;
+        &lt;/OBJECT&gt;
+        &lt;%
+        ' Call the Transfer method of the VIBank.Transfer component.
+        strResult = _
+            oTransfer.Transfer(CLng(Request.Form(&quot;Amount&quot;)), _
+                CLng(AccountTo.getValue()), _
+                CLng(AccountFrom.getValue()) )     
+        Response.Write strResult
+    Else
+        Response.Write (&quot;&lt;P&gt;&quot;)
+        Response.Write _
+            (&quot;Please enter a value for the amount of the transfer.&quot;)
+        Response.Write (&quot;&lt;P&gt;&quot;)
+    End If
+End If
+%&gt;
+                        
+&lt;/I&gt;&lt;/FONT&gt;
+&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;/tr&gt;
+&lt;/table&gt;
+
+&lt;% End If %&gt;
+            
+&lt;/td&gt;&lt;/td&gt;
+
+&lt;/tr&gt;
+&lt;/table&gt;
+
+&lt;/body&gt;
+&lt;% ' VI 6.0 Scripting Object Model Enabled %&gt;
+&lt;% EndPageProcessing() %&gt;
+&lt;/FORM&gt;
+&lt;/html&gt;
+&lt;%
+' The Transacted Script Commit Handler. This subroutine
+' will be called if the transacted script commits.
+
+Sub OnTransactionCommit()
+    If RequestMethod = &quot;POST&quot; Then
+        If Transaction_Flag = &quot;Y&quot; Then
+            Response.Write &quot;&lt;p&gt;&lt;center&gt;Your transaction &quot; + _
+                was successfully completed.&lt;/center&gt;&quot; 
+        Else
+            Response.Write &quot;&lt;p&gt;&lt;center&gt;Your transaction &quot; + _
+                was not completed.&lt;/center&gt;&quot; 
+        End If
+    End If
+End Sub
+
+' The Transacted Script Abort Handler. This subroutine
+' will be called if the transacted script aborts.
+
+Sub OnTransactionAbort()
+    If RequestMethod = &quot;POST&quot; Then
+        Response.Write &quot;&lt;p&gt;&lt;center&gt;Your transaction was &quot; + _
+            &quot;not completed.&lt;/center&gt;&quot; 
+    End If
+End Sub
+%&gt;   
+</PRE>
+
+</P>
+<P>The transfer.asp page is interesting because there's so much going on. 
+Not only does the page maintain its state, it also has to query the database, 
+display the users' account descriptions in data-bound design-time controls (DTCs), 
+call the <I>Transfer</I> function within MTS, and display the results of the transaction 
+on screen. Note that the code for the DTCs has been trimmed down for 
+clarity's sake. There's a <I>Recordset</I> DTC that performs the initial SQL select statement 
+to get the users' account descriptions. There are also two data-bound Listbox 
+DTCs that are used to display these account descriptions on screen. The dollar 
+amount that the user wants to transfer is captured using a standard text box.
+
+</P>
+<P>After the user presses the Submit button to submit the form, the 
+selected account information is determined by using the <I>getValue</I> and <I>getText</I> methods of the list box DTCs. This information is then passed as parameters into the <I>Transfer</I> method to perform the transfer. The ASP code also includes some error checking to ensure that the user has entered a value in the Amount field and that the &quot;From&quot; and &quot;To&quot; accounts are different. In a production system, you might want to move some of this error checking to the client side and also trap for non-numeric input in the Amount field.
+
+</P>
+<P>Finally, the transfer.asp page uses the familiar <I>OnTransactionCommit</I> and 
+<I>OnTransactionAbort</I> event handlers to capture the success or failure of 
+the transaction. This will be determined by the server-side components and 
+by whether the database has been updated correctly. Figure 20-12 shows the 
+results of a successful transaction, while Figure 20-13 shows the results of 
+an unsuccessful transaction. In Figure 20-13, the transaction was rolled back 
+because the transfer would have overdrawn the user's savings account. 
+
+</P>
+<P>
+<A HREF="javascript:fullSize('f20lh12x.htm')"> <IMG SRC="images/f20lh12.jpg" width=404 height=303 border=0 ALT="Click to view at full size."> </A>
+
+</P>
+<P>
+<!-- CAPTION --><B>Figure 20-12.</B> <I>The Transfer Funds page of the VI-Bank sample application after a successful transfer.</I><!-- /CAPTION -->
+
+</P>
+<P>
+<A HREF="javascript:fullSize('f20lh13x.htm')"> <IMG SRC="images/f20lh13.jpg" width=404 height=303 border=0 ALT="Click to view at full size."> </A>
+
+</P>
+<P>
+<!-- CAPTION --><B>Figure 20-13.</B> <I>The Transfer Funds page of the VI-Bank sample application after an unsuccessful transfer.</I><!-- /CAPTION -->
+
+</P>
+</BODY>
+</HTML>
+
+
+
+

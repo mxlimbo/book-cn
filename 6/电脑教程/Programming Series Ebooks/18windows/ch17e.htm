@@ -1,0 +1,481 @@
+<HTML>
+<HEAD>
+	<LINK REL=StyleSheet HREF="petzoldi.css" TYPE="text/css">
+<title>Font Enumeration</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="631"><h1>Font Enumeration</h1></A>
+<p>Font enumeration is the process of obtaining from GDI a list of all fonts available on a device. A program can then select one of these fonts or display them in a dialog box for selection by the user. I'll first briefly describe the enumeration functions and then show how to use the <I>ChooseFont</I> function, which fortunately makes font enumeration much less necessary for an application.
+
+<A NAME="632"><h2>The Enumeration Functions</h2></A>
+<p>In the old days of Windows, font enumeration required use of the <I>EnumFonts</I> function:
+
+<P><pre>
+EnumFonts (hdc, szTypeFace, EnumProc, pData) ;
+</PRE>
+
+<p>A program could enumerate all fonts (by setting the second argument to NULL) or just those of a particular typeface. The third argument is an enumeration callback function; the fourth argument is optional data passed to that function. GDI calls the callback function once for each font in the system, passing to it both LOGFONT and TEXTMETRIC structures that defined the font, plus some flags indicating the type of font.
+
+<p>The <I>EnumFontFamilies</I> function was designed to better enumerate TrueType fonts under Windows 3.1:
+
+<P><pre>
+EnumFontFamilies (hdc, szFaceName, EnumProc, pData) ;
+</PRE>
+
+<p>Generally, <I>EnumFontFamilies</I> is called first with a NULL second argument. The <I>EnumProc</I> callback function is called once for each font family (such as Times New Roman). Then the application calls <I>EnumFontFamilies</I> again with that typeface name and a different callback function. GDI calls the second callback function for each font in the family (such as Times New Roman Italic). The callback function is passed an ENUMLOGFONT structure (which is a LOGFONT structure plus a &quot;full name&quot; field and a &quot;style&quot; field containing, for example, the text name &quot;Italic&quot; or &quot;Bold&quot;) and a TEXTMETRIC structure for non-TrueType fonts and a NEWTEXTMETRIC structure for TrueType fonts. The NEWTEXTMETRIC structure adds four fields to the information in the TEXTMETRIC structure.
+
+<p>The <I>EnumFontFamiliesEx</I> function is recommended for applications running under the 32-bit versions of Windows:
+
+<P><pre>
+EnumFontFamiliesEx (hdc, &amp;logfont, EnumProc, pData, dwFlags) ;
+</PRE>
+
+<p>The second argument is a pointer to a LOGFONT structure for which the <I>lfCharSet</I> and <I>lfFaceName</I> fields indicate what fonts are to be enumerated. The callback function gets information about each font in the form of ENUMLOGFONTEX and NEWTEXTMETRICEX structures.
+
+<A NAME="633"><h2>The <I>ChooseFont</I> Dialog</h2></A>
+<p>We had a little introduction to the <I>ChooseFont</I> common dialog box back in <a href="ch11a.htm#331">Chapter 11</a>. Now that we've encountered font enumeration, the inner workings of the<I> ChooseFont</I> function should be obvious. The <I>ChooseFont</I> function takes a pointer to a CHOOSEFONT structure as its only argument and displays a dialog box listing all the fonts. On return from <I>ChooseFont</I>, a LOGFONT structure, which is part of the CHOOSEFONT structure, lets you create a logical font.
+
+<p>The CHOSFONT program, shown in Figure 17-7, demonstrates using the <I>ChooseFont</I> function and displays the fields of the LOGFONT structure that the function defines. The program also displays the same string of text as PICKFONT.
+
+<p><B>Figure 17-7.</b> <i>The CHOSFONT program.</I>
+
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="634"><h3>CHOSFONT.C</h3></A><P><pre>
+/*-----------------------------------------
+   CHOSFONT.C -- ChooseFont Demo
+                 (c) Charles Petzold, 1998
+  -----------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &quot;resource.h&quot;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName[] = TEXT (&quot;ChosFont&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+     
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = szAppName ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+               szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;ChooseFont&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static CHOOSEFONT cf ;
+     static int        cyChar ;
+     static LOGFONT    lf ;
+     static TCHAR      szText[] = TEXT (&quot;\x41\x42\x43\x44\x45 &quot;)
+                                  TEXT (&quot;\x61\x62\x63\x64\x65 &quot;)
+
+                                  TEXT (&quot;\xC0\xC1\xC2\xC3\xC4\xC5 &quot;)
+                                  TEXT (&quot;\xE0\xE1\xE2\xE3\xE4\xE5 &quot;) 
+#ifdef UNICODE
+                                  TEXT (&quot;\x0390\x0391\x0392\x0393\x0394\x0395 &quot;)
+                                  TEXT (&quot;\x03B0\x03B1\x03B2\x03B3\x03B4\x03B5 &quot;)
+
+                                  TEXT (&quot;\x0410\x0411\x0412\x0413\x0414\x0415 &quot;)
+                                  TEXT (&quot;\x0430\x0431\x0432\x0433\x0434\x0435 &quot;)
+
+                                  TEXT (&quot;\x5000\x5001\x5002\x5003\x5004&quot;) 
+#endif
+                                 ;
+     HDC               hdc ;
+     int               y ;
+     PAINTSTRUCT       ps ;
+     TCHAR             szBuffer [64] ;
+     TEXTMETRIC        tm ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+
+               // Get text height
+
+          cyChar = HIWORD (GetDialogBaseUnits ()) ;
+
+               // Initialize the LOGFONT structure
+
+          GetObject (GetStockObject (SYSTEM_FONT), sizeof (lf), &amp;lf) ;
+
+               // Inialize the CHOOSEFONT structure
+          cf.lStructSize    = sizeof (CHOOSEFONT) ;
+          cf.hwndOwner      = hwnd ;
+          cf.hDC            = NULL ;
+          cf.lpLogFont      = &amp;lf ;
+          cf.iPointSize     = 0 ;
+          cf.Flags          = CF_INITTOLOGFONTSTRUCT |
+                              CF_SCREENFONTS | CF_EFFECTS ;
+          cf.rgbColors      = 0 ;
+          cf.lCustData      = 0 ;
+          cf.lpfnHook       = NULL ;
+          cf.lpTemplateName = NULL ;
+          cf.hInstance      = NULL ;
+          cf.lpszStyle      = NULL ;
+          cf.nFontType      = 0 ;      
+          cf.nSizeMin       = 0 ;
+          cf.nSizeMax       = 0 ;
+          return 0 ;
+
+     case WM_COMMAND:
+          switch (LOWORD (wParam))
+          {
+          case IDM_FONT:
+               if (ChooseFont (&amp;cf))
+                    InvalidateRect (hwnd, NULL, TRUE) ;
+               return 0 ;
+          }
+          return 0 ;
+
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+
+               // Display sample text using selected font
+
+          SelectObject (hdc, CreateFontIndirect (&amp;lf)) ;
+          GetTextMetrics (hdc, &amp;tm) ;
+          SetTextColor (hdc, cf.rgbColors) ;
+          TextOut (hdc, 0, y = tm.tmExternalLeading, szText, lstrlen (szText)) ;
+
+               // Display LOGFONT structure fields using system font
+
+          DeleteObject (SelectObject (hdc, GetStockObject (SYSTEM_FONT))) ;
+          SetTextColor (hdc, 0) ;
+          
+          TextOut (hdc, 0, y += tm.tmHeight, szBuffer,
+               wsprintf (szBuffer, TEXT (&quot;lfHeight = %i&quot;), lf.lfHeight)) ;
+          TextOut (hdc, 0, y += cyChar, szBuffer,
+               wsprintf (szBuffer, TEXT (&quot;lfWidth = %i&quot;), lf.lfWidth)) ;
+          
+          TextOut (hdc, 0, y += cyChar, szBuffer,
+               wsprintf (szBuffer, TEXT (&quot;lfEscapement = %i&quot;), 
+                         lf.lfEscapement)) ;
+          
+          TextOut (hdc, 0, y += cyChar, szBuffer,
+               wsprintf (szBuffer, TEXT (&quot;lfOrientation = %i&quot;), 
+                         lf.lfOrientation)) ;
+
+          TextOut (hdc, 0, y += cyChar, szBuffer,
+               wsprintf (szBuffer, TEXT (&quot;lfWeight = %i&quot;), lf.lfWeight)) ;
+
+          TextOut (hdc, 0, y += cyChar, szBuffer,
+               wsprintf (szBuffer, TEXT (&quot;lfItalic = %i&quot;), lf.lfItalic)) ;
+
+          TextOut (hdc, 0, y += cyChar, szBuffer,
+               wsprintf (szBuffer, TEXT (&quot;lfUnderline = %i&quot;), lf.lfUnderline)) ;
+
+          TextOut (hdc, 0, y += cyChar, szBuffer,
+               wsprintf (szBuffer, TEXT (&quot;lfStrikeOut = %i&quot;), lf.lfStrikeOut)) ;
+
+          TextOut (hdc, 0, y += cyChar, szBuffer,
+               wsprintf (szBuffer, TEXT (&quot;lfCharSet = %i&quot;), lf.lfCharSet)) ;
+
+          TextOut (hdc, 0, y += cyChar, szBuffer,
+               wsprintf (szBuffer, TEXT (&quot;lfOutPrecision = %i&quot;), 
+                         lf.lfOutPrecision)) ;
+
+          TextOut (hdc, 0, y += cyChar, szBuffer,
+               wsprintf (szBuffer, TEXT (&quot;lfClipPrecision = %i&quot;), 
+                         lf.lfClipPrecision)) ;
+
+          TextOut (hdc, 0, y += cyChar, szBuffer,
+               wsprintf (szBuffer, TEXT (&quot;lfQuality = %i&quot;), lf.lfQuality)) ;
+
+          TextOut (hdc, 0, y += cyChar, szBuffer,
+               wsprintf (szBuffer, TEXT (&quot;lfPitchAndFamily = 0x%02X&quot;), 
+                         lf.lfPitchAndFamily)) ;
+
+          TextOut (hdc, 0, y += cyChar, szBuffer,
+               wsprintf (szBuffer, TEXT (&quot;lfFaceName = %s&quot;), lf.lfFaceName)) ;
+
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+     case WM_DESTROY:
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</PRE>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="635"><h3>CHOSFONT.RC</h3></A><P><pre>
+//Microsoft Developer Studio generated resource script.
+
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+// Menu
+
+CHOSFONT MENU DISCARDABLE 
+BEGIN
+    MENUITEM &quot;&amp;Font!&quot;,                      IDM_FONT
+END
+</PRE>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="636"><h3>RESOURCE.H</h3></A><P><pre>
+// Microsoft Developer Studio generated include file.
+// Used by ChosFont.rc
+
+#define IDM_FONT                        40001
+</pre>
+</td></tr></table>
+
+<p>As usual with the common dialog boxes, a <I>Flags</I> field in the CHOOSEFONT structure lets you pick lots of options. The CF_INITLOGFONTSTRUCT flag that CHOSFONT specifies causes Windows to initialize the dialog box selection based on the LOGFONT structure passed to the <I>ChooseFont</I> structure. You can use flags to specify TrueType fonts only (CF_TTONLY) or fixed-pitch fonts only (CF_FIXEDPITCHONLY) or no symbol fonts (CF_SCRIPTSONLY). You can display screen fonts (CF_SCREENFONTS), printer fonts (CF_PRINTERFONTS), or both (CF_BOTH). In the latter two cases, the <I>hDC</I> field of the CHOOSEFONT structure must reference a printer device context. The CHOSFONT program uses the CF_SCREENFONTS flag.
+
+<p>The CF_EFFECTS flag (the third flag that the CHOSFONT program uses) forces the dialog box to include check boxes for underlining and strikeout and also allows the selection of a text color. It's not hard to implement text color in your code, so try it.
+
+<p>Notice the Script field in the Font dialog displayed by <I>ChooseFont</I>. This lets the user select a character set available for the particular font; the appropriate character set ID is returned in the LOGFONT structure.
+
+<p>The <I>ChooseFont</I> function uses the logical inch to calculate the <I>lfHeight</I> field from the point size. For example, suppose you have Small Fonts installed from the Display Properties dialog. That means that <I>GetDeviceCaps</I> with a video display device context and the argument LOGPIXELSY returns 96. If you use <I>ChooseFont</I> to choose a 72-point Times Roman Font, you really want a 1-inch tall font. When ChooseFont returns, the <I>lfHeight</I> field of the LOGFONT structure will equal -96 (note the minus sign), meaning that the point size of the font is equivalent to 96 pixels, or one logical inch.
+
+<p>Good. That's probably what we want. But keep the following in mind:
+<UL>
+
+<p><li>If you set one of the metric mapping modes under Windows NT, logical coordinates will be inconsistent with the physical size of the font. For example, if you draw a ruler next to the text based on a metric mapping mode, it will be not match the font. You should use the Logical Twips mapping mode described above to draw graphics that are consistent with the font size.
+
+<p><li>If you're going to be using <I>any</I> non-MM_TEXT mapping mode, make sure the mapping mode is <I>not</I> set when you select the font into the device context and display the text. Otherwise, GDI will interpret the <I>lfHeight</I> field of the LOGFONT structure as being expressed in logical coordinates.
+
+<p><li>The <I>lfHeight</I> field of the LOGFONT structure set by <I>ChooseFont</I> is always in pixels, and it is only appropriate for the video display. When you create a font for a printer device context, you must adjust the <I>lfHeight</I> value. The <I>ChooseFont</I> function uses the <I>hDC</I> field of the CHOOSEFONT structure only for obtaining printer fonts to be listed in the dialog box. This device context handle does not affect the value of <I>lfHeight</I>.
+</UL>
+
+<p>Fortunately, the CHOOSEFONT structure includes an <I>iPointSize</I> field that provides the size of the selected font in units of 1/10 of a point. Regardless of the device context and mapping mode, you can always convert this field to a logical size and use that for the <I>lfHeight</I> field. The appropriate code can be found in the EZFONT.C file. You can probably simplify it based on your needs.
+
+<p>Another program that uses <I>ChooseFont</I> is UNICHARS, shown in Figure 17-8. This program lets you view all the characters of a font and is particularly useful for studying the Lucida Sans Unicode font, which it uses by default for display, or the Bitstream CyberBit font. UNICHARS always uses the <I>TextOutW</I> function for displaying the font characters, so you can run it under Windows NT or Windows 98.
+
+<p><b>Figure 17-8.</b> <i>The UNICHARS program.</i>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="637"><h3>UNICHARS.C</h3></A><P><pre>
+/*-----------------------------------------------
+   UNICHARS.C -- Displays 16-bit character codes
+                 (c) Charles Petzold, 1998
+  -----------------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &quot;resource.h&quot;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName[] = TEXT (&quot;UniChars&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+     
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = szAppName ;
+     wndclass.lpszClassName = szAppName ;
+
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requies Windows NT!&quot;), 
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Unicode Characters&quot;),
+                          WS_OVERLAPPEDWINDOW | WS_VSCROLL,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static CHOOSEFONT cf ;
+     static int        iPage ;
+     static LOGFONT    lf ;
+     HDC               hdc ;
+     int               cxChar, cyChar, x, y, i, cxLabels ;
+     PAINTSTRUCT       ps ;
+     SIZE              size ;
+     TCHAR             szBuffer [8] ;
+     TEXTMETRIC        tm ;
+     WCHAR             ch ;
+
+     switch (message)
+     {
+     case WM_CREATE:
+          hdc = GetDC (hwnd) ;
+          lf.lfHeight = - GetDeviceCaps (hdc, LOGPIXELSY) / 6 ;  // 12 points
+          lstrcpy (lf.lfFaceName, TEXT (&quot;Lucida Sans Unicode&quot;)) ;
+          ReleaseDC (hwnd, hdc) ;
+
+          cf.lStructSize = sizeof (CHOOSEFONT) ;
+          cf.hwndOwner   = hwnd ;
+          cf.lpLogFont   = &amp;lf ;
+          cf.Flags       = CF_INITTOLOGFONTSTRUCT | CF_SCREENFONTS ;
+
+          SetScrollRange (hwnd, SB_VERT, 0, 255, FALSE) ;
+          SetScrollPos   (hwnd, SB_VERT, iPage,  TRUE ) ;
+          return 0 ;
+
+     case WM_COMMAND:
+          switch (LOWORD (wParam))
+          {
+          case IDM_FONT:
+               if (ChooseFont (&amp;cf))
+                    InvalidateRect (hwnd, NULL, TRUE) ;
+               return 0 ;
+          }
+          return 0 ;
+     case WM_VSCROLL:
+          switch (LOWORD (wParam))
+               {
+               case SB_LINEUP:         iPage -=  1 ;  break ;
+               case SB_LINEDOWN:       iPage +=  1 ;  break ;
+               case SB_PAGEUP:         iPage -= 16 ;  break ;
+               case SB_PAGEDOWN:       iPage += 16 ;  break ;
+               case SB_THUMBPOSITION:  iPage = HIWORD (wParam) ;  break ;
+
+               default:
+                    return 0 ;
+               }
+
+          iPage = max (0, min (iPage, 255)) ;
+
+          SetScrollPos (hwnd, SB_VERT, iPage, TRUE) ;
+          InvalidateRect (hwnd, NULL, TRUE) ;
+          return 0 ;
+
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+
+          SelectObject (hdc, CreateFontIndirect (&amp;lf)) ;
+
+          GetTextMetrics (hdc, &amp;tm) ;
+          cxChar = tm.tmMaxCharWidth ;
+          cyChar = tm.tmHeight + tm.tmExternalLeading ;
+
+          cxLabels = 0 ;
+
+          for (i = 0 ; i &lt; 16 ; i++)
+          {
+               wsprintf (szBuffer, TEXT (&quot; 000%1X: &quot;), i) ;
+               GetTextExtentPoint (hdc, szBuffer, 7, &amp;size) ;
+
+               cxLabels = max (cxLabels, size.cx) ;
+          }
+
+          for (y = 0 ; y &lt; 16 ; y++)
+          {
+               wsprintf (szBuffer, TEXT (&quot; %03X_: &quot;), 16 * iPage + y) ;
+               TextOut (hdc, 0, y * cyChar, szBuffer, 7) ;
+
+               for (x = 0 ; x &lt; 16 ; x++)
+               {
+                    ch = (WCHAR) (256 * iPage + 16 * y + x) ;
+                    TextOutW (hdc, x * cxChar + cxLabels,
+                                   y * cyChar, &amp;ch, 1) ;
+               }
+          }
+
+          DeleteObject (SelectObject (hdc, GetStockObject (SYSTEM_FONT))) ;
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+
+     case WM_DESTROY:
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</PRE>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="638"><h3>UNICHARS.RC</h3></A><P><pre>
+//Microsoft Developer Studio generated resource script.
+
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+// Menu
+
+UNICHARS MENU DISCARDABLE 
+BEGIN
+    MENUITEM &quot;&amp;Font!&quot;,                      IDM_FONT
+END
+</PRE>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="639"><h3>RESOURCE.H</h3></A><P><pre>
+// Microsoft Developer Studio generated include file.
+// Used by Unichars.rc
+
+#define IDM_FONT                        40001
+</PRE>
+</td></tr></table>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

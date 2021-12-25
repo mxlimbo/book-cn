@@ -1,0 +1,836 @@
+<HTML>
+<HEAD>
+<TITLE>Device and Driver Layering</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch02a.htm">[Previous]</A> <A HREF="ch02c.htm">[Next]</a>
+</p>
+
+<A NAME="31"><H1>Device and Driver Layering</H1></A>
+
+<p>The Windows Driver Model formalizes a layering of drivers, as illustrated in Figure 2-1. A
+stack of <i>device objects</i> appears at the left of the figure. The device objects are data
+structures that the system creates to help software manage hardware. Many of these data
+structures can exist for a single piece of physical hardware. The lowest-level device object in
+a stack is called the <i>physical device object,</i> or PDO for short. Somewhere in the middle
+of a device object stack is an object called the <i>functional device object,</i> or FDO. Above
+and below the FDO there might be a collection of <i>filter device objects.</i> Filter device
+objects above the FDO are called <i>upper filters,</i> whereas filter device objects below the
+FDO (but still above the PDO) are called <i>lower filters</i>.</p>
+
+<p>
+<A HREF="javascript:fullSize('F02wi01x.htm')"> <img src="images/F02wi01.JPG" width=404 height=360 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 2-1.</b> <i>Layering of device objects and drivers in the WDM.</i><!--/caption-->
+</p>
+
+
+<p><div class="sidebar"><blockquote>
+<b>An Acronym for Filter Device Objects?</b>
+<p>In an industry known for its prolific use of acronyms, it seems odd that the term <i>filter
+device object</i> has no official abbreviation. FDO is taken&#8212;as I've said, it refers
+to the functional device object that belongs to the real driver for the device. Once upon a
+time, Microsoft was using the acronym FiDO to describe these objects. This acronym suffers from
+a slight lack of specificity in that you can't immediately tell whether you're talking
+about an upper or a lower filter. There may have been other reasons why the term fell into
+disfavor as something appropriate to sober discussion about a serious new technology, however.
+My seminar students have been quick to point out, for example, that the FiDO at the top of any
+given stack is, of course, the &quot;top dog.&quot;</p>
+
+<p>Being a sometime cat owner and thus unoffended by canine allusions, and not being a total
+slave to prevailing convention, I'll use the acronym FiDO in this book as a generic way of
+describing filter device objects. I guess driver programming (or at least this book) is going
+to the dogs.</p>
+</blockquote></div></p>
+
+<p>The Plug and Play (PnP) Manager component of the operating system constructs the stack of
+device objects at the behest of device drivers. For our purposes in this book, we can use the
+generic term <i>bus</i> to describe a piece of hardware to which devices connect
+electronically. This is a pretty broad definition. Not only does it include things like the PCI
+(Peripheral Component Interconnect) bus, but it also includes a SCSI (Small Computer System
+Interface) adapter, a parallel port, a serial port, a USB (universal serial bus) hub, and so
+on&#8212;anything, in fact, that can have multiple devices plugged into it. One responsibility
+of the driver for a bus is to enumerate the devices attached to the bus and to create PDOs for
+each of them. The PnP Manager begins painting the picture in Figure 2-1, then, by creating a
+PDO because some bus driver has detected some actual hardware.</p>
+
+<p>Having created a PDO, the PnP Manager consults the registry database to find the filter and
+function drivers that occupy the middle of the figure. The setup program is responsible for
+many of these registry entries, and the INF files that control hardware installation are
+responsible for others. The registry entries define the order in which the drivers will appear
+in the stack, so the PnP Manager begins by loading the lowest-level filter driver and calling
+its AddDevice function. This function creates a FiDO, thus establishing the horizontal link
+between a FiDO and a driver. AddDevice then connects the PDO to the FiDO; that's where the
+line connecting the two device objects comes from. The PnP Manager proceeds upward, loading and
+calling each lower filter, the function driver, and each upper filter, until the stack is
+complete.</p>
+
+<p>The purpose for the layering becomes apparent when you consider the flow of I/O requests
+diagrammed on the right-hand side of Figure 2-1. Each request for an operation affecting a
+device uses an I/O request packet (IRP). IRPs are normally sent to the topmost driver for the
+device and can percolate down the stack to the other drivers. At each level, the driver decides
+what to do with the IRP. Sometimes, a driver will do nothing except pass the IRP down. Other
+times, a driver might completely handle the IRP without passing it down. Still other times, a
+driver might process the IRP <i>and</i> pass it down, or vice versa. It all depends on the
+device and the exact semantics of the IRP. I'll explain in a later sidebar how it comes to
+pass that drivers can send IRPs down even though device objects are linked upward from the
+PDO.</p>
+
+<p>The various drivers that occupy the stack for a single piece of hardware perform different
+roles. The function driver manages the device, represented by the FDO. The bus driver manages
+the connection between the device and the computer, represented by the PDO. Because of the
+close relationship between driver software and device object, I'll sometimes use the term
+<i>FDO driver</i> to mean the function driver and the term <i>PDO driver</i> to refer to the
+bus driver. The filter drivers, if they even exist, monitor or modify the stream of IRPs.</p>
+
+<p>One of my seminar students, on seeing a diagram similar to Figure 2-1, was misled (I
+won't say by which teacher, who also wrote this book) into thinking of C++ and class
+inheritance. A perfectly reasonable way of designing an architecture for device drivers would
+be to define base classes from which programmers could derive progressively more specialized
+classes. In such a scheme, you could have a set of abstract classes that manage different sorts
+of PDOs, and you could derive FDO drivers from them. The system would send IRPs to virtual
+functions, some of which would be handled by the base class in the PDO driver and some of which
+would be handled by the derived class in the FDO driver. WDM doesn't work this way, though.
+The PDO driver performs completely different jobs from the FDO driver. The FDO driver
+&quot;delegates&quot; certain work to the PDO driver by passing IRPs down to it, but the
+relationship is more like being peers in a bucket brigade (and we won't discuss the
+contents of the metaphorical buckets!) than like being hierarchically related.</p>
+
+<A NAME="32"><H2>How the System Loads Drivers</H2></A>
+
+<p>Having presented this much description of device layering in the WDM, it's time for me
+to be a bit more precise. To begin with, there's an obvious chicken-and-egg problem with
+what I've described. I said that the bus driver creates the PDO, but I also said that the
+PnP Manager loads drivers based on registry entries for a PDO that already exists. So where
+does the bus driver come from? I'll explain that in the next section. The registry database
+plays a crucial role in the process of loading drivers and configuring devices, so I'll
+explain which registry keys are relevant and what they contain.</p>
+
+<A NAME="33"><H3>Recursive Enumeration</H3></A>
+
+<p>In the first instance, the PnP Manager has a built-in &quot;driver&quot; for a
+&quot;root&quot; bus that doesn't actually exist. The root bus conceptually connects the
+computer to all hardware that can't electronically announce its presence&#8212;including the
+primary hardware bus (such as PCI). The root bus driver gets information about the computer
+from the registry, which was initialized by the Windows 2000 Setup program. Setup got the
+information by running an elaborate hardware detection program and by asking the end user
+suitable questions. Consequently, the root bus driver knows enough to create a PDO for the
+primary bus.</p>
+
+<p>The function driver for the primary bus can then <i>enumerate</i> its own hardware
+electronically. The PCI bus, for example, provides a way of accessing a special configuration
+space for each attached device, and the configuration space contains a description of the
+device and its resource requirements. When a bus driver enumerates hardware, it acts in the
+guise of an ordinary function driver. Having detected a piece of hardware, however, the driver
+switches roles: it becomes a bus driver and creates a new PDO for the detected hardware. The
+PnP Manager then loads drivers for this device PDO, as previously discussed. It might happen
+that the function driver for the device enumerates still more hardware, in which case the whole
+process repeats recursively. The end result will be a tree like that shown in Figure 2-2,
+wherein a bus device stack branches into other device stacks for the hardware attached to that
+bus.</p>
+
+<p>
+<A HREF="javascript:fullSize('F02wi02x.htm')"> <img src="images/F02wi02.JPG" width=404 height=709 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 2-2.</b> <i>Layering of recursively enumerated devices.</i><!--/caption-->
+</p>
+
+
+<A NAME="34"><H3>The Role of the Registry</H3></A>
+
+<p>Three different registry keys bear on configuration. These are called the <i>hardware
+key,</i> the <i>class key,</i> and the <i>service key.</i> To be clear, these are not the
+proper names of specific subkeys: they are generic names of three keys whose pathnames depend
+on the device to which they belong. Broadly speaking, the hardware key contains information
+about a single device, the class key concerns all devices of the same type, and the service
+keys contains information about drivers. People sometimes use the name &quot;instance key&quot;
+to refer to the hardware key and &quot;software key&quot; to refer to the service key. The
+multiplicity of names derives from the fact that Windows 95/98 and Windows 2000 were written
+(mostly) by different people.</p>
+
+<p><b>The Hardware (Instance) Keys</b> Device hardware keys appear in the \System\CurrentControlSet\Enum subkey of the local machine branch of the registry. You normally
+can't look inside this key because the system grants access to the System account only. In
+other words, kernel-mode programs and user-mode services running in the System account can read
+from and write to the Enum key and its subkeys, but not even an administrator can do so. To see
+what's inside Enum, you can run REGEDT32.EXE from an administrator-privilege account and
+change the security settings. Figure 2-3 illustrates the hardware key for one of the sample
+devices that accompanies this book (namely, the USB42 sample I'll discuss in Chapter 11,
+&quot;<A HREF="ch11a.htm">The Universal Serial Bus</A>&quot;).</p>
+
+<p>
+<A HREF="javascript:fullSize('F02wi03x.htm')"> <img src="images/F02wi03.JPG" width=404 height=306 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 2-3.</b> <i>A hardware key in the registry.</i><!--/caption-->
+</p>
+
+
+<p><div class="sidebar"><blockquote>
+<b>How Registry Keys Are Named</b>
+
+<p>The naming of the very top level of the registry key hierarchy is confusing for the
+first-time visitor. When you use Win32 API functions to access the registry in user mode, you
+identify the top level with one of the predefined handle constants, such as HKEY_CLASSES_ROOT,
+HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, and a few others. The REGEDIT.EXE registry editor applet uses these same names,
+as shown in Figure 2-3. Sometimes, in writing about registry access, the length of these
+keywords induces one to use abbreviations like HKCR, HKCU, HKLM, and so on.</p>
+
+<p>In point of fact, HKCR is an alias for HKLM\Software\Classes, and HKCU is an alias for one
+of the subkeys of HKEY_USERS. The targets of these two aliases depend on which session context
+you're dealing with.</p>
+
+<p>In kernel mode, however, you use a different naming scheme, based on the kernel namespace.
+(I'll discuss this namespace a bit further on in this chapter.) The top levels are named
+\Registry\User and \Registry\Machine. The Machine branch, which is the same branch that user
+mode knows as HKLM, is where you can find all information relevant to device drivers. Unless
+otherwise indicated, therefore, you should assume that a particular registry key referred to in
+the text can be found in \Registry\Machine.</p>
+</blockquote></div></p>
+
+<p>The subkeys on the first level below the Enum key correspond to the different bus
+enumerators in the system. The description of all past or present USB devices is in the
+&#8230;\Enum\USB subkey. I've expanded the key for the USB42 sample to show you how the
+device's hardware ID (vendor 0574, product 102A) has turned into the name of a key
+(Vid_0547&amp;Pid_102A) and how a particular instance of the device that has that ID appears as
+a further subkey named 7&amp;2. The 7&amp;2 key is the hardware, or instance, key for this
+device.</p>
+
+<p>Some of the values in the hardware key provide descriptive information that user-mode
+components such as the Device Manager can use. (You reach the Device Manager from the
+Management Console or, more easily, from the Hardware tab of the property sheet you get when
+you right-click the My Computer desktop icon and select Properties.) Figure 2-4 shows how the
+Device Manager portrays the properties of USB42. Refer to the sidebar &quot;Accessing Device
+Keys from User Mode&quot; for an indication of how the Device Manager can gather this
+information even though it can't, by itself, get past the normal security block to the Enum
+key.</p>
+
+<p>
+<A HREF="javascript:fullSize('F02wi04x.htm')"> <img src="images/F02wi04.JPG" width=404 height=438 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 2-4.</b> <i>The Device Manager properties display for a device.</i><!--/caption-->
+</p>
+
+
+<p><div class="sidebar"><blockquote>
+<b>Accessing Device Keys from User Mode</b>
+
+<p>Applications often need to access information about hardware devices. To make this possible
+without tempting fate by exposing the crucial Enum key to inadvertent (or not-so-inadvertent)
+tampering, Microsoft provides the CFGMGR32 set of APIs. The header file and library for this
+API is part of the Windows 2000 DDK, and the functions in the API set work both in Windows 2000
+and Windows 98. The API is currently documented in a DOC file that's part of the Microsoft
+Windows NT version 4.0 (!) DDK.</p>
+
+<p>To give you one example, let's suppose you knew the name of a device's hardware key
+somehow. One of the ways you could know is by enumerating all &quot;device instances&quot;
+starting from the device root by recursively calling <b>CM_Locate_DevNode</b>, <b>
+CM_Get_Child</b>, and <b>CM_Get_Sibling</b>. Here's a short fragment of code illustrating
+how to read the <b>Manufacturer</b> value from the corresponding hardware key:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+#include &lt;cfgmgr32.h&gt;
+...
+LPTSTR lpszDevnodeName;
+DEVNODE dn;
+CONFIGRET cr = CM_Locate_DevNode(&amp;dn, lpszDevnodeName,
+  CM_LOCATE_DEVNODE_NORMAL);
+if (cr != CR_SUCCESS)
+  <i>&lt;handle error&gt;</i>
+TCHAR buffer[_MAX_PATH];
+DWORD size = sizeof(buffer);
+cr = CM_Get_DevInstRegistry_Property(dn, CM_DRP_MFG, NULL,
+  buffer, size, 0);
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The <b>lpszDevnodeName</b> is a string like
+&quot;USB\Vid_0547&amp;Pid_102A\7&amp;2&quot; whose relationship to the hardware key name
+should now be obvious. I use code just like this fragment to gather some of the information in
+the DEVVIEW applet I'll tell you about presently.</p>
+</blockquote></div></p>
+
+<p>The hardware key also contains several values that identify the class of device to which the
+device belongs and the drivers for the device. <b>ClassGUID</b> is the ASCII representation of
+a <i>globally unique identifier</i> (GUID) that uniquely identifies a device class; in effect,
+it's a pointer to the class key for this device. <b>Service</b> is a pointer to the service
+key. Optional values (which USB42 doesn't have) named <b>LowerFilters</b> and <b>
+UpperFilters</b>, if present, would identify the service names for any lower or upper filter
+drivers, respectively.</p>
+
+<p>Finally, a hardware key might have overriding values named <b>Security</b>, <b>
+Exclusive</b>, <b>DeviceType</b>, and <b>DeviceCharacteristics</b> that force the device object
+the driver will create to have certain attributes. I'll discuss the importance of these
+overrides later on when I tell you how to create a device object.</p>
+
+<p>Most of the values in the hardware key get there automatically as part of the setup process
+or because the system recognizes new hardware (or gets told it about via the Hardware Wizard)
+sometime after initial setup. Some of the values get there because the INF file that's used
+to install the hardware directs that they be put there. I'll discuss INF files when I talk
+about how to plan for installation in Chapter 12, &quot;<A HREF="ch12a.htm#401">Installing Device Drivers</A>.&quot;</p>
+
+<P><b>The Class Keys</b> The class keys for all classes of device appear in the HKLM\System\CurrentControlSet\Control\Class key. Their key names are GUIDs assigned by Microsoft.
+Figure 2-5 illustrates the class key for SAMPLE devices, which is the class to which the USB42
+sample and all the other sample drivers in this book belong.</p>
+
+<p>
+<A HREF="javascript:fullSize('F02wi05x.htm')"> <img src="images/F02wi05.JPG" width=404 height=103 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 2-5.</b> <i>A class key in the registry.</i><!--/caption-->
+</p>
+
+
+<p>The USB class isn't particularly interesting as it lacks some of the optional values
+that might be there, such as these:</p>
+
+<ul>
+<p><li> <b>LowerFilters</b> and <b>UpperFilters</b>, if present, specify filter drivers for all
+devices of this class.</li></p>
+
+<p><li> <b>Security</b>, <b>Exclusive</b>, <b>DeviceType</b>, and <b>DeviceCharacteristics</b>,
+if present in a Properties subkey of the class key, specify values that override default
+settings of certain device object parameters for all devices of this class. These overrides
+have less precedence than the ones (if any) in the hardware key. System administrators will
+eventually be able to set up these overrides through the Management Console.</li></p>
+</ul>
+
+
+<p>Each device also has its own subkey below the class key. The name of this key is the <b>
+Driver</b> value in the device's hardware key. Refer to Figure 2-6 for an illustration of
+the contents of this subkey, the purpose of which is to correlate all these registry entries
+with the INF file used to install the device.</p>
+
+
+<p>
+<A HREF="javascript:fullSize('F02wi06x.htm')"> <img src="images/F02wi06.JPG" width=404 height=126 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 2-6.</b> <i>A device-specific subkey of the device's class key in the registry.</i><!--/caption-->
+</p>
+
+
+
+<p><b>The Service (Software) Keys</b> The last key that's important for a device driver is the
+service key. It indicates where the driver's executable file is on disk and contains some
+other parameters that govern the way the driver is loaded. Service keys appear in the
+HKLM\System\CurrentControlSet\Services key. Refer to Figure 2-7 for USB42's service
+key.</p>
+
+<p>
+<A HREF="javascript:fullSize('F02wi07x.htm')"> <img src="images/F02wi07.JPG" width=404 height=285 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 2-7.</b> <i>A service key in the registry.</i><!--/caption-->
+</p>
+
+
+<p>It's not my purpose to rehash all the possible settings in the service key, which is
+splendidly documented in several places, including under the heading &quot;Service
+Install&quot; in the Platform Software Development Kit (SDK). In this particular case, the
+values have the following significance:</p>
+
+<ul>
+<p><li> <b>ImagePath</b> indicates that the executable file for the driver is named USB42.SYS and
+can be found in %SystemRoot%\system32\drivers. Note that the registry setting in this case is a
+relative pathname starting from the system root directory.</li></p>
+
+<p><li> <b>Type</b> (1) indicates that this entry describes a kernel-mode driver.</li></p>
+
+<p><li> <b>Start</b> (3) indicates that the system should load this driver when it's needed
+to support a newly arrived device. (This numeric value corresponds to the SERVICE_DEMAND_START
+constant in a call to CreateService. When applied to a kernel-mode driver, it has the meaning I
+just described&#8212;it's not necessary to explicitly call StartService or issue a NET START
+command to start the driver.)</li></p>
+
+<p><li> <b>ErrorControl</b> (1) indicates that a failure to load this driver should cause the
+system to log the error and display a message box.</li></p>
+</ul>
+
+
+<A NAME="35"><H3>Order of Driver Loading</H3></A>
+
+<p>When the PnP Manager encounters a new device, it opens the hardware and class keys and
+proceeds to load drivers in the following order:</p>
+
+<ol>
+<p><li> Any lower filter drivers specified in the hardware key for the device. Since the
+LowerFilters value is of type REG_MULTI_SZ, it can specify more than one driver. They're
+loaded in the order in which they appear in the value's data string.</li></p>
+
+<p><li> Any lower filter drivers specified in the class key. Again, these are loaded in
+the order in which they appear in the LowerFilters value's data string.</li></p>
+
+<p><li> The driver specified by the Service value in the hardware key.</li></p>
+
+<p><li> Any upper filter drivers specified in the hardware key, in the order in which
+they appear in the UpperFilters data string.</li></p>
+
+<p><li> Any upper filter drivers specified in the class key, in the order in which they
+appear in the UpperFilters data string.</li></p>
+</ol>
+
+<p>When I say the system &quot;loads&quot; a driver, I mean that it maps the driver's image
+into virtual memory, fixes up relocatable references, and calls the driver's main entry
+point. The main entry point is usually named DriverEntry. I'll describe the DriverEntry
+function a bit further on in this chapter. It might turn out that a particular driver is
+already present in memory, in which case nothing happens at the load stage except incrementing
+a reference count that will preserve the image in memory for however long some device needs
+it.</p>
+
+<p>You might have noticed that the loading of upper and lower filters belonging to the class
+and to the device instance isn't neatly nested as you might have expected. Before I knew
+the facts, I guessed that device-level filters would be closer to the function driver than
+class-level filters. As we'll see later on, it's not very important in what order the
+loading occurs. However, the system calls the drivers' AddDevice functions (another topic
+I'll discuss in considerable detail shortly) in the same order in which the PnP Manager
+loads the drivers. Consequently, the device object stack will mirror this order, with possibly
+unexpected results.</p>
+
+<A NAME="36"><H3>How Device Objects Interrelate</H3></A>
+
+<p>The tree of device object stacks shown in Figure 2-2 doesn't imply that IRPs necessarily
+flow from a PDO to the top FiDO for the next lower branch of the tree. In fact, the driver for
+one stack's PDO is the FDO driver for the next lower branch, as illustrated by the shading
+in the figure. When the driver receives an IRP in its PDO role, it will do <i>something</i> to
+perform the IRP, but that might not involve sending the same, or even any other, IRP to the
+devices in the stack it occupies while performing its FDO role. Conversely, when a bus driver
+receives an IRP in its FDO role, it might or might not need to send some IRPs to one or more of
+the devices for which it acts as PDO.</p>
+
+<p>A few examples should clarify the relationship between FiDOs, FDOs, and PDOs. The first
+example concerns a read operation directed to a device that happens to be on a secondary PCI
+bus that itself attaches to the main bus through a PCI-to-PCI bridge chip. To keep things
+simple, let's suppose that there's one FiDO for this device, as illustrated in Figure
+2-8. You'll learn in later chapters that a read request turns into an IRP with a major
+function code of IRP_MJ_READ. Such a request would flow first to the upper FiDO and then to the
+function driver for the device. (That driver is the one for the device object marked
+FDO<sub>dev</sub> in the figure.) The function driver calls the hardware abstraction layer
+(HAL) directly to perform its work, so none of the other drivers in the figure will see the
+IRP.</p>
+
+<p>
+<A HREF="javascript:fullSize('F02wi08x.htm')"> <img src="images/F02wi08.JPG" width=404 height=338 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 2-8.</b> <i>The flow of a read request for a device on a secondary bus.</i><!--/caption-->
+</p>
+
+
+<p>A variation on the first example is shown in Figure 2-9. Here we have a read request for a
+device plugged into a USB hub that itself is plugged into the host controller. The complete
+device tree therefore contains stacks for the device, for the hub, and for the host controller.
+The IRP_MJ_READ flows through the FiDO to the function driver, which then sends one or more
+IRPs of a different kind downward to its own PDO. The PDO driver for a USB device is
+USBHUB.SYS, and it forwards the IRPs to the topmost driver in the host controller device stack,
+skipping the two-driver stack for the USB hub in the middle of the figure.</p>
+
+<p>
+<A HREF="javascript:fullSize('F02wi09x.htm')"> <img src="images/F02wi09.JPG" width=404 height=286 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 2-9.</b> <i>The flow of a read request for a USB device.</i><!--/caption-->
+</p>
+
+
+<p>The third example is similar to the first, except that the IRP in question is a notification
+concerning whether a disk drive on a PCI bus will or will not be used as the repository for a
+system paging file. You'll learn in Chapter 6, &quot;<A HREF="ch06a.htm">Plug and Play</A>,&quot; that this
+notification takes the form of an IRP_MJ_PNP request with the minor function code
+IRP_MN_DEVICE_USAGE_NOTIFICATION. In this case, the FiDO driver will pass the request to the
+FDO<sub>dev</sub> driver, which will take note of it and pass it further down the stack to the
+PDO<sub>dev</sub> driver. This particular notification has implications about how other I/O
+requests that concern the PnP system or power management will be handled, so the
+PDO<sub>dev</sub> driver sends an identical notification to the stack within which it's the
+FDO<sub>bus</sub>, as illustrated in Figure 2-10. (Not all bus drivers work this way, but the
+PCI bus does.)</p>
+
+<p>
+<A HREF="javascript:fullSize('F02wi10x.htm')"> <img src="images/F02wi10.JPG" width=404 height=351 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 2-10.</b> <i>The flow of a device usage notification.</i><!--/caption-->
+</p>
+
+
+<A NAME="37"><H3>Examining the Device Stack</H3></A>
+
+<p>To better visualize the way device objects and drivers are layered, it helps to have a tool.
+I wrote the DEVVIEW utility, which you'll find on the companion disc, for this purpose.
+I'll be describing other uses for DEVVIEW in this chapter, but the feature that concerns us
+now is its ability to display the device objects that are used to manage hardware devices. With
+the so-called Answer device plugged into my USB hub, I ran DEVVIEW and generated the two screen
+shots shown in Figure 2-11 and Figure 2-12.</p>
+
+<p>This particular device uses only two device objects. The PDO is managed by USBHUB.SYS,
+whereas the FDO is managed by USB42.SYS (the image for the Answer device). In the first of
+these screen shots, you can see other information about the PDO. Based on our exploration of
+the registry keys associated with USB42, it should now be clear where that information came
+from.</p>
+
+<p>It's worth experimenting with DEVVIEW on your own system to see how various drivers are
+layered for the hardware you own.</p>
+
+<p>
+<A HREF="javascript:fullSize('F02wi11x.htm')"> <img src="images/F02wi11.JPG" width=404 height=477 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 2-11.</b> <i>DEVVIEW information about USB42's PDO.</i><!--/caption-->
+</p>
+
+
+<p>
+<A HREF="javascript:fullSize('F02wi12x.htm')"> <img src="images/F02wi12.JPG" width=404 height=543 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 2-12.</b> <i>DEVVIEW information about USB42's FDO.</i><!--/caption-->
+</p>
+
+
+<A NAME="38"><H2>Driver Objects</H2></A>
+
+<p>The I/O Manager uses a <i>driver object</i> data structure to represent each device driver.
+See Figure 2-13. Like many of the data structures we'll be discussing, the driver object is
+<i>partially opaque</i>. This means that you and I are only supposed to directly access or
+change certain fields in the structure, even though the DDK headers declare the entire
+structure. I've shown the opaque fields of the driver object in the figure with a gray
+background. These opaque fields are analogous to the private and protected members of a C++
+class, and the accessible fields are analogous to public members.</p>
+
+<p>
+<img src="images/F02wi13.JPG" width=403 height=751 border=0>
+</p><p>
+<!--caption--><b>Figure 2-13.</b> <i>The DRIVER_OBJECT data structure.</i><!--/caption-->
+</p>
+
+
+<p>The DDK headers declare the driver object, and all other kernel-mode data structures for
+that matter, in a stylized way, as this excerpt from WDM.H illustrates:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+typedef struct _DRIVER_OBJECT {
+  CSHORT Type;
+  CSHORT Size;
+  ...
+  } DRIVER_OBJECT, *PDRIVER_OBJECT;
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>That is, the header declares a structure with a type name of DRIVER_OBJECT. It also declares
+a pointer type (PDRIVER_OBJECT) and assigns a structure tag (_DRIVER_OBJECT). This declaration pattern appears many places in the DDK, and I won't mention it
+again. The headers also declare a small set of type names (like CSHORT) to describe the atomic
+data types used in kernel mode. Table 2-1 lists some of these names. CSHORT, for example, means
+&quot;signed short integer used as a cardinal number.&quot;</p>
+
+<p><b>Table 2-1.</b> <i>Common type names for kernel-mode drivers.</i></p>
+<table cellpadding="5" width="95%">
+<tr><th><i>Type Name</i></th><th><i>Description</i></th></tr>
+<tr><td valign="top">PVOID, PVOID64</td><td valign="top">Generic pointers (default precision and 64-bit precision)</td></tr>
+<tr><td valign="top">NTAPI</td><td valign="top">Used with service function declarations to force use of _ _stdcall calling convention on x86 architectures</td></tr>
+<tr><td valign="top">VOID</td><td valign="top">Equivalent to &quot;void&quot;</td></tr>
+<tr><td valign="top">CHAR, PCHAR</td><td valign="top">8-bit character, pointer to same (signed or not according to compiler default)</td></tr>
+<tr><td valign="top">UCHAR, PUCHAR</td><td valign="top">Unsigned 8-bit character, pointer to same</td></tr>
+<tr><td valign="top">SCHAR, PSCHAR</td><td valign="top">Signed 8-bit character, pointer to same</td></tr>
+<tr><td valign="top">SHORT, PSHORT</td><td valign="top">Signed 16-bit integer, pointer to same</td></tr>
+<tr><td valign="top">USHORT, PUSHORT</td><td valign="top">Unsigned 16-bit integer, pointer to same</td></tr>
+<tr><td valign="top">LONG, PLONG</td><td valign="top">Signed 32-bit integer, pointer to same</td></tr>
+<tr><td valign="top">ULONG, PULONG</td><td valign="top">Unsigned 32-bit integer, pointer to same</td></tr>
+<tr><td valign="top">WCHAR, PWSTR</td><td valign="top">Wide (Unicode) character or string</td></tr>
+<tr><td valign="top">PCWSTR</td><td valign="top">Pointer to constant Unicode string</td></tr>
+<tr><td valign="top">NTSTATUS</td><td valign="top">Status code (typed as signed long integer)</td></tr>
+<tr><td valign="top">LARGE_INTEGER</td><td valign="top">Signed 64-bit integer</td></tr>
+<tr><td valign="top">ULARGE_INTEGER</td><td valign="top">Unsigned 64-bit integer</td></tr>
+<tr><td valign="top">PSZ, PCSZ</td><td valign="top">Pointer to ASCIIZ (single-byte) string or constant string</td></tr>
+<tr><td valign="top">BOOLEAN, PBOOLEAN</td><td valign="top">TRUE or FALSE (equivalent to UCHAR)</td></tr>
+</table>
+
+
+
+<p><div class="sidebar"><blockquote>
+<b>Note on 64-Bit Types</b>
+
+<p>The DDK headers contain type names that will make it relatively painless for driver authors
+to compile the same source code for either 32-bit or 64-bit Intel platforms. For example,
+instead of blithely assuming that a long integer and a pointer are the same size, you should
+declare variables that might be either a LONG_PTR or a ULONG_PTR. Such a variable can hold
+either a long (or unsigned long) or a pointer to something. Also, for example, declare an
+integer that can count as high as a pointer might span as a SIZE_T&#8212;you'll get a 64-bit
+integer on a 64-bit platform. These and other 32/64 typedefs are in the DDK header file named
+BASETSD.H.</p>
+</blockquote></div>
+</p>
+
+<p>I'll briefly discuss the accessible fields of the driver object structure now.</p>
+
+<p><b>DeviceObject</b> (PDEVICE_OBJECT) anchors a list of device object data structures, one
+for each of the devices managed by the driver. The I/O Manager links the device objects
+together and maintains this field. The DriverUnload function of a non-WDM driver would use this
+field to traverse the list of device objects in order to delete them. A WDM driver probably
+doesn't have any particular need to use this field.</p>
+
+<p><b>DriverExtension</b> (PDRIVER_EXTENSION) points to a small substructure within which only
+the <b>AddDevice</b> (PDRIVER_ADD_DEVICE) member is accessible to the likes of us. (See Figure
+2-14.) AddDevice is a pointer to a function within the driver that creates device objects; this
+function is rather a big deal, and I'll discuss it at length later in this chapter.</p>
+
+<p>
+<img src="images/F02wi14.JPG" width=401 height=252 border=0>
+</p><p>
+<!--caption--><b>Figure 2-14.</b> <i>The DRIVER_EXTENSION data structure.</i><!--/caption-->
+</p>
+
+
+<p><b>HardwareDatabase</b> (PUNICODE_STRING) describes a string that names a hardware database
+registry key for the device. This is a name like &quot;\Registry\Machine\Hardware\Description\System&quot; and names the registry key within which resource allocation
+information resides. WDM drivers have no need to access the information below this key because
+the PnP Manager performs resource allocation automatically. The name is stored in Unicode. (In
+fact, all kernel-mode string data uses Unicode.) I'll discuss the format and the use of the
+UNICODE_STRING data structure in the <a href="ch03a.htm">next chapter</a>.</p>
+
+<p><b>FastIoDispatch</b> (PFAST_IO_DISPATCH) points to a table of function pointers that file
+system and network drivers export. How these functions are used is beyond the scope of this
+book. If you're interested in learning more about file system drivers, consult Rajeev
+Nagar's <i>Windows NT File System Internals: A Developer's Guide</i> (O'Reilly
+&amp; Associates, 1997).</p>
+
+<p><b>DriverStartIo</b> (PDRIVER_STARTIO) points to a function in your driver that processes
+I/O requests that the I/O Manager has serialized for you. I'll discuss request queuing in
+general and the use of this routine in particular in Chapter 5, &quot;<A HREF="ch05a.htm#147">The I/O RequestPacket</A>.&quot;</p>
+
+<p><b>DriverUnload</b> (PDRIVER_UNLOAD) points to a cleanup function in your driver. I'll
+discuss this function a bit further on in connection with DriverEntry, but you might as well
+know now that a WDM driver probably doesn't have any significant cleanup to do anyway.</p>
+
+<p><b>MajorFunction</b> (array of PDRIVER_DISPATCH) is a table of pointers to functions in your
+driver that handle each of the roughly two dozen types of I/O request. This table is also
+something of a big deal, as you might guess, because it defines how I/O requests make it into
+your code.</p>
+
+<A NAME="39"><H2>Device Objects</H2></A>
+
+<p>Figure 2-15 illustrates the format of a <i>device object</i> and uses the same shading
+convention for opaque fields that I used in the preceding discussion of driver objects. As the
+author of a WDM driver, you will create some of these objects by calling <b>IoCreateDevice</b>,
+but the I/O Manager will be responsible for managing them.</p>
+
+<p><b>DriverObject</b> (PDRIVER_OBJECT) points to the object describing the driver associated
+with this device object, usually the one that called IoCreateDevice to create it. Filter
+drivers sometimes need to use this pointer to find the driver object for a device they're
+filtering so that they can inspect entries in the MajorFunction table.</p>
+
+<p><b>NextDevice</b> (PDEVICE_OBJECT) points to the next device object that belongs to the same
+driver as this one. This field is the one that links device objects together starting from the
+driver object's DeviceObject member. There's probably no reason for a WDM driver to use
+this field.</p>
+
+<p>
+<img src="images/F02wi15.JPG" width=403 height=851 border=0>
+</p><p>
+<!--caption--><b>Figure 2-15.</b> <i>The DEVICE_OBJECT data structure.</i><!--/caption-->
+</p>
+
+
+<p><b>CurrentIrp</b> (PIRP) points to the I/O request packet most recently sent to the
+corresponding driver's StartIo function. I'll have more to say about the CurrentIrp
+field in <a href="ch05a.htm">Chapter 5</a> when I discuss cancel routines.</p>
+
+<p><b>Flags</b> (ULONG) contains a collection of flag bits. Table 2-2 lists the bits that are
+accessible to driver writers.</p>
+
+<p><b>Table 2-2.</b> <i>Accessible flags in a DEVICE_OBJECT data structure.</i></p>
+
+<table cellpadding=5 width="95%"><tr>
+<th><i>Flag</i></th>
+<th><i>Description</i></th>
+</tr><tr>
+<td valign="top">DO_BUFFERED_IO</td>
+<td valign="top">Reads and writes use the buffered method
+ (system copy buffer) for accessing user-mode
+ data</td>
+</tr><tr>
+<td valign="top">DO_EXCLUSIVE</td>
+<td valign="top">Only one thread at a time allowed to open
+ a handle</td>
+</tr><tr>
+<td valign="top">DO_DIRECT_IO</td>
+<td valign="top">Reads and writes use the direct method
+ (memory descriptor list) for accessing
+ user-mode data</td>
+</tr><tr>
+<td valign="top">DO_DEVICE_INITIALIZING</td>
+<td valign="top">Device object not initialized yet</td>
+</tr><tr>
+<td valign="top">DO_POWER_PAGABLE</td>
+<td valign="top">IRP_MJ_PNP must be handled at
+ PASSIVE_LEVEL</td>
+</tr><tr>
+<td valign="top">DO_POWER_INRUSH</td>
+<td valign="top">Device requires large in-rush of current
+ during power-on</td>
+</tr><tr>
+<td valign="top">DO_POWER_NOOP</td>
+<td valign="top">Device doesn't participate in power
+ management</td>
+</tr></table>
+
+
+
+
+<p><b>Characteristics</b> (ULONG) is another collection of flag bits describing various
+optional characteristics of the device. (See Table 2-3.) The I/O Manager initializes these
+flags based on an argument to IoCreateDevice. Filter drivers propagate them upward in the
+device stack.</p>
+
+<p><b>Table 2-3.</b> <i>Characteristics flags in a DEVICE_OBJECT data structure.</i></p>
+
+<table cellpadding="5" width="95%">
+<tr><th><i>Flag</i></th><th><i>Description</i></th></tr>
+<tr><td valign="top">FILE_REMOVABLE_MEDIA</td><td valign="top">Media can be removed from device</td></tr>
+<tr><td valign="top">FILE_READ_ONLY_DEVICE</td><td valign="top">Media can only be read, not written</td></tr>
+<tr><td valign="top">FILE_FLOPPY_DISKETTE</td><td valign="top">Device is a floppy disk drive</td></tr>
+<tr><td valign="top">FILE_WRITE_ONCE_MEDIA</td><td valign="top">Media can be written once</td></tr>
+<tr><td valign="top">FILE_REMOTE_DEVICE</td><td valign="top">Device accessible through network connection</td></tr>
+<tr><td valign="top">FILE_DEVICE_IS_MOUNTED</td><td valign="top">Physical media is present in device</td></tr>
+<tr><td valign="top">FILE_DEVICE_SECURE_OPEN</td><td valign="top">Check security on device object during open operations</td></tr>
+</table>
+
+
+<p><b>DeviceExtension</b> (PVOID) points to a data structure <i>you</i> define that will hold
+per-instance information about the device. The I/O Manager allocates space for the structure,
+but its name and contents are entirely up to you. A common convention is to declare a structure
+with the type name DEVICE_EXTENSION. To access it given a pointer (for example, <b>fdo</b> ) to
+the device object, use a statement like this one:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>It happens to be true (now, anyway) that the device extension immediately follows the device
+object in memory. It would be a bad idea to rely on this always being true, though, especially
+when the documented method of following the DeviceExtension pointer will always work.</p>
+
+<p><b>DeviceType</b> (DEVICE_TYPE) is an enumeration constant describing what type of device
+this is. The I/O Manager initializes this member based on an argument to IoCreateDevice. Filter
+drivers might conceivably need to inspect it. At the date of this writing, there are roughly 50
+possible values for this member. (See Table 2-4.)</p>
+
+
+<p><b>Table 2-4.</b> <i>Device type codes and default security.</i></p>
+
+
+<table cellpadding="5" width="95%">
+<tr><th><i>Device Type</i></th><th><i>Default Security</i></th></tr>
+<tr><td valign="top">FILE_DEVICE_BEEP</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_CD_ROM</td><td valign="top">Modified Public Default Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_CD_ROM_FILE_SYSTEM</td><td valign="top">Public Default Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_CONTROLLER</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_DATALINK</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_DFS</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_DISK </td><td valign="top">Modified Public Default Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_DISK_FILE_SYSTEM</td><td valign="top">Public Default Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_FILE_SYSTEM</td><td valign="top">Public Default Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_INPORT_PORT</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_KEYBOARD</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_MAILSLOT</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_MIDI_IN</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_MIDI_OUT</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_MOUSE</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_MULTI_UNC_PROVIDER</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_NAMED_PIPE</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_NETWORK </td><td valign="top">Modified Public Default Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_NETWORK_BROWSER</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_NETWORK_FILE_SYSTEM </td><td valign="top">Modified Public Default Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_NULL</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_PARALLEL_PORT</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_PHYSICAL_NETCARD</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_PRINTER</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_SCANNER</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_SERIAL_MOUSE_PORT</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_SERIAL_PORT</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_SCREEN</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_SOUND</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_STREAMS</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_TAPE</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_TAPE_FILE_SYSTEM</td><td valign="top">Public Default Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_TRANSPORT</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_UNKNOWN</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_VIDEO</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_VIRTUAL_DISK </td><td valign="top">Modified Public Default Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_WAVE_IN</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_WAVE_OUT</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_8042_PORT</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_NETWORK_REDIRECTOR</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_BATTERY</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_BUS_EXTENDER</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_MODEM</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_VDM</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_MASS_STORAGE </td><td valign="top">Modified Public Default Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_SMB</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_KS</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_CHANGER</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_SMARTCARD</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_ACPI</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_DVD</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_FULLSCREEN_VIDEO</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_DFS_FILE_SYSTEM</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_DFS_VOLUME</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_SERENUM</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_TERMSRV</td><td valign="top">Public Open Unrestricted</td></tr>
+<tr><td valign="top">FILE_DEVICE_KSEC</td><td valign="top">Public Open Unrestricted</td></tr>
+</table>
+
+<p><b>StackSize</b> (CCHAR) counts the number of device objects starting from this one and
+descending all the way to the PDO. The purpose of this field is to inform interested parties
+about how many stack locations should be created for an IRP that will be sent first to this
+device's driver. WDM drivers don't normally need to modify this value, however, because
+the support routines they use for building the device stack do so automatically.</p>
+
+<p><div class="sidebar"><blockquote>
+<b>How the Device Stack Is Implemented</b> 
+
+<p>In the textual discussion of the DEVICE_OBJECT, I indicated that there's a NextDevice
+field that horizontally links together all the devices belonging to a particular driver, but I
+didn't describe the method that links device objects into a vertical stack from the
+uppermost FiDO through the FDO and from the lower FiDOs to the PDO. The opaque field <b>
+AttachedDevice</b> performs this office. Starting with the PDO, each device object points to
+the object immediately above it. There is no documented downward pointer&#8212;drivers must keep
+track on their own of what's underneath them. (In fact, <b>IoAttachDeviceToDeviceStack</b> 
+does set up a downward pointer in a structure for which the DDK doesn't have a complete
+declaration. It would be unwise to try to reverse-engineer that structure because it's
+subject to change at any time.)</p>
+
+<p>The AttachedDevice field is purposely not documented because its proper use requires
+synchronization with code that might be deleting device objects from memory. You and I are
+allowed to call <b>IoGetAttachedDeviceReference</b> to find the topmost device object in a
+given stack and to increment a reference count that will prevent that object from being
+prematurely removed from memory. If you wanted to work your way down to the PDO, you could send
+your own device an IRP_MJ_PNP request with the minor function code IRP_MN_QUERY_DEVICE_RELATIONS and a <b>Type</b> parameter of <b>TargetDeviceRelation</b>. The PDO's driver will answer by returning the address of the PDO. This IRP is
+supposedly reserved for use by the operating system, though, so you really shouldn't be
+issuing it on your own. Instead, you need to remember the PDO address when you first create the
+device object. </p>
+
+<p>Similarly, to know what device object is immediately underneath you, you need to save a
+pointer when you first add your object to the stack. Since each of the drivers in a stack will
+have its own unknowable way of implementing the downward pointers used for IRP dispatching,
+it's not practical to alter the device stack once the stack has been created.</p>
+
+</blockquote></div>
+</p>
+
+</BODY>
+</HTML>
+
+
+
+
+

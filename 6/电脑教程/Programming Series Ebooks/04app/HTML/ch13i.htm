@@ -1,0 +1,275 @@
+<HTML>
+<HEAD>
+<TITLE>The Importance of Data Alignment</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch13h.htm">[Previous]</A> <A HREF="ch14a.htm">[Next]</A><P>
+
+<A NAME="182"><H1>The Importance of Data Alignment</H1></A>
+
+<p>In this section, we leave the discussion of a process's virtual
+address space and discuss the important topic of data alignment. Data
+alignment is not so much a part of the operating system's memory
+architecture, but it is a part of the CPU's architecture.</p>
+
+<p>CPUs operate most efficiently when they access properly aligned
+data. Data is aligned when the memory address of the data modulo of the
+data's size is 0. For example, a WORD value should always start on
+an address that is evenly divided by 2, a DWORD value should always
+start on an address that is evenly divided by 4, and so on. When the
+CPU attempts to read a data value that is not properly aligned, the CPU
+will do one of two things. It will either raise an exception or the CPU
+will perform multiple, aligned memory accesses in order to read the
+full misaligned data value.</p>
+
+<p>Here is some code that accesses misaligned data:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+VOID SomeFunc(PVOID pvDataBuffer) { 
+   
+   // The first byte in the buffer is some byte of information
+   char c = * (PBYTE) pvDataBuffer;       
+
+   // Increment past the first byte in the buffer 
+   pvDataBuffer = (PVOID)((PBYTE) pvDataBuffer + 1); 
+
+   // Bytes 2-5 contain a double-word value
+   DWORD dw = * (DWORD *) pvDataBuffer; 
+
+   // The line above raises a data misalignment exception on the Alpha
+   
+   <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+
+}
+</pre></td></tr></table></p>
+
+<p>Obviously, if the CPU performs multiple memory accesses, the
+performance of your application is hampered. At best, it will take the
+system twice as long to access a misaligned value as it will to access
+an aligned value&#8212;but the access time could be even worse! To get
+the best performance for your application, you'll want to write
+your code so that the data is properly aligned.</p> 
+<p>Let's take a closer look at how the <i>x</i>86 CPU handles data
+alignment. The <i>x</i>86 CPU contains a special bit flag in its EFLAGS
+register called the AC (alignment check) flag. By default, this flag is
+set to zero when the CPU first receives power. When this flag is zero,
+the CPU automatically does whatever it has to in order to successfully
+access misaligned data values. However, if this flag is set to 1, the
+CPU issues an INT 17H interrupt whenever there is an attempt to access
+misaligned data. The <i>x</i>86 version of Windows 2000 and Windows 98
+never alters this CPU flag bit. Therefore, you will never see a data
+misalignment exception occur in an application when it is running on an
+<i>x</i>86 processor.</p>
+
+<p>Now, let's turn our attention to the Alpha CPU. The Alpha CPU
+cannot automatically fix up misaligned data accesses. Instead, when a
+misaligned data access occurs, the CPU notifies the operating system.
+Windows 2000 now decides if it should raise a data misalignment
+exception&#8212;or it can execute additional instructions that silently
+correct the problem and allow your code to continue executing. By
+default, when you install Windows 2000 on an Alpha machine, the
+operating system silently corrects any data misalignment accesses.
+However, you can alter this behavior. When you boot Windows 2000, the
+system looks in the registry for the following key:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HKEY_LOCAL_MACHINE\CurrentControlSet\Control\Session Manager
+</pre></td></tr></table></p>
+
+<p>In this key, there might be a value called
+EnableAlignmentFaultExceptions. If this value doesn't exist (which
+is the usual case), Windows 2000 silently fixes up misaligned data
+accesses. However, if this value does exist, the system gets its
+associated data value. If the data value is 0, the system performs
+silent fixups. If, however, the data value is 1, the system will not
+perform the silent fixups but will instead raise a data misalignment
+exception. You should almost never change the data value of this
+registry value because some applications can now raise data
+misalignment exceptions and terminate.</p>
+
+<p>To make it easier to change this registry entry, the Alpha edition
+of Microsoft Visual C++ includes a small utility called AXPAlign.exe.
+AXPAlign is used as shown here:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Alpha AXP alignment fault exception control
+
+Usage: axpalign [option]
+
+Options:
+   /enable   to enable alignment fault exceptions.
+   /disable  to disable alignment fault exceptions.
+   /show     to display the current alignment exception setting.
+
+Enable alignment fault exceptions:
+   In this mode any aligned access to unaligned data will result in a
+   data misalignment exception and no automatic operating system fixups
+   will occur. The application may be terminated or a debugger can be
+   used to locate the source of alignment faults in your code.
+
+   This setting applies to all running processes and thus care should
+   be taken since older applications may get exceptions and terminate.
+
+   Note that SetErrorMode(SEM_NOALIGNMENTFAULTEXCEPT) can be used to
+   suppress alignment exceptions even in this mode.
+
+Disable alignment fault exceptions:
+   This is the default mode with Windows NT for Alpha AXP, versions 3.1
+   and 3.5. In this mode the operating system will fixup any misaligned
+   data accesses should they occur and applications or debuggers will
+   not see them. This may lead to performance degradation if it occurs
+   at a high rate. Perfmon or wperf may be used to monitor the rate. 
+</pre></td></tr></table></p>
+
+<p>This utility simply changes the state of the registry value or shows
+the current state of the value. After using this utility to change the
+data value, you'll have to reboot for the change to take
+effect.</p>
+<p>Without using AXPAlign, you can still tell the system to silently
+correct misaligned data accesses for all threads in your process by
+having one of your process's threads call the <i>SetErrorMode</i>
+function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+UINT SetErrorMode(UINT fuErrorMode); 
+</pre></td></tr></table></p>
+
+<p>For our discussion, the flag in question is the
+SEM_NOALIGNMENTFAULTEXCEPT flag. When this flag is set, the system
+automatically corrects for misaligned data accesses. When this flag is
+reset, the system does not correct for misaligned data accesses but
+instead raises data misalignment exceptions. Note that changing this
+flag affects all threads contained within the process that owns the
+thread that makes the call. In other words, changing this flag will not
+affect any threads contained in any other processes. You should also
+note that a process's error mode flags are inherited by any child
+processes. Therefore, you might want to temporarily reset this flag
+before calling the <i>CreateProcess</i> function (although you usually
+don't do this). </p>
+<p>Of course, you can call <i>SetErrorMode</i> passing the
+SEM_NOALIGNMENTFAULTEXCEPT flag regardless of which CPU platform you
+are running on. However, the results are not always the same. For <i>
+x</i>86 systems, this flag is always on and cannot be turned off. For
+Alpha systems, you can turn this flag off only if the
+EnableAlignmentFaultExceptions registry value is set to 1. </p>
+<p>You can use the Windows 2000 MMC Performance Monitor snap-in to see how
+many alignment fixups per second the system is performing. The
+following figure shows what the Add Counter dialog box looks like just
+before you add this counter to the chart. </p>
+
+<p>
+ <img src="images/G13s02.JPG" width=398 height=313 border="0">
+</p>
+
+<p>What this counter really shows is the number of times per second the
+CPU notifies the operating system of misaligned data accesses. If you
+monitor this counter on an <i>x</i>86 machine, you'll see that it
+always reports zero fixups per second. This is because the <i>x</i>86
+CPU itself is performing the fixups and doesn't notify the
+operating system. Because the <i>x</i>86 CPU performs the fixup instead
+of the operating system, accessing misaligned data on an <i>x</i>86
+machine is not nearly as bad a performance hit as that of CPUs that
+require software (the Windows 2000 operating system code) to do the
+fixup. </p>
+<p>As you can see, simply calling <i>SetErrorMode</i> is enough to make
+your application work correctly. But this solution is definitely not
+the most efficient. In fact, the <i>Alpha Architecture Reference
+Manual,</i> published by Digital Press, states that the system's
+emulation code to silently correct for misaligned data accesses could
+take as much as 100 times longer to execute! That's quite an
+overhead to pay. Fortunately, there is a more efficient solution to
+your problem.</p>
+
+<p>Microsoft's C/C++ compiler for the Alpha supports a special
+keyword called <i>_ _unaligned</i>. You use the <i>_ _unaligned</i>
+modifier just as you would use the <i>const</i> or <i>volatile</i>
+modifiers except that the <i>_ _unaligned</i> modifier is only
+meaningful when applied to pointer variables. When you access data via
+an unaligned pointer, the compiler generates code that assumes that the
+data is not aligned properly and adds the additional CPU instructions
+necessary to access the data. The code shown here is a modified version
+of the code shown earlier. This new version takes advantage of the <i>
+_ _unaligned</i> keyword.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+VOID SomeFunc(PVOID pvDataBuffer) { 
+
+   // The first byte in the buffer is some byte of information
+   char c = * (PBYTE) pvDataBuffer;   
+
+   // Increment past the first byte in the buffer
+   pvDataBuffer = (PVOID)((PBYTE) pvDataBuffer + 1);
+
+   // Bytes 2-5 contain a double-word value
+   DWORD dw = * (_ _unaligned DWORD *) pvDataBuffer;
+
+   // The line above causes the compiler to generate additional 
+   // instructions so that several aligned data accesses are performed 
+   // to read the DWORD. 
+   // Note that a data misalignment exception is not raised.
+   
+   <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+
+}
+</pre></td></tr></table></p>
+
+<p>When I compile the following line on the Alpha, 7 CPU instructions
+are generated:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+DWORD dw = * (_ _unaligned DWORD *) pvDataBuffer; 
+</pre></td></tr></table></p>
+
+<p>However, if I remove the <i>_ _unaligned</i> keyword from the line
+and recompile, only 3 CPU instructions are generated. As you can see,
+the use of the <i>_ _unaligned</i> keyword on the Alpha causes more than
+twice the number of CPU instructions to be generated. The instructions
+added by the compiler are still much more efficient than letting the
+CPU trap the misaligned data access and having the operating system
+correct the problem. In fact, if you monitor the Alignment Fixups/sec
+counter, you'll see that accesses via unaligned pointers have no
+effect on the chart. </p>
+<p>Finally, the <i>_ _unaligned</i> keyword is not supported by the <i>
+x</i>86 version of the Visual C/C++ compiler. I assume that Microsoft
+felt that this wasn't necessary because of the speed at which the
+CPU itself can perform the fixups. However, this also means that the
+<i>x</i>86 compiler will generate errors when it encounters the <i>
+_ _unaligned</i> keyword. So, if you are trying to create a single
+source code base for your application, you'll want to use the
+UNALIGNED macro instead of the <i>_ _unaligned</i> keyword. The
+UNALIGNED macro is defined in WinNT.h as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+#if defined(_M_MRX000) || defined(_M_ALPHA) || defined(_M_IA64)
+#define UNALIGNED _ _unaligned
+#if defined(_WIN64)
+#define UNALIGNED64 _ _unaligned
+#else
+#define UNALIGNED64
+#endif
+#else
+#define UNALIGNED
+#define UNALIGNED64
+#endif
+</pre></td></tr></table></p>
+</body>
+</html>
+
+
+
+
+
+
+

@@ -1,0 +1,180 @@
+<HTML>
+<HEAD>
+<TITLE>Resetting the Contents of Physical Storage </TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch15g.htm">[Previous]</A> <A HREF="ch15i.htm">[Next]</A><P>
+
+<A NAME="200"><H1>Resetting the Contents of Physical Storage </H1></A>
+
+<p>
+<div class="note"><blockquote>
+<b>WINDOWS 98</b><hr>
+Windows 98 does not support the resetting of physical storage.
+</blockquote></div>
+</p>
+
+<p>When you modify the contents of various pages of physical storage, the system tries to keep the changes in RAM as long as possible. However, while applications are running, a demand might be placed on your system's RAM as pages are being loaded from .exe files, DLL files, and/or the paging file. As the system looks for pages of RAM to satisfy recent load requests, the system will have to swap modified pages of RAM to the system's paging file.</p>
+ 
+<p>Windows 2000 offers a feature that allows an application to improve its performance&#8212;the resetting of physical storage. Resetting storage means that you are telling the system that the data on one or more pages of storage is not modified. If the system is searching for a page of RAM and chooses a modified page, the system must write the page of RAM to the paging file. This operation is slow and hurts performance. For most applications, you want the system to preserve your modified
+pages in the system's paging file.</p>
+ 
+<p>However, certain applications use storage for short periods of time and then no longer require that the contents of that storage be preserved. To help performance, an application can tell the system not to preserve desired pages of storage in the system's paging file. This is basically a way for an application to tell the system that a data page has not been modified. So if the system chooses to use a page of RAM for another purpose, the page's contents don't have to be preserved in the paging file, thus increasing performance. An application resets storage by calling <i>VirtualAlloc,</i> passing the MEM_RESET flag in the third parameter.</p>
+ 
+<p>If the pages referenced in the call to <i>VirtualAlloc</i> are in the paging file, the system discards them. The next time the application accesses the storage, new RAM pages that are first initialized to zeroes are used. If you reset pages that are currently in RAM, they are marked as not modified so that they will never be written to the paging file. Note that although the content of the RAM page is <i>not</i> zeroed, you should not continue to read from this page of storage. If the system doesn't need the page of RAM, it will contain the original contents. However, if the system needs the page of RAM, the system can take it. Then when you attempt to access the page's contents, the system will give you a new page that has been zeroed. Since you have no control over this behavior, you must assume that the
+contents of the page are garbage after you reset the page.</p>
+ 
+<p>Keep in mind a couple of additional things when you reset storage. First, when you call <i>VirtualAlloc</i>, the base address is usually rounded down to a page boundary and the number of bytes is rounded up to an integral number of pages. Rounding the base address and number of bytes this way would be very dangerous to do when resetting storage; therefore, <i>VirtualAlloc</i> rounds these values in the opposite
+direction when you pass MEM_RESET. For example, let's say that you had the following code:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+PINT pnData = (PINT) VirtualAlloc(NULL, 1024, 
+   MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+pn[0] = 100;
+pn[1] = 200;
+VirtualAlloc((PVOID) pnData, sizeof(int), MEM_RESET, PAGE_READWRITE);
+</pre></td></tr></table></p>
+
+<p>This code commits one page of storage and then says that the first 4 bytes (<i>sizeof(int)</i>) are no longer necessary and can be reset. However, as with all storage operations, everything must be done on page boundaries and in page increments. As it turns out, the call to reset the storage above fails (<i>VirtualAlloc</i> returns NULL). Why? Because when you pass MEM_RESET to <i>VirtualAlloc</i>, the base address that you pass to the function is rounded up to a page boundary and the number of bytes is rounded down to an integral number of pages. This is done to ensure that important data is not thrown away. In the
+preceding example, rounding the number of bytes down makes it 0, and it is illegal to reset 0 bytes.</p>
+ 
+<p>The second thing to remember about resetting storage is that the MEM_RESET flag must always be used by itself and cannot be ORed with any other flags. The following call always fails and returns NULL:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+PVOID pvMem = VirtualAlloc(NULL, 1024, 
+   MEM_RESERVE | MEM_COMMIT | MEM_RESET, PAGE_READWRITE);
+</pre></td></tr></table></p>
+
+<p>It really doesn't make any sense to combine the MEM_RESET flag
+with any other flag, anyway.</p>
+ 
+<p>Finally, note that calling <i>VirtualAlloc</i> with MEM_RESET requires that you pass a valid page protection value even though this value will not be used by the function.</p>
+
+<A NAME="201"><H2>The MemReset Sample Application</H2></A>
+
+<p>The MemReset application (&quot;15 MemReset.exe&quot;), listed in Figure 15-2 below, demonstrates how the MEM_RESET flag works. The source code and resource files for the application are in
+the 15-MemReset directory on the companion CD-ROM.</p>
+ 
+<p>The first thing that the MemReset.cpp code does is reserve and commit a region of physical storage. Since the size passed to <i>VirtualAlloc</i> is 1024, the system automatically rounds this value up to the system's page size. Now a string is copied into this buffer using <i>lstrcpy</i>, causing the contents of the page to be modified. If the system later decides it needs the page of RAM occupied by our data page, the system will first write the data that is in our page to the system's paging file. When our application later attempts to access this data, the system automatically reloads the page from the paging file into another page of RAM so that we can successfully access the data.</p>
+
+<p>After writing the string to the page of storage, the code presents the user with a message box asking whether the data needs to be accessed at a later time. If the user responds by selecting the No button, the code forces the operating system to believe that the data in the page is not modified by calling <i>VirtualAlloc</i> and passing the MEM_RESET flag. </p>
+
+<p>To demonstrate that the storage has been reset, we need to force a heavy demand on the system's RAM. We can do this with the following three-step process:</p>
+
+<ol>
+<p><li>Call <i>GlobalMemoryStatus</i> to get the total amount of RAM in the machine.</li></p>
+
+<p><li>Call <i>VirtualAlloc</i> to commit this amount of storage. This operation is very fast because the system doesn't actually allocate RAM for the storage until the process attempts to touch the pages.</li></p>
+
+<p><li> Call <i>ZeroMemory</i> so that the newly committed pages are touched. This will place a heavy burden on the system's RAM,
+causing some pages that are currently in RAM to be written to the
+paging file.</li></p>
+</ol>
+
+<p>If the user indicated that that data will be accessed later, the data is not reset and will be swapped back into RAM later when it is accessed. However, if the user indicated that the data will not be accessed later, the data is reset and the system will not write it out to the paging file, thereby improving our application's performance. </p>
+
+<p>After <i>ZeroMemory</i> returns, the code compares the contents of the data page with the string originally written to it. If the data wasn't reset, the contents are guaranteed to be the same. If the data page was reset, the contents might or might not be the same. In the MemReset program, the contents will never be the same because all pages in RAM are forced to be written to the paging file. However, if the dummy region were smaller than the total amount of RAM in the machine, the original contents could possibly still be in RAM. As I pointed out earlier, be careful about this!</p>
+
+<p>
+<b>Figure 15-2.</b> <i>The MemReset sample application</i>
+</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+
+<p><b>MemReset.cpp</b></p>
+
+<PRE>
+/******************************************************************************
+Module:  MemReset.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#include..\CmnHdr.h&quot;     /* See Appendix A. */
+#include &lt;tchar.h&gt;
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+int WINAPI _tWinMain(HINSTANCE hinstExe, HINSTANCE, LPTSTR pszCmdLine, int) {
+
+   chWindows9xNotAllowed();
+
+   TCHAR szAppName[]  = TEXT(&quot;MEM_RESET tester&quot;);
+   TCHAR szTestData[] = TEXT(&quot;Some text data&quot;);
+
+   // Commit a page of storage and modify its contents.
+   LPTSTR pszData = (LPTSTR) VirtualAlloc(NULL, 1024, 
+      MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+   lstrcpy(pszData, szTestData);
+
+   if (MessageBox(NULL, TEXT(&quot;Do you want to access this data later?&quot;), 
+      szAppName, MB_YESNO) == IDNO) {
+
+      // We want this page of storage to remain in our process but the 
+      // contents aren't important to us anymore. 
+      // Tell the system that the data is not modified.
+
+      // Note: Because MEM_RESET destroys data, VirtualAlloc rounds
+      // the base address and size parameters to their safest range.
+      // Here is an example: 
+      //    VirtualAlloc(pvData, 5000, MEM_RESET, PAGE_READWRITE)
+      // resets 0 pages on CPUs where the page size is greater than 4 KB 
+      // and resets 1 page on CPUs with a 4-KB page. So that our call to 
+      // VirtualAlloc to reset memory below always succeeds, VirtualQuery 
+      // is called first to get the exact region size.
+      MEMORY_BASIC_INFORMATION mbi;
+      VirtualQuery(pszData, &amp;mbi, sizeof(mbi));
+      VirtualAlloc(pszData, mbi.RegionSize, MEM_RESET, PAGE_READWRITE);
+   }
+   
+   // Commit as much storage as there is physical RAM.
+   MEMORYSTATUS mst;
+   GlobalMemoryStatus(&amp;mst);
+   PVOID pvDummy = VirtualAlloc(NULL, mst.dwTotalPhys, 
+      MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+
+   // Touch all the pages in the dummy region so that any
+   // modified pages in RAM are written to the paging file.
+   ZeroMemory(pvDummy, mst.dwTotalPhys);
+
+   // Compare our data page with what we originally wrote there.
+   if (lstrcmp(pszData, szTestData) == 0) {
+
+      // The data in the page matches what we originally put there.
+      // ZeroMemory forced our page to be written to the paging file.
+      MessageBox(NULL, TEXT(&quot;Modified data page was saved.&quot;), 
+         szAppName, MB_OK);
+   } else {
+
+      // The data in the page does NOT match what we originally put there
+      // ZeroMemory didn't cause our page to be written to the paging file
+      MessageBox(NULL, TEXT(&quot;Modified data page was NOT saved.&quot;), 
+         szAppName, MB_OK);
+   }
+   return(0);
+}
+
+
+//////////////////////////////// End of File //////////////////////////////////
+</pre>
+
+</td></tr></table>
+</p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

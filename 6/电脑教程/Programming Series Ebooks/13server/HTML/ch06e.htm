@@ -1,0 +1,301 @@
+<HTML>
+<HEAD>
+<TITLE>Reading the Event Log</TITLE>
+<link rel="STYLESHEET" type="text/css" href="prosrvwin.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR = "#ffffff">
+<A HREF="ch06d.htm">[Previous]</A> <A HREF="ch07a.htm">[Next]</A><P>
+
+<A NAME="103"><h1>Reading the Event Log</h1></A>
+<p>The Event Viewer snap-in that ships with Windows is usually sufficient for most event-reading needs. However, Windows does provide functions that allow your own applications to access event logs. There are lots of possibilities for a feature like this&#8212;for example, you could write an application that sends an e-mail when it detects that an event entry of a certain ID is being added to an event log.</p> 
+
+<p>To get started reading the event log, your application must first retrieve a handle to a log by calling <i>OpenEventLog</i>:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+HANDLE OpenEventLog( 
+   PCTSTR pszUNCServerName, 
+   PCTSTR pszLogName);
+</pre></td></tr></table>
+</p>
+
+<p>The <i>pszUNCServerName</i> parameter identifies the machine containing the event log you wish to access. The <i>pszLogName</i> parameter identifies the specific log on the server machine. Once you have a valid handle to the log file, you are prepared to read events. As always, you should close the handle when you are finished accessing the log file by calling <i>CloseEventLog</i>:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+BOOL CloseEventLog(HANDLE hEventLog);
+</pre></td></tr></table>
+</p>
+
+<p>Reading events requires a call to <i>ReadEventLog</i>:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+BOOL ReadEventLog(
+   HANDLE hEventLog,
+   DWORD  dwReadFlags, 
+   DWORD  dwRecordOffset, 
+   PVOID  pvBuffer, 
+   DWORD  nNumberOfBytesToRead,
+   PDWORD pnBytesRead, 
+   PDWORD pnMinNumberOfBytesNeeded);
+</pre></td></tr></table>
+</p>
+
+<p>The <i>hEventLog</i> parameter is the handle returned from <i>OpenEventLog</i>. The <i>dwReadFlags</i> parameter identifies whether you will read the log sequentially or start reading from a specific record. Table 6-5 lists the possible flags for <i>dwReadFlags</i>. A common value to pass is EVENTLOG_FORWARDS_READ | EVENTLOG_SEQUENTIAL_READ.</p>
+
+<p><b>Table 6-5.</b> <i>Flags that can be passed for</i> ReadEventLog'<i>s</i> dwReadFlags <i>parameter</i></p>
+
+<p>
+<table cellpadding=5 width="95%">
+<tr> 
+<th>Flag  </th>
+<th>Description  </th></tr>
+<tr>
+<td valign="top">EVENTLOG_SEEK_READ  </td>
+<td valign="top">Allows you to specify a zero-based index in the log file for the event that you want to begin reading from. You specify the index with the <i>dwRecordOffset</i> parameter. You must select either seek or sequential reading.  </td></tr>
+<tr>
+<td valign="top">EVENTLOG_SEQUENTIAL_READ   </td>
+<td valign="top">Indicates that you will be reading the event log sequentially, starting with the event record that follows the most recently read record. This is the most commonly selected read type for the event log.  </td></tr>
+<tr>
+<td valign="top">EVENTLOG_FORWARDS_READ  </td>
+<td valign="top">Indicates that you will be reading forward through the event log file. This flag can be used for either sequential or seek reads.  </td></tr>
+<tr>
+<td valign="top">EVENTLOG_BACKWARDS_READ   </td>
+<td valign="top">Indicates that you will be reading backward through the event log file. This flag can be used with either sequential or seek reads.  </td></tr>
+</table></p>
+      
+
+
+<p>To receive event log data, you supply a buffer pointer (<i>pvBuffer</i>) and a buffer size in bytes (<i>nNumberOfBytesToRead</i>) to <i>ReadEventLog</i>. If your buffer is not large enough to read the next record in the log, the function will fail, and <i>GetLastError</i> will report ERROR_INSUFFICIENT_BUFFER. The variable pointed to by the <i>pnMinNumberOfBytesNeeded</i> parameter will contain the number of bytes needed to read a single record. However, if your buffer is large enough for one or more records, <i>ReadEventLog</i> will fill your buffer with the data for as many records as will completely fit in your buffer. I suggest your application make a single call to <i>ReadEventLog</i> to find out the necessary buffer size for reading a single event, allocate the buffer, and then call <i>ReadEventLog</i> again to read the log. Although you can read multiple events at a time, doing so is not significantly more efficient, and it complicates your parsing code because the data returned is of variable
+length.</p>
+
+<p> If no more records are left to read, <i>ReadEventLog</i> will return FALSE, and <i>GetLastError</i> will report ERROR_HANDLE_EOF.</p>
+
+<p>After you successfully call <i>ReadEventLog</i>,  your buffer will contain one or more EVENTLOGRECORD structures. This structure is of variable length and is declared as follows:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+typedef struct _EVENTLOGRECORD {
+   DWORD Length; 
+   DWORD Reserved; 
+   DWORD RecordNumber; 
+   DWORD TimeGenerated; 
+   DWORD TimeWritten; 
+   DWORD EventID; 
+   WORD  EventType; 
+   WORD  NumStrings; 
+   WORD  EventCategory; 
+   WORD  ReservedFlags; 
+   DWORD ClosingRecordNumber; 
+   DWORD StringOffset; 
+   DWORD UserSidLength; 
+   DWORD UserSidOffset; 
+   DWORD DataLength; 
+   DWORD DataOffset; 
+   // 
+   // Then follow: 
+   // 
+   // TCHAR SourceName[] 
+   // TCHAR Computername[] 
+   // SID UserSid 
+   // TCHAR Strings[] 
+   // BYTE Data[] 
+   // CHAR Pad[] 
+   // DWORD Length; 
+   // 
+} EVENTLOGRECORD; 
+</pre></td></tr></table>
+</p>
+
+<p>A precious few members of this structure are straightforward, and you should recognize them immediately as the <i>EventID</i>, <i>EventType</i>, and <i>EventCategory</i> fields. But the other members of this structure get more complex from here.</p>
+
+<p> Let's start with the <i>TimeGenerated</i> and <i>TimeWritten</i> values. As you might have guessed, they correspond to the date and time the event was generated and written to the log, respectively. However, the format of the time value is not one commonly used with Win32 API functions, so it may seem awkward at first. Here is what the documentation has to say about this time format: &quot;This time is measured in the number of seconds elapsed since 00:00:00 January 1, 1970, Universal Coordinated Time.&quot; This format is similar to that for the C runtime's <i>time_t</i> type, except that the time values for events or &quot;event times&quot; are unsigned. What does this mean? It means that you will have to jump through a couple of hoops to get event time
+values into a useful time format such as the SYSTEMTIME structure.</p>
+
+<p> If you are familiar with the different time structures supported by Windows, you might recognize the event time format as being similar to the FILETIME format. The FILETIME format, however, is defined as a 64-bit value representing the number of 100-nanosecond intervals since 00:00:00 January 1, 1601. Since Windows provides useful functions for converting from FILETIME to SYSTEMTIME, our best move is to convert our event time to a FILETIME value. Somewhere in the process we should adjust for local time. (Remember that event times are Universal Coordinated Time.) The following code wraps all of this logic in a simple function:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+void EventTimeToLocalSystemTime(DWORD dwEventTime, 
+   SYSTEMTIME* pstTime) {
+
+   SYSTEMTIME st1970;
+   // Create a FILETIME for 00:00:00 January 1, 1970
+   st1970.wYear         = 1970;
+   st1970.wMonth        = 1;
+   st1970.wDay          = 1;
+   st1970.wHour         = 0;
+   st1970.wMinute       = 0;
+   st1970.wSecond       = 0;
+   st1970.wMilliseconds = 0;
+
+   union {
+      FILETIME ft;
+      LONGLONG ll;
+   } u1970;
+   SystemTimeToFileTime(&amp;st1970, &amp;u1970.ft);
+
+   union {
+      FILETIME ft;
+      LONGLONG ll;
+   } uUCT;
+   // Scale from seconds to 100-nanoseconds
+   uUCT.ll = 0;
+   uUCT.ft.dwLowDateTime = dwEventTime;
+   uUCT.ll *= 10000000;
+   uUCT.ll += u1970.ll;
+
+   FILETIME   ftLocal;
+   FileTimeToLocalFileTime(&amp;uUCT.ft, &amp;ftLocal);
+   FileTimeToSystemTime(&amp;ftLocal, pstTime);
+}
+</pre></td></tr></table>
+</p>
+
+<p>Well, now that the mystery of the time values is solved, let's move on to the <i>SourceName</i> and <i>Computername</i> members. These are both string values that are somewhat awkward to retrieve. Although the EVENTLOGRECORD structure provides offsets to some of the variably positioned items in the structure, the designers of the system apparently didn't feel the need to be consistent. As a result, <i>SourceName</i> is simply defined as the zero-terminated string immediately following the <i>DataOffset</i> member of the structure. Similarly, the <i>Computername</i> string starts on the first character following the <i>SourceName</i> string. I have thrown together a couple of useful macros (included in EventMonitor.cpp on the companion CD) to ease the pain of extracting these values from the EVENTLOGRECORD structure. These macros will work with source modules built using either Unicode or ANSI strings.</p>
+
+<p> Fortunately the EVENTLOGRECORD structure includes the <i>UserSidOffset</i> and <i>
+StringOffset</i> values for accessing the <i>UserSid</i> and <i>Strings</i> members gracefully. These offsets start from the beginning of the structure and are measured in bytes. The <i>UserSid</i> is a SID structure identifying the user for which the event was logged. In <A HREF="ch09a.htm">Chapter 9</A>, I discuss how to convert a SID structure into a human-readable user name. The <i>Strings</i> array is an array of pointers to the expansion strings, which were passed to the <i>ppszStrings</i> parameter of <i>ReportEvent</i>.</p>
+
+<A NAME="104"><h2>Converting a Message ID to a Human-Readable String</h2></A>
+<p>You are probably wondering how you are supposed to get the text for the event category and the detailed description of the event. Knowing what you know about event reporting, you could infer that it would be possible to look up the event source in the registry, load the appropriate message DLLs, and extract the detailed category and message from the resource manually&#8212;but that would be unnecessarily messy, wouldn't it? Well, it would, but the method I described is the only way to retrieve the event text. Fortunately the system does implement a handy function named <i>FormatMessage</i> that extracts the resource text, but the rest of the task is up to us. The EventMonitor sample application, discussed at the end of this chapter, shows how to use <i>FormatMessage</i> for event reading. The function is defined as follows:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+DWORD FormatMessage(
+   DWORD  dwFlags,
+   PCVOID pSource,
+   DWORD  dwMessageId,
+   DWORD  dwLanguageId,
+   PTSTR  pBuffer,
+   DWORD  nSize,
+   va_list *Arguments); 
+</pre></td></tr></table>
+</p>
+
+<p>I would have liked to see a pair of functions defined as follows:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+PTSTR GetEventCategory(
+   PTSTR           pszLog,
+   PEVENTLOGRECORD pelr);
+
+PTSTR GetEventMessage(
+   PTSTR           pszLog,
+   PEVENTLOGRECORD pelr);
+</pre></td></tr></table>
+</p>
+
+<p>These functions would take a pointer to a log file and an event record from that log file, and then return a buffer containing the requested text. The returned buffer could be freed using <i>LocalFree</i> in the tradition of the <i>FormatMessage</i> function. However, the system doesn't provide us with these lovely functions. So I took it upon myself to implement them as a macro and a function that wrap my own <i>FormatEventMessage</i> function. The complete code for this function is available in EventMonitor.cpp on the companion CD. Let me point out some highlights.</p>
+
+<p> You probably remember from our earlier discussion of reporting events that the message DLLs are stored in registry values named <i>EventMessageFile</i>, <i>ParameterMessageFile</i>, or <i>CategoryMessageFile</i>, depending on which message you are attempting to find. If the event source in question is named MySource and is logged to the Application log, the registry looks like this:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+HKEY_LOCAL_MACHINE
+   SYSTEM
+      CurrentControlSet
+         Services
+            EventLog
+               Application
+                  <i>MySource
+                    </i> CategoryMessageFile
+ <i>                   </i> EventMessageFile
+ <i>                   </i> ParameterMessageFile
+</pre></td></tr></table>
+</p>
+
+<p>It is your application's job, when reading events, to locate the appropriate registry value and parse the string for the one or many message DLLs that contain the desired message string. Remember, you must pass the semicolon-delimited string of message files retrieved from the registry to <i>ExpandEnvironmentStrings</i> before using the string to load the modules into your address space, because the registry value type for these values is REG_EXPAND_SZ.</p>
+
+<p> After you have retrieved your list of message DLLs and EXEs, you must load each one in turn (from left to right) into your process's address space using <i>LoadLibraryEx</i>. Use <i>LoadLibraryEx</i> rather than  <i>LoadLibrary</i>, because <i>LoadLibraryEx</i> allows you to load a module as a resource-only module by passing the LOAD_LIBRARY_AS_DATAFILE flag. After you have retrieved an instance handle from <i>LoadLibraryEx</i>, you pass it, along with a message ID and expansion strings, from the EVENTLOGRECORD structure to <i>FormatMessage</i>. If
+the call to <i>FormatMessage</i> succeeds, your message has been located, and you can unload the library and return the message text. If it does not succeed, you must unload the message DLL, and then load and try the next message DLL. If you will be extracting message text for more than a single event, you might find it advantageous to optimize your code to avoid repeated loading and unloading of message DLLs.</p>
+
+<p> Although <i>FormatMessage</i> automatically expands your strings into the message, it does not automatically expand messages from the <i>ParameterMessageFile</i> DLLs into your message. Your code must manually scan for instances of &quot;%%&quot; in the string returned from <i>FormatMessage</i> and, using the same algorithm, replace them with the text extracted from the <i>ParameterMessageFile</i> DLLs. The EventMonitor sample application in this chapter shows how to do all of this properly.</p>
+
+<p> One final point about <i>FormatMessage</i> before we move on: If the message text calls for more strings than
+the number of strings you pass to <i>FormatMessage</i>, the function will blindly attempt to access the nonexistent strings. Most likely, this will cause an access violation, meaning that you either need to parse the string and precount the number of strings expected, which ensures that the correct number of strings is passed, or&#8212;and this is the easier approach to take&#8212;wrap the call to <i>FormatMessage</i> in a structured exception-handling frame that handles the access violation gracefully. Remember that the system makes no promises about the correctness of the events reported by other applications.</p>
+
+<p> While we are on the topic of robust event viewing, I should point out that it is also possible for an event source to have an invalid or nonexistent event message file. Your code should deal gracefully with situations like these. For example, the Event Viewer snap-in shows an improperly logged event, as shown earlier and in Figure 6-8.</p>
+
+<p>
+<img src="images/F06FJ08.JPG" width=404 height=448 border="0">
+</p><p>
+<!-- caption --><b>Figure 6-8.</b> <i>An event in Event Viewer where message file information could not be found</i><!-- /caption -->
+</p>
+
+<p>As you can see, event reading is not a trivial problem. Because of the complexity of this task, you might find it helpful to adapt your event reading code from the sample code for this chapter.</p>
+
+<p> Before I move on to the next section, I feel compelled to mention the <i>BackupEventLog</i>, <i>OpenBackupEventLog</i>, and <i>ClearEventLog</i> functions, not because they directly relate to event reading, but because many event-reading tools use these functions to offer additional functionality. These functions are prototyped as follows:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+BOOL BackupEventLog(
+   HANDLE hEventLog, 
+   PCTSTR pszBackupFileName);
+ 
+HANDLE OpenBackupEventLog( 
+   PCTSTR pszUNCServerName,
+   PCTSTR pszFileName);
+ 
+BOOL ClearEventLog(
+   HANDLE hEventLog,
+   PCTSTR pszBackupFileName);
+</pre></td></tr></table>
+</p>
+
+<p><i>BackupEventLog</i> creates a file using the provided filename and then copies the contents of event log (identified by the <i>hEventLog</i> parameter) to this new file. This function allows an administrator to save the history of events.</p>
+
+<p>To open the event history and read its events, an application calls <i>OpenBackupEventLog</i>, which returns an event log handle (just like the <i>OpenEventLog</i> function discussed earlier). Using this handle, you can call the other familiar event log functions to retrieve the stored event entries. When you are finished retrieving the entries, you close the event log handle by calling <i>CloseEventLog</i>. Backing up an event log can be very helpful for archiving and later examining the event log, and it eases the customer's task of wrapping up a log and shipping it back to you for troubleshooting.</p>
+
+<p>The last function, <i>ClearEventLog</i>, simply erases all the event entries from a log file opened by <i>OpenEventLog</i> or <i>OpenBackupEventLog</i>. For convenience, this function allows you to back up the log file before erasing the entries. You can pass NULL for the <i>pszBackupFileName</i> parameter to clear the log file without producing a backup file.</p>
+
+<A NAME="105"><h2>Event Notification</h2></A>
+<p>You can have the system notify you as events are added to an event log. For example, if your favorite chat server logs an event for every client connection as well as every client disconnection, you could write a utility to wait for notification of these events and maintain a running log of connections to your chat server. To receive event log notifications, you must call the <i>NotifyChangeEventLog</i> function:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+BOOL NotifyChangeEventLog(
+   HANDLE hEventLog,
+   HANDLE hEvent);
+</pre></td></tr></table>
+</p>
+
+<p>The <i>hEventLog</i> parameter is the handle returned from a call to <i>OpenEventLog</i>, and the <i>hEvent</i> parameter is the handle of a previously created event kernel object. When the system detects a change to the event log, the system automatically signals the event kernel object. A thread in your application will detect the signaled event kernel object and then do whatever processing it desires to the event log.</p>
+
+<p>You should know several facts about <i>NotifyChangeEventLog</i>. First, once you have associated an event object with an event log, there is no way to turn off notification to that event object short of calling <i>CloseEventLog</i>. This is typically not a problem, however, since you can simply choose to pass your event object handle to <i>CloseHandle</i> and create a new event kernel object if needed.</p>
+
+<p>Second, the system signals the event by calling <i>PulseEvent</i> when a change is made to the event log. This means that you do not have to reset the event and that you must have a thread waiting on the event consistently; otherwise, you're likely to miss some notifications.</p>
+
+<p> Third, the system does not promise <i>PulseEvent</i> for every event record added to the event log. Rather, it pulses your event roughly every 5 seconds if one or more changes were made to the event log during that 5-second period. So if you are waiting on the event object, and then read the log as a result of a pulse, you should not assume that only one event has been added, and you should read until you have reached the end of the log.</p>
+
+<p> Last, the system pulses the event when any event record is added to any log file, regardless of which log you specified when calling <i>NotifyChangeEventLog</i>. So your thread might wake up when an event is added to the System log even though you wanted only notifications from the Application
+log. Your application must be able to gracefully handle receipt of a notification even when nothing has changed in the log.</p>
+
+<A NAME="106"><h2>The EventMonitor Sample Application</h2></A>
+<p>The EventMonitor sample application (&quot;06 EventMonitor.exe&quot;) demonstrates how to read event records from an event log. In addition, the sample application calls the <i>NotifyChangeEventLog</i> function and updates its display as new entries are added to the event log. The source code and resource files for the application are in the 06-EventMonitor directory on the companion CD. When the user executes the EventMonitor sample application, the dialog box shown in Figure 6-9 appears.</p>
+
+<p> By default, EventMonitor shows the contents of the local machine's Application event log. But you can easily select a different machine or log and then click the Monitor button to dump and monitor the newly selected machine's log. The sample only allows you to view the System, Security, and Application logs, but the source code can easily be modified so that the application monitors any custom logs you may create.</p>
+
+<p>
+<A HREF="javascript:fullSize('F06FJ09x.htm')"> <img src="images/F06FJ09.JPG" width=404 height=277 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!-- caption --><b>Figure 6-9.</b> <i>The dialog box for the EventMonitor sample application</i><!-- /caption -->
+</p>
+
+
+
+<p>When you start monitoring an event log, EventMonitor creates an entry in its list box for every entry in the selected log. Once the list box is full, EventMonitor calls <i>NotifyChangeEventLog</i> and has a thread that waits for new event log entries to appear. As new entries appear in the system's event log, EventMonitor retrieves the new entries and appends them to the list box as well. The last thing that EventMonitor demonstrates is how to convert category and message IDs into the proper string text. As you select entries in the list box, EventMonitor loads in the proper message file or files, grabs the appropriate string text, and displays the string text in the read-only edit box at the bottom of the dialog box.</p>
+
+</body>
+</html>
+
+
+
+
+

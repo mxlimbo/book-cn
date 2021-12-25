@@ -1,0 +1,418 @@
+<HTML>
+<HEAD>
+<TITLE>TCP Example</title>
+<link rel="STYLESHEET" type="text/css" href="Library.css">
+
+
+</head>
+<BODY BGCOLOR="#FFFFFF" TEXT="#000000">
+<SCRIPT LANGUAGE="JavaScript">
+<!--
+
+function fullSize(sURL){
+	window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+
+function LibraryHeaderNav(sBackward, sForward, sImgLeftOff, sImgLeftOn, sImgRightOff, sImgRightOn, iH, iW, sImgLeftStyle, sImgRightStyle, sImgRuleStyle, sRuleColor, sRuleSize){
+	var tableStr;
+	//validate questionable args for defs
+	tableStr = "<TABLE BORDER=0 CELLPADDING=0 CELLSPACING=0 border=0 width=100%>";
+	tableStr += "<TR VALIGN=top ALIGN=right>";
+
+	tableStr += "<TD align=right class=" + sImgRuleStyle + ">&nbsp;</TD>";	
+	
+	tableStr += "<TD width=34 align=right class=" + sImgLeftStyle + ">";
+	tableStr += "<A href='" + sBackward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgLeftOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgLeftOff + '\'\"';
+	tableStr += " SRC='" + sImgLeftOff + "' vspace=0 hspace=0></a></TD>";
+	
+	tableStr += "<TD width=34 align=left class=" + sImgRightStyle + ">";
+	tableStr += "<A href='" + sForward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgRightOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgRightOff + '\'\"';
+	tableStr += " SRC='" + sImgRightOff + "' vspace=0 hspace=0></a></TD></TR>";
+
+	tableStr += "<TR VALIGN=top>";
+	tableStr += "<TD height=3 align=center colspan=3 class=" + sImgRuleStyle + ">";
+	tableStr += "<HR color=" + sRuleColor + " size=" + sRuleSize + "></TD></TR></TABLE>";
+	//alert(tableStr);
+	document.write(tableStr);
+}
+
+ 																						     //purple is: #aa22aa   orange is: #ff9900
+LibraryHeaderNav("ch15e.htm" , "ch15g.htm", "images/unit_o_a1.gif", "images/unit_o_a2.gif", "images/unit_o_b1.gif", "images/unit_o_b2.gif", 18, 34, "unit01", "unit02", "headerrule", "#ff9900", "2");
+//--></SCRIPT>
+
+
+
+<A NAME="469"><H1>TCP Example</H1></A>
+
+<p>Using a Winsock control with the TCP protocol is a bit more involved and complex than using the control with its UDP counterpart. As we did with UDP, we will present a sample TCP application and go over its specifics in order to gain an understanding of the steps necessary to successfully use a TCP connection. Figure 15-4 shows the application running, and Figure 15-5 contains the sample code for this section. You can find the code for this Visual Basic project&#8212;named SockTCP.vbp&#8212;under the Chapter 15 directory.</p>
+
+<p>Let's take a look at the form in Figure 15-4 to gain an understanding of this application's capabilities. Again, you'll notice three group boxes: TCP Server, TCP Client, and Winsock Information. First we'll discuss the TCP Server portion of the application. The server has a text box, <i>txtServerPort</i>, for the local port that the server will be bound to in order to listen for incoming client connections. Also, the server has two buttons, one to put the server in listening mode and the other to shut down the server and stop accepting incoming connections. Finally, the server has a single Winsock control named <i>sockServer</i>. If you take a look at the properties page, you'll see that the <i>Index</i> property has been set to 0. This means the control is actually an array capable of holding many instances of the Winsock control. The 0 signifies that at form load time only one instance (element 0 of the array) will be created. At any time we can dynamically load another instance of a Winsock control into an element of the array.</p>
+
+<p>The Winsock control array is the basis of our server capabilities. Remember that a single Winsock control has only one socket handle associated with it. In <a href="ch07a.htm">Chapter 7</a>, you learned that when a server accepts an incoming connection, a new socket is created to handle that connection. Our application is designed to dynamically load additional Winsock controls upon a client connection so that the connection can be passed to the newly loaded control without interrupting the server socket to handle the connection. Another way to accomplish this is to actually put <i>x</i> number of Winsock controls on the form at design time. However, this is wasteful and does not scale well. When the application begins, a great deal of time will be spent loading all the resources necessary for every control; there is also the issue of how many controls to use. By placing <i>x</i> number of controls, you limit yourself to <i>x</i> number of concurrent clients. If your application requirements allow for only a fixed number of concurrent connections, placing a fixed number of Winsock controls on the form will work and is probably a bit simpler than using an array. For most applications, however, an array of Winsock controls is the best way to go.</p>
+
+<p>
+<A HREF="javascript:fullSize('F15JI04x.htm')"> <img src="images/F15JI04.JPG" width=404 height=263 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!-- caption --><b>Figure 15-4.</b> <i>Sample TCP application</i><!-- /caption -->
+</p>
+
+<p><b>Figure 15-5.</b> <i>Sample TCP application</i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+Option Explicit
+
+' The index value of the last Winsock control dynamically loaded
+' in the sockServer array
+Private ServerIndex As Long
+
+Private Sub cmdCloseListen_Click()
+    Dim itemx As Object
+    ' Close the server's listening socket. No more
+    ' clients will be allowed to connect.
+    '
+    sockServer(0).Close
+    cmdListen.Enabled = True
+    cmdCloseListen.Enabled = False
+    
+    Set itemx = lstStates.ListItems.Item(2)
+    itemx.SubItems(2) = &quot;-1&quot;
+End Sub
+
+Private Sub cmdConnect_Click()
+    ' Have the client control attempt to connect to the
+    ' specified server on the given port number
+    '
+    sockClient.LocalPort = 0
+    sockClient.RemoteHost = txtServerName.Text
+    sockClient.RemotePort = CInt(txtPort.Text)
+    sockClient.Connect
+    
+    cmdConnect.Enabled = False
+End Sub
+
+Private Sub cmdDisconnect_Click()
+    Dim itemx As Object
+    ' Close the client's connection and set up the command
+    ' buttons for subsequent connections
+    '
+    sockClient.Close
+    
+    cmdConnect.Enabled = True
+    cmdSendData.Enabled = False
+    cmdDisconnect.Enabled = False
+    ' Set the port number to -1 to indicate no connection
+    '
+    Set itemx = lstStates.ListItems.Item(1)
+    itemx.SubItems(2) = &quot;-1&quot;
+End Sub
+
+Private Sub cmdExit_Click()
+    Unload Me
+End Sub
+
+Private Sub cmdListen_Click()
+    Dim itemx As Object
+    ' Put the server control into listening mode on the given
+    ' port number
+    '
+    sockServer(0).LocalPort = CInt(txtServerPort.Text)
+    sockServer(0).Listen
+    
+    Set itemx = lstStates.ListItems.Item(2)
+    itemx.SubItems(2) = sockServer(0).LocalPort
+    
+    cmdCloseListen.Enabled = True
+    cmdListen.Enabled = False
+End Sub
+
+Private Sub cmdSendData_Click()
+    ' If we're connected, send the given data to the server
+    '
+    If (sockClient.State = sckConnected) Then
+        sockClient.SendData txtSendData.Text
+    Else
+        MsgBox &quot;Unexpected error! Connection closed&quot;
+        Call cmdDisconnect_Click
+    End If
+End Sub
+
+Private Sub Form_Load()
+    Dim itemx As Object
+
+    lblLocalHostname.Caption = sockServer(0).LocalHostName
+    lblLocalHostIP.Caption = sockServer(0).LocalIP
+    
+    ' Initialize the Protocol property to TCP since that's
+    ' all we'll be using
+    '
+    ServerIndex = 0
+    sockServer(0).Protocol = sckTCPProtocol
+    sockClient.Protocol = sckTCPProtocol
+    ' Set up the buttons
+    '
+    cmdDisconnect.Enabled = False
+    cmdSendData.Enabled = False
+    cmdCloseListen.Enabled = False
+    ' Initialize the ListView control that contains the
+    ' current state of all Winsock controls created (not
+    ' necessarily connected or being used)
+    '
+    Set itemx = lstStates.ListItems.Add(1, , &quot;Local Client&quot;)
+    itemx.SubItems(1) = &quot;sckClosed&quot;
+    itemx.SubItems(2) = &quot;-1&quot;
+    Set itemx = lstStates.ListItems.Add(2, , &quot;Local Server&quot;)
+    itemx.SubItems(1) = &quot;sckClosed&quot;
+    itemx.SubItems(2) = &quot;-1&quot;
+    ' Initialize the timer, which controls the rate of refresh
+    ' on the above socket states
+    '
+    Timer1.Interval = 500
+    Timer1.Enabled = True
+End Sub
+
+
+Private Sub sockClient_Close()
+    sockClient.Close
+End Sub
+
+Private Sub sockClient_Connect()
+    Dim itemx As Object
+    
+    ' The connection was successful: enable the transfer data
+    ' buttons
+    cmdSendData.Enabled = True
+    cmdDisconnect.Enabled = True
+    
+    Set itemx = lstStates.ListItems.Item(1)
+    itemx.SubItems(2) = sockClient.LocalPort
+End Sub
+
+Private Sub sockClient_Error(ByVal Number As Integer, _
+        Description As String, ByVal Scode As Long, _
+        ByVal Source As String, ByVal HelpFile As String, _
+        ByVal HelpContext As Long, CancelDisplay As Boolean)
+    ' An error occured on the Client control: print a message,
+    ' and close the control. An error puts the control in the
+    ' sckError state, which is cleared only when the Close
+    ' method is called.
+    MsgBox Description
+    sockClient.Close
+    cmdConnect.Enabled = True
+End Sub
+
+Private Sub sockServer_Close(index As Integer)
+    Dim itemx As Object
+    ' Close the given Winsock control
+    '
+    sockServer(index).Close
+    
+    Set itemx = lstStates.ListItems.Item(index + 2)
+    lstStates.ListItems.Item(index + 2).Text = &quot;---.---.---.---&quot;
+    itemx.SubItems(2) = &quot;-1&quot;
+            
+End Sub
+
+Private Sub sockServer_ConnectionRequest(index As Integer, _
+        ByVal requestID As Long)
+    Dim i As Long, place As Long, freeSock As Long, itemx As Object
+    
+    ' Search through the array to see wether there is a closed
+    ' control that we can reuse
+    freeSock = 0
+    For i = 1 To ServerIndex
+        If sockServer(i).State = sckClosed Then
+            freeSock = i
+            Exit For
+        End If
+    Next i
+    ' If freeSock is still 0, there are no free controls
+    ' so load a new one
+    '
+    If freeSock = 0 Then
+        ServerIndex = ServerIndex + 1
+        Load sockServer(ServerIndex)
+    
+        sockServer(ServerIndex).Accept requestID
+        place = ServerIndex
+    Else
+        sockServer(freeSock).Accept requestID
+        place = freeSock
+    End If
+    '  If no free controls were found, we added one above.
+    '  Create an entry in the ListView control for the new
+    '  control.  In either case set the state of the new
+    '  connection to sckConnected.
+    '
+    If freeSock = 0 Then
+        Set itemx = lstStates.ListItems.Add(, , _
+            sockServer(ServerIndex).RemoteHostIP)
+    Else
+        Set itemx = lstStates.ListItems.Item(freeSock + 2)
+        lstStates.ListItems.Item(freeSock + 2).Text = _
+            sockServer(freeSock).RemoteHostIP
+    End If
+    itemx.SubItems(2) = sockServer(place).RemotePort
+    
+End Sub
+
+Private Sub sockServer_DataArrival(index As Integer, _
+        ByVal bytesTotal As Long)
+    Dim data As String, entry As String
+    
+    ' Allocate a large enough string buffer and get the
+    ' data
+    '
+    data = String(bytesTotal + 2, Chr$(0))
+    sockServer(index).GetData data, vbString, bytesTotal
+    ' Add the client's IP address to the beginning of the
+    ' message and add the message to the list box
+    '
+    entry = sockServer(index).RemoteHostIP &amp; &quot;: &quot; &amp; data
+    lstMessages.AddItem entry
+End Sub
+
+Private Sub sockServer_Error(index As Integer, _
+        ByVal Number As Integer, Description As String, _
+        ByVal Scode As Long, ByVal Source As String, _
+        ByVal HelpFile As String, ByVal HelpContext As Long, _
+        CancelDisplay As Boolean)
+    ' Print the error message and close the specified control.
+    ' An error puts the control in the sckError state, which
+    ' is cleared only when the Close method is called.
+    MsgBox Description
+    sockServer(index).Close
+End Sub
+
+Private Sub Timer1_Timer()
+    Dim i As Long, index As Long, itemx As Object
+    
+    ' Set the state of the local client Winsock control
+    '
+    Set itemx = lstStates.ListItems.Item(1)
+    Select Case sockClient.State
+        Case sckClosed
+            itemx.SubItems(1) = &quot;sckClosed&quot;
+        Case sckOpen
+            itemx.SubItems(1) = &quot;sckOpen&quot;
+        Case sckListening
+            itemx.SubItems(1) = &quot;sckListening&quot;
+        Case sckConnectionPending
+            itemx.SubItems(1) = &quot;sckConnectionPending&quot;
+        Case sckResolvingHost
+            itemx.SubItems(1) = &quot;sckResolvingHost&quot;
+        Case sckHostResolved
+            itemx.SubItems(1) = &quot;sckHostResolved&quot;
+        Case sckConnecting
+            itemx.SubItems(1) = &quot;sckConnecting&quot;
+        Case sckConnected
+            itemx.SubItems(1) = &quot;sckConnected&quot;
+        Case sckClosing
+            itemx.SubItems(1) = &quot;sckClosing&quot;
+        Case sckError
+            itemx.SubItems(1) = &quot;sckError&quot;
+        Case Else
+            itemx.SubItems(1) = &quot;unknown: &quot; &amp; sockClient.State
+    End Select
+
+    ' Now set the states for the listening server control as
+    ' well as any connected clients
+    '
+    index = 0
+    For i = 2 To ServerIndex + 2
+        Set itemx = lstStates.ListItems.Item(i)
+        
+        Select Case sockServer(index).State
+            Case sckClosed
+                itemx.SubItems(1) = &quot;sckClosed&quot;
+            Case sckOpen
+                itemx.SubItems(1) = &quot;sckOpen&quot;
+            Case sckListening
+                itemx.SubItems(1) = &quot;sckListening&quot;
+            Case sckConnectionPending
+                itemx.SubItems(1) = &quot;sckConnectionPending&quot;
+            Case sckResolvingHost
+                itemx.SubItems(1) = &quot;sckResolvingHost&quot;
+            Case sckHostResolved
+                itemx.SubItems(1) = &quot;sckHostResolved&quot;
+            Case sckConnecting
+                itemx.SubItems(1) = &quot;sckConnecting&quot;
+            Case sckConnected
+                itemx.SubItems(1) = &quot;sckConnected&quot;
+            Case sckClosing
+                itemx.SubItems(1) = &quot;sckClosing&quot;
+            Case sckError
+                itemx.SubItems(1) = &quot;sckError&quot;
+            Case Else
+                itemx.SubItems(1) = &quot;unknown&quot;
+        End Select
+        index = index + 1
+    Next i
+End Sub
+</pre>
+</td></tr></table>
+</p>
+
+<A NAME="470"><H2>TCP Server</H2></A>
+
+<p>Now we'll examine the code behind the form. Take a look at the <i>Form_Load</i> procedure in Figure 15-5. The first two statements simply set two labels to the host name and IP address of the local machine. These labels are in the Winsock Information group box, which serves the same purpose as the informational box in the UDP example. Next you'll see the initialization of the server control, <i>sockServer</i>, to the TCP protocol. Element 0 of the Winsock control array is always the listening socket. After this, the procedure disables the Close Listen button, which is enabled again later when the server starts to listen for clients. The last part of the procedure sets up the <i>ListView</i> control, <i>lstStates</i>. This control is used to display the current state of every Winsock control currently in use. The code adds entries for the client and server controls so that they are elements 1 and 2, respectively. Any other dynamically loaded Winsock controls will be added after these two. The entry for the server control is named &quot;Local Server.&quot; As in the UDP example, the procedure sets a timer to regulate how often the socket states are updated. By default, the timer triggers the update every half second.</p>
+
+<p>From here, let's take a look at the two buttons the server uses. The first is the Listen button, whose function is simple. The handler for the Listen button, <i>cmdListen</i>, sets the <i>LocalPort</i> property to the value the user entered in the <i>txtServerPort</i> text box. The local port is the most important field to a listening socket. This is the port all clients attempt to connect to in order to establish a connection. After setting the <i>LocalPort</i> property, all the code needs to do is call the <i>Listen</i> method. Once the Listen button's handler puts the <i>sockServer</i> control in listening mode, the program waits for the <i>ConnectionRequest</i> event to be fired on our <i>sockServer</i> control to indicate a client connection. The user can click the other button, Close Listen, to shut down the <i>sockServer</i> control. The Close Listen button's handler calls the <i>Close</i> method on <i>sockServer(0),</i> preventing any further client connections.</p>
+
+<p>The most important event for a TCP server is the <i>ConnectionRequest</i> event, which handles incoming client requests. When a client requests a connection, two options exist for handling the request. First, you can use the server socket itself to handle the client. The drawback of this method is that it will close the listening socket and prevent any other connections from being serviced. This method is accomplished by simply calling the <i>Accept</i> method on the server control with the <i>requestID</i> that is passed into the event handler. The other way to handle a client's connection request is to pass the connection to a separate control. This is what the example SockTCP does. Remember that you have an array of Winsock controls, and element 0 is the listening socket. The first thing to do is search through the array for a control whose state is closed (for example, query the <i>State</i> property for the value <i>sckClosed</i>). Of course, there are no free controls for the first loop because none are loaded. In this case, the first loop you see is not executed and the variable <i>freeSock</i> is still 0, indicating that no free controls were found. The next steps dynamically load a new Winsock control by incrementing the <i>ServerIndex</i> counter (the place in the array in which to load the control) and then executing the following statement:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+Load sockServer(ServerIndex)
+</pre>
+</td></tr></table>
+</p>
+
+<p>Now that a new Winsock control is loaded, the procedure can call the <i>Accept</i> method with the given request ID. The remaining statements add a new entry in the <i>lstStates</i> ListView control so that the program can display the current state of the new Winsock control.</p>
+
+<p>In the case of an already loaded Winsock control whose state is closed, the procedure simply would have reused that control by calling the <i>Accept</i> method on it. Continually loading and unloading controls is a bad idea, as it decreases performance. The load and unload processes are expensive. There is also a memory leak when the Winsock control is unloaded that we will discuss in detail later in this chapter.</p>
+
+<p>The remaining server-side functions are straightforward. The <i>sockServer_Close</i> event is triggered whenever the client calls the <i>Close</i> method on its end. All the server does is close the socket on this side and clear the IP address entry in the ListView control by setting it to &quot;---.---.---.---&quot; and setting the entry's port to -1. The <i>sockServer_DataArrival</i> function allocates a buffer to receive the data and then calls the <i>GetData</i> method to perform the read. Afterward, the message is added to the <i>lstMessages</i> list box. The last server function is the <i>Error</i> event handler. Upon an error, the handler displays the text message and closes the control.</p>
+
+<A NAME="471"><H2>TCP Client</H2></A>
+
+<p>Now that you have seen how the server is implemented, let's examine the client. The only initialization performed by the client in the <i>Form_Load</i> procedure is setting the protocol of <i>sockClient</i> to TCP. Other than the initialization code, three command button handlers belong to the client and several event handlers. The first button is Connect, and its handler is named <i>cmdConnect_Click</i>. <i>LocalPort</i> is set to 0 because it doesn't matter what the local system assigns as the port number on our machine. <i>RemoteHost</i> and <i>RemotePort</i> are set according to the values in the <i>txtServerName</i> and <i>txtPort</i> fields, respectively. That's all the information required to establish a TCP connection to a server. The only task left is to call the <i>Connect</i> method. After that, the control's state is in the process of either resolving the name or connecting (the control's state is <i>sckResolvingHost</i>, <i>sckResolved</i>, or <i>sckConnecting</i>). When the connection finally is established, the state changes to <i>sckConnected</i> and the <i>Connect</i> event is triggered. The next section covers the various states and the transitions among them.</p>
+
+<p>Once the connection is established, the handler <i>sockClient_Connect</i> is called. This handler simply enables the Send Data and Disconnect buttons. Additionally, the port number on which the connection is established on the local machine is updated for the Local Client entry in the <i>lstStates</i> ListView control. Now you can send and receive data. There are two other event handlers: <i>sockClient_Close</i> and <i>sockClient_Error</i>. The <i>sockClient_Close</i> event handler simply closes the client Winsock control, while the <i>sockClient_Error</i> event handler displays a message box with the error description and then closes the control.</p>
+
+<p>The last two pieces to the client are the remaining command buttons: Send Data and Disconnect. The subroutine <i>cmdSendData_Click</i> handles the Send Data button. If the Winsock control is connected, the routine calls the <i>SendData</i> method with the string in the <i>txtSendData</i> text box. Finally, the Disconnect button is handled by <i>cmdDisconnect_Click</i>. This handler simply closes the client control, resets a number of buttons to their initial state, and updates the Local Client entry in the <i>lstStates</i> ListView control.</p>
+
+<A NAME="472"><H2>Obtaining Winsock Information</H2></A>
+
+<p>The last part of the TCP example is the Winsock information section. We have already explained this a bit, but we'll briefly present it here for the sake of clarity. As with the UDP example, a timer triggers an update on the current socket states of all loaded Winsock controls. The default refresh rate is set to 500 milliseconds. Upon load, two entries are added to the <i>lstStates</i> Listview control. The first is the Local Client label that corresponds to the client Winsock control, <i>sockClient</i>. The second entry is Local Server, which refers to the listening socket. Whenever a new client connection is established, a new Winsock control is dynamically loaded and a new entry is added to the <i>sckStates</i> control; the name of the entry is the client's IP address. When a client disconnects, the entry is set to the default state with the IP address &quot;---.---.---.---&quot; and port number equal to -1. Of course, if another client connects, it reuses any unused controls in the server array. The local machine's IP address and host name are also displayed.</p>
+
+<A NAME="473"><H2>Running the TCP Example</H2></A>
+
+<p>Again, running the TCP example is a straightforward process. Start three instances of the application, each on a separate machine. With TCP, it doesn't matter if any of the machines are multihomed because the routing table decides which interface is more appropriate for any given TCP connection. On one of the TCP examples, start the listening socket by clicking the Listen button. You'll notice that the Local Server entry in the State Information ListView control changes from <i>sckClosed</i> to <i>sckListening</i> and the port number is listed as 5150. The server is now ready to accept client connections.</p>
+
+<p>On one of the clients, set the Server Name field to the name of the machine running the first instance of the application (the listening server) and then click the Connect button. On the client application, the Local Client entry in the State Information list is now in the <i>sckConnected</i> state and the local port on which the connection was made is updated to a non-negative number. Additionally, on the server side, an entry is added to the State Information list whose name is the IP address of the client that just connected. The new entry's state is <i>sckConnected</i> and also contains the port number on the server side on which the connection was established. Now you can type text into the Message text field on the client and click the Send Data button a few times. You will see the messages appearing in the Messages list box on the server side. Next disconnect the client by clicking the Disconnect button. On the client side, the Local Client entry in the State Information list is set back to <i>sckClosed</i> and the port number value to -1. For the server, the entry corresponding to the client is not removed; it is simply marked as unused with the name set to a dashed IP address, the state to <i>sckClosed</i>, and the port to -1.</p>
+
+<p>On the third machine, enter the name of the listening server in the Server Name text box and make a client connection. The results are similar to those for the first client except that the server uses the same Winsock control to handle this client as it did the first. If a Winsock control is in the closed state, it can be used to accept any incoming connection. The final step you might want to try is using the client on the server application to make a connection locally. After you make the connection, a new entry is added to the Socket Information list, as in the earlier examples. The only difference is that the IP listed is the same as the IP address of the server. Play with the clients and server a bit to get a feel for how they interact and what results are triggered by each command.</p>
+
+<A NAME="474"><H2>TCP States</H2></A>
+
+<p>Using the Winsock control with the TCP protocol is much more complicated than using UDP sockets because many more socket states are possible. Figure 15-6 is a state diagram for a TCP socket. The default start state is <i>sckClosed</i>. The transitions are straightforward and don't require explanation except for the <i>sckClosing</i> state. Because of the TCP half-close, there are two transition paths from this state for the <i>SendData</i> method. Once one side of the TCP connection issues a <i>Close</i> method, that side can't send any more data. The other side of the connection receives the <i>Close</i> event and enters the <i>sckClosing</i> state but can still send data. This is why there are two paths out of <i>sckClosing</i> for the <i>SendData</i> method. If the side that issued the <i>Close</i> tries to call <i>SendData</i>, an error is generated and the state moves to <i>sckError</i>. The side that receives the <i>Close</i> event can freely send data and receive any remaining data.</p>
+
+<p>
+<A HREF="javascript:fullSize('F15ji06x.htm')"> <img src="images/F15ji06.JPG" width=404 height=276 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!-- caption --><b>Figure 15-6.</b> <i>TCP state diagram</i><!-- /caption -->
+</p>
+
+</BODY>
+</HTML>
+
+
+
+

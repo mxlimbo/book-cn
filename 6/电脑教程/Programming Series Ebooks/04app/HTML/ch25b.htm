@@ -1,0 +1,110 @@
+<HTML>
+<HEAD>
+<TITLE>Just-In-Time Debugging</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch25a.htm">[Previous]</A> <A HREF="ch25c.htm">[Next]</A><P>
+
+<A NAME="336"><H1>Just-In-Time Debugging</H1></A>
+
+<p>The ability to connect a debugger to any process at any time is
+called <i>just-in-time debugging</i>. Here's a little more
+information about how this works: when you click on the Cancel button,
+you're telling the <i>UnhandledExceptionFilter</i> function that
+you want to debug the process.</p>
+
+<p>Internally, <i>UnhandledExceptionFilter</i> invokes the debugger by
+looking into the following registry subkey:</p>
+
+<p><table cellpadding=5><tr><td>
+<PRE>
+HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AeDebug
+</pre></td></tr></table></p>
+
+<p>Inside this subkey, there is a data value named Debugger, which is
+typically set to the following value when you install Visual
+Studio:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+&quot;C:\Program Files\Microsoft Visual Studio\Common\MSDev98\Bin\msdev.exe&quot;
+   -p %ld -e %ld
+</pre></td></tr></table></p>
+
+<p><div class="note"><blockquote><b>Windows 98</b><hr>
+In Windows 98, these values are not stored in the registry&#8212;they are
+stored in the Win.ini file.
+</blockquote></div></p>
+
+<p>This line tells the system which program (MSDev.exe) to run as the
+debugger. Of course, you can change this to the debugger of your
+choice. <i>UnhandledExceptionFilter</i> also passes two parameters on
+the command line to the debugger. The first parameter is the ID of the
+process that is to be debugged. The second parameter identifies an
+inheritable manual-reset event that was created in the nonsignaled
+state by the <i>UnhandledExceptionFilter</i> function. Vendors must
+implement their debuggers so that they recognize the <i>-p</i> and 
+<i>-e</i> switches as identifying the process ID and the event handle.</p>
+
+<p>After the process ID and event handle are merged into the string,
+<i>UnhandledExceptionFilter</i> executes the debugger by calling <i>
+CreateProcess.</i> At this point, the debugger process starts running
+and checks its command-line arguments. If the <i>-p</i> switch exists,
+the debugger grabs the process ID and attaches itself to the process by
+calling <i>DebugActiveProcess</i>:</p>
+
+<p><table cellpadding=5><tr><td>
+<PRE>
+BOOL DebugActiveProcess(DWORD dwProcessID);
+</pre></td></tr></table></p>
+
+<p>Once the debugger attaches itself, the operating system informs the
+debugger of the debuggee's state. For example, the system will tell
+the debugger how many threads are in the debuggee and which DLLs are
+loaded in the debuggee's address space. It takes time for the
+debugger to accumulate all of this data as it prepares to debug the
+process. While all of this preparation is going on, the thread inside
+<i>UnhandledExceptionFilter</i> must wait. It does this by calling <i>
+WaitForSingleObject</i>, passing the handle of the manual-reset event
+that it had created. You'll recall that this event was created in
+the nonsignaled state, and therefore, the debuggee's thread is
+immediately suspended waiting for the event.</p>
+
+<p>After the debugger has fully initialized, it again checks its
+command line looking for the <i>-e</i> switch. If this switch exists,
+the debugger gets the handle of the event and calls <i>SetEvent</i>.
+The debugger can use the event's handle value directly because the
+event's handle was created inheritable and because the
+debuggee's call to the <i>UnhandledExceptionFilter</i> function
+spawned the debugger process as a child process.</p>
+
+<p>Setting the event causes the debuggee's thread to wake up. The
+thread communicates the information about the unhandled exception to
+the debugger. The debugger receives this notification and loads the
+proper source code file, positioning itself at the instruction that
+raised the exception. Wow, this is all very cool!</p>
+
+<p>By the way, you don't have to wait for an exception before you
+can debug a process. You can always connect a debugger to any process
+at any time by running &quot;MSDEV -p <i>PID</i>&quot; where PID is the
+ID of the process you want to debug. In fact, the Windows 2000 Task
+Manager makes this easy for you. When viewing the Process tab, you can
+select a process, click the right mouse button, and choose the Debug
+menu option. This causes the Task Manager to look at the same registry
+subkey we just discussed and call <i>CreateProcess</i>, passing the ID
+of the selected process. In this case, the Task Manager passes 0 for
+the event handle.</p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

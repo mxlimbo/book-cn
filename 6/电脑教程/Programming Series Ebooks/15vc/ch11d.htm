@@ -1,0 +1,138 @@
+<HTML>
+<HEAD>
+<LINK REL=StyleSheet HREF="basicIE4.css" TYPE="text/css">
+<TITLE>Using Bitmaps to Improve the Screen Display</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY>
+<A NAME="219"><H1>Using Bitmaps to Improve the Screen Display</H1></A>
+<P>You've seen an example program that displays a bitmap that originated outside the program. Now you'll see an example program that generates its own bitmap to support smooth motion on the screen. The principle is simple: you draw on a memory device context with a bitmap selected, and then you zap the bitmap onto the screen.
+<A NAME="220"><H2>The EX11B Example</H2></A>
+<P>In the EX05C example in <A HREF="ch05a.htm">Chapter 5</A>, the user dragged a circle with the mouse. As the circle moved, the display flickered because the circle was erased and redrawn on every mouse-move message. EX11B uses a GDI bitmap to correct this problem. The EX05C custom code for mouse message processing carries over almost intact; most of the new code is in the <I>OnPaint</I> and <I>OnInitialUpdate</I> functions.
+<P>In summary, the EX11B <I>OnInitialUpdate</I> function creates a memory device context and a bitmap that are compatible with the display. The <I>OnPaint</I> function prepares the memory device context for drawing, passes 
+<I>OnDraw</I> a handle to the memory device context, and copies the resulting bitmap from the memory device context to the display.
+<P>Here are the steps to build EX11B from scratch:
+<OL>
+<P><B><LI>Run AppWizard to produce \vcpp32\ex11b\ex11b.</B> Accept all the default settings but two: select Single Document and select <I>CScrollView</I> view as the base class for <I>CEx11bView</I>. The options and the default class names are shown here.
+<P> <img src="g11og03x.gif" width=414 height=423 border=0 >
+
+<P><B><LI>Use ClassWizard to add <I>CEx11bView </I>message handlers.</B> Add message handlers for the following messages:<P>
+<UL>
+<P><LI>WM_LBUTTONDOWN
+<P><LI>WM_LBUTTONUP
+<P><LI>WM_MOUSEMOVE
+<P><LI>WM_PAINT
+</UL>
+<P><B><LI>Edit the ex11bView.h header file.</B> Add the private data members shown here to the <I>CEx11bView</I> class:
+<P><PRE><B>private:
+    const CSize m_sizeEllipse;
+    CPoint   m_pointTopLeft;
+    BOOL     m_bCaptured;
+    CSize    m_sizeOffset;
+    CDC*     m_pdcMemory;
+    CBitmap* m_pBitmap;</b></PRE>
+<P><LI><B>Code the <I>CEx11bView </I>constructor and destructor in ex11bView.cpp.</B> You need a memory device context object and a bitmap GDI object. These are constructed in the view's constructor and destroyed in the view's destructor. Add the following boldface code:
+<P><PRE>CEx11bView::CEx11bView() : <B>m_sizeEllipse(100, -100),
+                           m_pointTopLeft(10, -10),
+                           m_sizeOffset(0, 0)</B>
+{
+    <B>m_bCaptured = FALSE;
+    m_pdcMemory = new CDC;
+    m_pBitmap   = new CBitmap;</B>
+}
+
+CEx11bView::~CEx11bView()
+{
+    <B>delete m_pBitmap; // already deselected
+    delete m_pdcMemory;</B>
+}</PRE>
+<P><B><LI>Add code for the <I>OnInitialUpdate</I> function in ex11bView.cpp.</B> The C++ memory device context and bitmap objects are already 
+constructed. This function creates the corresponding Windows objects. Both the device context and the bitmap are compatible with the display context <I>dc</I>, but you must explicitly set the memory device context's mapping mode to match the display context. You could create the bitmap in the <I>OnPaint</I> function, but the program runs faster if you create it once here. Add the boldface code shown here:
+<P><PRE>void CEx11bView::OnInitialUpdate()
+{
+    CScrollView::OnInitialUpdate();
+<B>    CSize sizeTotal(800, 1050); // 8-by-10.5 inches
+    CSize sizePage(sizeTotal.cx / 2, sizeTotal.cy / 2);
+    CSize sizeLine(sizeTotal.cx / 50, sizeTotal.cy / 50);
+    SetScrollSizes(MM_LOENGLISH, sizeTotal, sizePage, sizeLine);
+    // creates the memory device context and the bitmap
+    if (m_pdcMemory-&gt;GetSafeHdc() == NULL) {
+        CClientDC dc(this);
+        OnPrepareDC(&amp;dc);
+        CRect rectMax(0, 0, sizeTotal.cx, -sizeTotal.cy);
+        dc.LPtoDP(rectMax);
+        m_pdcMemory-&gt;CreateCompatibleDC(&amp;dc);
+        // makes bitmap same size as display window
+        m_pBitmap-&gt;CreateCompatibleBitmap(&amp;dc, rectMax.right,
+                                          rectMax.bottom);
+        m_pdcMemory-&gt;SetMapMode(MM_LOENGLISH);
+    }</B>
+}</PRE>
+<P><B><LI>Add code for the <I>OnPaint</I> function in ex11bView.cpp.</B> Normally it isn't necessary to map the WM_PAINT message in your derived view 
+class. The <I>CView</I> version of <I>OnPaint</I> contains the following code:
+<P><PRE>CPaintDC dc(this);
+OnPrepareDC(&amp;dc);
+OnDraw(&amp;dc);</PRE>
+<P>In this example, you will be using the <I>OnPaint</I> function to reduce screen flicker through the use of a memory device context. <I>OnDraw</I> is passed this memory device context for the display, and it is passed the printer device context for printing. Thus, <I>OnDraw</I> can perform tasks common to the display and to the printer. You don't need to use the bitmap with the printer because the printer has no speed constraint.
+<P>The <I>OnPaint</I> function must perform, in order, the following three steps to prepare the memory device context for drawing:
+<UL>
+<P><LI>Select the bitmap into the memory device context.
+<P><LI>Transfer the invalid rectangle (as calculated by <I>OnMouseMove</I>) from the display context to the memory device context. There is no <I>SetClipRect</I> function, but the <I>CDC::IntersectClipRect</I> function, when called after the <I>CDC::SelectClipRgn</I> function (with a <I>NULL</I> parameter), has the same effect. If you don't set the clipping rectangle to the 
+minimum size, the program runs more slowly.
+<P><LI>Initialize the bitmap to the current window background color. The <I>CDC::PatBlt</I> function fills the specified rectangle with a pattern. In this case, the pattern is the brush pattern for the current window background. That brush must first be constructed and selected into the memory device context.
+</UL>
+<P>After the memory device context is prepared, <I>OnPaint</I> can call <I>OnDraw</I> with a memory device context parameter. Then the <I>CDC::BitBlt</I> function copies the updated rectangle from the memory device context to the display device context. Add the following boldface code:
+<P><PRE>void CEx11bView::OnPaint()
+{
+    CPaintDC dc(this); // device context for painting
+<B>    OnPrepareDC(&amp;dc);
+    CRect rectUpdate;
+    dc.GetClipBox(&amp;rectUpdate);
+    CBitmap* pOldBitmap = m_pdcMemory-&gt;SelectObject(m_pBitmap);
+    m_pdcMemory-&gt;SelectClipRgn(NULL);
+    m_pdcMemory-&gt;IntersectClipRect(&amp;rectUpdate);
+    CBrush backgroundBrush((COLORREF) ::GetSysColor(COLOR_WINDOW));
+    CBrush* pOldBrush = m_pdcMemory-&gt;SelectObject(&amp;backgroundBrush);
+    m_pdcMemory-&gt;PatBlt(rectUpdate.left, rectUpdate.top,
+                        rectUpdate.Width(), rectUpdate.Height(),
+                        PATCOPY); 
+    OnDraw(m_pdcMemory);
+    dc.BitBlt(rectUpdate.left, rectUpdate.top,
+              rectUpdate.Width(), rectUpdate.Height(),
+              m_pdcMemory, rectUpdate.left, rectUpdate.top,
+              SRCCOPY);
+    m_pdcMemory-&gt;SelectObject(pOldBitmap);
+    m_pdcMemory-&gt;SelectObject(pOldBrush);</B>
+}</PRE>
+<P><B><LI>Code the <I>OnDraw</I> function in ex11bView.cpp.</B> Copy the code from ex05cView.cpp. In EX11B, <I>OnDraw</I> is passed a pointer to a memory 
+device context by the <I>OnPaint</I> function. For printing, <I>OnDraw</I> is passed a pointer to the printer device context.
+<P><B><LI>Copy the mouse message-handling code from ex05cView.cpp.</B> Copy the functions shown below from ex05cView.cpp to ex11bView.cpp. Be sure to change the functions' class names from <I>CEx05cView</I> to <I>CEx11bView.</I><P>
+<UL>
+<P><LI><I>OnLButtonDown</I>
+<P><LI><I>OnLButtonUp</I>
+<P><LI><I>OnMouseMove</I>
+</UL>
+<P><B><LI>Change two lines in the <I>OnMouseMove</I> function in ex11bView.cpp.</B> Change the following two lines:
+<P><PRE>InvalidateRect(rectOld, TRUE);
+InvalidateRect(rectNew, TRUE);</PRE>
+<P>to
+<P><PRE>InvalidateRect(rectOld,<B> FALSE</B>);
+InvalidateRect(rectNew,<B> FALSE</B>);</PRE>
+<P>If the second <I>CWnd::InvalidateRect</I> parameter is <I>TRUE</I> (the default), Windows erases the background before repainting the invalid rectangle. That's what you needed in EX05C, but the background erasure is what causes the flicker. Because the entire invalid rectangle is being copied from the bitmap, you no longer need to erase the background. The <I>FALSE</I> parameter prevents this erasure.
+<P><B><LI>Build and run the application.</B> Here is the EX11B program output.
+
+<P><A HREF="javascript:fullSize('G11OG04x.htm')"> <img src="G11OG04.JPG" width=404 height=317 border=0 ALT = "Click to view at full size."> </A><P>
+
+<P>Is the circle's movement smoother now? The problem is that the bitmap is only 8-by-10.5 inches, and if the scrolling window is big enough, the circle goes off the edge. One solution to this problem is to make the bitmap as big as the largest display.
+</OL>
+<A NAME="221"><H2>Windows Animation</H2>
+</A><P>EX11B is a crude attempt at Windows animation. What if you wanted to move an angelfish instead of a circle? Win32 doesn't have an <I>Angelfish</I> function (yet), so you'd have to keep your angelfish in its own bitmap and use the <I>StretchBlt</I> mask ROP codes to merge the angelfish with the background. You'd probably keep the background in its own bitmap, too. These techniques are outside the scope of this book. If you are interested in learning more about Windows Animation, run out and get Nigel Thompson's <I>Animation Techniques in Win32 </I>(Microsoft Press, 1995). After you read it, you can get rich writing video games for Windows!
+</BODY>
+</HTML>
+
+
+

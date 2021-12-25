@@ -1,0 +1,687 @@
+<html>
+<head>
+<title>Chapter 16 -- A Thread's Stack</title>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<body bgcolor="#ffffff" text="#000000">
+<A HREF="ch15i.htm">[Previous]</A> <A HREF="ch17a.htm">[Next]</A><P>
+<font size="+3">Chapter 16</font>
+
+<A NAME="204"><H1>A Thread's Stack</H1></A>
+
+<p>Sometimes the system reserves regions in your own process's
+address space. I mentioned in <A HREF="ch13a.htm">Chapter 13</A> that this happens for process
+and thread environment blocks. Another time that the system reserves
+regions in your own process's address space is for a thread's
+stack.</p>
+
+<p>Whenever a thread is created, the system reserves a region of
+address space for the thread's stack (each thread gets its very own
+stack) and also commits some physical storage to this reserved region.
+By default, the system reserves 1 MB of address space and commits 2
+pages of storage. However, these defaults can be changed by specifying
+the /STACK option to Microsoft's linker when you link your
+application:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+/STACK:<i>reserve</i>[,<i>commit</i>]
+</pre></td></tr></table></p>
+
+<p>When a thread's stack is created, the system reserves a region
+of address space indicated by the linker's /STACK switch. However,
+you can override the amount of storage that is initially committed when
+you call the <i>CreateThread</i> or the <i>_beginthreadex</i> function.
+Both functions have a parameter that allows you to override the storage
+that is initially committed to the stack's address space region. If
+you specify 0 for this parameter, the system uses the commit size
+indicated by the /STACK switch. For the remainder of this discussion,
+I'll assume we're using the default stack sizes: 1 MB of
+reserved region with storage committed one page at a time.</p>
+
+<p>Figure 16-1 shows what a stack region (reserved starting at address
+0x08000000) might look like on a machine whose page size is 4 KB. The
+stack's region and all of the physical storage committed to it have
+a page protection of PAGE_READWRITE.</p>
+
+<p>After reserving this region, the system commits physical storage to
+the top 2 pages of the region. Just before allowing the thread to begin
+execution, the system sets the thread's stack pointer register to
+point to the end of the top page of the stack region (an address very
+close to 0x08100000). This page is where the thread will begin using
+its stack. The second page from the top is called the <i>guard
+page</i>. As the thread increases its call tree by calling more
+functions, the thread needs more stack space.</p>
+
+<p>
+<A HREF="javascript:fullSize('F16SI01x.htm')"> <img src="images/F16SI01.JPG" width=404 height=417 border=0 ALT="Click to view at full size."> </A>
+</p><p>
+<!-- CAPTION --><b>Figure 16-1.</b> <i>What a thread's stack region looks like when it is first created</i><!-- /CAPTION -->
+</p>
+
+<p>Whenever the thread attempts to access storage in the guard page,
+the system is notified. In response, the system commits another page of
+storage just below the guard page. Then the system removes the guard
+page protection flag from the current guard page and assigns it to the
+newly committed page of storage. This technique allows the stack
+storage to increase only as the thread requires it. Eventually, if the
+thread's call tree continues to expand, the stack region will look
+like Figure 16-2.</p>
+
+<p>Referring to Figure 16-2, assume that the thread's call tree is
+very deep and that the stack pointer CPU register points to the stack
+memory address 0x08003004. Now, when the thread calls another function,
+the system has to commit more physical storage. However, when the
+system commits physical storage to the page at address 0x08001000, the
+system does not do exactly what it did when committing physical storage
+to the rest of the stack's memory region. Figure 16-3 shows what
+the stack's reserved memory region looks like.</p>
+
+<p>
+<A HREF="javascript:fullSize('F16SI02x.htm')"> <img src="images/F16SI02.JPG" width=404 height=417 border=0 ALT="Click to view at full size."> </A>
+</p><p>
+<!-- CAPTION --><b>Figure 16-2.</b> <i>A nearly full thread's stack region</i><!-- /CAPTION -->
+</p>
+
+<p>As you'd expect, the page starting at address 0x08002000 has the
+guard attribute removed, and physical storage is committed to the page
+starting at 0x08001000. The difference is that the system does not
+apply the guard attribute to the new page of physical storage
+(0x08001000). This means that the stack's reserved address space
+region contains all the physical storage that it can ever contain. The
+bottommost page is always reserved and never gets committed. I will
+explain the reason for this shortly.</p>
+
+<p>The system performs one more action when it commits physical storage
+to the page at address 0x08001000&#8212;it raises an
+EXCEPTION_STACK_ 
+OVERFLOW exception (defined as 0xC00000FD in WinNT.h). By using
+structured exception handling (SEH), your program will be notified of
+this condition and can recover gracefully. For more information on SEH,
+see <a href="ch23a.htm">Chapters 23</a>, <a href="ch24a.htm">24</a>, and <a href="ch25a.htm">25</a>. The Summation sample at the end of this
+chapter demonstrates how to recover gracefully from stack
+overflows.</p>
+
+<p>
+<A HREF="javascript:fullSize('F16SI03x.htm')"> <img src="images/F16SI03.JPG" width=404 height=417 border=0 ALT="Click to view at full size."> </A>
+</p><p>
+<!-- CAPTION --><b>Figure 16-3.</b> <i>A full thread stack region</i><!-- /CAPTION -->
+</p>
+
+<p>If the thread continues to use the stack after the stack overflow
+exception is raised, all the memory in the page at 0x08001000 will be
+used and the thread will attempt to access memory in the page starting
+at 0x08000000. When the thread attempts to access this reserved
+(uncommitted) memory, the system raises an access violation exception.
+If this access violation exception is raised while the thread is
+attempting to access the stack, the thread is in deep trouble. The
+system takes control at this point and terminates the process&#8212;not
+just the thread, but also the whole process. The system doesn't
+even show a message box to the user&#8212;the whole process just
+disappears!</p>
+
+<p>Now I will explain why the bottommost page of a stack's region
+is always reserved. Doing so protects against accidental overwriting of
+other data being used by the process. You see, it's possible that
+at address 0x07FFF000 (one page below 0x08000000) another region of
+address space has committed physical storage. If the page at 0x08000000
+contained physical storage, the system would not catch attempts by the
+thread to access the reserved stack region. If the stack were to dip
+below the reserved stack region, the code in your thread would
+overwrite other data in your process's address space&#8212;a very,
+very difficult bug to catch.</p>
+
+<A NAME="205"><H2>A Thread's Stack Under Windows 98</H2></A>
+
+<p>Under Windows 98, stacks behave similarly to their Windows 2000
+counterparts. However, there are some significant differences.</p>
+
+<p>Figure 16-4 shows what a stack region (reserved starting at address
+0x00530000) might look like for a 1-MB stack under Windows 98.</p>
+
+<p>
+<A HREF="javascript:fullSize('F16SI04x.htm')"> <img src="images/F16SI04.JPG" width=404 height=283 border=0 ALT="Click to view at full size."> </A>
+</p><p>
+<!-- CAPTION --><b>Figure 16-4.</b> <i>What a thread's stack region looks like when it is first created under Windows 98</i><!-- /CAPTION -->
+</p>
+
+<p>First notice that the region is actually 1 MB plus 128 KB in size,
+even though we wanted to create a stack that was only up to 1 MB in
+size. In Windows 98, whenever a region is reserved for a stack, the
+system actually reserves a region that is 128 KB larger than the
+requested size. The stack is in the middle of this region, with a 64-KB
+block before the stack and another 64-KB block after the stack.</p>
+
+<p>The 64 KB at the beginning of the stack are there to catch stack
+overflow conditions, while the 64 KB at the end of the stack are there
+to catch stack underflow conditions. To see why stack underflow
+detection is useful, examine the following code fragment:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+int WINAPI WinMain (HINSTANCE hinstExe, HINSTANCE,
+   PSTR pszCmdLine, int nCmdShow) {
+
+   char szBuf[100];
+   szBuf[10000] = 0; // Stack underflow 
+
+   return(0);
+}
+</pre></td></tr></table></p>
+
+<p>When this function's assignment statement is executed, an
+attempt is made to access beyond the end of the thread's stack. Of
+course, the compiler and the linker will not catch the bug in the code
+above, but if your application is running under Windows 98, an access
+violation will be raised when the statement executes. This is a nice
+feature of Windows 98 that is not offered by Windows 2000. On Windows
+2000, it is possible to have another region immediately after your
+thread's stack. If this happens and you attempt to access memory
+beyond your stack, you might corrupt memory related to another part of
+your process&#8212;and the system will <i>not</i> detect this
+corruption.</p> 
+
+<p>The second significant difference to note is that no pages have the
+PAGE_GUARD protection attribute flag. Because Windows 98 does not support
+this flag, it uses a slightly different technique to expand a
+thread's stack. Windows 98 marks the committed page immediately
+below the stack with the PAGE_NOACCESS protection attribute (address 0x0063E000 in Figure 16-4). Then when the thread touches the page below the read/write pages, an access violation occurs. The system catches this, changes the no access page to a read/write page, and commits a new &quot;guard&quot; page just below the previous guard page.</p>
+ 
+<p>The third difference to notice is the single page of PAGE_READWRITE
+storage at address 0x00637000 in Figure 16-4. This page exists for
+16-bit Windows compatibility. Although Microsoft never documented it,
+developers found out that the 16 bytes at the beginning of a 16-bit
+application's stack segment (SS) contain information about the
+16-bit application's stack, local heap, and local atom table.
+Because Win32 applications running on Windows 98 frequently call 16-bit
+DLL components, and some of these 16-bit components assume that this
+information is available at the beginning of the stack segment,
+Microsoft was forced to simulate these bytes in Windows 98. When 32-bit
+code thunks to 16-bit code, Windows 98 maps a 16-bit CPU selector to
+the 32-bit stack and sets the stack segment register to point to the
+page at address 0x00637000. The 16-bit code can then access the 16
+bytes at the beginning of the stack segment and continue executing
+without any problems.</p> 
+
+<p>Now, as Windows 98 grows the thread's stack, it continues to grow
+the block at address 0x0063F000; it also keeps moving the guard page
+down until 1 MB of stack storage is committed, and then the guard page
+disappears&#8212;just as it does under Windows 2000. The system also
+continues to move the page for 16-bit Windows component compatibility
+down, and eventually this page goes into the 64-KB block at the
+beginning of the stack region. So a fully committed stack in Windows 98
+looks like Figure 16-5.</p>
+
+<p>
+<A HREF="javascript:fullSize('F16SI05x.htm')"> <img src="images/F16SI05.JPG" width=404 height=206 border=0 ALT="Click to view at full size."> </A>
+</p><p>
+<!-- CAPTION --><b>Figure 16-5.</b> <i>A full thread stack region under Windows 98</i><!-- /CAPTION -->
+</p>
+
+<A NAME="206"><H2>The C/C++ Run-Time Library's Stack-Checking Function</H2></A>
+
+<p>The C/C++ run-time library contains a stack-checking function. As
+your source code is compiled, the compiler generates calls to this
+function automatically when necessary. The purpose of the
+stack-checking function is to make sure that pages are appropriately
+committed to your thread's stack. Let's look at an example.
+Here's a small function that requires a lot of memory for its local
+variables:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+void SomeFunction () {
+   int nValues[4000];
+
+   // Do some processing with the array.
+   nValues[0] = 0;  // Some assignment
+}
+</pre></td></tr></table></p>
+
+<p>This function will require at least 16,000 bytes (4000 &times;
+sizeof(int); each integer is 4 bytes) of stack space to accommodate the
+array of integers. Usually the code a compiler generates to allocate
+this stack space simply decrements the CPU's stack pointer by
+16,000 bytes. However, the system does not commit physical storage to
+this lower area of the stack's region until an attempt is made to
+access the memory address.</p>
+ 
+<p>On a system with a 4-KB or 8-KB page size, this limitation could cause
+a problem. If the first access to the stack is at an address that is
+below the guard page (as shown on the assignment line in the code
+above), the thread will be accessing reserved memory and the system
+will raise an access violation. To ensure that you can successfully
+write functions like the one shown above, the compiler inserts calls to
+the C run-time library's stack-checking function.</p>
+ 
+<p>When compiling your program, the compiler knows the page size for the
+CPU system you are targeting. The <i>x</i>86 compiler knows that pages
+are 4 KB, and the Alpha compiler knows that pages are 8 KB. As the
+compiler encounters each function in your program, it determines the
+amount of stack space required for the function; if the function
+requires more stack space than the target system's page size, the
+compiler automatically inserts a call to the stack-checking
+function.</p>
+
+<p>The following pseudocode shows what the stack-checking function
+does. I say <i>pseudocode</i> because this function is usually
+implemented in assembly language by the compiler vendors.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// The C run-time library knows the page size for the target system.
+#ifdef _M_ALPHA
+#define PAGESIZE   (8 * 1024)   // 8-KB page
+#else
+#define PAGESIZE   (4 * 1024)   // 4-KB page
+#endif
+
+void StackCheck(int nBytesNeededFromStack) {
+   // Get the stack pointer position.
+   // At this point, the stack pointer has NOT been decremented
+   // to account for the function's local variables.
+   PBYTE pbStackPtr = (CPU's stack pointer);
+
+   while (nBytesNeededFromStack &gt;= PAGESIZE) {
+      // Move down a page on the stack--should be a guard page.
+      pbStackPtr -= PAGESIZE;
+
+      // Access a byte on the guard page--forces new page to be
+      // committed and guard page to move down a page.
+      pbStackPtr[0] = 0;
+
+      // Reduce the number of bytes needed from the stack.
+      nBytesNeededFromStack -= PAGESIZE;
+   }
+
+   // Before returning, the StackCheck function sets the CPU's
+   // stack pointer to the address below the function's
+   // local variables.
+}
+</pre></td></tr></table></p>
+
+<p>Microsoft Visual C++ does offer a compiler switch that allows you to
+control the page-size threshold that the compiler uses to determine
+when to add the automatic call to <i>StackCheck</i>. You should use
+this compiler switch only if you know exactly what you are doing and
+have a special need for it. For 99.99999 percent of all applications
+and DLLs written, this switch should not be used.</p>
+
+<A NAME="207"><H2>The Summation Sample Application</H2></A>
+
+<p>The Summation (&quot;16 Summation.exe&quot;) sample application in
+Figure 16-6 demonstrates how to use exception
+filters and exception handlers to recover gracefully from a stack
+overflow. The source code and resource files for the application are in
+the 16-Summation directory on the companion CD-ROM. You might want to
+review the chapters on SEH in order to fully understand how this
+application works.</p> 
+<p>The Summation application sums all of the numbers from 0 through <i>
+x,</i> where <i>x</i> is a number entered by the user. Of course, the
+simplest way to do this would be to create a function called <i>Sum</i>
+that simply performs the following calculation:</p>
+
+<p><table cellpadding=5><tr><td>
+<PRE>
+Sum = (x * (x + 1)) / 2;
+</pre></td></tr></table></p>
+
+<p>However, for this sample, I have written the <i>Sum</i> function to
+be recursive so that it uses a lot of stack space if you enter large
+numbers.</p> 
+
+<p>When the program starts, it displays the dialog box shown here.</p> 
+
+<p>
+<img src="images/G16si01.JPG" width=249 height=92 border=0>
+</p>
+
+<p>In this dialog box, you can enter a number in the edit control and
+then click on the Calculate button. This causes the program to create a
+new thread whose sole responsibility is to total all of the numbers
+between 0 and <i>x</i>. While the new thread is running, the
+program's primary thread waits for the result by calling <i>
+WaitForSingleObject</i> passing the new thread's handle. When the
+new thread terminates, the system wakes the primary thread. The primary
+thread retrieves the sum by getting the new thread's exit code
+through a call to <i>GetExitCodeThread</i>. Finally&#8212;and this is
+extremely important&#8212;the primary thread closes its handle to the
+new thread so that the system can completely destroy the thread object
+and so that our application does not have a resource leak.</p>
+
+<p>Now the primary thread examines the summation thread's exit
+code. The exit code UINT_MAX indicates that an error occurred&#8212;the
+summation thread overflowed the stack while totaling the
+numbers&#8212;and the primary thread will display a message box to this
+effect. If the exit code is not UINT_MAX, the summation thread
+completed successfully and the exit code is the summation. In this
+case, the primary thread will simply put the summation answer in the
+dialog box.</p>
+
+<p>Now let's turn to the summation thread. The thread function for
+this thread is called <i>SumThreadFunc</i>. When the primary thread
+creates this thread, it is passed the number of integers that it should
+total as its only parameter, <i>pvParam</i>. The function then
+initializes the <i>uSum</i> variable to UINT_MAX, which means that the
+function is assuming that it will not complete successfully. Next <i>
+SumThreadFunc</i> sets up SEH so that it can catch any exception that
+might be raised while the thread executes. The recursive <i>Sum</i>
+function is then called to calculate the sum.</p>
+
+<p>If the sum is calculated successfully, <i>SumThreadFunc</i> simply
+returns the value of the <i>uSum</i> variable; this is the thread's
+exit code. However, if an exception is raised while the <i>Sum</i>
+function is executing, the system will immediately evaluate the SEH
+filter expression. In other words, the system will call the <i>
+FilterFunc</i> function and pass it the code that identifies the raised
+exception. For a stack overflow exception, this code is
+EXCEPTION_STACK_OVERFLOW. If you want to see the program gracefully
+handle a stack overflow exception, tell the program to sum the first
+44,000 numbers.</p>
+
+<p>My <i>FilterFunc</i> function is simple. It checks to see if a stack
+overflow exception was raised, and if not, it returns
+EXCEPTION_CONTINUE_SEARCH. Otherwise, the filter returns EXCEPTION_EXECUTE_HANDLER. This indicates to the system that the filter was expectingthis exception and that the code contained in the <i>except</i> block should execute. For this sample application, the exception handler has nothing special to do but allows the thread to exit gracefully with a return code of UINT_MAX (the value in <i>uSumNum</i>). The parent thread will see this special return value and display a warning message to the user.</p>
+
+<p>The final thing that I want to discuss is why I execute the <i>
+Sum</i> function in its own thread instead of just setting up an SEH
+block in the primary thread and calling the <i>Sum</i> function from
+within the <i>try</i> block. I created this additional thread for three
+reasons.</p>
+
+<p>First, each time a thread is created, it gets its very own 1-MB
+stack region. If I called the <i>Sum</i> function from within the
+primary thread, some of the stack space would already be in use and the
+<i>Sum</i> function would not be able to use its full 1 MB of stack
+space. Granted, my sample is a simple program and is probably not using
+all that much stack, but other programs will probably be more
+complicated. I can easily imagine a situation in which <i>Sum</i> might
+successfully total the integers from 0 through 1000. Then when <i>
+Sum</i> is called again later, the stack might be deeper, causing a
+stack overflow to occur when <i>Sum</i> is trying only to total the
+integers from 0 through 750. So to make the <i>Sum</i> function behave
+more consistently, I ensure that it has a full stack that has not been
+used by any other code.</p>
+
+<p>The second reason for using a separate thread is that a thread is
+notified only once of a stack overflow exception. If I called the <i>
+Sum</i> function in the primary thread and a stack overflow occurred,
+the exception could be trapped and handled gracefully. However, at this
+point all of the stack's reserved address space is committed with
+physical storage, and there are no more pages with the guard protection
+flag turned on. If the user performs another sum, the <i>Sum</i>
+function could overflow the stack and a stack overflow exception would
+not be raised. Instead, an access violation exception would be raised,
+and it would be too late to handle this situation gracefully.</p>
+
+<p>The final reason for using a separate stack is so that the physical
+storage for the stack can be freed. Take this scenario as an example:
+The user asks the <i>Sum</i> function to calculate the sum of the
+integers from 0 through 30,000. This will require quite a bit of
+physical storage to be committed to the stack region. Then the user
+might do several summations in which the highest number is only 5000.
+In this case, a large amount of storage is committed to the stack
+region but is no longer being used. This physical storage is allocated
+from the paging file. Rather than leave this storage committed,
+it's better to free the storage, giving it back to the system and
+other processes. By having the <i>SumThreadFunc</i> thread terminate,
+the system automatically reclaims the physical storage that was
+committed to the stack's region.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><b>Summation.cpp</b></p>
+<PRE>
+/******************************************************************************
+Module:  Summation.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+#include &quot;..\CmnHdr.h&quot;     /* See Appendix A. */
+#include &lt;windowsx.h&gt;
+#include &lt;limits.h&gt;
+#include &lt;process.h&gt;       // For _beginthreadex
+#include &lt;tchar.h&gt;
+#include &quot;Resource.h&quot;
+
+///////////////////////////////////////////////////////////////////////////////
+
+// An example of calling Sum for uNum = 0 through 9
+// uNum: 0 1 2 3  4  5  6  7  8  9 ...
+// Sum:  0 1 3 6 10 15 21 28 36 45 ...
+UINT Sum(UINT uNum) {
+
+   // Call Sum recursively.
+   return((uNum == 0) ? 0 : (uNum + Sum(uNum - 1)));
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+LONG WINAPI FilterFunc(DWORD dwExceptionCode) {
+
+   return((dwExceptionCode == STATUS_STACK_OVERFLOW) 
+      ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// The separate thread that is responsible for calculating the sum. 
+// I use a separate thread for the following reasons:
+//    1. A separate thread gets its own 1 MB of stack space.
+//    2. A thread can be notified of a stack overflow only once.
+//    3. The stack's storage is freed when the thread exits.
+DWORD WINAPI SumThreadFunc(PVOID pvParam) {
+
+   // The parameter pvParam, contains the number of integers to sum.
+   UINT uSumNum = PtrToUlong(pvParam);
+
+   // uSum contains the summation of the numbers from 0 through uSumNum. 
+   // If the sum cannot be calculated, a sum of UINT_MAX is returned.
+   UINT uSum = UINT_MAX;
+
+   _ _try {
+      // To catch the stack overflow exception, we must 
+      // execute the Sum function while inside an SEH block.
+      uSum = Sum(uSumNum); 
+   }
+   _ _except (FilterFunc(GetExceptionCode())) {
+      // If we get in here, it's because we have trapped a stack overflow. 
+      // We can now do whatever is necessary to gracefully continue execution.
+      // This sample application has nothing to do, so no code is placed 
+      // in this exception handler block.
+   }
+
+   // The thread's exit code is the sum of the first uSumNum 
+   // numbers, or UINT_MAX if a stack overflow occurred.
+   return(uSum);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+BOOL Dlg_OnInitDialog(HWND hwnd, HWND hwndFocus, LPARAM lParam) {
+
+   chSETDLGICONS(hwnd, IDI_SUMMATION);
+
+   // Don't accept integers more than 9 digits long.
+   Edit_LimitText(GetDlgItem(hwnd, IDC_SUMNUM), 9);
+
+   return(TRUE);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify) {
+
+   switch (id) {
+      case IDCANCEL:
+         EndDialog(hwnd, id);
+         break;
+
+      case IDC_CALC:
+         // Get the number of integers the user wants to sum.
+         UINT uSum = GetDlgItemInt(hwnd, IDC_SUMNUM, NULL, FALSE);
+
+         // Create a thread (with its own stack) that is
+         // responsible for performing the summation.
+         DWORD dwThreadId;
+         HANDLE hThread = chBEGINTHREADEX(NULL, 0, 
+            SumThreadFunc, (PVOID) (UINT_PTR) uSum, 0, &amp;dwThreadId);
+
+         // Wait for the thread to terminate.
+         WaitForSingleObject(hThread, INFINITE);
+
+         // The thread's exit code is the resulting summation.
+         GetExitCodeThread(hThread, (PDWORD) &amp;uSum);
+
+         // Allow the system to destroy the thread kernel object
+         CloseHandle(hThread);
+
+         // Update the dialog box to show the result.
+         if (uSum == UINT_MAX) {
+            // If result is UINT_MAX, a stack overflow occurred.
+            SetDlgItemText(hwnd, IDC_ANSWER, TEXT(&quot;Error&quot;));
+            chMB(&quot;The number is too big, please enter a smaller number&quot;);
+         } else {
+            // The sum was calculated successfully; 
+            SetDlgItemInt(hwnd, IDC_ANSWER, uSum, FALSE);
+         }
+         break;
+   }
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+INT_PTR WINAPI Dlg_Proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+
+   switch (uMsg) {
+      chHANDLE_DLGMSG(hwnd, WM_INITDIALOG, Dlg_OnInitDialog);
+      chHANDLE_DLGMSG(hwnd, WM_COMMAND,    Dlg_OnCommand);
+   }
+   return(FALSE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+int WINAPI _tWinMain(HINSTANCE hinstExe, HINSTANCE, PTSTR pszCmdLine, int) {
+
+   DialogBox(hinstExe, MAKEINTRESOURCE(IDD_SUMMATION), NULL, Dlg_Proc);
+   return(0);
+}
+
+
+//////////////////////////////// End of File //////////////////////////////////
+</pre></td></tr></table></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><b>Summation.rc</b></p>
+<PRE>
+//Microsoft Developer Studio generated resource script.
+//
+#include &quot;Resource.h&quot;
+
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#define APSTUDIO_HIDDEN_SYMBOLS
+#include &quot;windows.h&quot;
+#undef APSTUDIO_HIDDEN_SYMBOLS
+
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+/////////////////////////////////////////////////////////////////////////////
+// English (U.S.) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+#ifdef _WIN32
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(1252)
+#endif //_WIN32
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+// Icon with lowest ID value placed first to ensure application icon
+// remains consistent on all systems.
+IDI_SUMMATION           ICON    DISCARDABLE     &quot;Summation.ico&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
+
+IDD_SUMMATION DIALOG DISCARDABLE  18, 18, 162, 41
+STYLE WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION &quot;Summation&quot;
+FONT 8, &quot;MS Sans Serif&quot;
+BEGIN
+    LTEXT           &quot;Calculate the sum of the numbers from 0 through &amp;x, where x is: &quot;,
+                    IDC_STATIC,4,4,112,20
+    EDITTEXT        IDC_SUMNUM,120,8,40,13,ES_AUTOHSCROLL
+    DEFPUSHBUTTON   &quot;&amp;Calculate&quot;,IDC_CALC,4,28,56,12
+    LTEXT           &quot;Answer:&quot;,IDC_STATIC,68,30,30,8
+    LTEXT           &quot;?&quot;,IDC_ANSWER,104,30,56,8
+END
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// TEXTINCLUDE
+//
+
+1 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;Resource.h\0&quot;
+END
+
+2 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;#define APSTUDIO_HIDDEN_SYMBOLS\r\n&quot;
+    &quot;#include &quot;&quot;windows.h&quot;&quot;\r\n&quot;
+    &quot;#undef APSTUDIO_HIDDEN_SYMBOLS\r\n&quot;
+    &quot;\0&quot;
+END
+
+3 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+#endif    // APSTUDIO_INVOKED
+
+#endif    // English (U.S.) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 3 resource.
+//
+
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED
+</pre></td></tr></table></p>
+</body>
+</html>
+
+
+
+
+
+
+

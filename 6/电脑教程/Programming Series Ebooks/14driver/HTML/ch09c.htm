@@ -1,0 +1,369 @@
+<HTML>
+<HEAD>
+<TITLE>Logging Errors</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch09b.htm">[Previous]</A> <A HREF="ch09d.htm">[Next]</a>
+</p>
+
+<A NAME="304"><H1>Logging Errors</H1></A>
+
+<p>In the discussions of error handling up until now, I've been concerned only with
+detecting (and propagating) status codes and with doing various things in the checked build to
+help debug problems that show up as errors. Even in the free build of a driver, however, some
+errors are serious enough that we want to be sure the system administrator knows about them.
+For example, maybe a disk driver discovers that the disk's physical surface has an
+unusually large number of bad sectors. Or maybe a driver is encountering unexpectedly frequent
+data errors or some sort of difficulty configuring or starting the device.</p>
+
+<p>To deal with these types of situations, a driver can write an entry to the system error log.
+The Event Viewer applet&#8212;one of the administrative tools on a Microsoft Windows 2000
+system&#8212;can later display this entry so that an administrator can learn about the problem.
+See Figure 9-4 for an illustration of the Event Viewer. Another way to indicate sudden errors
+is by signaling a Windows Management Instrumentation (WMI) event. I'll discuss event
+logging in this section; WMI is the subject of Chapter 10, &quot;<a href="ch10a.htm#330">Windows Management
+Instrumentation</a>.&quot;</p>
+
+<p>Production of an administrative report from the error log involves the steps diagrammed in
+Figure 9-5. A driver uses the kernel-mode service function <b>IoWriteErrorLogEntry</b> to send
+an <i>error log packet</i> data structure to the event logger service. The packet contains a
+numeric code instead of message text. As time permits, the event logger writes packets to a
+logging file on disk. Later, the Event Viewer combines the packets in the log file with message
+text drawn from a collection of <i>message files</i> to produce the report. The message files
+are ordinary 32-bit DLLs containing text appropriate to all possible logged events in the local
+language.</p>
+
+<p>
+<A HREF="javascript:fullSize('F09wi04x.htm')"> <img src="images/F09wi04.JPG" width=404 height=362 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 9-4.</b> <i>The Windows 2000 Event Viewer.</i><!--/caption-->
+</p>
+
+
+<p>
+<A HREF="javascript:fullSize('F09wi05x.htm')"> <img src="images/F09wi05.JPG" width=404 height=268 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 9-5.</b> <i>Overview of event logging and reporting.</i><!--/caption-->
+</p>
+
+
+<p>Your job as a driver author is to create appropriate error log packets when noteworthy
+events occur. As a practical matter, you'll probably also be the person who has to build
+the message file in at least one natural language. I'll describe both aspects of error
+logging in the next two sections.</p>
+
+<A NAME="305"><H2>Creating an Error Log Packet</H2></A>
+
+<p>To log an error, a driver creates an IO_ERROR_LOG_PACKET data structure and sends it to the
+kernel-mode logger. The packet is a variable-length structure&#8212;see Figure 9-6&#8212;with a
+fixed-size header containing general information about the event you're logging. <b>
+ErrorCode</b> indicates what event you're logging; it correlates with the message text file
+I'll describe shortly. After the fixed header comes an array of doublewords called <b>
+DumpData</b>, which contains <b>DumpDataSize</b> bytes of data that the Event Viewer will
+display in hexadecimal notation when asked for detailed information about this event. The size
+is in bytes even though the array is declared as consisting of 32-bit integers. After the
+DumpData, the packet can contain zero or more null-terminated Unicode strings that will end up
+being substituted into the formatted message text by the Event Viewer. The string area begins
+<b>StringOffset</b> bytes from the start of the packet and contains <b>NumberOfStrings</b> 
+strings.</p>
+
+<p>
+<A HREF="javascript:fullSize('F09wi06x.htm')"> <img src="images/F09wi06.JPG" width=404 height=657 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 9-6.</b> <i>The IO_ERROR_LOG_PACKET structure.</i><!--/caption-->
+</p>
+
+
+<p>You don't have to fill in any of the fixed-header members besides the ones I just
+mentioned. But they add, perhaps, diagnostic utility to the log entries, which might help you
+track down problems.</p>
+
+<p>Since the logging packet is of variable length, your first job is to determine how much
+memory is needed for the packet you want to create. Add the size of the fixed header to the
+number of bytes of DumpData to the number of bytes occupied by the substitution strings
+(including their null terminators). For example, the following code fragment, taken from the
+EVENTLOG sample on the companion disc, allocates an error log packet big enough to hold 4 bytes
+of dump data plus a single string:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>VOID LogEvent(NTSTATUS code, PDEVICE_OBJECT fdo)
+  {
+  PWSTR myname = L&quot;EventLog&quot;;
+  ULONG packetlen = (wcslen(myname) + 1) * sizeof(WCHAR)
+    + sizeof(IO_ERROR_LOG_PACKET) + 4;
+  if (packetlen &gt; ERROR_LOG_MAXIMUM_SIZE)
+    return;
+  PIO_ERROR_LOG_PACKET p = (PIO_ERROR_LOG_PACKET)
+    IoAllocateErrorLogEntry(fdo, (UCHAR) packetlen);
+  if (!p)
+    return;
+  ...
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>One trap for the unwary in this sequence is that error log packets have a maximum length of
+152 bytes, the value of ERROR_LOG_MAXIMUM_SIZE. Furthermore, the size argument to <b>
+IoAllocateErrorLogEntry</b> is a UCHAR, which is only 8 bits wide. It would be very easy to ask
+for a packet that was, say, 400 bytes long and be embarrassed when only 144 bytes get
+allocated. (400 is 0x190; 144 is 0x90, which is what you'd get after the truncation to 8
+bits.)</p>
+
+<p>Notice that the first argument to IoAllocateErrorLogEntry is the address of a device object.
+The name, if any, of that device object will appear in eventual log entries in place of the %1
+substitution escape, which I will discuss more in the next section.</p>
+
+<p>This code fragment also illustrates the action you should take in response to a problem
+allocating a log entry: <i>none</i>. It's not considered an error if you can't log some
+other error, so you don't want to fail any IRP, generate a bug check, or do anything else
+that will cause your processing to terminate. In fact, you'll notice that this <b>
+LogEvent</b> helper function is VOID because no programmer should be concerned enough about
+whether it succeeds or fails to have put a check into his or her code.</p>
+
+<p>After successfully allocating the log packet, your next job is to initialize the structure
+and hand off control of it to the logger. For example:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>  ...
+  memset(p, 0, sizeof(IO_ERROR_LOG_PACKET));
+  p-&gt;ErrorCode =<i> </i> code;
+
+  p-&gt;DumpDataSize = 4;
+  p-&gt;DumpData[0] = <i>&lt;whatever&gt;</i>;
+
+  p-&gt;StringOffset = sizeof(IO_ERROR_LOG_PACKET) + p-&gt;DumpDataSize;
+  p-&gt;NumberOfStrings = 1;
+  wcscpy((PWSTR) ((PUCHAR) p + p-&gt;StringOffset), myname);
+
+  IoWriteErrorLogEntry(p);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>When logging a device error, you'd fill in more of the fields in the header than just
+the error code. For information about these other fields, consult the IoAllocateErrorLogEntry
+function in the DDK documentation.</p>
+
+<A NAME="306"><H2>Creating a Message File</H2></A>
+
+<p>The Event Viewer uses the ErrorCode in an error packet to locate the text of an appropriate
+message in one of the message files associated with your driver. A message file is just a DLL
+with a message resource containing text in one or more natural languages. Since a WDM driver
+uses the same executable file format as a DLL, the message file for your private messages could
+just be your driver file itself. I'll give you an introduction here to building a message
+file. You can find additional information on MSDN and in James D. Murray's <i>Windows NT
+Event Logging</i> (O'Reilly &amp; Associates, 1998) at pages 125-57.</p>
+
+<p>Figure 9-7 illustrates the process by which you attach message text to your driver. You begin
+by creating a message source file with the file extension MC. Your build script uses the
+message compiler (MC.EXE) to translate the messages. One of the outputs of the message compiler
+is a header file containing symbolic constants for your messages; you include that file in your
+driver, and the constants end up being the ErrorCode values for the events you log. The other
+outputs from the message compiler are a set of intermediate files containing message text in
+one or more natural languages and a resource script file (.RC) that lists those intermediate
+files. Your build script goes on to compile the resource file and to specify the translated
+resources as input to the linkage editor. At the end of the build, your driver contains the
+message resources required to support the Event Viewer.</p>
+
+<p>
+<A HREF="javascript:fullSize('F09wi07x.htm')"> <img src="images/F09wi07.JPG" width=404 height=215 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 9-7.</b> <i>Creating a message file.</i><!--/caption-->
+</p>
+
+
+
+<p>The following is an example of a simple message source file. (This is part of the EVENTLOG
+sample program.)</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr>
+
+<td valign=top>
+<pre>
+1 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+2 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+
+
+3 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+4 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+
+5 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+6 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+</pre>
+</td>
+<td>
+<pre>  MessageIdTypedef = NTSTATUS
+
+  SeverityNames = (
+    Success        = 0x0:STATUS_SEVERITY_SUCCESS
+    Informational  = 0x1:STATUS_SEVERITY_INFORMATIONAL
+    Warning        = 0x2:STATUS_SEVERITY_WARNING
+    Error          = 0x3:STATUS_SEVERITY_ERROR
+    )
+
+  FacilityNames = (
+    System      = 0x0
+    Eventlog    = 0x2A:FACILITY_EVENTLOG_ERROR_CODE
+    )
+
+  LanguageNames = (
+    English    = 0x0409:msg00001
+    German     = 0x0407:msg00002
+    French     = 0x040C:msg00003
+    )
+
+  MessageId = 0x0001
+  Facility = Eventlog
+  Severity = Informational
+  SymbolicName = EVENTLOG_MSG_TEST
+  Language = English
+  %2 said, &quot;Hello, world!&quot;
+  .
+  Language = German
+  %2 hat gesagt, &laquo;Wir sind nicht mehr im Kansas!&raquo;
+  .
+  Language = French
+  %2 a dit, &laquo;Mon chien a mang&eacute; mon devoir!&raquo;
+  .</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> The <b>MessageIdTypedef</b> statement allows you to specify a symbol that will
+appear as a cast operator in the definition of each of the message identifier constants
+generated by this message file. For example, later we'll define a message with the symbolic
+name EVENTLOG_MSG_TEST. The presence of the MessageIdTypedef statement causes the header file
+generated by the message compiler to define this symbol as <b>((NTSTATUS)0x602A0001L)</b>.</li></p>
+
+<p><li> The <b>SeverityNames</b> statement allows you to define your own names for the
+four possible severity codes. The names on the left side of the equal signs (Success,
+Informational, and so on) appear in the definition of messages elsewhere in this very file. The
+symbol after the colon ends up being defined&#8212;in the header output file&#8212;as equal to
+the number before the colon. For example, <b>#define STATUS_SEVERITY_SUCCESS 0x0</b>.</li></p>
+
+<p><li> The <b>FacilityNames</b> statement allows you to define your own names for the
+facility codes that will be included in the message identifier definitions. Here, we've
+said we'll use the name <b>Eventlog</b> in Facility statements later. The message compiler
+generates the statement <b>#define FACILITY_EVENTLOG_ERROR_CODE 0x2A</b> as a result of the third line of the FacilityNames
+statement.</li></p>
+
+<p><li> The <b>LanguageNames</b> statement allows you to define your own names for the
+languages into which you've translated your messages. Here, we've said we'll use
+the name English elsewhere in the file when we mean to specify LANGID 0x0409, which is Standard
+English in the normal Microsoft Windows NT scheme of languages. The name after the colon is the
+name of the intermediate binary file that receives the compiled messages for this particular
+language.</li></p>
+
+<p><li> Each individual message definition contains some header statements followed by
+the text of the message in each of the languages supported by this message source file. The <b>
+MessageId</b> statement can specify an absolute number, as in this example, or it can specify a
+delta from the last message (such as <b>MessageId = +1</b>). You specify the facility code and
+severity by using names defined at the start of the message source file. You also specify, with
+the <b>SymbolicName</b> statement, a symbolic name for this message. The message compiler will
+define this symbol in the header file it generates.</li></p>
+
+<p><li> For each language you specified in the LanguageNames statement, you have a
+message text definition like this one. It begins with a <b>Language</b> statement that uses one
+of the language names you defined. Text for the message follows. Each message text definition
+ends with a line containing just a period. (With respect to the German and French
+nontranslations of the phrase &quot;Hello, world!&quot; it will help you to know that at the
+time I wrote this chapter I was in the process of studying the <i>pass&eacute;
+compos&eacute;</i> in my French class and a revival of <i>The Wizard of Oz</i> was underway in
+theaters.)</li></p>
+</ol>
+
+<p>Within the message texts, you can indicate by means of a percent sign followed by an integer
+the places where you want string substitution to occur. <b>%1</b> refers to the name of the
+device object that generated the message. That name is an implicit parameter when you create an
+error log entry; you don't have to specify it directly. <b>%2</b>, <b>%3</b>, and so on,
+correspond to the first, second, and so on, Unicode strings you append to the log entry. In the
+example we've been following, <b>%2</b> will be replaced by <b>EventLog</b> because we put
+that string into our error packet.</p>
+
+<p>This way of indicating substitution is especially useful in that you're free to put strings
+into the text in whatever order is appropriate for the language you're dealing with. So, if
+your message text read &quot;The %1 %2 fox jumped over the %3 dog&quot; in English, it might
+read &quot;Der %3 Hund wurde vom %1 %2 Fuchs &uuml;bergesprungen&quot; in German. (This is a
+silly example, of course. If the driver supplied &quot;quick&quot;, &quot;brown&quot;, and
+&quot;lazy&quot; for the substitution strings, they'd appear in English in all displayed
+versions of the message. But I think you get the point I'm trying to make about word
+order.)</p>
+
+<p>The Event Viewer can't find your message file without a little bit of help in the form
+of some registry entries. A key named EventLog resides in the services branch of the Windows NT
+registry&#8212;that is, the collection of subkeys below HKLM\System\CurrentControlSet\Services.
+Each driver or other service that logs events has its own subkey below that. Each
+service-specific subkey has values named <b>EventMessageFile</b> and <b>TypesSupported</b>. The
+EventMessageFile value is a REG_SZ or REG_EXPAND_SZ type that names all of the message files
+that the Event Viewer might need to access to format the messages your driver generates. This
+value would have a data string like &quot;%SystemRoot%\System32\iologmsg.dll; %SystemRoot%\System32\Drivers\EventLog.sys&quot;. IOLOGMSG.DLL contains the text of all the standard
+NTSTATUS.H codes, by the way. Consult the sidebar below for some tantalizing hints about how to
+automatically set these registry entries when you install your driver. The TypesSupported value
+should just be a REG_DWORD type equalling &quot;7&quot; to indicate that your driver can
+generate all possible events&#8212;that is, errors, warnings, and informational messages. (The
+fact that you even need to specify this value seems like a historical artifact of some
+kind.)</p>
+
+
+<p><div class="sidebar"><blockquote>
+<b>A Practical Note About Message Files</b> 
+
+<p>Two practical facts about putting message resources into your driver are difficult to
+discover: how precisely you make your build script compile your messages, and how you convince
+the system's hardware installer to put the necessary entries into the registry so the Event
+Viewer will find your messages. Art Baker's <i>The Windows NT Device Driver Book: A Guide
+for Programmers</i> (Prentice Hall, 1997) alludes to a solution to the first problem on page
+308. The DDK's discussion of INF files explains how to solve the second problem with syntax
+in an <b>AddService</b> statement.</p>
+
+<p>Like the other sample programs in this book, the EVENTLOG sample is based on a Microsoft
+Visual C++ 6.0 project file. I modified the project definition to include a custom build step
+for EVENTLOG.MC and to include the resulting .RC file in the build. If you open the project
+settings, you'll see what I mean.</p>
+
+<p>Later in this book (in Chapter 12, &quot;<A HREF="ch12a.htm#401">Installing Device Drivers</A>&quot;), I'll discuss
+the general topic of how you use an INF file to install drivers. To see how you specify your
+message file in an INF file, take a look at DEVICE.INF in the EVENTLOG project directory and,
+specifically, at its AddService statement. You'll see that the AddService line points to an
+<b>EventLogLogging</b> section that, in turn, uses the <b>AddReg</b> statement to point to an
+<b>EventLogAddReg</b> section. The latter section adds EventMessageFile and TypesSupported
+values to the service-specific subkey of the event logger service.</p>
+</blockquote></div>
+</p>
+
+</BODY>
+</HTML>
+
+
+
+
+

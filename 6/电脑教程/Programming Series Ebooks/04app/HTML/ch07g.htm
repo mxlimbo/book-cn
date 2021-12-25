@@ -1,0 +1,288 @@
+<HTML>
+<HEAD>
+<TITLE>Putting the Context in Context</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch07f.htm">[Previous]</A> <A HREF="ch07h.htm">[Next]</A><P>
+
+<A NAME="102"><H1>Putting the Context in Context</H1></A>
+
+<p>By now, you should understand the important role that the context structure plays in thread scheduling. The context structure allows the system to remember a thread's state so that the thread can pick up where it left off the next time it has a CPU to run on.</p>
+
+<p>You might be surprised to learn that such a low-level data structure is completely documented in the Platform SDK. However, if you look up the CONTEXT structure in the documentation, all you'll see is this:</p>
+
+<p>&quot;A CONTEXT structure contains processor-specific register data. The system uses CONTEXT structures to perform various internal operations. Currently, there are CONTEXT structures defined for Intel, MIPS, Alpha, and PowerPC processors. Refer to the header file WinNT.h for definitions of these structures.&quot; </p>
+
+<p>The documentation does not show you the structure's members and does not describe the members in any way whatsoever because the members depend on which CPU Windows 2000 is running on. In fact, of all the data structures Windows defines, the CONTEXT structure is the only data structure that is CPU-specific. </p>
+
+<p>So what's in the CONTEXT structure? Well, it contains a data member for each register on the host CPU. On an <i>x</i>86 machine, the members are <i>Eax</i>, <i>Ebx</i>, <i>Ecx</i>, <i>Edx</i>, and so on. For the Alpha processor, the members are <i>IntV0</i>, <i>IntT0</i>, <i>IntT1</i>, <i>IntS0</i>, <i>IntRa</i>, <i>IntZero</i>, and so on. The code fragment below shows the complete CONTEXT structure for an <i>x</i>86 CPU.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+typedef struct _CONTEXT {
+
+    //
+    // The flags values within this flag control the contents of
+    // a CONTEXT record.
+    //
+    // If the context record is used as an input parameter, then
+    // for each portion of the context record controlled by a flag
+    // whose value is set, it is assumed that that portion of the
+    // context record contains valid context. If the context record
+    // is being used to modify a threads context, then only that
+    // portion of the threads context will be modified.
+    //
+    // If the context record is used as an IN OUT parameter to capture
+    // the context of a thread, then only those portions of the thread's
+    // context corresponding to set flags will be returned.
+    //
+    // The context record is never used as an OUT only parameter.
+    //
+
+    DWORD ContextFlags;
+
+    //
+    // This section is specified/returned if CONTEXT_DEBUG_REGISTERS is
+    // set in ContextFlags.  Note that CONTEXT_DEBUG_REGISTERS is NOT
+    // included in CONTEXT_FULL.
+    //
+
+    DWORD   Dr0;
+    DWORD   Dr1;
+    DWORD   Dr2;
+    DWORD   Dr3;
+    DWORD   Dr6;
+    DWORD   Dr7;
+
+    //
+    // This section is specified/returned if the
+    // ContextFlags word contians the flag CONTEXT_FLOATING_POINT.
+    //
+
+    FLOATING_SAVE_AREA FloatSave;
+
+    //
+    // This section is specified/returned if the
+    // ContextFlags word contians the flag CONTEXT_SEGMENTS.
+    //
+
+    DWORD   SegGs;
+    DWORD   SegFs;
+    DWORD   SegEs;
+    DWORD   SegDs;
+
+    //
+    // This section is specified/returned if the
+    // ContextFlags word contians the flag CONTEXT_INTEGER.
+    //
+
+    DWORD   Edi;
+    DWORD   Esi;
+    DWORD   Ebx;
+    DWORD   Edx;
+    DWORD   Ecx;
+    DWORD   Eax;
+
+    //
+    // This section is specified/returned if the
+    // ContextFlags word contians the flag CONTEXT_CONTROL.
+    //
+
+    DWORD   Ebp;
+    DWORD   Eip;
+    DWORD   SegCs;              // MUST BE SANITIZED
+    DWORD   EFlags;             // MUST BE SANITIZED
+    DWORD   Esp;
+    DWORD   SegSs;
+
+    //
+    // This section is specified/returned if the ContextFlags word
+    // contains the flag CONTEXT_EXTENDED_REGISTERS.
+    // The format and contexts are processor specific
+    //
+
+    BYTE    ExtendedRegisters[MAXIMUM_SUPPORTED_EXTENSION];
+
+} CONTEXT;
+</pre>
+</td></tr></table></p>
+
+<p>A CONTEXT structure has several sections. CONTEXT_CONTROL contains the control registers of the CPU, such as the instruction pointer, stack pointer, flags, and function return address. (Unlike the <i>x</i>86 processor, which pushes a function's return address on the stack when it makes a call, the Alpha CPU places a function's return address in a register when it makes a call.) CONTEXT_INTEGER identifies the CPU's integer registers; CONTEXT_FLOATING_POINT identifies the CPU's floating-point registers; CONTEXT_SEGMENTS identifies the CPU's segment registers (<i>x</i>86 only); CONTEXT_DEBUG_REGISTERS identifies the CPU's debug registers (<i>x</i>86 only); and CONTEXT_ EXTENDED_REGISTERS identifies the CPU's extended registers (<i>x</i>86 only).</p>
+
+<p>Windows actually lets you look inside a thread's kernel object and grab its current set of CPU registers. To do this, you simply call <i>GetThreadContext</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL GetThreadContext(
+   HANDLE hThread, 
+   PCONTEXT pContext);
+</pre>
+</td></tr></table></p>
+
+<p>To call this function, just allocate a CONTEXT structure, initialize some flags (the structure's <i>ContextFlags</i> member) indicating which registers you want to get back, and pass the address of the structure to <i>GetThreadContext</i>. The function then fills in the members you've requested. </p>
+
+<p>You should call <i>SuspendThread</i> before calling <i>
+GetThreadContext</i>; otherwise, the thread might be scheduled and the thread's context might be different from what you get back. A thread actually has two contexts: user mode and kernel mode. <i>GetThreadContext</i> can return only the user-mode context of a thread. If you call <i>SuspendThread</i> to stop a thread but that thread is currently executing in kernel mode, its user-mode context is stable even though <i>SuspendThread</i> hasn't actually suspended the thread yet. But the thread cannot execute any more user-mode code until it is resumed, so you can safely consider the thread suspended and <i>GetThreadContext</i> will work.</p>
+
+<p>The CONTEXT structure's <i>ContextFlags</i> member does not
+correspond to any CPU registers. This member exists in all CONTEXT structure definitions regardless of the CPU architecture. The <i>ContextFlags</i> member indicates to the <i>GetThreadContext</i> function which registers you want to retrieve. For example, if you want to get the control registers for a thread, you can write something like this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// Create a CONTEXT structure.
+CONTEXT Context;
+
+// Tell the system that we are interested in only the 
+// control registers.
+Context.ContextFlags = CONTEXT_CONTROL;
+
+// Tell the system to get the registers associated with a thread.
+GetThreadContext(hThread, &amp;Context);
+
+// The control register members in the CONTEXT structure
+// reflect the thread's control registers. The other members 
+// are undefined.
+</pre>
+</td></tr></table></p>
+
+<p>Notice that you must first initialize the <i>ContextFlags</i> member in the CONTEXT structure before calling <i>GetThreadContext</i>. If you want to get a thread's control and integer registers, you should initialize <i>ContextFlags</i> as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// Tell the system that we are interested
+// in the control and integer registers.
+Context.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
+</pre>
+</td></tr></table></p>
+
+<p>Here is the identifier you can use to get all of the thread's
+important registers (that is, the ones Microsoft deems to be most
+commonly used):</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// Tell the system we are interested in the important registers.
+Context.ContextFlags = CONTEXT_FULL;
+</pre>
+</td></tr></table></p>
+
+<p>CONTEXT_FULL is defined in WinNT.h as shown in the following
+table.</p>
+
+<P>
+	<TABLE CELLPADDING=5 WIDTH="95%">
+	
+		<TR>
+			<TH>CPU Type</TH>
+			<TH>Definition of CONTEXT_FULL</TH>
+		</TR>		
+		
+		<TR>
+			<TD VALIGN="TOP"><i>x</i>86</TD>
+			<TD VALIGN="TOP">CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_SEGMENTS</TD>
+		</TR>		
+		
+		<TR>
+			<TD VALIGN="TOP">Alpha</TD>
+			<TD VALIGN="TOP">CONTEXT_CONTROL | CONTEXT_FLOATING_POINT | CONTEXT_INTEGER</TD>
+		</TR>
+		
+	</TABLE>
+</P>
+  
+<p>When <i>GetThreadContext</i> returns, you can easily examine any of the thread's register values, but remember that this means writing CPU-dependent code. The following table lists the instruction pointer and stack pointer members of a CONTEXT structure according to the CPU type.</p> 
+
+<P>
+	<TABLE CELLPADDING=5 WIDTH="95%">		
+		
+		<TR>
+			<TH>CPU Type</TH>
+			<TH>Instruction Pointer</TH>
+			<TH>Stack Pointer</TH>
+		</TR>		
+		
+		<TR>
+			<TD VALIGN="TOP"><i>x</i>86</TD>
+			<TD VALIGN="TOP">CONTEXT.Eip</TD>
+			<TD VALIGN="TOP">CONTEXT.Esp</TD>
+		</TR>
+		
+		<TR>
+			<TD VALIGN="TOP">Alpha</TD>
+			<TD VALIGN="TOP">CONTEXT.Fir</TD>
+			<TD VALIGN="TOP">CONTEXT.IntSp</TD>
+		</TR>
+		
+	</TABLE>
+</P>
+
+<p>It's amazing how much power Windows offers the developer! But, if you think that's cool, you're gonna love this: Windows lets you change the members in the CONTEXT structure and then place the new register values back into the thread's kernel object by calling <i>SetThreadContext</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL SetThreadContext(
+   HANDLE hThread, 
+   CONST CONTEXT *pContext);
+</pre>
+</td></tr></table></p>
+
+<p>Again, the thread whose context you're changing should be
+suspended first or the results will be unpredictable.</p>
+
+<p>Before calling <i>SetThreadContext</i>, you must initialize the <i>ContextFlags</i> member of CONTEXT again, as shown here:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+CONTEXT Context;
+
+// Stop the thread from running.
+SuspendThread(hThread);
+
+// Get the thread's context registers.
+Context.ContextFlags = CONTEXT_CONTROL;
+GetThreadContext(hThread, &amp;Context);
+
+// Make the instruction pointer point to the address of your choice.
+// Here I've arbitrarily set the address instruction pointer to 
+// 0x00010000.
+#if defined(_ALPHA_)
+Context.Fir = 0x00010000;
+#elif defined(_X86_)
+Context.Eip = 0x00010000;
+#else
+#error Module contains CPU-specific code; modify and recompile.
+#endif
+
+
+// Set the thread's registers to reflect the changed values.
+// It's not really necessary to reset the ControlFlags member
+// because it was set earlier.
+Context.ControlFlags = CONTEXT_CONTROL;
+SetThreadContext(hThread, &amp;Context);
+
+// Resuming the thread will cause it to begin execution
+// at address 0x00010000. 
+ResumeThread(hThread);
+</pre>
+</td></tr></table></p>
+
+<p>This will probably cause an access violation in the remote thread; the unhandled exception message box will be presented to the user, and the remote process will be terminated. That's right&#8212;the remote process will be terminated, not your process. You will have successfully crashed another process while yours continues to execute just fine!</p>
+
+<p>The <i>GetThreadContext</i> and <i>SetThreadContext</i> functions give you a lot of control over threads, but you should use them with caution. In fact, few applications ever call these functions at all. The functions were added to help debuggers and other tools. But any application can call them.</p>
+
+<p>I'll talk about the CONTEXT structure more in <A HREF="ch24a.htm">Chapter 24</A>.</p>
+
+
+</BODY>
+</HTML>
+
+
+
+
+
+

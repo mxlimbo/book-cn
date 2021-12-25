@@ -1,0 +1,347 @@
+<HTML>
+<HEAD>
+<TITLE>Affinities</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch07j.htm">[Previous]</A> <A HREF="ch08a.htm">[Next]</A><P>
+
+<A NAME="109"><H1>Affinities</H1></A>
+
+<p>By default, Windows 2000 uses <i>soft affinity</i> when assigning
+threads to processors. This means that if all other factors are equal,
+it tries to run the thread on the processor it ran on last. Having a
+thread stay on a single processor helps reuse data that is still in the
+processor's memory cache.</p>
+
+<p>There is a new computer architecture called NUMA (Non-Uniform Memory
+Access) in which a machine consists of several boards. Each board has
+four CPUs and its own bank of memory. The following figure shows a
+machine with 3 boards in it, making 12 CPUs available so that any
+single thread can run on any of the 12 CPUs.</p>
+
+<p>
+<A HREF="javascript:fullSize('G07si06x.htm')"> <img src="images/G07si06.JPG" width=404 height=178 border=0 ALT="Click to view at full size."> </A>
+</p>
+
+<p>A NUMA system performs best when a CPU accesses the memory that is on
+its own board. If the CPU needs to touch memory that is on another
+board, an enormous performance hit is incurred. In such an environment,
+it is desirable to have threads from one process run on CPUs 0 through
+3 and have threads in another process run on CPUs 4 through 7, and so
+on. To accommodate such machine architectures, Windows 2000 allows you
+to set process and thread affinities. In other words, you can control
+which CPUs can run certain threads. This is called <i>hard
+affinity</i>.</p>
+
+<p>The system determines how many CPUs are available in the machine at
+boot time. An application can query the number of CPUs on the machine
+by calling <i>GetSystemInfo</i> (discussed in <A HREF="ch14a.htm">Chapter 14</A>). By default,
+any thread can be scheduled to any of these CPUs. To limit threads in a
+single process to run on a subset of the available CPUs, you can call
+<i>SetProcessAffinityMask</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL SetProcessAffinityMask(
+   HANDLE hProcess, 
+   DWORD_PTR dwProcessAffinityMask);
+</pre></td></tr></table></p>
+
+<p>The first parameter, <i>hProcess</i>, indicates which process to
+affect. The second parameter, <i>dwProcessAffinityMask</i>, is a
+bitmask indicating which CPUs the threads can run on. For example,
+passing 0x00000005 means that threads in this process can run on CPU 0
+and CPU 2 but not on CPU 1 and CPUs 3 through 31.</p>
+
+<p>Note that child processes inherit process affinity. So if a process has
+an affinity mask of 0x00000005, any threads in its child processes have
+the same mask and share the same CPUs. In addition, you can use the job
+kernel object (discussed in <A HREF="ch05a.htm">Chapter 5</A>) to restrict a set of processes
+to a desired set of CPUs.</p>
+
+<p>Of course, there is also a function that returns a process's
+affinity mask, <i>GetProcessAffinityMask</i>, shown here.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL GetProcessAffinityMask(
+   HANDLE hProcess,
+   PDWORD_PTR pdwProcessAffinityMask, 
+   PDWORD_PTR pdwSystemAffinityMask); 
+</pre></td></tr></table></p>
+
+<p>Here, you also pass the handle of the process whose affinity mask
+you want and the function fills in the variable pointed to by <i>
+pdwProcessAffinityMask</i>. This function also returns the system's
+affinity mask (in the variable pointed to by <i>
+pdwSystemAffinityMask</i>). The system's affinity mask indicates
+which of the system's CPUs can process threads. A process's
+affinity mask is always a proper subset of the system's affinity
+mask.</p>
+
+<P><DIV CLASS="NOTE"><BLOCKQUOTE>
+<B>Windows 98</B><HR>
+Windows 98 uses only one CPU regardless of how many are actually in
+the machine. Therefore, <i>GetProcessAffinityMask</i> always fills both
+variables with 1.
+</BLOCKQUOTE></DIV>
+</P>
+
+<p>So far, we've discussed how to limit the threads of a process to
+a set of CPUs. Sometimes you might want to limit a thread within a
+process to a set of CPUs. For example, you might have a process
+containing four threads running on a machine with four CPUs. If one of
+these threads is doing important work and you want to increase the
+likelihood that a CPU will always be available for it, you limit the
+other three threads so they cannot run on CPU 0 and can only run on
+CPUs 1, 2, and 3.</p>
+
+<p>You can set affinity masks for individual threads by calling <i>
+SetThreadAffinityMask</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+DWORD_PTR SetThreadAffinityMask(
+   HANDLE hThread,
+   DWORD_PTR dwThreadAffinityMask);
+</pre></td></tr></table></p>
+
+<p>The <i>hThread</i> parameter indicates which thread to limit and the
+<i>dwThreadAffinityMask</i> indicates which CPUs the thread can run on.
+The <i>dwThreadAffinityMask</i> must be a proper subset of the
+process's affinity mask. The return value is the thread's
+previous affinity mask. So, to limit three threads to CPUs 1, 2, and 3,
+you do this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// Thread 0 can only run on CPU 0.
+SetThreadAffinityMask(hThread0, 0x00000001);
+
+// Threads 1, 2, 3 run on CPUs 1, 2, 3.
+SetThreadAffinityMask(hThread1, 0x0000000E);
+SetThreadAffinityMask(hThread2, 0x0000000E);
+SetThreadAffinityMask(hThread3, 0x0000000E);
+</pre></td></tr></table></p>
+
+<P><DIV CLASS="NOTE"><BLOCKQUOTE>
+<B>Windows 98</B><HR>
+Since Windows 98 uses only one CPU regardless of how many are actually
+in the machine, the <i>dwThreadAffinityMask</i> parameter must always
+be 1.
+</BLOCKQUOTE></DIV>
+</P>
+
+<p>When an <i>x</i>86 system boots, the system executes code that
+detects which CPUs on the host machine experience the famous Pentium
+floating-point bug. The system must test this for each CPU by setting a
+thread's affinity to the first CPU, performing the potentially
+faulty divide operation, and comparing the result with the known
+correct answer. Then this sequence is attempted again for the next CPU,
+and so on.</p>
+
+<P><DIV CLASS="NOTE"><BLOCKQUOTE>
+<B>NOTE</B><HR>
+In most environments, altering thread affinities interferes with the
+scheduler's ability to effectively migrate threads across CPUs that
+make the most efficient use of CPU time. The table below shows an
+example. 
+
+<P>
+	<TABLE CELLPADDING=5 WIDTH="95%">
+		<TR>
+			<TH>Thread</TH>
+			<TH>Priority</TH>		
+			<TH>Affinity Mask</TH>
+			<TH>Result</TH>
+		</TR>
+
+		<TR>
+			<TD VALIGN="TOP">A</TD>
+			<TD VALIGN="TOP">4</TD>		
+			<TD VALIGN="TOP">0x00000001</TD>
+			<TD VALIGN="TOP">CPU 0</TD>
+		</TR>
+
+		<TR>
+			<TD VALIGN="TOP">B</TD>
+			<TD VALIGN="TOP">8</TD>		
+			<TD VALIGN="TOP">0x00000003</TD>
+			<TD VALIGN="TOP">CPU 1</TD>
+		</TR>
+
+		<TR>
+			<TD VALIGN="TOP">C</TD>
+			<TD VALIGN="TOP">6</TD>		
+			<TD VALIGN="TOP">0x00000002</TD>
+			<TD VALIGN="TOP">Can't run</TD>
+		</TR>
+
+	</TABLE>
+</P>
+
+<p>When Thread A wakes, the scheduler sees that the thread can
+run on CPU 0 and is assigned to CPU 0. Thread B then wakes and the
+scheduler sees that the thread can be assigned to CPU 0 or 1 but since
+CPU 0 is in use, the scheduler assigns it to CPU 1. So far, so
+good.</p>
+
+<p>Now Thread C wakes, and the scheduler sees that it can run only on CPU
+1. But CPU 1 is in use by thread B, a priority 8 thread. Since Thread C
+is a priority 6 thread, it can't preempt Thread B. Thread C can
+preempt Thread A, a priority 4 thread, but the scheduler will not
+preempt Thread A because Thread C can't run on CPU 0.</p>
+
+<p>This demonstrates how setting hard affinities for threads can interfere
+with the scheduler's priority scheme.</p>
+</BLOCKQUOTE></DIV>
+</P>
+
+<p>Sometimes forcing a thread to a specific CPU is not the best idea.
+For example, you might have three threads all limited to CPU 0, but
+CPUs 1, 2, and 3 might be sitting idle. It would be better if you could
+tell the system that you want a thread to run on a particular CPU but
+allow the thread to migrate to another CPU if one is available.</p>
+
+<p>To set an ideal CPU for a thread, you call <i>
+SetThreadIdealProcessor</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+DWORD SetThreadIdealProcessor(
+   HANDLE hThread, 
+   DWORD dwIdealProcessor);
+</pre></td></tr></table></p>
+
+<p>The <i>hThread</i> parameter indicates which thread to set a
+preferred CPU for. However, unlike all the other functions we've
+been discussing, the <i>dwIdealProcessor</i> is not a bitmask; it is an
+integer from 0 through 31 that indicates the preferred CPU for the
+thread. You can pass a value of MAXIMUM_PROCESSORS (defined as 
+32 in WinNT.h) to indicate that the thread has
+no ideal CPU. The function returns the previous ideal CPU or
+MAXIMUM_PROCESSORS if the thread doesn't have an ideal CPU set for it.</p>
+
+<p>You can also set processor affinity in the header of an executable
+file. Oddly, there doesn't seem to be a linker switch for this, but
+you can use code similar to this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// Load the EXE into memory.
+PLOADED_IMAGE pLoadedImage = ImageLoad(szExeName, NULL);
+
+// Get the current load configuration information for the EXE.
+IMAGE_LOAD_CONFIG_DIRECTORY ilcd;
+GetImageConfigInformation(pLoadedImage, &amp;ilcd);
+
+// Change the processor affinity mask.
+ilcd.ProcessAffinityMask = 0x00000003; // I desire CPUs 0 and 1
+
+// Save the new load configuration information.
+SetImageConfigInformation(pLoadedImage, &amp;ilcd);
+
+// Unload the EXE from memory.
+ImageUnload(pLoadedImage);
+</pre></td></tr></table></p>
+
+<p>I won't bother to explain all these functions in detail; you can
+look them up in the Platform SDK documentation if you're
+interested. Also, you can use a utility called ImageCfg.exe to change
+some flags in an executable module's header. When you run
+ImageCfg.exe, it displays the following usage:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+usage: IMAGECFG [switches] image-names...
+              [-?] display this message
+              [-a Process Affinity mask value in hex]
+              [-b BuildNumber]
+              [-c Win32 GetVersionEx Service Pack return value in hex]
+              [-d decommit thresholds]
+              [-g bitsToClear bitsToSet]
+              [-h 1|0 (Enable/Disable Terminal Server Compatible bit)
+              [-k StackReserve[.StackCommit]	
+              [-l enable large (&gt;2GB) adresses
+              [-m maximum allocation size]
+              [-n bind no longer allowed on this image
+              [-o default critical section timeout
+              [-p process heap flags]
+              [-q only print config info if changed
+              [-r run with restricted working set]
+              [-s path to symbol files]
+              [-t VirtualAlloc threshold]
+              [-u Marks image as uniprocesor only]
+              [-v MajorVersion.MinorVersion]
+              [-w Win32 GetVersion return value in hex]
+              [-x Mark image as Net - Run From Swapfile
+              [-y Mark image as Removable - Run From Swapfile
+</pre></td></tr></table></p>
+
+<p>To change the application’s allowed affinity mask, you execute ImageCfg 
+and specify the -a switch. Of course, all this utility does is call the functions 
+shown in the code fragment above. Also notice the -u switch, which tells the system 
+that the executable file can run only on single-CPU systems.</p>
+
+<p>Finally, the Windows 2000 Task Manager allows a user to alter a process’s CPU 
+affinity by selecting a process and displaying its context menu. If you run on a 
+multiprocessor machine, you see a Set Affinity menu item. (This menu item is not 
+available on uniprocessor machines.) When you choose this menu item, you see the 
+following dialog box, in which you can select which CPUs the threads in the chosen 
+process can run on.</p>
+
+<p>
+<img src="images/G07si07.JPG" width=354 height=280 border="0">
+</p>
+
+<P><DIV CLASS="NOTE"><BLOCKQUOTE>
+<B>Windows 2000</B><HR>
+<p>When Windows 2000 boots on an x86 machine, you can limit the number of CPUs that 
+the system will use. During the boot cycle, the system examines a file called Boot.ini, 
+which is in the root directory of the boot drive. Here is the Boot.ini file that I 
+have on my dual processor machine:</p>
+
+<P>
+<TABLE CELLPADDING=5 WIDTH ="95%">
+<TR><TD>
+<PRE>
+[boot loader]
+timeout=2
+default=multi(0)disk(0)rdisk(0)partition(1)\WINNT
+[operating systems]
+multi(0)disk(0)rdisk(0)partition(1)\WINNT=”Windows 2000 Server”
+   /fastdetect
+multi(0)disk(0)rdisk(0)partition(1)\WINNT=”Windows 2000 Server”
+   /fastdetect /NumProcs=1
+</PRE>
+</TD></TR></TABLE>
+</P>
+
+<p>This Boot.ini file was produced by the Windows 2000 installation, but I added the 
+last line using Notepad. This line tells the system that at boot time it should use 
+just one of the processors on the machine. The /NumProcs=1 switch is the piece of magic 
+that makes this happen. I occasionally find this useful for debugging. (Usually I want 
+to use all of my processors.)</p>
+
+<p>Please note that, because of printing considerations only, the options appear on a 
+separate (indented) line in the listing above. The Boot.ini file requires that the 
+options and the ARC path to the boot partition appear on one line.</p>
+</BLOCKQUOTE></DIV>
+</P>
+
+
+</body>
+
+</html>
+
+
+
+
+
+
+

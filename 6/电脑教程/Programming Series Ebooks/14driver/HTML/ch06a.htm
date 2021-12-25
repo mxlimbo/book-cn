@@ -1,0 +1,149 @@
+<html>
+<head>
+<title>Chapter 6 -- Plug and Play</title>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch05h.htm">[Previous]</A> <A HREF="ch06b.htm">[Next]</a>
+</p>
+
+
+<font size="+3">Chapter 6</font>
+
+<A NAME="180"><H1>Plug and Play </H1></A>
+
+<p>The Plug and Play (PnP) Manager communicates information and requests to device drivers via
+I/O request packets (IRPs) with a major function code of IRP_MJ_PNP. This type of request is
+new with Microsoft Windows 2000 and the Windows Driver Model: previous versions of Microsoft
+Windows NT required device drivers to do most of the work of detecting and configuring their
+devices. Happily, WDM drivers can let the PnP Manager do that work. To work with the PnP
+Manager, driver authors will have to understand a few relatively complicated IRPs.</p>
+
+<p>Plug and Play requests play two roles in the WDM. In their first role, these requests
+instruct the driver when and how to configure or deconfigure itself and the hardware. Table 6-1
+lists the roughly two dozen minor functions that a PnP request can designate. Only the bus
+driver handles the nine minor functions shown with an asterisk; a filter driver or function
+driver would simply pass these IRPs down the stack. Of the remaining minor functions, three
+have special importance to a typical filter driver or function driver. The PnP Manager uses
+IRP_MN_START_DEVICE to inform the function driver what I/O resources it has assigned to the
+hardware and to instruct the function driver to do any necessary hardware and software setup so
+that the device can function. IRP_MN_STOP_DEVICE tells the function driver to shut down the
+device. IRP_MN_REMOVE_DEVICE tells the function driver to shut down the device <i>and</i>
+release the associated device object. I'll discuss these three minor functions in detail in
+this chapter and the next; along the way, I'll also describe the purpose for the other
+unstarred minor functions that a filter driver or function driver might need to handle.</p>
+
+<p><b>Table 6-1.</b> <i>Minor function codes for IRP_MJ_PNP. (* indicates handled only by bus
+drivers.)</i></p>
+
+<P>
+<table cellpadding=5 width="95%">
+<tr> 
+<th><i>IRP Minor Function Code</i>  </th>
+<th><i>Description</i>  </th></tr>
+<tr>
+<td valign="top">IRP_MN_START_DEVICE</td>
+<td valign="top">Configures and initializes device</td></tr>
+<tr>
+<td valign="top">IRP_MN_QUERY_REMOVE_DEVICE</td>
+<td valign="top">Can device be removed safely?</td></tr>
+<tr>
+<td valign="top">IRP_MN_REMOVE_DEVICE</td>
+<td valign="top">Shuts down and removes device</td></tr>
+<tr>
+<td valign="top">IRP_MN_CANCEL_REMOVE_DEVICE</td>
+<td valign="top">Ignores previous QUERY_REMOVE</td></tr>
+<tr>
+<td valign="top">IRP_MN_STOP_DEVICE</td>
+<td valign="top">Shuts down device</td></tr>
+<tr>
+<td valign="top">IRP_MN_QUERY_STOP_DEVICE</td>
+<td valign="top">Can device be shut down safely?</td></tr>
+<tr>
+<td valign="top">IRP_MN_CANCEL_STOP_DEVICE</td>
+<td valign="top">Ignores previous QUERY_STOP</td></tr>
+<tr>
+<td valign="top">IRP_MN_QUERY_DEVICE_RELATIONS</td>
+<td valign="top">Gets list of devices which are related in some specified way</td></tr>
+<tr>
+<td valign="top">IRP_MN_QUERY_INTERFACE</td>
+<td valign="top">Obtains direct-call function addresses</td></tr>
+<tr>
+<td valign="top">IRP_MN_QUERY_CAPABILITIES</td>
+<td valign="top">Determines capabilities of device</td></tr>
+<tr>
+<td valign="top">IRP_MN_QUERY_RESOURCES*</td>
+<td valign="top">Determines boot configuration </td></tr>
+<tr>
+<td valign="top">IRP_MN_QUERY_RESOURCE_REQUIREMENTS*</td>
+<td valign="top">Determines I/O resource requirements</td></tr>
+<tr>
+<td valign="top">IRP_MN_QUERY_DEVICE_TEXT*</td>
+<td valign="top">Obtains description or location string</td></tr>
+<tr>
+<td valign="top">IRP_MN_FILTER_RESOURCE_REQUIREMENTS</td>
+<td valign="top">Modifies I/O resource requirements list</td></tr>
+<tr>
+<td valign="top">IRP_MN_READ_CONFIG*</td>
+<td valign="top">Reads configuration space</td></tr>
+<tr>
+<td valign="top">IRP_MN_WRITE_CONFIG*</td>
+<td valign="top">Writes configuration space</td></tr>
+<tr>
+<td valign="top">IRP_MN_EJECT*</td>
+<td valign="top">Ejects the device</td></tr>
+<tr>
+<td valign="top">IRP_MN_SET_LOCK* </td>
+<td valign="top">Locks/unlocks device against ejection</td></tr>
+<tr>
+<td valign="top">IRP_MN_QUERY_ID*</td>
+<td valign="top">Determines hardware ID of device</td></tr>
+<tr>
+<td valign="top">IRP_MN_QUERY_PNP_DEVICE_STATE</td>
+<td valign="top">Determines state of device</td></tr>
+<tr>
+<td valign="top">IRP_MN_QUERY_BUS_INFORMATION*</td>
+<td valign="top">Determines parent bus type</td></tr>
+<tr>
+<td valign="top">IRP_MN_DEVICE_USAGE_NOTIFICATION</td>
+<td valign="top">Notes creation or deletion of paging, dump, or hibernate file</td></tr>
+<tr>
+<td valign="top">IRP_MN_SURPRISE_REMOVAL</td>
+<td valign="top">Notes fact that device has been removed</td></tr>
+</table></p>
+
+
+<p>A second and more complicated purpose of PnP requests is to guide the driver through a
+series of state transitions, as illustrated in Figure 6-1. WORKING and STOPPED are the two
+fundamental states of the device. The STOPPED state is the initial state of a device
+immediately after you create the device object. The WORKING state indicates that the device is
+fully operational. Two of the intermediate states&#8212;PENDINGSTOP and PENDINGREMOVE&#8212;arise
+because of queries that all drivers for a device must process before making the transition from
+WORKING. SURPRISEREMOVED occurs after the sudden and unexpected removal of the physical
+hardware.</p>
+
+<p>
+<A HREF="javascript:fullSize('F06wi01x.htm')"> <img src="images/F06wi01.JPG" width=404 height=293 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 6-1.</b> <i>State diagram for a device.</i><!--/caption-->
+</p>
+
+
+<p>When I described the standard model for IRP processing in the previous chapter, I indicated
+that Plug and Play would impose additional requirements on IRP queuing and cancellation.
+I'll describe a DEVQUEUE object in this chapter that satisfies those requirements and helps
+you manage the state transitions.</p>
+
+</BODY>
+</HTML>
+
+
+
+
+

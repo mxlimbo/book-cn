@@ -1,0 +1,313 @@
+<HTML>
+<HEAD>
+<TITLE>The WDM Power Model</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch08a.htm">[Previous]</A> <A HREF="ch08c.htm">[Next]</a>
+</p>
+
+<A NAME="266"><H1>The WDM Power Model</H1></A>
+
+<p>In Windows 2000 and Windows 98, the operating system takes over most of the job of managing
+power. This makes sense because only the operating system really knows what's going on, of
+course. A system BIOS charged with power management, for example, can't tell the difference
+between an application's use of the screen and a screen saver's. But the operating
+system can tell the difference and thus can determine whether it's okay to turn off the
+display.</p>
+
+<p>As the global <i>power policy owner</i> for the computer, the operating system supports user
+interface elements that give the end user ultimate control over power decisions. These elements
+include the control panel, commands in the Start menu, and APIs for controlling device wake-up
+features. The Power Manager component of the kernel implements the operating system's power
+policies by sending I/O request packets (IRPs) to devices. WDM drivers have the primarily
+passive role of responding to these IRPs, although you'll probably find this passivity to
+incorporate a lot of active motion when I show you how much code is involved.</p>
+
+<A NAME="267"><H2>The Roles of WDM Drivers</H2></A>
+
+<p>One of the drivers for a device acts as the power policy owner for the device. Since the
+function driver most often fills this role, I'll continue discussing power management as
+though that were invariably the case. Just bear in mind that your device might have unique
+requirements that mandate giving the responsibilities of policy owner to some filter driver or
+to the bus driver instead.</p>
+
+<p>The function driver receives IRPs (system IRPs) from the Power Manager that pertain to
+changes in the overall power state of the system. Acting as policy owner for the device, it
+translates these instructions into device terms and originates new IRPs (device IRPs). When
+responding to the device IRPs, the function driver worries about the details that pertain to
+the device. Devices might carry onboard <i>context information</i> that you don't want to
+lose during a period of low power. Keyboard drivers, for example, might hold the state of
+locking keys (such as CAPS-LOCK, NUM-LOCK, and SCROLL-LOCK), LEDs, and so on. The function
+driver is responsible for saving and restoring that context. Some devices have a <i>wake-up
+feature</i> that allows them to wake up a sleeping system when external events occur; the
+function driver works together with the end user to make sure that the wake-up feature is
+available when needed. Many function drivers manage queues of substantive IRPs&#8212;that is,
+IRPs that read or write data to the device, and they need to stall or release those queues as
+power wanes and waxes.</p>
+
+<p>The bus driver at the bottom of the device stack is responsible for controlling the flow of
+current to your device and for performing whatever electronic steps are necessary to arm or
+disarm your device's wake-up feature.</p>
+
+<p>A filter driver normally acts as a simple conduit for power requests, passing them down to
+lower-level drivers by using the special protocol I'll describe a bit further on.</p>
+
+<A NAME="268"><H2>Device Power and System Power States</H2></A>
+
+<p>The Windows Driver Model uses the same terms to describe power states as does the Advanced
+Configuration and Power Interface (ACPI) specification. (See <i>
+<a href="http://www.teleport.com/~acpi/spec.htm" target="_window2">http://www.teleport.com/~acpi/spec.htm</a>.</i>) Devices can assume the four states illustrated in
+Figure 8-1. In the D0 state, the device is fully functional. In the D3 state, the device is
+using no (or very minimal) power and is therefore not functioning (or is functioning at a very
+low level). The intermediate D1 and D2 states denote two different somnolent states for the
+device. As a device moves from D0 to D3, it consumes less and less power. In addition, it
+remembers less and less <i>context</i> information about its current state. Consequently, the
+<i>latency</i> period needed for the device's transition back to D0 increases.</p>
+
+<p>
+<A HREF="javascript:fullSize('F08wi01x.htm')"> <img src="images/F08wi01.JPG" width=404 height=196 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 8-1.</b> <i>ACPI device power states.</i><!--/caption-->
+</p>
+
+
+<p>Microsoft has formulated class-specific requirements for different types of devices. I found
+these requirements on line at <i><a href="http://www.microsoft.com/hwdev/specs/PMref/" target="_window2">http://www.microsoft.com/hwdev/specs/PMref/</a></i>. The
+specifications mandate, for example, that every device support at least the D0 and D3 states.
+Input devices (keyboards, mice, and so on) should also support the D1 state. Modem devices, on
+the other hand, should additionally support D2. These differences in specifications for device
+classes stem from likely usage scenarios and industry practice.</p>
+
+<p>The operating system doesn't deal directly with the power states of
+devices&#8212;that's exclusively the province of device drivers. Rather, the system controls
+power by using a set of system power states that are analogous to the ACPI device states. See
+Figure 8-2. The Working state is the full-power, fully functional state of the computer.
+Programs are able to execute only when the system is in the Working state.</p>
+
+<p>
+<A HREF="javascript:fullSize('F08wi02x.htm')"> <img src="images/F08wi02.JPG" width=404 height=308 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 8-2.</b> <i>System power states.</i><!--/caption-->
+</p>
+
+
+<p>The other system power states correspond to reduced power configurations in which no
+instructions execute. The Shutdown state is the power-off state. (Discussing the Shutdown state
+seems like discussing an unanswerable question such as &quot;What's inside a black
+hole?&quot; Like the event horizon surrounding a black hole, though, the <i>transition</i> to
+Shutdown is something you'll need to know about as your device spirals in.) The Hibernate
+state is a variant of Shutdown in which the entire state of the computer is recorded on disk so
+that a live session can be restarted when power comes back. The three sleeping states between
+Hibernate and Working encompass gradations in power consumption.</p>
+
+<A NAME="269"><H2>Power State Transitions</H2></A>
+
+<p>The system initializes in the Working state. This almost goes without saying, because the
+computer is, by definition, in the Working state whenever it's executing instructions. Most
+devices start out in the D0 state, although the policy owner for the device might put it into a
+lower power state when it's not actually in use. After the system is up and running, then,
+it reaches a steady state in which the system power level is Working and devices are in various
+states depending on activity and capability.</p>
+
+<p>End user actions and external events cause subsequent transitions between power states. A
+common transition scenario arises when the user uses the Shut Down command on the Start menu to
+put the machine into standby. In response, the Power Manager first asks each driver whether the
+prospective loss of power will be okay by sending an IRP_MJ_POWER request with the minor
+function code IRP_MN_QUERY_POWER. If all drivers acquiesce, the Power Manager sends a second
+power IRP with the minor function code IRP_MN_SET_POWER. Drivers put their devices into lower
+power states in response to this second IRP. If any driver vetoes the query, the Power Manager
+still sends an IRP_MN_SET_POWER request, but it usually specifies the <i>current</i> power
+level instead of the one originally proposed.</p>
+
+<p>The system doesn't always send IRP_MN_QUERY_POWER requests, by the way. Some events
+(such as the end user unplugging the computer or the battery expiring) must be accepted without
+demur, and the operating system won't issue a query when they occur. But when a query is
+issued, and when a driver accepts the proposed state change by passing the request along, the
+driver undertakes that it won't start any operation that might interfere with the expected
+set-power request. A tape driver, for example, would make sure that it's not currently
+retensioning a tape&#8212;the interruption of which might break the tape&#8212;before succeeding
+a query for a low-power state. In addition, the driver would reject any subsequent retension
+command until (and unless) a countervailing set-power request arrives to signal abandonment of
+the state change.</p>
+
+<A NAME="270"><H2>Handling IRP_MJ_POWER Requests</H2></A>
+
+<p>The Power Manager communicates with drivers by means of an IRP_MJ_POWER I/O request packet.
+Four minor function codes are currently possible. See Table 8-1.</p>
+
+<p><b>Table 8-1.</b> <i>Minor function codes for IRP_MJ_POWER.</i></p>
+
+<p><table cellpadding=5 width="95%"><tr>
+<th><i>Minor Function Code</i></th>
+<th><i>Description</i></th>
+</tr><tr>
+<td valign="top">IRP_MN_QUERY_POWER</td>
+<td valign="top">Determine if prospective change in power state can safely occur</td>
+</tr><tr>
+<td valign="top">IRP_MN_SET_POWER</td>
+<td valign="top">Instructs driver to change power state</td>
+</tr><tr>
+<td valign="top">IRP_MN_WAIT_WAKE</td>
+<td valign="top">Instructs bus driver to arm wake-up feature; provides way for function
+driver to know when wake-up signal occurs</td>
+</tr><tr>
+<td valign="top">IRP_MN_POWER_SEQUENCE</td>
+<td valign="top">Provides optimization for context saving and restoring</td>
+</tr></table></p>
+
+
+<p>The <b>Power</b> substructure in the IO_STACK_LOCATION's <b>Parameters</b> union has
+four parameters that describe the request, of which only two will be of interest to most WDM
+drivers. See Table 8-2.</p>
+
+<p><b>Table 8-2.</b> <i>Fields in the Parameters.Power substructure of an IO_STACK_LOCATION.</i></p>
+
+<p><table cellpadding=5 width="95%"><tr>
+<th><i>Field Name</i></th>
+<th><i>Description</i></th>
+</tr><tr>
+<td valign="top">SystemContext</td>
+<td valign="top">A context value used internally by the Power Manager</td>
+</tr><tr>
+<td valign="top">Type</td>
+<td valign="top">DevicePowerState or SystemPowerState (values of POWER_STATE_TYPE enumeration)</td>
+</tr><tr>
+<td valign="top">State</td>
+<td valign="top">Power state&#8212;either a DEVICE_POWER_STATE enumeration value or a SYSTEM_POWER_STATE 
+enumeration value</td>
+</tr><tr>
+<td valign="top">ShutdownType</td>
+<td valign="top">A code indicating the reason for a transition to PowerSystemShutdown</td>
+</tr></table></p>
+
+
+
+<p>All drivers&#8212;both filter drivers and the function driver&#8212;generally pass every power
+request down the stack to the driver underneath them. The only exceptions are an
+IRP_MN_QUERY_POWER request that the driver wants to fail and an IRP that arrives while the
+device is being deleted.</p>
+
+<p>Special rules govern how you pass power requests down to lower-level drivers. Refer to
+Figure 8-3 for an overview of the process in the three possible variations you might use.
+First, before releasing control of a power IRP, you must call <b>PoStartNextPowerIrp</b>. You
+do so even if you are completing the IRP with an error status. The reason for this call is that
+the Power Manager maintains its own queue of power requests and must be told when it will be
+okay to dequeue and send the next request to your device. In addition to calling
+PoStartNextPowerIrp, you must call the special routine <b>PoCallDriver</b> (instead of <b>
+IoCallDriver</b> ) to send the request to the next driver.</p>
+
+<p>
+<A HREF="javascript:fullSize('F08wi03x.htm')"> <img src="images/F08wi03.JPG" width=404 height=286 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 8-3.</b> <i>Handling IRP_MJ_POWER requests.</i><!--/caption-->
+</p>
+
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+Not only does the Power Manager maintain a queue of power IRPs for each device,
+but it maintains <i>two</i> such queues. One queue is for system power IRPs (that is,
+IRP_MN_SET_POWER requests that specify a system power state). The other queue is for device
+power IRPs (that is, IRP_MN_SET_POWER requests that specify a device power state). One IRP of
+each kind can be simultaneously active. Your driver might also be handling a Plug and Play
+(PnP) request and any number of substantive IRPs at the same time, too, by the
+way.</blockquote></div>
+</p>
+
+<p>The following function illustrates the mechanical aspects of passing a power request down
+the stack:</p>
+
+<table width="95%" cellpadding="5" valign="TOP" border=0>
+<tr><td valign=top>
+<pre>
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+2 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+3 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+</pre>
+</td>
+
+
+<p>
+<td valign="top">
+<pre>NTSTATUS DefaultPowerHandler(IN PDEVICE_OBJECT fdo, IN PIRP Irp)
+  {
+  PoStartNextPowerIrp(Irp);
+  IoSkipCurrentIrpStackLocation(Irp);
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+  return PoCallDriver(pdx-&gt;LowerDeviceObject, Irp);
+  }</pre>
+</td></p></tr>
+</table>
+
+
+<ol>
+<p><li> <b>PoStartNextPowerIrp</b> tells the Power Manager that it can dequeue and send
+the next power IRP. You must make this call for every power IRP you receive at a time when you
+own the IRP. In other words, the call must occur either in your dispatch routine before you
+send the request to PoCallDriver or in a completion routine.</li></p>
+
+<p><li> We use <b>IoSkipCurrentIrpStackLocation</b> to retard the IRP's stack pointer
+by one position in anticipation that PoCallDriver will immediately advance it. This is the same
+technique I've already discussed for passing a request down and ignoring what happens to it
+afterwards.</li></p>
+
+<p><li> You use <b>PoCallDriver</b> to forward power requests. Microsoft implemented this
+function to forestall the minimal, but nonetheless measurable, impact on performance that might
+result from adding conditional logic to IoCallDriver to handle power management.</li></p>
+</ol>
+
+<p>The function driver takes the two steps of passing the IRP down and performing its
+device-specific action in a neatly nested order, as shown in Figure 8-4: When <i>removing</i>
+power&#8212;that is, when changing to a lower power state&#8212;it performs the device-dependent
+step first and then passes the request down. When <i>adding</i> power&#8212;when changing to a
+higher power state&#8212;it passes the request down and performs the device-dependent step in a
+completion routine. This neat nesting of operations guarantees that the pathway leading to the
+hardware has power while the driver manipulates the hardware.</p>
+
+<p>
+<A HREF="javascript:fullSize('F08wi04x.htm')"> <img src="images/F08wi04.JPG" width=404 height=283 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 8-4.</b> <i>Handling system power requests.</i><!--/caption-->
+</p>
+
+
+<p>Power IRPs come to you in the context of a system thread that you must not block. You
+can't block the thread for any of several reasons. If your device has the INRUSH
+characteristic, or if you've cleared the DO_POWER_PAGABLE flag in your device object, the
+Power Manager will send you IRPs at DISPATCH_LEVEL. You remember, of course, that you can't
+block a thread while executing at DISPATCH_LEVEL. Even if you've set DO_POWER_PAGABLE,
+however, so that you get power IRPs at PASSIVE_LEVEL, you can cause a deadlock by requesting a
+device power IRP while servicing a system IRP and then blocking: the Power Manager might not
+send you the device IRP until your system IRP dispatch routine returns, so you'll wait
+forever.</p>
+
+<p>The function driver normally needs to perform several steps that require time to finish as
+part of handling some power requests. The DDK points out that you can <i>delay</i> the
+completion of power IRPs by periods that the end user won't find perceptible under the
+circumstances, but being able to delay doesn't mean being able to block. The requirement
+that you can't block while these operations finish means lavish use of completion routines
+to make the steps asynchronous.</p>
+
+<p>Implicit in the notion that IRP_MN_QUERY_POWER poses a question for you to answer
+&quot;Yes&quot; or &quot;No&quot; is the fact that you can fail an IRP with that minor function
+code. Failing the IRP is how you say &quot;No.&quot; You don't have any such freedom with
+IRP_MN_SET_POWER requests, however: you must carry out the instructions they convey.</p>
+
+</BODY>
+</HTML>
+
+
+
+
+

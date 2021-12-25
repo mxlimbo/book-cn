@@ -1,0 +1,480 @@
+<HTML>
+<HEAD>
+<TITLE>Exchange Server Routing</TITLE>
+<link rel="STYLESHEET" type="text/css" href="Library.css">
+
+
+</HEAD>
+<BODY BGCOLOR="#FFFFFF" TEXT="#000000">
+<SCRIPT LANGUAGE="JavaScript">
+<!--
+
+function fullSize(sURL){
+	window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+
+function LibraryHeaderNav(sBackward, sForward, sImgLeftOff, sImgLeftOn, sImgRightOff, sImgRightOn, iH, iW, sImgLeftStyle, sImgRightStyle, sImgRuleStyle, sRuleColor, sRuleSize){
+	var tableStr;
+	//validate questionable args for defs
+	tableStr = "<TABLE BORDER=0 CELLPADDING=0 CELLSPACING=0 border=0 width=100%>";
+	tableStr += "<TR VALIGN=top ALIGN=right>";
+
+	tableStr += "<TD align=right class=" + sImgRuleStyle + ">&nbsp;</TD>";	
+	
+	tableStr += "<TD width=34 align=right class=" + sImgLeftStyle + ">";
+	tableStr += "<A href='" + sBackward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgLeftOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgLeftOff + '\'\"';
+	tableStr += " SRC='" + sImgLeftOff + "' vspace=0 hspace=0></a></TD>";
+	
+	tableStr += "<TD width=34 align=left class=" + sImgRightStyle + ">";
+	tableStr += "<A href='" + sForward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgRightOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgRightOff + '\'\"';
+	tableStr += " SRC='" + sImgRightOff + "' vspace=0 hspace=0></a></TD></TR>";
+
+	tableStr += "<TR VALIGN=top>";
+	tableStr += "<TD height=3 align=center colspan=3 class=" + sImgRuleStyle + ">";
+	tableStr += "<HR color=" + sRuleColor + " size=" + sRuleSize + "></TD></TR></TABLE>";
+	//alert(tableStr);
+	document.write(tableStr);
+}
+
+ 																						     //purple is: #aa22aa   orange is: #ff9900
+LibraryHeaderNav("ch13a.htm", "ch13c.htm", "images/unit_o_a1.gif", "images/unit_o_a2.gif", "images/unit_o_b1.gif", "images/unit_o_b2.gif", 18, 34, "unit01", "unit02", "headerrule", "#ff9900", "2");
+//--></SCRIPT>
+
+<A NAME="443"><H1>Exchange Server Routing</H1></A>
+
+<p>Of course, before we can dive into the guts of the Exchange Server Routing Objects technology, we first must take a look at the overall architecture. At its highest level, Exchange Server routing technologies, included with Exchange Server 5.5 Service Pack 1, consists of three components. The first component is a routing engine, which is implemented as a custom event handler for the Event Scripting Agent. The engine itself is a state engine that executes and tracks process instances in a specific Exchange Server folder. A process instance is essentially an item and a corresponding routing map that are part of executing a route. A routing map is a high-level set of instructions that describes the routing. The instructions in the routing map involve intrinsic or custom actions, which are just routing functions to be executed. When events fire within the folder, the engine will process those events and move the process state according to the routing map.</p>
+
+<p>The second component is a set of COM objects called the routing objects. These objects allow you to manipulate the routing map as well as the process instances in your application. Using these objects, you can control what the engine executes and build tools to create routing maps and track current process instances. To demonstrate some of the capabilities of the routing objects, the Agent Install program used in <A HREF="ch12a.htm">Chapter 12</A> has been updated to use them. You will see an example of the updated Agent Install program later in this chapter.</p>
+
+<p>The third component is a set of actions. Actions are functions that the routing engine calls as defined by the routing map. When the routing engine executes an action, it will update the state of the process instance according to the results of that action. Actions can be intrinsic actions that the engine understands, such as Goto or Terminate, or they can be custom actions that 
+you write yourself in VBScript. The Expense Report application from <A HREF="ch12a.htm">Chapter 12</A> has been converted to a routing application that uses intrinsic and custom actions. We will look at this Expense Routing application later in this chapter.</p>
+
+<A NAME="444"><H2>Routing Architecture</H2></A>
+
+<p>When combined, these three components form a server-side hub and spoke architecture for routing. Figure 13-1 shows a diagram of Exchange Server routing. The hub, in this case, is a server-based folder that contains your routing map, your custom script for the engine, and an agent on the folder that has the engine as a custom event handler. The hub must meet all the requirements of the Event Scripting Agent, so you cannot create routes in a private folder stored on your local machine. The folders must reside on the server and can be either public or private.</p>
+
+<P>
+<A HREF="javascript:fullSize('F13oh01x.htm')"> <img src="images/F13oh01.JPG" width=404 height=446 border=0 ALT="Click to view at full size."> </A>
+</P><P>
+<!-- CAPTION --><B>Figure 13-1</B> <I>A diagram of Exchange Server routing.</I><!-- /CAPTION -->
+</P>
+
+<p>The spokes in this architecture are the e-mail messages sent from the hub to the recipients or other applications in the route. To track the state of the item after the recipient performs an action, a message must be sent back to the hub so that the engine can update the state of the item and handle any errors that occurred. For this reason, the logical view of your process might be very different from the actual implementation. For example, to route a message between users A, B, and C, the logical view would be to send the message to A, then from A to B, and then from B to C. However, in the actual implementation in the routing architecture, the message must flow through the hub so that the engine can update its status and move the process forward.</p>
+
+<A NAME="445"><H2>Operation of the Routing Engine</H2></A>
+
+<p>As a custom event handler for Event Scripting, the routing engine is dependent on the creation of an agent, or binding, in the folder where you want the engine to run. When creating the agent, the routing engine really uses only two events provided by Event Scripting: the message creation event and the timer event. Whenever a message arrives in the folder or a timer has expired, the engine evaluates the event and determines whether the state of the process needs to be updated.</p>
+
+<p>Recall from the last chapter that the agents in a folder contain the script that executes when the events on that agent occur. Because the routing engine is built on top of the agent architecture, as you would expect, the custom actions you create in VBScript for the engine must be contained in the script for the agent&#8212;if they are not, you might receive the error indicating a connection point was not found for the engine. This error usually occurs when you are calling a custom VBScript function, and the script in the agent does not contain it. This is an important point to remember, because you might not immediately associate the script in the agent with the script executed by the routing engine.</p>
+
+<A NAME="446"><H2>Process Instances</H2></A>
+
+<p>You might be wondering how the engine creates a new process instance, and how it tracks these different process instances when hundreds are in the folder. A new process instance is created by adding into a folder a new item that is currently not associated with another process in that folder. For example, suppose you created a new expense report in the folder. First, the engine receives the message creation event. Then the engine tries to correlate the new message with an existing process instance (that is, another message) in the folder.</p> 
+
+<p>The engine determines whether a new item is associated with another item in the folder through a unique number called the Route Unique Identifier (RUI). The RUI number is assigned to each process instance in a folder. When a new item arrives in a folder, the routing engine can use the RUI to track which process instance the item belongs to. For example, if the folder receives an approval message from a recipient in the route of a process instance, the incoming message contains an RUI number so that the routing engine can associate that approval message with the correct process instance. Then the routing engine can update the status and execute the action in the map to perform the necessary functionality. In this example, the most common functionality to 
+execute would be adding the approval to the recipient table on the process instance so that other users can see that the item has been approved.</p>
+
+<p>If the engine cannot find an associated process instance for the new message, it assumes that the new message is a new process instance, and it looks for a routing map on the new item. If a map is found, the engine turns the new message or item into a new process instance by adding an RUI and some other properties. The engine then starts executing the map on the newly transformed process instance. Since a message can contain its own map, a folder can have items with different maps, allowing routing to be specified for the current need or ad-hoc routing to be implemented. The typical scenario for this type of application is document routing and approval: a document is routed to various people for approval based on the document's content or an individual's expertise. You can implement this functionality by creating a simple form that allows the user to select the document route and then add the map for the route directly to the message.</p> 
+
+<p>If a new message does not contain a map, the engine adds to the message the default map for the folder. The routing engine attaches other information to the message, which transforms the message into a new process instance. The default map in the folder is actually stored as a hidden message in the folder. This hidden message contains two important named properties, RouteMap 
+and RouteType. As you might guess, the RouteMap property contains the default map for the folder, and the RouteType property can hold the type of route the map is considered to be. With the Routing Wizard sample application in Exchange Server 5.5 Service Pack 1, the RouteType property is set by the wizard as either Sequential or Parallel. You can set this type property to be any 
+string you want. You will see later in this chapter how to access the hidden messages in the folder and how to retrieve and set these two properties on your folders.</p>
+
+<p>One of the most important issues to remember is that every item in a particular folder with a routing engine enabled will have some type of map. If the message does not contain a map, the engine will copy the default folder map onto it.</p>
+
+<A NAME="447"><H2>Routing Maps</H2></A>
+
+<p>Now that you know how a new process instance is created and how a map is added to a process instance, you need to take a look at exactly what is contained in a map and how it works. A routing map is a high-level set of instructions written by you that describes the routing process&#8212;in other words, a state diagram that contains the logic and flow of a particular business process so that the routing engine can execute it. In the same way that subroutines and functions perform tasks in a program, routing maps reference actions, which are just routing functions that the routing engine calls.</p>
+
+<p>The easiest way to understand routing maps is to take a look at one. The following map in Figure 13-2 is the Expense Report application from <A HREF="ch12a.htm">Chapter 12</A>, transformed into a routing application. This is a simple example of a map. You can make your maps extremely complex depending on the business process 
+you are modeling in the map.</p>
+
+<P>
+<A HREF="javascript:fullSize('f13oh02x.htm')"> <img src="images/f13oh02.JPG" width=404 height=263 border=0 ALT="Click to view at full size."> </A>
+</P><P>
+<!-- CAPTION --><B>Figure 13-2</B> <I>A routing map for the Expense Routing application displayed with the updated Agent Install program.</I><!-- /CAPTION -->
+</p>
+
+<p>The maps in Exchange Server are required to have three primary fields: ActivityID, Action, and Flags. The ActivityID field is a number value that uniquely identifies a row in the map. It allows you to jump between different places on the map. If you've ever worked with a programming language that requires line numbering, the concept of the ActivityID field will be very familiar to you.</p>
+ 
+<p>The second field, Action, identifies the action the engine should perform. This field is a string that must resolve either to an intrinsic action for the engine, such as a Goto action or an OrSplit action, or a custom action, which is a VBScript subroutine in the agent for the folder. (We'll discuss intrinsic 
+actions in the next section.) If these two conditions are not met, you will receive an error from the engine.</p>
+
+<p>The final required field, Flags, specifies whether the action in the Action field is an intrinsic action or a custom action. By setting this flag to 0, you are informing the engine that the action is an intrinsic action. Setting this flag to 2 tells the engine that the action is a VBScript subroutine you implemented.</p>
+
+<p>Depending on the action you select, you can pass parameters in the map. For example, in Figure 13-2, you can see that when the map calls the <I>UpdateStatus</I> subroutine, a parameter set to either True or False is passed to the subroutine, depending on which line of the map is executed. This parameter specifies whether the expense approver approved or rejected the expense report. The VBScript subroutine can then appropriately update the user on the status of the expense report. You are not limited to only one parameter. In fact, you can have multiple parameters in your maps, depending on the needs of your application.</p>
+
+<A NAME="448"><H2>Intrinsic Actions</H2></A>
+
+<p>In a routing map, you can use six intrinsic actions: AndSplit, Goto, New, OrSplit, Terminate, and Wait.</p>
+
+<A NAME="449"><H3>AndSplit</H3></A>
+
+<p>The AndSplit action is used in your map for parallel branching. Parallel branching enables new subprocesses to run independent of one another, but the parent process blocks itself until all the subprocesses have finished. The parameters for this action are the ActivityIDs. The engine creates new processes for each of these ActivityIDs in the array and then copies the current map to these new processes. The engine starts execution in each of these new subprocesses at the ActivityID specified in the array.</p>
+
+<p>These new subprocesses will execute until they hit a Terminate action. It is your responsibility to make sure these subprocesses have a Terminate action. It is also your responsibility to copy the necessary properties from the subprocesses and save them onto the parent process before the subprocesses terminate.</p>
+
+<p>Table 13-1 below shows an example of a simple map with an AndSplit action. If execution starts at ActivityID 100, this map describes the following routing process. First the process waits 10 minutes and then splits execution at 500 and 700. The 500 branch will send the current message to Mailbox1 and return. The 700 branch will send the current message to Mailbox2 and return. With both branches complete, execution resumes at 300, 
+where the process waits 10 minutes and then terminates.</p>
+
+
+<p><B>Table 13-1</B> <i>Map Using the AndSplit Action</i></p>
+
+<p><table width="95%" cellpadding="5">
+<tr>
+<th>ActivityID</th>
+<th>Action</th>
+<th>Flags</th>
+<th>Parameter1</th>
+<th>Parameter2</th>
+</tr>
+<tr>
+<td valign="TOP">100</td>
+<td valign="TOP">Wait</td>
+<td valign="TOP">0</td>
+<td valign="TOP">10</td>
+<td valign="TOP"> </td>
+</tr>
+<tr>
+<td valign="TOP">200</td>
+<td valign="TOP">AndSplit</td>
+<td valign="TOP">0</td>
+<td valign="TOP">500</td>
+<td valign="TOP">700</td>
+</tr>
+<tr>
+<td valign="TOP">300</td>
+<td valign="TOP">Wait</td>
+<td valign="TOP">0</td>
+<td valign="TOP">10</td>
+<td valign="TOP"> </td>
+</tr>
+<tr>
+<td valign="TOP">400</td>
+<td valign="TOP">Terminate</td>
+<td valign="TOP">0</td>
+<td valign="TOP"> </td>
+<td valign="TOP"> </td>
+</tr>
+<tr>
+<td valign="TOP">500</td>
+<td valign="TOP">Send</td>
+<td valign="TOP">2</td>
+<td valign="TOP">Mailbox1</td>
+<td valign="TOP"> </td>
+</tr>
+<tr>
+<td valign="TOP">600</td>
+<td valign="TOP">Terminate</td>
+<td valign="TOP">0</td>
+<td valign="TOP"> </td>
+<td valign="TOP"> </td>
+</tr>
+<tr>
+<td valign="TOP">700</td>
+<td valign="TOP">Send</td>
+<td valign="TOP">2</td>
+<td valign="TOP">Mailbox2</td>
+<td valign="TOP"> </td>
+</tr>
+<tr>
+<td valign="TOP">800</td>
+<td valign="TOP">Terminate</td>
+<td valign="TOP">0</td>
+<td valign="TOP"> </td>
+<td valign="TOP"> </td>
+</tr>
+</table></p>
+
+<A NAME="450"><H3>Goto</H3></A>
+
+<p>Since we are all programmers, I don't need to explain too much about the Goto action. When a Goto action is executed, it jumps to a specified ActivityID in your map and continues executing. Table 13-2 shows a map illustrating the use of multiple Goto actions&#8212;for example, if execution starts at ActivityID 
+100, the process will jump to 300, then jump to 200, and then jump to 400 where it terminates.</p>
+
+
+<p><B>Table 13-2</B> <i>Map Using Multiple Goto Actions</i></p>
+
+<p><table width="95%" cellpadding="5">
+<tr>
+<th>ActivityID</th>
+<th>Action</th>
+<th>Flags</th>
+<th>Parameter1</th>
+</tr>
+<tr>
+<td valign="TOP">100</td>
+<td valign="TOP">Goto</td>
+<td valign="TOP">0</td>
+<td valign="TOP">300</td>
+</tr>
+<tr>
+<td valign="TOP">200</td>
+<td valign="TOP">Goto</td>
+<td valign="TOP">0</td>
+<td valign="TOP">400</td>
+</tr>
+<tr>
+<td valign="TOP">300</td>
+<td valign="TOP">Goto</td>
+<td valign="TOP">0</td>
+<td valign="TOP">200</td>
+</tr>
+<tr>
+<td valign="TOP">400</td>
+<td valign="TOP">Terminate</td>
+<td valign="TOP">0</td>
+<td valign="TOP"> </td>
+</tr>
+</table></p>
+ 
+<A NAME="451"><H3>New</H3></A>
+
+<p>The New intrinsic action creates a new process instance and begins executing it. As with the AndSplit action, the routing engine copies the current map over to the new process instance. The only parameter you pass to this action is the ActivityID in the new process instance where the engine should start executing. The new process instance will be created in the folder, and when the Terminate action is triggered for the new process, the process instance will be removed from the folder. Both the original and the new process instance run at the same time. Table 13-3 shows a map using the New intrinsic action. Starting at ActivityID 100, this process creates a new process and terminates. The new process begins execution at 300, executes the specified actions, and then terminates.</p>
+
+<p><B>Table 13-3</B> <i>Map Using the New Action</i></p>
+
+<p><table width="95%" cellpadding="5">
+<tr>
+<th>ActivityID</th>
+<th>Action</th>
+<th>Flags</th>
+<th>Parameter1</th>
+</tr>
+<tr>
+<td valign="TOP">100</td>
+<td valign="TOP">New</td>
+<td valign="TOP">0</td>
+<td valign="TOP">300</td>
+</tr>
+<tr>
+<td valign="TOP">200</td>
+<td valign="TOP">Terminate</td>
+<td valign="TOP">0</td>
+<td valign="TOP"> </td>
+</tr>
+<tr>
+<td valign="TOP">300</td>
+<td valign="TOP">Your Action Here</td>
+<td valign="TOP">2</td>
+<td valign="TOP"> </td>
+</tr>
+<tr>
+<td valign="TOP">400</td>
+<td valign="TOP">Terminate</td>
+<td valign="TOP">0</td>
+<td valign="TOP"> </td>
+</tr>
+</table></p>
+
+<A NAME="452"><H3>OrSplit</H3></A>
+
+<p>The OrSplit intrinsic action is like an If statement in programming. You pass a parameter to this action that is the name of a VBScript subroutine that returns either True or False. If the subroutine returns True, the line immediately following the OrSplit action executes. If the subroutine returns False, the next row in the map is skipped and the row after that is executed. You can nest these actions to create nested If statements. The map in Table 13-4 shows you how to use the OrSplit action. Starting at ActivityID 100, if <I>MySub</I> returns True, the Goto action will be executed and will jump to 400. If <I>MySub</I> returns False, the Terminate action at 300 will be executed.</p>
+
+<p><B>Table 13-4</B> <i>Map Using the OrSplit Action</i></p>
+
+<p><table width="95%" cellpadding="5">
+<tr>
+<th>ActivityID</th>
+<th>Action</th>
+<th>Flags</th>
+<th>Parameter1</th>
+</tr>
+<tr>
+<td valign="TOP">100</td>
+<td valign="TOP">OrSplit</td>
+<td valign="TOP">0</td>
+<td valign="TOP">MySub</td>
+</tr>
+<tr>
+<td valign="TOP">200</td>
+<td valign="TOP">Goto</td>
+<td valign="TOP">0</td>
+<td valign="TOP">400</td>
+</tr>
+<tr>
+<td valign="TOP">300</td>
+<td valign="TOP">Terminate</td>
+<td valign="TOP">0</td>
+<td valign="TOP"></td>
+</tr>
+<tr>
+<td valign="TOP">400</td>
+<td valign="TOP">Terminate</td>
+<td valign="TOP">0</td>
+<td valign="TOP"></td>
+</tr>
+</table></p>
+
+<A NAME="453"><H3>Terminate</H3></A>
+
+<p>The Terminate action ends the currently running process instance. This action takes no parameters and can occur anywhere in your map.</p>
+
+<A NAME="454"><H3>Wait</H3></A>
+
+<p>The Wait action causes the engine to wait until a specified amount of time has elapsed. This action takes as its parameter the number of minutes to wait. After the time limit is reached, the next row executes. When you are in a Wait action, your map is not blocked. Use the Wait action in your maps to program timeouts that give participants a finite amount of time in which to respond.</p>
+
+<p>The map in Table 13-5 is a section from the Expense Report application map, and it shows you how to use the Wait action. Starting at ActivityID 120, the engine will wait 60 minutes before executing the next line in the map, which is the OrSplit action. This wait time gives the manager of the person who submitted the expense report time to approve or reject the report. If the manager does not approve the report in one hour, the time limit for the Wait action will expire, and the report will be routed to the manager's manager. If, however, the engine is waiting for the timeout to occur and an approval or rejection message is sent to the folder with the correct RUI for the expense report, the <I>ReceivedApprovalMsg</I> subroutine will be called.</p>
+
+<p><B>Table 13-5</B> <i>Map Using the Wait Action</i></p>
+
+<p><table width="95%" cellpadding="5">
+<tr>
+<th>ActivityID</th>
+<th>Action</th>
+<th>Flags</th>
+<th>Parameter1</th>
+</tr>
+<tr>
+<td valign="TOP">120</td>
+<td valign="TOP">Wait</td>
+<td valign="TOP">0</td>
+<td valign="TOP">60</td>
+</tr>
+<tr>
+<td valign="TOP">130</td>
+<td valign="TOP">OrSplit</td>
+<td valign="TOP">0</td>
+<td valign="TOP">IsTimeout</td>
+</tr>
+<tr>
+<td valign="TOP">140</td>
+<td valign="TOP">Goto</td>
+<td valign="TOP">0</td>
+<td valign="TOP">5000</td>
+</tr>
+<tr>
+<td valign="TOP">150</td>
+<td valign="TOP">OrSplit</td>
+<td valign="TOP">0</td>
+<td valign="TOP">ReceivedApprovalMsg</td>
+</tr>
+</table></p>
+
+<A NAME="455"><H2>Custom Script Actions</H2></A>
+
+<p>While the six intrinsic actions control the flow of the engine when processing the map, they really do not implement any application functionality; to do that, you will have to create custom script actions in VBScript. (You must write your script actions in VBScript because currently it is the only supported 
+scripting language for creating custom actions.) The script actions can be used in your maps and will be called by the routing engine during execution. In your script, you can also call COM objects to perform your work.</p>
+
+<p>Writing a script action requires that you properly name the VBScript subroutine that implements the action. You must prefix the subroutine name with the text <I>Route_.</I> For example, if you wanted to have a CheckTotal action, which checks the total of an expense report to see if it can be automatically approved, you would name your subroutine <I>Route_CheckTotal</I>. If you don't use the Route_ syntax, the engine will generate an error stating that a connection point could not be found.</p>
+
+<p>To help you implement the most common types of actions you'll 
+perform with the routing engine, Microsoft provides a script file named Routing.vbs. This script file contains 16 route actions and a number of helper functions. The Routing.vbs file is available from the Microsoft web site at 
+<I><A HREF="http://www.microsoft.com/technet/resource/download/exchange/misc" TARGET="_window2">http://www.microsoft.com/technet/resource/download/exchange/misc</A></I> under Routing Script Source Code (routingsrc.exe). Table 13-6 lists the route actions and describes the functionality of each.</p>
+
+<p><B>Table 13-6</B> <i>Route Actions of Routing.vbs Script File</i></p>
+<P><table width="95%" cellpadding="5">
+<tr>
+<th>Action</th>
+<th>Description</th>
+</tr>
+<tr>
+<td valign="TOP">AutoSet</td>
+<td valign="TOP">Provides autoapprove and autoreject functionality for your routes.</td>
+</tr>
+<tr>
+<td valign="TOP">CreateNote</td>
+<td valign="TOP">Converts an IPM.Post message to an IPM.Note message so that the status of the message can be tracked using Microsoft Outlook.</td>
+</tr>
+<tr>
+<td valign="TOP">Consolidate</td>
+<td valign="TOP">Takes the message body and any attachments of a reply message and adds them to the original process instance message.</td>
+</tr>
+<tr>
+<td valign="TOP">FinalizeReport</td>
+<td valign="TOP">Creates and sends a summary report about the status of the process instance.</td>
+</tr>
+<tr>
+<td valign="TOP">IsApprovalMsg</td>
+<td valign="TOP">Checks the sender of a message to determine whether the sender is on the recipient list for the route. If the sender is on the list, the action checks whether the sender has approved the item. It returns True for approval or False for rejection.</td>
+</tr>
+<tr>
+<td valign="TOP">IsApprovedTable</td>
+<td valign="TOP">Tallies all approval or rejection votes. The action returns True if the number of approvals is greater than the number of rejections or False if rejections are greater than approvals.</td>
+</tr>
+<tr>
+<td valign="TOP">IsInvalidRecip</td>
+<td valign="TOP">Checks a received response message to make sure that it is from the correct person in the routing sequence and from a person from whom a response is expected. If the message is not from the correct person, the message is ignored.</td>
+</tr>
+<tr>
+<td valign="TOP">IsNDR</td>
+<td valign="TOP">Checks to see whether the e-mail received is a nondelivery report. The action returns True if it is, False if it is not.</td>
+</tr>
+<tr>
+<td valign="TOP">IsOOF</td>
+<td valign="TOP">Checks to see whether e-mail received is an out-of-office message. The action returns True if it is, False if it is not.</td>
+</tr>
+<tr>
+<td valign="TOP">IsPost</td>
+<td valign="TOP">Checks to see whether the item in the folder is a Post message, or IPM.Post. The action returns True if it is, False if it is not.</td>
+</tr>
+<tr>
+<td valign="TOP">IsReceipt</td>
+<td valign="TOP">Checks to see if the e-mail received is a receipt message such as a delivery, a read, or a non-read receipt. Returns True if it is, False if it is not.</td>
+</tr>
+<tr>
+<td valign="TOP">IsTimeout</td>
+<td valign="TOP">Checks to see whether the process instance timeout has expired. Returns True if it has, False if it has not.</td>
+</tr>
+<tr>
+<td valign="TOP">NOP</td>
+<td valign="TOP">Performs a No Operation. You can use this function as a placeholder if you want to modify a map in progress.</td>
+</tr>
+<tr>
+<td valign="TOP">PreProcessing</td>
+<td valign="TOP">Performs initialization of the route, such as changing IPM.Document and IPM.Post items into IPM.Note.</td>
+</tr>
+<tr>
+<td valign="TOP">Receive</td>
+<td valign="TOP">Processes reply messages that correspond to a current process instance. This subroutine also handles voting button responses.</td>
+</tr>
+<tr>
+<td valign="TOP">Send</td>
+<td valign="TOP">Sends the routing message to the recipient. This message can include a work item as an attachment, or it can have an Outlook Web Access link to the work item. You can specify either the address of the participant or the role.</td>
+</tr>
+</table></P>
+
+<A NAME="456"><H2>What About Roles?</H2></A>
+
+<p>When developing routing applications, you'll frequently want to use a dynamic lookup to locate individuals to route items to. You could implement this lookup as a custom script function that searches in a database or in a flat file. But you could also use Exchange Server's directory, which contains information about the recipients inside or outside of your system.</p>
+
+<p>The Exchange Server directory provides one built-in role&#8212;Manager. This is the most typically used role; when you use it, items are dynamically sent to the current person's manager in the directory. This role is recognized automatically by the Routing Wizard sample application. If you do not use the 
+script actions from the Routing Wizard in your own applications, you will need to recognize and look up the Manager role in your own custom script.</p>
+
+<P><DIV CLASS="NOTE"><BLOCKQUOTE>
+<B>NOTE</B><HR>
+The roles discussed in this section are different from the security roles that you see on the Permissions tab in Outlook. 
+The roles discussed in this section are a special type of distribution list, where the owner is called the role performer. Security roles, such as Reviewer, on the other hand, make it easier for you to set permissions on a folder. 
+</BLOCKQUOTE></DIV></P>
+
+<P>You can extend the Exchange Server directory with your own custom 
+roles. Included with Exchange Server 5.5 Service Pack 1 is a Role Administrator program for the Exchange Server directory. Using this program, you can create custom roles that have a role performer, such as expense approver, and people for whom the role performer performs the function, such as Frank, Jane, and Scott. The interface for the Role Administrator program is shown in Figure 13-3.</P>
+
+<P>
+<A HREF="javascript:fullSize('f13oh03x.htm')"> <img src="images/f13oh03.JPG" width=404 height=325 border=0 ALT="Click to view at full size."> </A>
+</P><P>
+<!-- CAPTION --><B>Figure 13-3</B> <I>The Role Administrator program is implemented as an ASP application.</I><!-- /CAPTION -->
+</p>
+
+<p>Roles are implemented in the directory as nested distribution lists. The easiest way to understand the relationships between these nested distribution lists is to look at an example of one. Let's imagine that Thomas is the expense approver for Frank, Jane, and Scott. The expense approver role is represented as a distribution list in the directory. In that distribution list are nested other distribution lists that contain the role performers as the owner of the distribution list. In one of those nested distribution lists, Thomas is the owner. Frank, Jane, and Scott are members of that nested distribution list. Thomas, then, is the role performer for Frank, Jane, and Scott. Figure 13-4 shows the Properties dialog box of a nested distribution list in the Exchange Administrator program, with Thomas as the expense approver for Frank, Jane, and Scott.</p>
+
+<P>
+<A HREF="javascript:fullSize('f13oh04x.htm')"> <img src="images/f13oh04.JPG" width=404 height=371 border=0 ALT="Click to view at full size."> </A>
+</P><P>
+<!-- CAPTION --><B>Figure 13-4</B> <I>The Properties dialog box for a nested distribution list that was automatically created with the Role Administrator program. Thomas is the role performer of the Expense Approver role, and Frank, Jane, and Scott are members of the Expense Approver role.</I><!-- /CAPTION -->
+</p>
+
+<p>Distribution lists that represent roles are unique in that their property PR_GIVEN_NAME (&amp;H3A06001E) contains the text ROLEPERFORMER. By using this property and the CDO Address Entry Filter object, you can quickly create applications that find and display all the roles in your Exchange Server directory.</p>
+
+</BODY>
+</HTML>
+
+
+
+
+

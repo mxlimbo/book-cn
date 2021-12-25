@@ -1,0 +1,92 @@
+<HTML>
+<HEAD>
+<TITLE>Child Processes</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch04d.htm">[Previous]</A> <A HREF="ch04f.htm">[Next]</A><P>
+
+<A NAME="63"><H1>Child Processes</H1></A>
+
+<p>When you design an application, you might encounter situations in which you want another block of code to perform work. You assign work like this all the time by calling functions or subroutines. When you call a function, your code cannot continue processing until the function has returned. And in many situations, this single-tasking synchronization is needed. An alternative way to have another block of code perform work is to create a new thread within your process and have it help with the processing. This lets your code continue processing while the other thread performs the work you requested. This technique is useful, but it creates synchronization problems when your thread needs to see the results of the new thread.</p>
+
+<p>Another approach is to spawn off a new process&#8212;a child
+process&#8212;to help with the work. Let's say that the work you
+need to do is pretty complex. To process the work, you simply create a new thread within the same process. You write some code, test it, and get some incorrect results. You might have an error in your algorithm, or maybe you dereferenced something incorrectly and accidentally overwrote something important in your address space. One way to protect your address space while having the work processed is to have a new process perform the work. You can then wait for the new process to terminate before continuing with your own work, or you can continue working while the new process works.</p>
+
+<p>Unfortunately, the new process probably needs to perform operations on data contained in your address space. In this case, it might be a good idea to have the process run in its own address space and simply give it access to the relevant data contained in the parent process's address space, thus protecting all the data not relevant to the task at hand. Windows offers several methods for transferring data between different processes: Dynamic Data Exchange (DDE), OLE, pipes, mailslots, and so on. One of the most convenient ways to share the data is to use memory-mapped files. (See <A HREF="ch17a.htm">Chapter 17</A> for a detailed discussion of memory-mapped files.)</p>
+
+<p>If you want to create a new process, have it do some work, and wait for the result, you can use code similar to the following:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+PROCESS_INFORMATION pi;
+DWORD dwExitCode;
+
+// Spawn the child process.
+BOOL fSuccess = CreateProcess(..., &amp;pi);
+if (fSuccess) {
+
+   // Close the thread handle as soon as it is no longer needed!
+   CloseHandle(pi.hThread);
+
+   // Suspend our execution until the child has terminated.
+   WaitForSingleObject(pi.hProcess, INFINITE);
+
+   // The child process terminated; get its exit code.
+   GetExitCodeProcess(pi.hProcess, &amp;dwExitCode);
+
+   // Close the process handle as soon as it is no longer needed.
+   CloseHandle(pi.hProcess);
+}
+</pre>
+</td></tr></table></p>
+
+<p>In the code fragment above, you create the new process and, if it is successful, you call the <i>WaitForSingleObject</i> function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+DWORD WaitForSingleObject(HANDLE hObject, DWORD dwTimeout);
+</pre>
+</td></tr></table></p>
+
+<p>We'll discuss the <i>WaitForSingleObject</i> function
+exhaustively in <A HREF="ch09a.htm">Chapter 9</A>. For now, all you need to know is that it waits until the object identified by the <i>hObject</i> parameter becomes <i>signaled</i>. Process objects become signaled when they terminate. So the call to <i>WaitForSingleObject</i> suspends the parent's thread until the child process terminates. After <i>WaitForSingleObject</i> returns, you can get the exit code of the child process by calling <i>GetExitCodeProcess</i>.</p>
+
+<p>The calls to <i>CloseHandle</i> in the code fragment above cause the system to decrement the usage count for the thread and process objects to 0, allowing the objects' memories to be freed.</p>
+
+<p>You'll notice that in the code fragment, we close the handle to the child process's primary thread kernel object immediately after <i>CreateProcess</i> returns. This does not cause the child's primary thread to terminate&#8212;it simply decrements the usage count of the child's primary thread object. Here's why this practice is a good idea: Suppose that the child process's primary thread spawns off another thread and then the primary thread terminates. At this point, the system can free the child's primary thread object from its memory if the parent process doesn't have an outstanding handle to this thread object. But if the parent process does have a handle to the child's thread object, the system can't free the object until the parent process closes the handle.</p>
+
+<A NAME="64"><H2>Running Detached Child Processes</H2></A>
+
+<p>Most of the time, an application starts another process as a <i>detached process</i>. This means that after the process is created and executing, the parent process doesn't need to communicate with the new process or doesn't require it to complete its work before the parent process continues. This is how the Explorer works. After the Explorer creates a new process for the user, it doesn't care whether that process continues to live or whether the user terminates it.</p>
+
+<p>To give up all ties to the child process, the Explorer must close its handles to the new process and its primary thread by calling <i>CloseHandle</i>. The following code example shows how to create a new process and how to let it run detached.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+PROCESS_INFORMATION pi;
+
+// Spawn the child process.
+BOOL fSuccess = CreateProcess(..., &amp;pi);
+if (fSuccess) {
+
+   // Allow the system to destroy the process &amp; thread kernel
+   // objects as soon as the child process terminates.
+   CloseHandle(pi.hThread);
+   CloseHandle(pi.hProcess);
+}
+</pre></td></tr></table></p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

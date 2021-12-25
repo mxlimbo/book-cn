@@ -1,0 +1,120 @@
+<HTML>
+<HEAD>
+<TITLE>Storing Data in the System Registry</TITLE>
+<link rel="STYLESHEET" type="text/css" href="prosrvwin.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR = "#ffffff">
+<A HREF="ch05e.htm">[Previous]</A> <A HREF="ch05g.htm">[Next]</A><P>
+
+<A NAME="84"><h1>Storing Data in the System Registry</h1></A>
+<p>Before I discuss how to store data in the system registry, I will revisit the topic of proper registry usage. As you know, the system registry is a shared resource. As such, it is limited and access to it is serialized. Your application can store many thousands of kilobytes of data in the registry in various data types, but it is rarely in your application's best interest to take these capabilities to the extreme.</p>
+
+<p>You should ask yourself two questions when considering registry storage:</p>
+
+<ul>
+<p><li>Is the data I am storing part of my application's configuration information, or is it general application data? (For example, it would be inappropriate for a word processor to store documents in the registry.)</li></p>
+
+<p><li>Is the amount of data I am storing large enough (and will I be accessing the data frequently enough) to make storage in a file more efficient than storage in the registry? (For example, a spell-checking dictionary used by a word processing application would be better stored in a file.)</li></p>
+</ul>
+
+<p>In making these decisions, you end up weighing the pros and cons of file system clutter vs. the inefficiencies of storing large data in the system registry. I will be further discussing efficient use of the system registry in the section &quot;<A HREF="ch05h.htm#86">Using the System Registry Efficiently</A>&quot; later in this chapter.</p>
+
+<p>You can use the <i>RegSetValueEx</i> function to store data to the registry. Here is the prototype for <i>RegSetValueEx</i>:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+LONG RegSetValueEx(
+   HKEY   hkey,
+   PCTSTR pszValueName,
+   DWORD  dwReserved, 
+   DWORD  dwType,
+   CONST  BYTE *pbData, 
+   DWORD  cbData);
+</pre></td></tr></table>
+</p>
+
+<p>The <i>hkey</i> parameter refers to the key under which the value is stored. The <i>pszValueName</i> is the name you want to use for the value. If you pass NULL or a pointer to an empty string for <i>pszValueName</i>, the system stores your data in the default value for the key. The <i>dwType</i> parameter should be set to one of the data type values listed in Table 5-2, depending on what type of data you are storing in this value. The <i>pbData</i> parameter points to the actual data to be stored in the registry. You pass the size of the data, in bytes, in the <i>cbData</i> parameter.</p>
+
+<p>If <i>RegSetValueEx</i> succeeds, it returns ERROR_SUCCESS. The following code illustrates the use of <i>RegSetValueEx</i> by wrapping it in a function named <i>RegSetStringValue</i>.</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+LONG RegSetStringValue(HKEY hkey, PCTSTR pszValueName, 
+   PCTSTR pszString) {
+
+   // Get the length of the string
+   int nDataSize = lstrlen(pszString);
+
+   // Add one for the zero terminator
+   nDataSize++;
+
+   // Multiply by the character size
+   nDataSize = nDataSize * sizeof(TCHAR);
+
+   // Attempt to store the data to the registry
+   return(RegSetValueEx(hkey, pszValueName, 0, REG_SZ, 
+      (PBYTE) pszString, nDataSize));
+}
+</pre></td></tr></table>
+</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+The shell registry functions include a function called <i>SHSetValue</i>, which, like <i>SHGetValue</i>, does not require your application to first obtain a handle to a key. The <i>SHSetValue</i> function is defined as follows:
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+DWORD SHSetValue(
+   HKEY   hkey,
+   PCTSTR pszSubKey,
+   PCTSTR pszValue,
+   PDWORD pdwType,
+   PVOID  pvData,
+   PDWORD pcbData);
+</pre></td></tr></table>
+</p>
+
+</blockquote></div>
+</p>
+
+<p>As Table 5-2 shows, the registry supports many data types. You choose your type according to the needs of your application. You will likely find yourself using the REG_DWORD, REG_SZ, and REG_BINARY types most often. An application would use the REG_DWORD type to store numerical settings, REG_SZ (or REG_MULTI_SZ) to store textual settings, and REG_BINARY for other data that does not have a matching registry type. When using the REG_BINARY type, generic registry tools such as RegEdt32 will not know how to present the data other than as a block of byte values.</p>
+
+<p>Before moving on, I would like to clarify two potentially confusing registry types: REG_EXPAND_SZ and REG_MULTI_SZ. The REG_EXPAND_SZ registry type is very similar to the REG_SZ type in that it is a zero-terminated Unicode or ANSI string stored in the registry. They differ in that, by convention, data stored in values of REG_EXPAND_SZ is typically passed to the <i>ExpandEnvironmentStrings</i> function after being extracted from the registry.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+The registry functions do not automatically expand the data in values of type REG_EXPAND_SZ. Your application is responsible for passing the string to <i>ExpandEnvironmentStrings</i>.
+</blockquote></div>
+</p>
+
+<p>Here is the prototype for <i>ExpandEnvironmentStrings</i>:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+DWORD ExpandEnvironmentStrings(
+   PCTSTR pszSrc,
+   PTSTR  pszDst,
+   DWORD  nSize);
+</pre></td></tr></table>
+</p>
+
+<p>REG_MULTI_SZ is largely misunderstood because of its description in the documentation. The documentation states that a REG_MULTI_SZ value is &quot;an array of zero-terminated strings terminated by two zero characters.&quot; I think the documentation should read as follows: &quot;A REG_MULTI_SZ value is stored as a series of zero-terminated strings, with two zero characters terminating the final string in the series.&quot; Remember that when you are storing or retrieving data of this type, your buffer size must also include all terminating zero characters as well as the double zero at the end. Figure 5-3 shows an example of a multizero-terminated string registry value consisting of three strings.</p>
+
+<p>
+<A HREF="javascript:fullSize('F05fj03x.htm')"> <img src="images/F05fj03.JPG" width=404 height=27 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!-- caption --><b>Figure 5-3.</b> <i>A multizero-terminated string registry value consisting of three strings</i><!-- /caption -->
+</p>
+
+<p>The data in the example represents the words &quot;Jason's&quot;, &quot;Test&quot;, and &quot;MULTI_SZ&quot; as separate individual strings. The buffer required to hold this data would be 23 bytes in length for ANSI and 46 bytes in length for Unicode.</p>
+
+</BODY>
+</HTML>
+
+
+
+

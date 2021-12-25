@@ -1,0 +1,340 @@
+<HTML>
+<HEAD>
+<TITLE>Starting and Controlling a Service</TITLE>
+<link rel="STYLESHEET" type="text/css" href="prosrvwin.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR = "#ffffff">
+<A HREF="ch04c.htm">[Previous]</A> <A HREF="ch04e.htm">[Next]</A><P>
+
+<A NAME="67"><H1>Starting and Controlling a Service</H1></A>
+<p>As I mentioned earlier, many services ship with a client-side application 
+that allows administrators to start, stop, pause, continue, and otherwise control 
+a service. Writing such a service control program is very easy. Here's how 
+one works: The program first opens the SCM on the desired machine by 
+calling <I>OpenSCManager</I> using the SC_MANAGER_CONNECT access right. Then 
+the program calls <I>OpenService </I>to open the service you want to control by using 
+the desired combination of SERVICE_START, SERVICE_STOP, SERVICE_PAUSE_CONTINUE, 
+SERVICE_USER_DEFINED_CONTROL, and SERVICE_INTERROGATE access rights. After a service is opened, 
+calling <I>StartService</I> can start it:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>BOOL StartService(
+   SC_HANDLE hService,
+   DWORD     dwArgc,
+   PCTSTR*   pszArgv);
+</pre></td></tr></table>
+</p>
+
+<p>The <I>hService </I>parameter identifies the opened service, and the 
+<I>dwArgc </I>and <I>pszArgv </I>parameters indicate the set of arguments that you wish to pass to 
+the service's <I>ServiceMain </I>function. Most services don't use these parameters, so 
+0 and NULL are usually passed for the last two arguments. Remember that 
+starting a service can cause several services to start if the service you're starting 
+depends on other services or groups. Here are some of the main reasons 
+<I>StartService </I>can fail:</p>
+
+<UL>
+<p><li>The handle returned from <I>OpenService </I>doesn't have SERVICE_START access.</li></p>
+
+<p><li>The service's executable file is not in the location specified in the 
+directory.</li></p>
+
+<p><li>The service is already running, disabled, or marked for deletion.</li></p>
+
+<p><li>The SCM's database is locked. (I'll talk more about this later in 
+this chapter.)</li></p>
+
+<p><li>The service depends on another service that doesn't exist or failed 
+to start.</li></p>
+
+<p><li>The user account for the service could not be validated.</li></p>
+
+<p><li>The service didn't respond to the start request in a timely fashion.</li></p>
+</UL>
+ 
+<p>Note that the <I>StartService </I>function returns as soon as the service's 
+primary thread is created, so the service might not be ready to process control codes 
+or handle client requests by the time <I>StartService 
+</I>returns. Also, a service must not call <I>StartService 
+</I>while it is initializing, or a deadlock (lasting 80 seconds) 
+will occur. The problem is that the SCM locks the SCM database while starting 
+a service, preventing another service from starting.</p>
+
+<p>Once the service is running, you can call <I>ControlService 
+</I>to send controls to it:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+BOOL ControlService(
+   SC_HANDLE       hService,
+   DWORD           dwControl,
+   SERVICE_STATUS* pss);
+</pre></td></tr></table>
+</p>
+
+<p>Again, the <I>hService </I>parameter identifies the opened service that you 
+wish to control. The <I>dwControl </I>parameter indicates what you wish the service to 
+do and can be any one of the following values:</p>
+
+<UL>
+<p><li>SERVICE_CONTROL_STOP</li></p>
+<p><li>SERVICE_CONTROL_PAUSE</li></p>
+<p><li>SERVICE_CONTROL_CONTINUE</li></p>
+<p><li>SERVICE_CONTROL_INTERROGATE</li></p>
+<p><li>SERVICE_CONTROL_PARAMCHANGE</li></p>
+</UL>
+ 
+<p>Notice that these codes are the same codes that your 
+<I>HandlerEx </I>function receives (as discussed in <A HREF="ch03a.htm">Chapter 3</A>). In addition to these values, you 
+can send a user-defined code ranging from 128 through 255. Note that 
+<I>ControlService </I>fails if you pass a value of SERVICE_CONTROL_SHUTDOWN; only 
+the system can send this code to a service's handler 
+function.</p>
+
+<p><I>ControlService</I>'s last parameter, <I>pss</I>, must point to a 
+SERVICE_STATUS structure. The function will initialize the members of this structure to 
+report the service's last-reported status information. You can examine this 
+information after <I>ControlService </I>returns to see how the service is doing. Here are some 
+of the main reasons <I>ControlService </I>can fail:</p>
+
+<UL>
+<p><li>The handle returned from <I>OpenService </I>doesn't have the proper access.</li></p>
+
+<p><li>The service can't be stopped because other services depend on it. 
+In this case, your application must stop the dependent services first.</li></p>
+
+<p><li>The control code is not valid or is not acceptable to the service. 
+Remember from <A HREF="ch03a.htm">Chapter 3</A> that a service sets the 
+SERVICE_STATUS structure's <I>dwControlsAccepted 
+</I>member when it calls <I>SetServiceStatus</I>.</li></p>
+
+<p><li>The control code can't be sent to the service because the service 
+is reporting SERVICE_STOPPED, SERVICE_START_PENDING, 
+or SERVICE_STOP_PENDING.</li></p>
+
+<p><li>The service is not running.</li></p>
+
+<p><li>The service has not returned from its 
+<I>HandlerEx </I>function in a timely fashion (within 30 seconds).</li></p>
+</UL>
+ 
+<p>Certainly, if the service's handler function processes the call, you 
+would expect the returned SERVICE_STATUS structure to be initialized properly. 
+But what do you think the contents of the SERVICE_STATUS structure will be 
+if you attempt to send a SERVICE_CONTROL_INTERROGATE control to 
+a stopped service? Well, you'll be pleased to know that Microsoft has 
+enhanced the <I>ControlService </I>function so that it returns a valid SERVICE_STATUS 
+structure if the function fails with an error code of ERROR_INVALID_SERVICE_CONTROL, 
+ERROR_SERVICE_CANNOT_ACCEPT_CTRL, or ERROR_SERVICE_NOT_ACTIVE. 
+The following code shows how to stop a service:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+void StopService(PCTSTR pszInternalName) {
+
+   // Open the SCM and the desired service
+   SC_HANDLE hSCM = OpenSCManager(NULL, NULL, SC_MANAGER_CONNECT);
+   SC_HANDLE hService = OpenService(hSCM, pszInternalName,
+      SERVICE_STOP | SERVICE_QUERY_STATUS);
+
+   // Tell the service to stop
+   SERVICE_STATUS ss;
+   ControlService(hService, SERVICE_CONTROL_STOP, &amp;ss);
+
+   // Wait up to 15 seconds for the service to stop
+   WaitForServiceState(hService, SERVICE_STOPPED, &amp;ss, 15000);
+
+   // Close the service and the SCM
+   CloseServiceHandle(hService);
+   CloseServiceHandle(hSCM);
+}
+</pre></td></tr></table>
+</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+For clarity, the preceding code does not have any error 
+checking. <I>OpenSCManager</I>, <I>OpenService</I>, and 
+<I>ControlService </I>can fail for many reasons. Please add the proper error checking when adding code 
+like this into your own application.
+</blockquote></div>
+</p>
+
+<p>You'll notice that <I>StopService </I>calls the 
+<I>WaitForServiceState </I>function. The <I>WaitForServiceState 
+</I>function is not a Windows function but rather a 
+function I wrote, and it demonstrates how to handle the polling of a service's state 
+properly. Consider the following scenario. Using the Services snap-in, you initiate 
+a stop request for a service, causing the SCM to notify the selected service 
+that it should stop. The service should respond by calling 
+<I>SetServiceStatus</I>,<I> </I>with the SERVICE_STATUS structure's 
+<I>dwCurrentState </I>member set to SERVICE_STOP_PENDING. 
+However, the service has not stopped yet, so the 
+Services snap-in doesn't update its user interface to reflect that the service has 
+stopped. Unfortunately, the system does not provide a way for an application to be 
+notified of service state changes, so an SCP must periodically poll the service 
+to determine when its state has changed. The <I>WaitForServiceState 
+</I>function handles this polling.</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+BOOL WaitForServiceState(SC_HANDLE hService, DWORD dwDesiredState,
+   SERVICE_STATUS* pss, DWORD dwMilliseconds) {
+
+   BOOL  fServiceOk = TRUE;
+   BOOL  fFirstTime = TRUE; // Don't compare state/checkpoint the
+                            // first time
+   DWORD dwLastState = 0, dwLastCheckPoint = 0;
+   DWORD dwTimeout = GetTickCount() + dwMilliseconds;
+
+   // Loop until service reaches desired state, error occurs, or timeout
+   for (;;) {
+      // Get current state of service
+      fServiceOk = ::QueryServiceStatus(hService, pss);
+
+      // If we can't query the service, we're done
+      if (!fServiceOk) break;
+
+      // If the service reaches the desired state, we're done
+      if (pss-&gt;dwCurrentState == dwDesiredState) break;
+
+      // If timeout, we're done
+      if ((dwMilliseconds != INFINITE) &amp;&amp; (dwTimeout &lt; GetTickCount())){
+         fServiceOk = FALSE;
+         SetLastError(ERROR_TIMEOUT);
+         break;
+      }
+
+      // If first time, save service's state/checkpoint
+      if (fFirstTime) {
+         dwLastState      = pss-&gt;dwCurrentState;
+         dwLastCheckPoint = pss-&gt;dwCheckPoint;
+         fFirstTime       = FALSE;
+      } else {
+         // If not first time and state changed, save state/checkpoint
+         if (dwLastState != pss-&gt;dwCurrentState) {
+            dwLastState      = pss-&gt;dwCurrentState;
+            dwLastCheckPoint = pss-&gt;dwCheckPoint;
+         } else {
+            // State hasn't changed; make sure checkpoint isn't 
+            // decreasing
+            if (pss-&gt;dwCheckPoint &gt;= dwLastCheckPoint) {
+               // Good checkpoint; save it
+               dwLastCheckPoint = pss-&gt;dwCheckPoint;
+            } else {
+               // Bad checkpoint, service failed, we're done!
+               fServiceOk = FALSE; 
+               break;
+            }
+         }
+      }
+      // We're not done; wait the specified period of time
+      // Poll 1/10 of the wait hint
+      DWORD dwWaitHint = pss-&gt;dwWaitHint / 10;
+      // At most once a second
+      if (dwWaitHint &lt;  1000) dwWaitHint = 1000;
+      // At least every 10 seconds
+      if (dwWaitHint &gt; 10000) dwWaitHint = 10000;
+      Sleep(dwWaitHint);
+   }
+
+   // Note: The last SERVICE_STATUS is returned to the caller so
+   // that the caller can check the service state and error codes
+   return(fServiceOk);
+}
+</pre></td></tr></table>
+</p>
+
+<p>We all know that polling is a horrible thing to do because it wastes 
+precious CPU cycles, but we really have no choice in this case. Fortunately, 
+the situation is not as bad as you think because the SERVICE_STATUS 
+structure contains the <I>dwWaitHint </I>member. When a service calls 
+<I>SetServiceStatus</I>, the <I>dwWaitHint </I>member must indicate how many milliseconds the program 
+that is sending the control code should wait before polling the service's status again.</p>
+
+<p>The service control program should also examine the checkpoint 
+returned from the service during the polling process to make sure that it never 
+decreases. If a service returns a smaller checkpoint value, the service control program 
+should assume that the service has failed.</p>
+
+<p>You'll notice that the <I>WaitForServiceState </I>function calls 
+<I>QueryServiceStatus</I>:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+BOOL QueryServiceStatus(
+   SC_HANDLE       hService, 
+   SERVICE_STATUS* pss);
+</pre></td></tr></table>
+</p>
+
+<p><I>QueryServiceStatus </I>asks the SCM to return the service's last cached 
+state information (set when the service last called 
+<I>SetServiceStatus</I>). Calling 
+<I>QueryServiceStatus</I> is similar to calling 
+<I>ControlService </I>and passing the SERVICE_CONTROL_INTERROGATE 
+code, but calling <I>ControlService 
+</I>with SERVICE_CONTROL_INTERROGATE sends an action request to the 
+service to update the current state information. Another difference between 
+calling <I>QueryServiceStatus</I> and calling <I>ControlService 
+</I>is that <I>QueryServiceStatus </I>always returns in a timely fashion, whereas 
+<I>ControlService </I>might return failure if the service has stopped responding. If a service's handler function is busy 
+when you send an interrogate code to it, the service might not be able to respond 
+for a while, which will cause your call to <I>ControlService 
+</I>to wait (possibly for 30 seconds). Of course, the downside to using 
+<I>QueryServiceStatus</I> is that the SCM's cached data might not accurately reflect the most up-to-date state of the 
+service. Now that you know the trade-offs, you can query a service's state 
+using whichever method works best in your situation.</p>
+
+<p>In addition to the <I>QueryServiceStatus </I>function, Microsoft recently 
+added the new <I>QueryServiceStatusEx </I>function:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+BOOL QueryServiceStatusEx(
+   SC_HANDLE      hService,
+   SC_STATUS_TYPE InfoLevel,
+   PBYTE          pbBuffer,
+   DWORD          cbBufSize,
+   PDWORD         pdwBytesNeeded);
+</pre></td></tr></table>
+</p>
+
+<p>This function queries a service's status and initializes the new SERVICE_STATUS_PROCESS structure:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>typedef struct _SERVICE_STATUS_PROCESS {
+   DWORD  dwServiceType;
+   DWORD  dwCurrentState;
+   DWORD  dwControlsAccepted;
+   DWORD  dwWin32ExitCode;
+   DWORD  dwServiceSpecificExitCode;
+   DWORD  dwCheckPoint;
+   DWORD  dwWaitHint;
+   DWORD  dwProcessId;
+   DWORD  dwServiceFlags;
+} SERVICE_STATUS_PROCESS, *LPSERVICE_STATUS_PROCESS; 
+</pre></td></tr></table>
+</p>
+
+<p>This structure is identical to the SERVICE_STATUS structure except 
+that it has two additional members at the end: <I>dwProcessId 
+</I>and <I>dwServiceFlags</I>. The <I>dwProcessId 
+</I>member indicates the ID of the process that contains the 
+service, and <I>dwServiceFlags </I>indicates some additional information about the service. 
+If <I>dwServiceFlags </I>contains SERVICE_RUNS_IN_SYSTEM_PROCESS (the 
+only flag currently defined), the service is running in a system process such 
+as Services.exe or LSASS.exe. You should never attempt to kill services 
+running in a system process since the process itself is an integral component of the 
+operating system.</p>
+
+</BODY>
+</HTML>
+
+
+
+

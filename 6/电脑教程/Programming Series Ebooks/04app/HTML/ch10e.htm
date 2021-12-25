@@ -1,0 +1,882 @@
+<HTML>
+<HEAD>
+<TITLE>Implementing a WaitForMultipleExpressions Function</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch10d.htm">[Previous]</A> <A HREF="ch11a.htm">[Next]</A><P>
+
+<A NAME="150"><h1>Implementing a <i>WaitForMultipleExpressions</i> Function</h1></A>
+<p>A while ago, I was developing an application and I needed to solve a
+complex thread synchronization problem. The <i>WaitForMultipleObjects</i> 
+function, which allows a thread to wait for
+a single object or for all objects, was insufficient for my needs. What
+I wanted was a function that allowed me to express a richer waiting
+criteria. I had three kernel objects: a process, a semaphore, and an
+event. I needed a way to have my thread wait until the process and
+semaphore were both signaled or until the process and event were both
+signaled.</p>
+
+<p>With a little creative use of the existing Windows functions, I created
+exactly the function I needed: <i>WaitForMultipleExpressions</i>. It
+has the following prototype:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+DWORD WINAPI WaitForMultipleExpressions(
+   DWORD nExpObjects, 
+   CONST HANDLE* phExpObjects,
+   DWORD dwMilliseconds);
+</pre></td></tr></table></p>
+
+<p>To call this function, you must first allocate an array of HANDLEs
+and initialize all the array entries. The <i>nExpObjects</i> parameter
+indicates the number of entries in the array pointed to by the <i>
+phExpObjects</i> parameter. This array contains multiple sets of kernel
+object handles, each set separated by a NULL handle entry. <i>
+WaitForMultipleExpressions</i> treats objects within a single set as
+being ANDed together and the individual sets as being ORed together. So
+a call to <i>WaitForMultipleExpressions</i> suspends the calling thread
+until all the objects within a single set are signaled at the same
+time.</p>
+
+<p>Here's an example. Suppose that we're working with the four
+kernel objects in the following table.</p>
+
+<p><table width="95%" cellpadding="5">
+<tr><th>Object</th>
+<th>Handle Value</th></tr>
+<tr><td valign="TOP">Thread</td>
+<td valign="TOP">0x1111</td></tr>
+<tr><td valign="TOP">Semaphore</td>
+<td valign="TOP">0x2222</td></tr>
+<tr><td valign="TOP">Event</td>
+<td valign="TOP">0x3333</td></tr>
+<tr><td valign="TOP">Process</td>
+<td valign="TOP">0x4444</td></tr>
+</table>
+
+<p>Initializing the array of handles as follows instructs <i>
+WaitForMultipleObjects</i> to suspend the calling thread until the
+thread AND the semaphore are signaled OR the semaphore AND the event
+AND the process are signaled OR the thread AND the process are
+signaled, as shown here.</p>
+
+<p><table width="95%" cellpadding="5">
+<tr><th>Index</th>
+<th>Handle Value</th>
+<th>Set</th></tr>
+<tr><td valign="TOP">0</td>
+<td valign="TOP">0x1111 (thread)</td>
+<td valign="TOP">0</td></tr>
+<tr><td valign="TOP">1</td>
+<td valign="TOP">0x2222 (semaphore)</td>
+<td valign="TOP"></td></tr>
+<tr><td valign="TOP">2</td>
+<td valign="TOP">0x0000 (OR)</td>
+<td valign="TOP"> </td></tr>
+<tr><td valign="TOP">3</td>
+<td valign="TOP">0x2222 (semaphore)</td>
+<td valign="TOP">1</td></tr>
+<tr><td valign="TOP">4</td>
+<td valign="TOP">0x3333 (event)</td>
+<td valign="TOP"> </td></tr>
+<tr><td valign="TOP">5</td>
+<td valign="TOP">0x4444 (process)</td>
+<td valign="TOP"> </td></tr>
+<tr><td valign="TOP">6</td>
+<td valign="TOP">0x0000 (OR)</td>
+<td valign="TOP"> </td></tr>
+<tr><td valign="TOP">7</td>
+<td valign="TOP">0x1111 (thread)</td>
+<td valign="TOP">2</td></tr>
+<tr><td valign="TOP">8</td>
+<td valign="TOP">0x4444 (process)</td>
+<td valign="TOP"> </td></tr>
+</table></p>
+
+<p>You might recall that you cannot use <i>WaitForMultipleObjects</i>
+to pass an array of handles that exceeds 64 (MAXIMUM_WAIT_OBJECTS)
+entries. With <i>WaitForMultipleExpressions</i>, the handle array can
+be much larger than 64 entries. However, you must not have more than 64
+expressions and each expression can contain no more than 63 handles.
+Also, <i>WaitForMultipleExpressions</i> does not work correctly if you
+pass the handle of a mutex into it. (I'll explain why later.)</p>
+
+<p>The table on the following page shows the possible return values for
+<i>WaitForMultipleExpressions</i>. If an expression does become true,
+<i>WaitForMultipleExpressions</i> returns the WAIT_OBJECT_0-based index
+of that expression. Using the example, if the thread and the process
+object become signaled, <i>WaitForMultipleExpressions</i> returns an
+index of WAIT_OBJECT_0 + 2.</p>
+
+<p><table width="95%" cellpadding="5">
+<tr><th>Return</th>
+<th>Value Description</th></tr>
+<tr><td valign="TOP">WAIT_OBJECT_0 to (WAIT_OBJECT_0 + # of expressions -1)</td>
+<td valign="TOP">Indicates which expression came true.</td></tr>
+<tr><td valign="TOP">WAIT_TIMEOUT</td>
+<td valign="TOP">No expression came true within the specified time.</td></tr>
+<tr><td valign="TOP">WAIT_FAILED</td>
+<td valign="TOP">An error occurred. Call <i>GetLastError</i> for more
+information. An error of ERROR_TOO_MANY_SECRETS means that you
+specified more than 64 expressions. An error of ERROR_SECRET_TOO_LONG
+means that at least one expression had more than 63 objects specified.
+Other error codes might be returned. (I just couldn't resist using
+these two error codes for my own purposes.)</td></tr>
+</table>
+
+
+<A NAME="151"><H2>The WaitForMultipleExpressions Sample Application</H2></A>
+
+<p>The WaitForMultipleExpressions application (&quot;10
+WaitForMultExp.exe&quot;), listed in Figure 10-4 beginning on page 387,
+tests the <i>WaitForMultipleExpressions</i> function. The source code
+and resource files for the application are in the 10-WaitForMultExp
+directory on this book's companion CD-ROM. When you run it, the
+following dialog box appears.</p>
+
+<p>
+<img src="images/G10si04.JPG" width=258 height=326 border=0 >
+</p>
+
+<p>If you don't change any of the settings and click on the Wait
+For Multiple Expressions button, the dialog box looks like this.</p>
+
+<p>
+<img src="images/G10si05.JPG" width=258 height=326  border="0">
+</p>
+
+<p>Internally, the application creates four event kernel objects that
+are all initially not signaled, and it places one entry in the
+multicolumn, multiselection list box for each kernel object. Then the
+application parses the expression field and constructs the array of
+handles. I have chosen four kernel objects and an expression that
+coincides with my earlier example.</p>
+
+<p>Since I specified a timeout of 30000 milliseconds, you have 30
+seconds to select and deselect the event objects by toggling entries in
+the list box on and off. Selecting an entry calls <i>SetEvent</i> to
+signal the object and deselecting an entry calls <i>ResetEvent</i> to
+make the event nonsignaled. After you toggle enough entries to satisfy
+one of the expressions, <i>WaitForMultipleExpressions</i> returns and
+indicates at the bottom of the dialog box which expression was
+satisfied. If no expressions are satisfied within the 30 seconds, the
+word &quot;Timeout&quot; appears.</p>
+
+<p>Now I'll discuss how I implemented <i>WaitForMultipleExpressions</i>. 
+This was not an easy function to
+implement, and you definitely have to be concerned with some overhead
+issues when you use this function. As you know, Windows offers the <i>
+WaitForMultipleObjects</i> function, which allows a thread to wait on a
+single AND expression:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+DWORD WaitForMultipleObjects(
+   DWORD dwObjects, 
+   CONST HANDLE* phObjects, 
+   BOOL fWaitAll,
+   DWORD dwMilliseconds); 
+</pre></td></tr></table></p>
+
+<p>To extend this functionality to include ORing expressions, I must
+spawn multiple threads: one thread for each ORed expression. Each of
+these individual threads waits on a single AND expression using <i>
+WaitForMultipleObjectsEx</i>. (I use <i>WaitForMultipleObjectsEx</i>
+instead of the more common <i>WaitForMultipleObjects&#8212;</i>for
+reasons that I'll discuss later.) When one of the expressions comes
+true, one of the spawned threads wakes up and terminates.</p>
+
+<p>The thread that called <i>WaitForMultipleExpressions</i> (which is
+the same thread that spawned all the OR threads) must wait until one of
+the OR expressions comes true. It does this by calling the <i>
+WaitForMultipleObjectsEx</i> function. The number of threads spawned
+(OR expressions) is passed for the <i>dwObjects</i> parameter, and the
+<i>phObjects</i> parameter points to an array containing the list of
+spawned thread handles. For the <i>fWaitAll</i> parameter, FALSE is
+passed so that the main thread wakes up as soon as any of the
+expressions comes true. Finally, the <i>dwTimeout</i> value passed to
+<i>WaitForMultipleExpressions</i> is passed to <i>
+WaitForMultipleObjectsEx</i>.</p>
+
+<p>If none of the expressions comes true in the specified time, WAIT_TIMEOUT 
+is returned from <i>WaitForMultipleObjectsEx</i> and WAIT_TIMEOUT is returned 
+from <i>WaitForMultipleExpressions</i> as
+well. If an expression does come true, <i>WaitForMultipleObjectsEx</i>
+returns the index indicating which thread terminated. Since each thread
+is a separate expression, this index also indicates which expression
+came true and the same index is returned from <i>
+WaitForMultipleExpressions</i>.</p>
+
+<p>That's it for the executive summary of how <i>
+WaitForMultipleExpressions</i> works. However, three small details
+still need to be addressed. First, we don't want it to be possible
+for multiple OR threads to wake up from their call to <i>
+WaitForMultipleObjectsEx</i> simultaneously because successfully
+waiting on some kernel objects causes the object to alter its state.
+For example, waiting on a semaphore causes its count to decrement by 1.
+<i>WaitForMultipleExpressions</i> waits for just one expression to come
+true; therefore, I must prevent an object from altering its state more
+than once.</p>
+
+<p>The solution to this problem is actually quite simple. Before I spawn
+the OR threads, I create a semaphore object of my own with an initial
+count of 1. Then each OR thread's call to <i>
+WaitForMultipleObjectsEx</i> includes the handle to this semaphore
+along with the other handles in the expression. This explains why each
+set can specify no more than 63 handles. In order for an OR thread to
+wake up, all the objects that it's waiting on must be
+signaled&#8212;including my special semaphore. Since I gave my semaphore
+an initial count of 1, no more than one OR thread will ever wake up,
+and therefore no other objects will accidentally have their states
+altered.</p>
+
+<p>The second detail that needs to be addressed is how to force a waiting
+thread to stop waiting in order to clean up properly. Adding the
+semaphore guarantees that no more than one thread wakes up, but once I
+know which expression came true, I must force the remaining threads to
+wake up so they can terminate cleanly, freeing their stack. You should
+always avoid calling <i>TerminateThread</i>, so we need another
+mechanism. After thinking a while, I remembered that waiting threads
+are forced to wake up if they are in an alertable state when an entry
+enters their Asynchronous Procedure Call (APC) queue.</p>
+
+<p>My implementation of <i>WaitForMultipleExpressions</i> uses <i>
+QueueUserAPC</i> to force waiting threads to wake up. After my main
+thread's call to <i>WaitForMultipleObjects</i> returns, I queue an
+APC entry to each of the still-waiting OR threads:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// Break all the waiting expression threads out of their 
+// wait state so that they can terminate cleanly.
+for (dwExpNum = 0; dwExpNum &lt; dwNumExps; dwExpNum++) {
+
+   if ((WAIT_TIMEOUT == dwWaitRet) || 
+      (dwExpNum != (dwWaitRet - WAIT_OBJECT_0))) {
+
+      QueueUserAPC(WFME_ExpressionAPC, ahThreads[dwExpNum], 0);
+   }
+}
+</pre></td></tr></table></p>
+
+<p>The callback function, <i>WFME_ExpressionAPC</i>, looks like this
+because I really don't have anything to do&#8212;I just want the
+thread to stop waiting.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// This is the APC callback routine function.
+VOID WINAPI WFME_ExpressionAPC(DWORD dwData) {
+
+   // This function intentionally left blank
+}
+</pre></td></tr></table></p>
+
+<p>The third and last small detail has to do with handling timeouts
+correctly. If none of the expressions comes true while waiting, the
+main thread's call to <i>WaitForMultipleObjects</i> returns with a
+value of WAIT_TIMEOUT. If this happens, I want to prevent any of the
+expressions from coming true, which could cause objects to alter their
+state. The following code accomplishes this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// Wait for an expression to come TRUE or for a timeout.
+dwWaitRet = WaitForMultipleObjects(dwExpNum, ahThreads, 
+   FALSE, dwMilliseconds);
+
+if (WAIT_TIMEOUT == dwWaitRet) {
+
+   // We timed out; check if any expressions were satisfied by 
+   // checking the state of the hsemOnlyOne semaphore.
+   dwWaitRet = WaitForSingleObject(hsemOnlyOne, 0);
+
+   if (WAIT_TIMEOUT == dwWaitRet) {
+
+      // If the semaphore was not signaled, some thread expression
+      // was satisfied; we need to determine which expression.
+      dwWaitRet = WaitForMultipleObjects(dwExpNum, 
+         ahThreads, FALSE, INFINITE);
+
+   } else {
+
+      // No expression was satisfied and WaitForSingleObject just gave
+      // us the semaphore, so we know that no expression can ever be 
+      // satisfied now &#8212; waiting for an expression has timed out.
+      dwWaitRet = WAIT_TIMEOUT;
+   }
+}
+</pre></td></tr></table></p>
+
+<p>I prevent the other expressions from coming true by waiting on the
+semaphore. This decrements the semaphore's count to 0, and none of
+the OR threads can wake up. But somewhere after the main thread's
+call to <i>WaitForMultipleObjects</i> and its call to <i>
+WaitForSingleObject</i>, an expression might have come true. This is
+why I check the return value of calling <i>WaitForSingleObject</i>. If
+it returns WAIT_OBJECT_0, the main thread got the semaphore and none of
+the expressions can come true. But if WAIT_TIMEOUT is returned, an
+expression did come true before the main thread got the semaphore. To
+determine which expression came true, the main thread calls <i>
+WaitForMultipleObjects</i> again with a timeout of INFINITE, which is
+OK because I know that an OR thread got the semaphore and is about to
+terminate. At this point, I must force the OR threads to wake up so
+they exit cleanly. The loop that calls <i>QueueUserAPC</i> (shown above) 
+does this.</p>
+
+<p>Since <i>WaitForMultipleExpressions</i> is implemented internally by
+using different threads to wait on each set of ANDed objects, it's
+easy to see why you cannot use mutexes. Unlike the other kernel
+objects, mutex objects can be owned by a thread. So if one of my AND
+threads gets ownership of a mutex, it abandons the mutex when the
+thread terminates. If Microsoft ever adds a function to Windows that
+allows one thread to transfer ownership of a mutex to another thread,
+my <i>WaitForMultipleExpressions</i> function can easily be fixed to
+support mutexes properly. Until this function exists, there is no good,
+clean way for <i>WaitForMultipleExpressions</i> to support mutexes.</p>
+
+<p><b>Figure 10-4.</b> <i>The WaitForMultipleExpressions sample application</i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><b>WaitForMultExp.cpp</b></p>
+<PRE>
+/******************************************************************************
+Module:  WaitForMultExp.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#include &quot;..\CmnHdr.h&quot;     /* See Appendix A. */
+#include &lt;malloc.h&gt;
+#include &lt;process.h&gt;
+#include &quot;WaitForMultExp.h&quot;
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+// Internal data structure representing a single expression.
+// Used to tell OR-threads what objects to wait on.
+typedef struct {
+   PHANDLE m_phExpObjects;   // Points to set of handles
+   DWORD   m_nExpObjects;    // Number of handles
+} EXPRESSION, *PEXPRESSION;
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+// The OR-thread function
+DWORD WINAPI WFME_ThreadExpression(PVOID pvParam) {
+
+   // This thread function just waits for an expression to come true. 
+   // The thread waits in an alertable state so that it can be forced
+   // to stop waiting by queuing an entry to its APC queue.
+   PEXPRESSION pExpression = (PEXPRESSION) pvParam;
+   return(WaitForMultipleObjectsEx(
+      pExpression-&gt;m_nExpObjects, pExpression-&gt;m_phExpObjects, 
+      TRUE, INFINITE, TRUE));
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+// This is the APC callback routine function
+VOID WINAPI WFME_ExpressionAPC(ULONG_PTR dwData) {
+
+   // This function intentionally left blank
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+// Function to wait on multiple Boolean expressions
+DWORD WINAPI WaitForMultipleExpressions(DWORD nExpObjects, 
+   CONST HANDLE* phExpObjects, DWORD dwMilliseconds) {
+
+   // Allocate a temporary array because we modify the passed array and
+   // we need to add a handle at the end for the hsemOnlyOne semaphore.
+   PHANDLE phExpObjectsTemp = (PHANDLE)
+      _alloca(sizeof(HANDLE) * (nExpObjects + 1));
+   CopyMemory(phExpObjectsTemp, phExpObjects, sizeof(HANDLE) * nExpObjects);
+   phExpObjectsTemp[nExpObjects] = NULL;  // Put sentinel at end
+
+   // Semaphore to guarantee that only one expression gets satisfied
+   HANDLE hsemOnlyOne = CreateSemaphore(NULL, 1, 1, NULL);
+   
+   // Expression information: 1 per possible thread
+   EXPRESSION Expression[MAXIMUM_WAIT_OBJECTS];
+
+   DWORD dwExpNum  = 0;    // Current expression number
+   DWORD dwNumExps = 0;    // Total number of expressions
+
+   DWORD dwObjBegin = 0;   // First index of a set
+   DWORD dwObjCur   = 0;   // Current index of object in a set
+
+   DWORD dwThreadId, dwWaitRet = 0;
+
+   // Array of thread handles for threads: 1 per expression
+   HANDLE ahThreads[MAXIMUM_WAIT_OBJECTS];
+
+   // Parse the callers handle list by initializing a structure for
+   // each expression and adding hsemOnlyOne to each expression.
+   while ((dwWaitRet != WAIT_FAILED) &amp;&amp; (dwObjCur &lt;= nExpObjects)) {
+
+      // While no errors, and object handles are in the caller's list...
+
+      // Find next expression (OR-expressions are separated by NULL handles)
+      while (phExpObjectsTemp[dwObjCur] != NULL) 
+         dwObjCur++;
+      
+      // Initialize Expression structure which an OR-thread waits on
+      phExpObjectsTemp[dwObjCur] = hsemOnlyOne;
+      Expression[dwNumExps].m_phExpObjects =  &amp;phExpObjectsTemp[dwObjBegin];
+      Expression[dwNumExps].m_nExpObjects  =  dwObjCur - dwObjBegin + 1;
+
+      if (Expression[dwNumExps].m_nExpObjects &gt; MAXIMUM_WAIT_OBJECTS) {
+         // Error: Too many handles in single expression
+         dwWaitRet = WAIT_FAILED;
+         SetLastError(ERROR_SECRET_TOO_LONG);
+      }
+
+      // Advance to the next expression
+      dwObjBegin = ++dwObjCur;
+      if (++dwNumExps == MAXIMUM_WAIT_OBJECTS) {
+         // Error: Too many expressions
+         dwWaitRet = WAIT_FAILED;
+         SetLastError(ERROR_TOO_MANY_SECRETS);
+      }
+   }
+
+   if (dwWaitRet != WAIT_FAILED) {
+
+      // No errors occurred while parsing the handle list
+
+      // Spawn thread to wait on each expression
+      for (dwExpNum = 0; dwExpNum &lt; dwNumExps; dwExpNum++) {
+
+         ahThreads[dwExpNum] = chBEGINTHREADEX(NULL, 
+            1, // We only require a small stack
+            WFME_ThreadExpression, &amp;Expression[dwExpNum], 
+            0, &amp;dwThreadId);
+      }
+
+      // Wait for an expression to come TRUE or for a timeout
+      dwWaitRet = WaitForMultipleObjects(dwExpNum, ahThreads, 
+         FALSE, dwMilliseconds);
+
+      if (WAIT_TIMEOUT == dwWaitRet) {
+
+         // We timed-out, check if any expressions were satisfied by 
+         // checking the state of the hsemOnlyOne semaphore.
+         dwWaitRet = WaitForSingleObject(hsemOnlyOne, 0);
+
+         if (WAIT_TIMEOUT == dwWaitRet) {
+
+            // If the semaphore was not signaled, some thread expressions
+            // was satisfied; we need to determine which expression.
+            dwWaitRet = WaitForMultipleObjects(dwExpNum, 
+               ahThreads, FALSE, INFINITE);
+
+         } else {
+
+            // No expression was satisfied and WaitForSingleObject just gave
+            // us the semaphore so we know that no expression can ever be 
+            // satisfied now &#8212; waiting for an expression has timed-out.
+            dwWaitRet = WAIT_TIMEOUT;
+         }
+      }
+
+      // Break all the waiting expression threads out of their 
+      // wait state so that they can terminate cleanly.
+      for (dwExpNum = 0; dwExpNum &lt; dwNumExps; dwExpNum++) {
+
+         if ((WAIT_TIMEOUT == dwWaitRet) || 
+             (dwExpNum != (dwWaitRet - WAIT_OBJECT_0))) {
+
+            QueueUserAPC(WFME_ExpressionAPC, ahThreads[dwExpNum], 0);
+         }
+      }
+
+#ifdef _DEBUG
+      // In debug builds, wait for all of expression threads to terminate 
+      // to make sure that we are forcing the threads to wake up. 
+      // In non-debug builds, we'll assume that this works and 
+      // not keep this thread waiting any longer.
+      WaitForMultipleObjects(dwExpNum, ahThreads, TRUE, INFINITE);
+#endif
+
+      // Close our handles to all the expression threads
+      for (dwExpNum = 0; dwExpNum &lt; dwNumExps; dwExpNum++) {
+         CloseHandle(ahThreads[dwExpNum]);
+      }
+   }  // error occurred while parsing
+
+   CloseHandle(hsemOnlyOne);
+   return(dwWaitRet);
+}
+
+
+//////////////////////////////// End of File //////////////////////////////////
+</pre></td></tr></table></p>
+<p><table cellpadding=5 width="95%"><tr><td><PRE>
+<b>WaitForMultExp.h</b>
+/******************************************************************************
+Module:  WaitForMultExp.h
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#pragma once
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+DWORD WINAPI WaitForMultipleExpressions(DWORD nExpObjects, 
+   CONST HANDLE* phExpObjects, DWORD dwMilliseconds);
+
+
+//////////////////////////////// End of File //////////////////////////////////
+</pre></td></tr></table></p>
+<p><table cellpadding=5 width="95%"><tr><td><PRE>
+<b>WfMETest.cpp</b>
+/******************************************************************************
+Module: WfMETest.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#include &quot;..\CmnHdr.h&quot;     /* See Appendix A. */
+#include &lt;windowsx.h&gt;
+#include &lt;tchar.h&gt;
+#include &lt;process.h&gt;
+#include &quot;resource.h&quot;
+#include &quot;WaitForMultExp.h&quot;
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+// g_ahObjs contains the list of event kernel object
+// handles referenced in the Boolean expression.
+#define MAX_KERNEL_OBJS     1000
+HANDLE g_ahObjs[MAX_KERNEL_OBJS];
+
+
+// ahExpObjs contains all the expressions. A single expression
+// consists of a contiguous set of kernel object handles that 
+// is TRUE when all the objects are signaled at the same time. 
+// A NULL handle is used to separate OR expressions. 
+
+// A handle value may NOT appear multiple times within an AND 
+// expression but the same handle value may appear in 
+// different OR expressions.
+
+// An expression can have a maximum of 64 sets with no more 
+// than 63 handles/set plus a NULL handle to separate each set
+#define MAX_EXPRESSION_SIZE   ((64 * 63) + 63)
+
+
+// m_nExpObjects is the number of entries used in the ahExpObjects array.
+typedef struct {
+   HWND     m_hwnd;                            // Where to send results
+   DWORD    m_dwMilliseconds;                  // How long before timeout
+   DWORD    m_nExpObjects;                     // # of entries in object list
+   HANDLE   m_ahExpObjs[MAX_EXPRESSION_SIZE];  // List of objs
+} AWFME, *PAWFME;
+AWFME g_awfme;
+
+
+// This message is posted to the UI thread when an expression 
+// comes true or when we timeout while waiting for an 
+// expression to come TRUE.
+#define WM_WAITEND      (WM_USER + 101)
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL Dlg_OnInitDialog(HWND hwnd, HWND hwndFocus, LPARAM lParam) {
+
+   chSETDLGICONS(hwnd, IDI_WFMETEXT);
+
+   // Initialize the controls in the dialog box
+   SetDlgItemInt(hwnd,  IDC_NUMOBJS, 4, FALSE);
+   SetDlgItemInt(hwnd,  IDC_TIMEOUT, 30000, FALSE);
+   SetDlgItemText(hwnd, IDC_EXPRESSION, 
+      _T(&quot;1 2 | 2 3 4 | 1 4&quot;));
+
+   // Set the multicolumn listbox's column size
+   ListBox_SetColumnWidth(GetDlgItem(hwnd, IDC_OBJLIST), 
+      LOWORD(GetDialogBaseUnits()) * 4);
+
+   return(TRUE);  // Accept default focus window.
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+DWORD WINAPI AsyncWaitForMultipleExpressions(PVOID pvParam) {
+
+   PAWFME pawfme = (PAWFME) pvParam;
+
+   DWORD dw = WaitForMultipleExpressions(pawfme-&gt;m_nExpObjects, 
+      pawfme-&gt;m_ahExpObjs, pawfme-&gt;m_dwMilliseconds);
+   PostMessage(pawfme-&gt;m_hwnd, WM_WAITEND, dw, 0);
+   return(0);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+LRESULT Dlg_OnWaitEnd(HWND hwnd, WPARAM wParam, LPARAM lParam) {
+
+   // Close all the event kernel object handles
+   for (int n = 0; g_ahObjs[n] != NULL; n++)
+      CloseHandle(g_ahObjs[n]);
+
+   // Tell the user the result of running the test
+   if (wParam == WAIT_TIMEOUT) 
+      SetDlgItemText(hwnd, IDC_RESULT, _ _TEXT(&quot;Timeout&quot;));
+   else 
+      SetDlgItemInt(hwnd, IDC_RESULT, (DWORD) wParam - WAIT_OBJECT_0, FALSE);
+
+   // Allow the user to change values and run the test again
+   EnableWindow(GetDlgItem(hwnd, IDC_NUMOBJS),    TRUE);
+   EnableWindow(GetDlgItem(hwnd, IDC_TIMEOUT),    TRUE);
+   EnableWindow(GetDlgItem(hwnd, IDC_EXPRESSION), TRUE);
+   EnableWindow(GetDlgItem(hwnd, IDOK),           TRUE);
+   SetFocus(GetDlgItem(hwnd, IDC_EXPRESSION));
+
+   return(0);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify) {
+
+   // Obtain the user's settings from the dialog box controls.
+   TCHAR szExpression[100];
+   ComboBox_GetText(GetDlgItem(hwnd, IDC_EXPRESSION), szExpression,
+      sizeof(szExpression) / sizeof(szExpression[0]));
+
+   int nObjects = GetDlgItemInt(hwnd, IDC_NUMOBJS, NULL, FALSE);
+
+   switch (id) {
+   case IDCANCEL:
+      EndDialog(hwnd, id);
+      break;
+
+   case IDC_OBJLIST:
+      switch (codeNotify) {
+      case LBN_SELCHANGE:
+         // An item changed state, reset all items and set the selected ones.
+         for (int n = 0; n &lt; nObjects; n++)
+            ResetEvent(g_ahObjs[n]);
+
+         for (n = 0; n &lt; nObjects; n++) {
+            if (ListBox_GetSel(GetDlgItem(hwnd, IDC_OBJLIST), n)) 
+               SetEvent(g_ahObjs[n]);
+         }
+         break;
+      }
+      break;
+
+   case IDOK:
+      // Prevent the user from changing values while the test is running
+      SetFocus(GetDlgItem(hwnd, IDC_OBJLIST));
+      EnableWindow(GetDlgItem(hwnd, IDC_NUMOBJS),    FALSE);
+      EnableWindow(GetDlgItem(hwnd, IDC_TIMEOUT),    FALSE);
+      EnableWindow(GetDlgItem(hwnd, IDC_EXPRESSION), FALSE);
+      EnableWindow(GetDlgItem(hwnd, IDOK),           FALSE);
+
+      // Notify the user that the test is running
+      SetDlgItemText(hwnd, IDC_RESULT, TEXT(&quot;Waiting...&quot;));
+
+      // Create all of the desired kernel objects
+      ZeroMemory(g_ahObjs, sizeof(g_ahObjs));
+      g_awfme.m_nExpObjects = 0;
+      ZeroMemory(g_awfme.m_ahExpObjs, sizeof(g_awfme.m_ahExpObjs));
+      g_awfme.m_hwnd = hwnd;
+      g_awfme.m_dwMilliseconds = GetDlgItemInt(hwnd, IDC_TIMEOUT, NULL, FALSE);
+
+      ListBox_ResetContent(GetDlgItem(hwnd, IDC_OBJLIST));
+      for (int n = 0; n &lt; nObjects; n++) {
+         TCHAR szBuf[20];
+         g_ahObjs[n] = CreateEvent(NULL, FALSE, FALSE, NULL);
+
+         wsprintf(szBuf, TEXT(&quot;  %d&quot;), n + 1);
+         ListBox_AddString(GetDlgItem(hwnd, IDC_OBJLIST), 
+            &amp;szBuf[lstrlen(szBuf) - 3]);
+      }
+
+      PTSTR p = _tcstok(szExpression, TEXT(&quot; &quot;));
+      while (p != NULL) {
+         g_awfme.m_ahExpObjs[g_awfme.m_nExpObjects++] = 
+            (*p == TEXT('|')) ? NULL : g_ahObjs[_ttoi(p) - 1];
+         p = _tcstok(NULL, TEXT(&quot; &quot;));
+      }
+
+      DWORD dwThreadId;
+      CloseHandle(chBEGINTHREADEX(NULL, 0, 
+         AsyncWaitForMultipleExpressions, &amp;g_awfme, 
+         0, &amp;dwThreadId));
+      break;
+   }   
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+        
+INT_PTR WINAPI Dlg_Proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+
+   switch (uMsg) {
+      chHANDLE_DLGMSG(hwnd, WM_INITDIALOG, Dlg_OnInitDialog);
+      chHANDLE_DLGMSG(hwnd, WM_COMMAND,    Dlg_OnCommand);
+
+      case WM_WAITEND:
+         return(Dlg_OnWaitEnd(hwnd, wParam, lParam)); 
+   }
+
+   return(FALSE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+int WINAPI _tWinMain(HINSTANCE hinstExe, HINSTANCE, PTSTR pszCmdLine, int) {
+
+   DialogBox(hinstExe, MAKEINTRESOURCE(IDD_TESTW4ME), NULL, Dlg_Proc);
+   return(0);
+}
+
+
+//////////////////////////////// End of File //////////////////////////////////
+</pre></td></tr></table></p>
+<p><table cellpadding=5 width="95%"><tr><td><PRE>
+<b>WfMETest.rc</b>
+//Microsoft Developer Studio generated resource script.
+//
+#include &quot;resource.h&quot;
+
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+/////////////////////////////////////////////////////////////////////////////
+// English (U.S.) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+#ifdef _WIN32
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(1252)
+#endif //_WIN32
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
+
+IDD_WFMETEST DIALOGEX 0, 0, 168, 185
+STYLE DS_3DLOOK | DS_CENTER | WS_MINIMIZEBOX | WS_VISIBLE | WS_CAPTION | 
+    WS_SYSMENU
+EXSTYLE WS_EX_APPWINDOW
+CAPTION &quot;WaitForMultipleExpressions&quot;
+FONT 8, &quot;MS Sans Serif”, 0, 0, 0x1
+BEGIN
+    LTEXT           &quot;How many different &amp;kernel objects are referenced in the expression:&quot;,
+                    IDC_STATIC,3,4,121,17
+    EDITTEXT        IDC_NUMOBJS,138,6,27,14,ES_AUTOHSCROLL
+    LTEXT           &quot;&amp;Timeout (in milliseconds):&quot;,IDC_STATIC,4,28,83,8
+    EDITTEXT        IDC_TIMEOUT,138,26,27,14,ES_AUTOHSCROLL
+    LTEXT           &quot;&amp;Expression (use space for AND and | for OR):&quot;,
+                    IDC_STATIC,4,44,143,8
+    COMBOBOX        IDC_EXPRESSION,4,56,160,76,CBS_DROPDOWN | WS_VSCROLL | 
+                    WS_TABSTOP
+    DEFPUSHBUTTON   &quot;&amp;Wait for Multiple Expressions&quot;,IDOK,34,72,99,14
+    LTEXT           &quot;&amp;Signal which kernel objects:&quot;,IDC_STATIC,4,92,83,8
+    LISTBOX         IDC_OBJLIST,4,102,160,68,LBS_MULTIPLESEL | 
+                    LBS_NOINTEGRALHEIGHT | LBS_MULTICOLUMN | WS_VSCROLL | 
+                    WS_HSCROLL | WS_TABSTOP
+    LTEXT           &quot;Expression satisfied:&quot;,IDC_STATIC,32,172,63,8
+    LTEXT           &quot;Timeout&quot;,IDC_RESULT,100,172,36,8
+END
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// TEXTINCLUDE
+//
+
+1 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;resource.h\0&quot;
+END
+
+2 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;#include &quot;&quot;afxres.h&quot;&quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+3 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+#endif    // APSTUDIO_INVOKED
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+// Icon with lowest ID value placed first to ensure application icon
+// remains consistent on all systems.
+IDI_WFMETEXT            ICON    DISCARDABLE     &quot;WaitForMultExp.ico&quot;
+#endif    // English (U.S.) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 3 resource.
+//
+
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED
+</pre></td></tr></table></p>
+</body>
+</html>
+
+
+
+
+
+
+

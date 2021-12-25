@@ -1,0 +1,514 @@
+<HTML>
+ <HEAD>
+	<LINK REL=StyleSheet HREF="prowice.css" TYPE="text/css">
+<TITLE>The Different Kinds of Memory Allocation</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="222"><H1>The Different Kinds of Memory Allocation</H1></A>
+
+<P>A Windows CE application has a number of different methods for allocating memory. At the bottom of the memory-management food chain are the <I>Virtual</I>xxx functions that directly reserve, commit, and free virtual memory pages. Next comes the heap API. <I>Heaps</I> are regions of reserved memory space managed by the system for the application. Heaps come in two flavors: the default local heap automatically allocated when an application is started, and separate heaps that can be manually created by the application. After the heap API is static data&#8212;data blocks defined by the compiler and that are allocated automatically by the loader. Finally, we come to the stack, where an application stores variables local to a function.
+
+<P>The one area of the Win32 memory API that Windows CE doesn't support is the global heap. The global heap API, which includes calls such as <I>GlobalAlloc</I>, <I>GlobalFree</I>, and <I>GlobalRealloc</I>, are therefore not present in Windows CE. The global heap is really just a holdover from the Win16 days of Windows 3.<I>x</I>. In Win32, the global and local heaps are quite similar. One unique use of global memory, allocating memory for data in the clipboard, is handled by using the local heap under Windows CE.
+
+<P>The key to minimizing memory use in Windows CE is choosing the proper memory-allocation strategy that matches the memory-use patterns for a given block of memory. I'll review each of these memory types and then describe strategies for minimizing memory use in Windows CE applications.
+
+<A NAME="223"><H2>Virtual Memory</H2></A>
+
+<P>Virtual memory is the most basic of the memory types. The system uses calls to the virtual memory API to allocate memory for the other types of memory, including heaps and stacks. The virtual memory API, including the <I>VirtualAlloc</I>, <I>VirtualFree</I>, and <I>VirtualReSize</I> functions directly manipulate virtual memory pages in the application's virtual memory space. Pages can be reserved, committed to physical memory, and freed using these functions.
+
+<A NAME="224"><H3>Allocating virtual memory</H3></A>
+
+<P>Allocating and reserving virtual memory is accomplished using this function:
+
+<p><pre>
+LPVOID VirtualAlloc (LPVOID lpAddress, DWORD dwSize,
+                     DWORD flAllocationType,
+                     DWORD flProtect);
+</pre>
+
+<P>The first parameter to <I>VirtualAlloc</I> is the virtual address of the region of memory to allocate. The lpAddress parameter is used to identify the previously reserved memory block when you use VirtualAlloc to commit a block of memory previously reserved. If this parameter is NULL, the system determines where to allocate the memory region, rounded to a 64-KB boundary. The second parameter is <I>dwSize</I>, the size of the region to allocate or reserve. While this parameter is specified in bytes, not pages, the system rounds the requested size up to the next page boundary.
+
+<P>The <I>flAllocationType</I> parameter specifies the type of allocation. You can specify a combination of the following flags: MEM_COMMIT, MEM_AUTO_COMMIT, MEM_RESERVE, and MEM_TOP_DOWN. The MEM_COMMIT flag allocates the memory to be used by the program. MEM_RESERVE reserves the virtual address space to be later committed. Reserved pages can't be accessed until another call is made to <I>VirtualAlloc</I> specifying the region and using the MEM_COMMIT flag. The third flag, MEM_TOP_DOWN, tells the system to map the memory at the highest permissible virtual address for the application.
+
+<P>The MEM_AUTO_COMMIT flag is unique to Windows CE and is quite handy. When this flag is specified the block of memory is reserved immediately, but each page in the block will automatically be committed by the system when it's accessed for the first time. This allows you to allocate large blocks of virtual memory without burdening the system with the actual RAM allocation until the instant each page is first used. The drawback to auto-commit memory is that the physical RAM needed to back up a page might not be available when the page is first accessed. In this case, the system will generate an exception.
+
+<P><I>VirtualAlloc</I> can be used to reserve a large region of memory with subsequent calls committing parts of the region or the entire region. Multiple calls to commit the same region won't fail. This allows an application to reserve memory and then blindly commit a page before it's written to. While this method isn't particularly efficient, it does free the application from having to check the state of a reserved page to see whether it's already committed before making the call to commit the page.
+
+<P>The <I>flProtect</I> parameter specifies the access protection for the region being allocated. The different flags available for this parameter are summarized in the following list.
+
+<UL>
+<P><LI><I>PAGE_READONLY</I> The region can be read. If an application attempts to write to the pages in the region, an access violation will occur.
+<P><LI><I>PAGE_READWRITE</I> The region can be read from or written to by the application.
+<P><LI><I>PAGE_EXECUTE</I> The region contains code that can be executed by the system. Attempts to read from or write to the region will result in an access violation.
+<P><LI><I>PAGE_EXECUTE_READ</I> The region can contain executable code and applications can also read from the region.
+<P><LI><I>PAGE_EXECUTE_READWRITE</I> The region can contain executable code and applications can read from and write to the region.
+<P><LI><I>PAGE_GUARD</I> The first access to this region results in a STATUS_GUARD_PAGE exception. This flag should be combined with the other protection flags to indicate the access rights of the region after the first access.
+<P><LI><I>PAGE_NOACCESS</I> Any access to the region results in an access violation.
+<P><LI><I>PAGE_NOCACHE</I> The RAM pages mapped to this region won't be cached by the microprocessor.
+</UL>
+
+<P>The PAGE_GUARD and PAGE_NOCHACHE flags can be combined with the other flags to further define the characteristics of a page. The PAGE_GUARD flag specifies a guard page, a page that generates a one-shot exception when it's first accessed and then takes on the access rights that were specified when the page was committed. The PAGE_NOCACHE flag prevents the memory that's mapped to the virtual page from being cached by the microprocessor. This flag is handy for device drivers that share memory blocks with devices using direct memory access (DMA).
+
+<A NAME="225"><H3>Regions vs. pages</H3></A>
+
+<P>Before I go on to talk about the virtual memory API, I need to make a somewhat subtle distinction. Virtual memory is reserved in regions that must align on 64-KB boundaries. Pages within a region can then be committed page by page. You can directly commit a page or a series of pages without first reserving a region of pages, but the page, or series of pages, directly committed will be aligned on a 64-KB boundary. For this reason, it's best to reserve blocks of virtual memory in 64-KB chunks and then commit that page within the region as needed.
+
+<P>With the limit of a 32-MB virtual memory space per process, this leaves a maximum of 32 MB / 64 KB - 1= 511 virtual memory regions that can be reserved before the system reports that it's out of memory. Take, for example, the following code fragment:
+
+<p><pre>
+#define PAGESIZE 1024   // Assume we're on a 1-KB page machine
+for (i = 0; i &lt; 512; i++) 
+    pMem[i] = VirtualAlloc (NULL, PAGESIZE, MEM_RESERVE | MEM_COMMIT,
+                            PAGE_READWRITE);
+</pre>
+
+<P>This code attempts to allocate 512 one-page blocks of virtual memory. Even if you have half a megabyte of RAM available in the system, <I>VirtualAlloc</I> will fail before the loop completes because it will run out of virtual address space for the application. This happens because each 1-KB block is allocated on a 64-KB boundary. Since the code, stack, and local heap for an application must also be mapped into the same, 32-MB virtual address space, available virtual allocation regions usually top out at about 490.
+
+<P>A better way to make 512 distinct virtual allocations is to do something like this:
+
+<p><pre>
+#define PAGESIZE 1024   // Assume we're on a 1-KB page machine.
+
+// Reserve a region first.
+pMemBase = VirtualAlloc (NULL, PAGESIZE * 512, MEM_RESERVE,
+                         PAGE_NOACCESS);
+
+for (i = 0; i &lt; 512; i++) 
+    pMem[i] = VirtualAlloc (pMemBase + (i*PAGESIZE), PAGESIZE, 
+                            MEM_COMMIT, PAGE_READWRITE);
+</pre>
+
+<P>This code first reserves a region; the pages are committed later. Because the region was first reserved, the committed pages aren't rounded to 64-KB boundaries, and so, if you have 512 KB of available memory in the system, the allocations will succeed.
+
+<P>Although the code I just showed you is a contrived example (there are better ways to allocate 1-KB blocks than directly allocating virtual memory), it does demonstrate a major difference (from other Windows systems) in the way memory allocation works in Windows CE. In Windows NT, applications have a full 2-GB virtual address space with which to work. In Windows CE however, a programmer should remain aware of the relatively small 32-MB virtual address per application.
+
+<A NAME="226"><H3>Freeing virtual memory</H3></A>
+
+<P>You can decommit or free virtual memory by calling <I>VirtualFree</I>. Decommitting a page unmaps the page from a physical page of RAM but keeps the page or pages reserved. The function is prototyped as
+
+<p><pre>
+BOOL VirtualFree (LPVOID lpAddress, DWORD dwSize,
+                  DWORD dwFreeType);
+</pre>
+
+<P>The <I>lpAddress</I> parameter should contain a pointer to the virtual memory region that's to be freed or decommitted. The <I>dwSize</I> parameter contains the size, in bytes, of the region if the region is to be decommitted. If the region is to be freed, this value must be 0. The <I>dwFreeType</I> parameter contains the flags that specify the type of operation. The MEM_DECOMMIT flag specifies that the region will be decommited but will remain reserved. The MEM_RELEASE flag both decommits the region if the pages are committed and also frees the region.
+
+<P>All the pages in a region being freed by means of <I>VirtualFree</I> must be in the same state. That is, all the pages in the region to be freed must either be committed or reserved. <I>VirtualFree</I> fails if some of the pages in the region are reserved while some are committed. To free a region with pages that are both reserved and committed, the committed pages should be decommitted first, and then the entire region can be freed.
+
+<A NAME="227"><H3>Changing and querying access rights</H3></A>
+
+<P>You can modify the access rights of a region of virtual memory, initially specified in VirtualAlloc, by calling <I>VirtualProtect</I>. This function can change the access rights only on committed pages. The function is prototyped as
+
+<p><pre>
+BOOL VirtualProtect (LPVOID lpAddress, DWORD dwSize, 
+                     DWORD flNewProtect, PDWORD lpflOldProtect);
+</pre>
+
+<P>The first two parameters, <I>lpAddress </I>and <I>dwSize,</I> specify the block and the size of the region that the function acts on. The <I>flNewProtect</I> parameter contains the new protection flags for the region. These flags are the same ones I mentioned when I explained the <I>VirtualAlloc</I> function. The <I>lpflOldProtect</I> parameter should point to a DWORD that will receive the old protection flags of the first page in the region.
+
+<P>The current protection rights of a region can be queried with a call to
+
+<p><pre>
+DWORD VirtualQuery (LPCVOID lpAddress, 
+                    PMEMORY_BASIC_INFORMATION lpBuffer,
+                    DWORD dwLength);
+</pre>
+
+<P>The <I>lpAddress </I>parameter contains the starting address of the region being queried. The <I>lpBuffer </I>pointer points to a PMEMORY_BASIC_INFORMATION structure that I'll talk about soon. The third parameter, <I>dwLength</I>, must contain the size of the PMEMORY_BASIC_INFORMATION structure.
+
+<P>The PMEMORY_BASIC_INFORMATION structure is defined as
+
+<p><pre>
+typedef struct _MEMORY_BASIC_INFORMATION { 
+    PVOID BaseAddress; 
+    PVOID AllocationBase; 
+    DWORD AllocationProtect; 
+    DWORD RegionSize; 
+    DWORD State; 
+    DWORD Protect; 
+    DWORD Type; 
+} MEMORY_BASIC_INFORMATION;
+</pre>
+
+<P>The first field of MEMORY_BASIC_INFORMATION, <I>BaseAddress</I>, is the address passed to the <I>VirtualQuery</I> function. The <I>AllocationBase</I> field contains the base address of the region when it was allocated using a <I>VirtualAlloc</I> function. The <I>AllocationProtect</I> field contains the protection attributes for the region when it was originally allocated. The <I>RegionSize</I> field contains the number of bytes from the pointer passed to <I>VirtualQuery</I> to the end of series of pages that have the same attributes. The <I>State</I> field contains the state&#8212;free, reserved, or committed&#8212;of the pages in the region. The <I>Protect </I>field contains the current protection flags for the region. Finally, the <I>Type</I> field contains the type of memory in the region. This field can contain the flags MEM_PRIVATE, indicating that the region contains private data for the application; MEM_MAPPED, indicating that the region is mapped to a memory-mapped file; or MEM_IMAGE, indicating that the region is mapped to an EXE or DLL module.
+
+<P>The best way to understand the values returned by <I>VirtualQuery </I>is to look at an example. Say an application uses <I>VirtualAlloc</I> to reserve 16,384 bytes (16 pages on a 1-KB page-size machine). The system reserves this 16-KB block at address 0xA0000. Later, the application commits 9216 bytes (9 pages) starting 2048 bytes (2 pages) into the initial region. Figure 6-3 shows a diagram of this scenario.
+
+<P><A HREF="javascript:fullSize('f06rg03x.htm')"> <img src="f06rg03.jpg" width=404 height=295 border="0" ALT="Click to view at full size."></a>
+<!-- caption --><P><B>Figure 6-3.</B> <I>A region of reserved virtual memory that has nine pages committed.</I><!-- /caption -->
+
+<P>If a call is made to <I>VirtualQuery</I> with the <I>lpAddress</I> pointer pointing 4 pages into the initial region (address 0xA1000), the returned values would be the following:
+
+<p><pre>
+BaseAddress          0xA1000
+AllocationBase       0xA0000
+AllocationProtect    PAGE_NOACCESS
+RegionSize           0x1C00    (7,168 bytes or 7 pages)
+State                MEM_COMMIT
+Protect              PAGE_READWRITE
+Type                 MEM_PRIVATE
+</pre>
+
+<P>The <I>BaseAddress</I> field contains the address passed to <I>VirtualQuery</I>, 0xA1000, 4096 bytes into the initial region. The <I>AllocationBase</I> contains the base address of the original region while <I>AllocationProtect</I> contains PAGE_NOACCESS, indicating that the region was originally reserved, not directly committed. The <I>RegionSize</I> field contains the number of bytes from the pointer passed to <I>VirtualQuery</I>, 0xA1000 to the end of the committed pages at 0xA2C00. The <I>State</I> and <I>Protect</I> fields contain the flags indicating the current state of the pages. The <I>Type </I>field indicates that the region was allocated by the application for its own use.
+
+<A NAME="228"><H2>Heaps</H2></A>
+
+<P>Clearly, allocating memory on a page basis is inefficient for most applications. To optimize memory use, an application needs to be able to allocate and free memory on a per byte, or at least a per 4-byte, basis. The system enables allocations of this size through heaps. Using heaps also protects an application from having to deal with the differing page sizes of the microprocessors that support Windows CE. An application can simply allocate a block in a heap and the system deals with the number of pages necessary for the allocation.
+
+<P>As I mentioned before, heaps are regions of reserved virtual memory space managed by the system for the application. The system gives you a number of functions that allow you to allocate and free blocks within the heap with a granularity much smaller than a page. As memory is allocated by the application within a heap, the system automatically grows the size of the heap to fill the request. As blocks in the heap are freed, the system looks to see if an entire page is freed. If so, that page is decommitted.
+
+<P>Unlike Windows NT or Windows 98, Windows CE supports the allocation of only fixed blocks in the heap. This simplifies the handling of blocks in the heap, but it can lead to the heaps becoming fragmented over time as blocks are allocated and freed. The result can be a heap being fairly empty but still requiring a large number of virtual pages because the system can't reclaim a page from the heap unless it's completely free.
+
+<P>Each application has a default, or local, heap created by the system when the application is launched. Blocks of memory in the local heap can be allocated, freed, and resized using the <I>LocalAlloc</I>, <I>LocalFree</I>, and <I>LocalRealloc</I> functions. An application can also create any number of separate heaps. These heaps have the same properties as the local heap but are managed through a separate set of <I>Heap</I>xxxx functions.
+
+<A NAME="229"><H2>The Local Heap</H2></A>
+
+<P>By default, Windows CE initially reserves 384 pages, or 393,216 bytes, for the local heap but only commits the pages as they are allocated. If the application allocates more than the 384 KB in the local heap, the system allocates more space for the local heap. Growing the heap might require a separate, disjointed address space reserved for the additional space on the heap. Applications shouldn't assume that the local heap is contained in one block of virtual address space. Because Windows CE heaps support only fixed blocks, Windows CE implements only the subset of the Win32 local heap functions necessary to allocate, resize, and free fixed blocks on the local heap.
+
+<A NAME="230"><H3>Allocating memory on the local heap</H3></A>
+
+<P>You allocate a block of memory on the local heap by calling
+
+<p><pre>
+HLOCAL LocalAlloc (UINT uFlags, UINT uBytes);
+</pre>
+
+<P>The call returns a value cast as an HLOCAL, which is a handle to a local memory block, but since the block allocated is always fixed, the return value can simply be recast as a pointer to the block.
+
+<P>The <I>uFlags</I> parameter describes the characteristics of the block. The flags supported under Windows CE are limited to those that apply to fixed allocations. They are the following:
+
+<UL>
+<P><LI><I>LMEM_FIXED</I> Allocates a fixed block in the local heap. Since all local heap allocations are fixed, this flag is redundant.
+<P><LI><I>LMEM_ZEROINIT</I> Initializes memory contents to 0.
+<P><LI><I>LPTR</I> Combines the LMEM_FIXED and LMEM_ZEROINIT flags.
+</UL>
+
+<P>The <I>uBytes</I> parameter specifies the size of the block to allocate in bytes. The size of the block is rounded up, but only to the next DWORD (4 byte) boundary.
+
+<A NAME="231"><H3>Freeing memory on the local heap</H3></A>
+
+<P>You can free a block by calling
+
+<p><pre>
+HLOCAL LocalFree (HLOCAL hMem);
+</pre>
+
+<P>The function takes the handle to the local memory block and returns NULL if successful. If the function fails, it returns the original handle to the block.
+
+<A NAME="232"><H3>Resizing and querying the size of local heap memory</H3></A>
+
+<P>You can resize blocks on the local heap by calling
+
+<p><pre>
+HLOCAL LocalReAlloc (HLOCAL hMem, UINT uBytes, UINT uFlag);
+</pre>
+
+<P>The <I>hMem</I> parameter is the pointer (handle) returned by <I>LocalAlloc</I>. The <I>uBytes</I> parameter is the new size of the block. The <I>uFlag</I> parameter contains the flags for the new block. Under Windows CE, two flags are relevant, LMEM_ZEROINIT and LMEM_MOVEABLE. LMEM_ZEROINIT causes the contents of the new area of the block to be set to 0 if the block is grown as a result of this call. The LMEM_MOVEABLE flag tells Windows that it can move the block if the block is being grown and there's not enough room immediately above the current block. Without this flag, if you don't have enough space immediately above the block to satisfy the request, <I>LocalRealloc</I> will fail with an out-of-memory error. If you specify the LMEM_MOVEABLE flag, the handle (really the pointer to the block of memory) might change as a result of the call.
+
+<P>The size of the block can be queried by calling
+
+<p><pre>
+UINT LocalSize (HLOCAL hMem);
+</pre>
+
+<P>The size returned will be at least as great as the requested size for the block. As I mentioned earlier, Windows CE rounds the size of a local heap allocation up to the next 4-byte boundary.
+
+<A NAME="233"><H2>Separate Heaps</H2></A>
+
+<P>To avoid fragmenting the local heap, it's better to create a separate heap if you need a series of blocks of memory that will be used for a set amount of time. An example of this would be a text editor that might manage a file by creating a separate heap for each file it's editing. As files are opened and closed, the heaps would be created and destroyed.
+
+<P>Heaps under Windows CE have the same API as those under Windows NT or Windows 98. The only noticeable difference is the lack of support for the HEAP_GENERATE_EXCEPTIONS flag. Under Windows NT, this flag causes the system to generate an exception if an allocation request can't be accommodated.
+
+<P>A subtle, but more important difference to the programmer is how Windows CE manages heaps. While the heap API looks like the standard Win32 heap API, Windows CE doesn't implement the functions as you might expect. For example, the <I>HeapCreate</I> function has parameters that allow a program to specify how much memory to allocate and reserve for a heap. Windows CE ignores these values. In fact, simply creating a heap doesn't allocate or reserve any memory. Memory is reserved and committed only when the first block of the heap is allocated.
+
+<P>Under most conditions, going through the details about when heap memory is reserved and committed would seem like nitpicking. But if you've used up the 32MB virtual address space for other uses, a heap might not have the virtual address space available for the allocation even if you thought you had reserved enough using the <I>HeapCreate</I> call. On the other hand, Windows CE doesn't use the reserved parameter in the <I>HeapCreate</I> call as a hard-coded limit on the size of the heap. Windows CE accommodates almost any heap allocation request if the memory is available. Well, enough editorializing: on to the heap API.
+
+<A NAME="234"><H3>Creating a separate heap</H3></A>
+
+<P>You create heaps by calling
+
+
+<p><pre>
+HANDLE HeapCreate (DWORD flOptions, DWORD dwInitialSize,
+                   DWORD dwMaximumSize);
+</pre>
+
+<P>Under Windows CE, the first parameter, <I>flOptions</I>, can be NULL, or it can contain the HEAP_NO_SERIALIZE flag. By default, Windows heap management routines prevent two threads in a process from accessing the heap at the same time. This serialization prevents the heap pointers that the system uses to track the allocated blocks in the heap from being corrupted. In other versions of Windows the HEAP_NO_SERIALIZE flag can be used if you don't want this type of protection. Under Windows CE however, this flag is only provided for compatibility and all heap accesses are serialized.
+
+<P>The other two parameters, <I>dwInitialSize</I> and <I>dwMaximumSize</I>, specify the initial size and expected maximum size of the heap. Windows NT and Windows 98 use the <I>dwMaximumSize </I>value to determine how many pages in the virtual address space to reserve for the heap. You can set this parameter to 0 if you want to defer to Windows' determination of how many pages to reserve. The <I>dwInitialSize</I> parameter is then used to determine how many of those initially reserved pages will be immediately committed. As I mentioned, while these two size parameters are documented exactly the same way as their counterparts under Windows NT and 98, the current version of Windows CE doesn't actually use them. You should, however, use valid numbers to retain compatibility with future versions of Windows CE that might use these parameters.
+
+<A NAME="235"><H3>Allocating memory in a separate heap</H3></A>
+
+<P>You allocate memory on the heap using
+
+<p><pre>
+LPVOID HeapAlloc (HANDLE hHeap, DWORD dwFlags, DWORD dwBytes);
+</pre>
+
+<P>Notice that the return value is a pointer, not a handle as in the <I>LocalAlloc</I> function. Separate heaps always allocate fixed blocks, even under Windows NT and Windows 98. The first parameter is the handle to the heap returned by the <I>HeapCreate</I> call. The <I>dwFlags</I> parameter can be one of two self-explanatory values, HEAP_NO_SERIALIZE and HEAP_ZERO_MEMORY. The final parameter, <I>dwBytes</I>, specifies the number of bytes in the block to allocate. The size is rounded up to the next DWORD.
+
+<A NAME="236"><H3>Freeing memory in a separate heap</H3></A>
+
+<P>You can free a block in a heap by calling
+
+<p><pre>
+BOOL HeapFree (HANDLE hHeap, DWORD dwFlags, LPVOID lpMem);
+</pre>
+
+<P>The only flag allowable in the <I>dwFlags </I>parameter is HEAP_NO_SERIALIZE. The <I>lpMem</I> parameter points to the block to free, while <I>hHeap</I> contains the handle to the heap.
+
+<A NAME="237"><H3>Resizing and querying the size of memory in a separate heap</H3></A>
+
+<P>You can resize heap allocations by calling
+
+<p><pre>
+LPVOID HeapReAlloc (HANDLE hHeap, DWORD dwFlags, LPVOID lpMem,
+                    DWORD dwBytes);
+</pre>
+
+<P>The <I>dwFlags</I> parameter can be any combination of three flags: HEAP_NO_SERIALIZE, HEAP_REALLOC_IN_PLACE_ONLY, and HEAP_ZERO_MEMORY. The only new flag here is HEAP_REALLOC_IN_PLACE_ONLY, which tells the heap manager to fail the reallocation if the space can't be found for the block without relocating it. This flag is handy if you already have a number of pointers pointing to data in the block and you aren't interested in updating them. The <I>lpMem</I> parameter is the pointer to the block being resized, and the <I>dwBytes</I> parameter is the requested new size of the block. Notice that the function of the HEAP_REALLOC_IN_PLACE_ONLY flag in <I>HeapReAlloc </I>provides the opposite function from the one that the LMEM_MOVEABLE flag provides for <I>LocalReAlloc</I>. HEAP_REALLOC_IN_PLACE_ONLY prevents a block that would be moved by default in a separate heap while LMEM_MOVEABLE enables a block to be moved that by default would not be moved in the local heap. <I>HeapReAlloc</I> returns a pointer to the block if the reallocation was successful, and returns NULL otherwise. Unless you specified that the block not be relocated, the returned pointer might be different from the pointer passed in if the block had to be relocated to find enough space in the heap.
+
+<P>To determine the actual size of a block, you can call
+
+<p><pre>
+DWORD HeapSize (HANDLE hHeap, DWORD dwFlags, LPCVOID lpMem);
+</pre>
+
+<P>The parameters are as you expect: the handle of the heap, the single, optional flag, HEAP_NO_SERIALIZE, and the pointer to the block of memory being checked.
+
+<A NAME="238"><H3>Destroying a separate heap</H3></A>
+
+<P>You can completely free a heap by calling
+
+<p><pre>
+BOOL HeapDestroy (HANDLE hHeap);
+</pre>
+
+<P>Individual blocks within the heap don't have to be freed before you destroy the heap.
+
+<P>One final heap function is valuable when writing DLLs. The function
+
+<p><pre>
+HANDLE GetProcessHeap (VOID);
+</pre>
+
+<P>returns the handle to the local heap of the process calling the DLL. This allows a DLL to allocate memory within the calling process's local heap. All the other heap calls, with the exception of <I>HeapDestroy</I>, can be used with the handle returned by <I>GetProcessHeap</I>.
+
+<A NAME="239"><H2>The Stack</H2></A>
+
+<P>The stack is the easiest to use (the most self-managing) of the different types of memory under Windows CE. The stack under Windows CE, as in any operating system, is the storage place for temporary variables that are referenced within a function. The operating system also uses the stack to store return addresses for functions and the state of the microprocessor registers during exception handling.
+
+<P>Windows CE manages a separate stack for every thread in the system. Under all versions of the operating system before Windows CE 2.1, each stack in the system is limited to fewer than 58 KB. Separate threads within one process can each enlarge its stack up to the 58-KB limit. This limit has to do with how Windows CE manages the stack. When a thread is created, Windows CE reserves a 60-KB region for the thread's stack. It then commits virtual pages from the top down as the stack grows. As the stack shrinks, the system will, under low-memory conditions, reclaim the unused but still committed pages below the stack. The limit of 58 KB comes from the size of the 64-KB region dedicated to the stack minus the number of pages necessary to guard the stack against overflow and underflow.
+
+<P>Starting with Windows CE 2.1, the size of the stack can be specified by a linker switch when an application is linked. The same guard pages are applied, but the stack size can be specified up to 1 MB. Note that the size defined for the default stack is also the size used for all the separate thread stacks. That is, if you specify the main stack to be 128 KB, all other threads in the application have a stack size limit of 128 KB.
+
+<P>One other consideration must be made when you're planning how to use the stack in an application. When an application calls a function that needs stack space, Windows CE attempts to commit the pages immediately below the current stack pointer to satisfy the request. If no physical RAM is available, the thread needing the stack space is briefly suspended. If the request can't be granted within a short period of time, an exception is raised. Windows CE goes to great lengths to free the required pages, but if this can't happen the system raises an exception. I'll cover low-memory situations shortly, but for now just remember that you shouldn't try to use large amounts of stack space in low-memory situations.
+
+<A NAME="240"><H2>Static Data</H2></A>
+
+<P>C and C++ applications have predefined blocks of memory that are automatically allocated when the application is loaded. These blocks hold statically allocated strings, buffers, and global variables as well as buffers necessary for the library functions that were statically linked with the application. None of this is new to the C programmer, but under Windows CE, these spaces are handy for squeezing the last useful bytes out of RAM.
+
+<P>Windows CE allocates two blocks of RAM for the static data of an application, one for the read/write data and one for the read-only data. Because these areas are allocated on a per-page basis, you can typically find some space left over from the static data up to the next page boundary. The finely tuned Windows CE application should be written to ensure that it has little or no extra space left over. If you have space in the static data area, sometimes it's better to move a buffer or two into the static data area instead of allocating those buffers dynamically.
+
+<P>Another consideration is that if you're writing a ROM-based application, you should move as much data as possible to the read-only static data area. Windows CE doesn't allocate RAM to the read-only area for ROM-based applications. Instead, the ROM pages are mapped directly into the virtual address space. This essentially gives you unlimited read-only space with no impact on the RAM requirements of the application.
+
+<P>The best place to determine the size of the static data areas is to look in the map file that's optionally generated by the linker. The map file is chiefly used to determine the locations of functions and data for debugging purposes, but it also shows the size of the static data, if you know where to look. Figure 6-4 shows a portion of an example map file generated by Visual C++.
+
+<P><B>Figure 6-4.</B> <I>The top portion of a map file showing the size of the data segments in an application.</I>
+
+<p><pre>
+memtest
+
+Timestamp is 34ce4088 (Tue Jan 27 12:16:08 1998)
+
+
+Preferred load address is 00010000
+
+Start         Length     Name                   Class
+0001:00000000 00006100H .text                   CODE
+0002:00000000 00000310H .rdata                  DATA
+0002:00000310 00000014H .xdata                  DATA
+0002:00000324 00000028H .idata$2                DATA
+0002:0000034c 00000014H .idata$3                DATA
+0002:00000360 000000f4H .idata$4                DATA
+0002:00000454 000003eeH .idata$6                DATA
+0002:00000842 00000000H .edata                  DATA
+0003:00000000 000000f4H .idata$5                DATA
+0003:000000f4 00000004H .CRT$XCA                DATA
+0003:000000f8 00000004H .CRT$XCZ                DATA
+0003:000000fc 00000004H .CRT$XIA                DATA
+0003:00000100 00000004H .CRT$XIZ                DATA
+0003:00000104 00000004H .CRT$XPA                DATA
+0003:00000108 00000004H .CRT$XPZ                DATA
+0003:0000010c 00000004H .CRT$XTA                DATA
+0003:00000110 00000004H .CRT$XTZ                DATA
+0003:00000114 000011e8H .data                   DATA
+0003:000012fc 0000108cH .bss                    DATA
+0004:00000000 000003e8H .pdata                  DATA
+0005:00000000 000000f0H .rsrc$01                DATA
+0005:000000f0 00000334H .rsrc$02                DATA
+
+ Address         Publics by Value              Rva+Base     Lib:Object
+
+0001:00000000       _WinMai              00011000 f   memtest.obj
+0001:0000007c       _InitApp                   0001107c f   memtest.obj
+0001:000000d4       _InitInstance              000110d4 f   memtest.obj
+0001:00000164       _TermInstance              00011164 f   memtest.obj
+0001:00000248       _MainWndProc               00011248 f   memtest.obj
+0001:000002b0       _GetFixedEquiv             000112b0 f   memtest.obj
+0001:00000350       _DoCreateMai         00011350 f   memtest.obj.
+.
+.
+.
+</pre>
+
+<P>The map file in Figure 6-4 indicates that the EXE has five sections. Section <I>0001</I> is the text segment containing the executable code of the program. Section <I>0002 </I>contains the read-only static data. Section <I>0003</I> contains the read/write static data. Section <I>0004</I> contains the fix-up table to support calls to other DLLs. Finally, section <I>0005</I> is the resource section containing the application's resources, such as menu and dialog box templates.
+
+<P>Let's examine the <I>.data</I>, <I>.bss</I>, and <I>.rdata </I>lines. The <I>.data</I> section contains the initialized read/write data. If you initialized a global variable as in
+
+<p><pre>
+static HINST g_hLoadlib = NULL;
+</pre>
+
+<P>the <I>g_loadlib</I> variable would end up in the <I>.data</I> segment. The <I>.bss</I> segment contains the uninitialized read/write data. A buffer defined as
+
+<p><pre>
+static BYTE g_ucItems[256];
+</pre>
+
+<P>would end up in the <I>.bss</I> segment. The final segment, <I>.rdata</I>, contains the read-only data. Static data that you've defined using the <I>const</I> keyword ends up in the <I>.rdata</I> segment. An example of this would be the structures I use for my message look-up tables, as in the following:
+
+<p><pre>
+// Message dispatch table for MainWindowProc
+const struct decodeUINT MainMessages[] = {
+    WM_CREATE, DoCreateMain,
+    WM_SIZE, DoSizeMain,
+    WM_COMMAND, DoCommandMain,
+    WM_DESTROY, DoDestroyMain,
+};
+</pre>
+
+<P>The <I>.data</I> and <I>.bss</I> blocks are folded into the <I>0003</I> section which, if you add the size of all blocks in the third section, has a total size of 0x2274, or 8820, bytes. Rounded up to the next page size, the read/write section ends up taking nine pages, with 396 bytes not used. So, in this example, placing a buffer or two in the static data section of the application would be essentially free. The read-only segment, section <I>0002</I>, including <I>.rdata</I>, ends up being 0x0842, or 2114, bytes, which takes up three pages with 958 bytes, almost an entire page, wasted. In this case, moving 75 bytes of constant data from the read-only segment to the read /write segment saves a page of RAM when the application is loaded.
+
+<A NAME="241"><H2>String Resources</H2></A>
+
+<P>One often forgotten area for read-only data is the resource segment of your application. While I mentioned a new, Windows CE_specific feature of the <I>LoadString</I> function in <A HREF="ch03a.htm">Chapter 3</a>, it's worth repeating here. If you call <I>LoadString </I>with 0 in place of the pointer to the buffer, the function returns a pointer to the string in the resource segment. An example would be
+
+<p><pre>
+LPCTSTR pString;
+
+pString  = (LPCTSTR)LoadString (hInst, ID_STRING, NULL, 0)
+</pre>
+
+<P>The string returned is read only, but it does allow you to reference the string without having to allocate a buffer to hold the string.
+
+<A NAME="242"><H2>Selecting the Proper Memory Type</H2></A>
+
+<P>Now that we've looked at the different types of memory, it's time to consider the best use of each. For large blocks of memory, directly allocating virtual memory is best. An application can reserve as much address space (up to the 32-MB limit of the application) but can commit only the pages necessary at any one time. While directly allocated virtual memory is the most flexible memory allocation type, it shifts to us the burden of worrying about page granularity as well as keeping track of the reserved versus committed pages.
+
+<P>The local heap is always handy. It doesn't need to be created and will grow as necessary to satisfy a request. Fragmentation is the issue here. Consider that applications on an H/PC might run for weeks or even months at a time. There's no Off button on an H/PC or a Palm-size PC&#8212;just a Suspend command. So, when you're thinking about memory fragmentation, don't assume that a user will open the application, change one item, and then close it. A user is likely to start an application and keep it running so that the application is just a quick click away.
+
+<P>The advantage of separate heaps is that you can destroy them when their time is up, nipping the fragmentation problem in the bud. A minor disadvantage of separate heaps is the need to manually create and destroy them. Another thing to remember about separate heaps is that Windows CE doesn't reserve virtual address space when a heap is created, which can become an issue if your application uses much of the virtual address space available to the application.
+
+<P>The static data area is a great place to slip in a buffer or two essentially for free because the page is going to be allocated anyway. The key to managing the static data is to make the size of the static data segments close to, but over the page size of, your target processor. For applications written for the H/PC or Palm-size PC, consider the 1024-byte page size of the NEC MIPS 4100 and Hitachi SH3 processors as the default. Sometimes it's better to move constant data from the read-only segment to the read/write segment if it saves a page in the read-only segment. The only time you wouldn't do this is if the application is to be burned into ROM. Then, the more constant data, the better, because it doesn't take up RAM.
+
+<P>The stack is, well, the stack&#8212;simple to use and always around. The only considerations are the maximum size of the stack and the problems of enlarging the stack in a low memory condition. Make sure your application doesn't require large amounts of stack space to shut down. If the system suspends a thread in your application while it's being shut down, the user will more than likely lose data. That won't help customer satisfaction.
+
+<A NAME="243"><H2>Managing Low-Memory Conditions</H2></A>
+
+<P>Even for applications that have been fine-tuned to minimize their memory use, there are going to be times when the system runs very low on RAM. Windows CE applications operate in an almost perpetual low-memory environment. The Palm-size PC is designed intentionally to run in a low-memory situation Applications on the Palm-size PC don't have a Close button&#8212;the shell automatically closes them when the system needs additional memory. Because of this, Windows CE offers a number of methods to distribute the scarce memory in the system among the running applications.
+
+<A NAME="244"><H3>The WM_HIBERNATE message</H3></A>
+
+<P>The first and most obvious addition to Windows CE is the WM_HIBERNATE message. Windows CE sends this message to all top-level windows that have the WS_OVERLAPPED style (that is, have neither the WS_POPUP nor the WS_CHILD style) and have the WS_VISIBLE style. These qualifications should allow most applications to have at least one window that receives a WM_HIBERNATE message. An exception to this would be an application that doesn't really terminate, but simply hides all its windows. This arrangement allows an application a quick start because it only has to show its window, but this situation also means that the application is taking up RAM even when the user thinks it's closed. While this is exactly the kind of application design that should <I>not</I> be used under Windows CE, those that are designed this way must act as if they're always in hibernate mode when hidden because they'll never receive a WM_HIBERNATE message.
+
+<P>Windows CE sends WM_HIBERNATE messages to the top-level windows in reverse Z-order until enough memory is freed to push the available memory above a preset threshold. When an application receives a WM_HIBERNATE message, it should reduce its memory footprint as much as possible. This can involve releasing cached data; freeing any GDI objects such as fonts, bitmaps, and brushes; and destroying any window controls. In essence, the application should reduce its memory use to the smallest possible footprint that's necessary to retain its internal state.
+
+<P>If sending WM_HIBERNATE messages to the applications in the background doesn't free enough memory to move the system out of a limited-memory state, a WM_HIBERNATE message is sent to the application in the foreground. If part of your hibernation routine is to destroy controls on your window, you should be sure that you aren't the foreground application. Disappearing controls don't give the user a warm and fuzzy feeling.
+
+<A NAME="245"><H3>Memory thresholds</H3></A>
+
+<P>Windows CE monitors the free RAM in the system and responds differently as less and less RAM is available. As less memory is available, Windows CE first sends WM_HIBERNATE messages and then begins limiting the size of allocations possible. The two figures below show the free-memory levels used by the Handheld PC and the Palm-size PC to trigger low-memory events in the system. Windows CE defines four memory states: normal, limited, low, and critical. The memory state of the system depends on how much free memory is available to the system as a whole. These limits are higher for 4-KB page systems because those systems have less granularity in allocations.
+
+<P><B>Figure 6-5.</B> <I>Memory thresholds for the Handheld PC.</I>
+
+<P>
+<TABLE cellpadding=5 width="95%">
+
+<tr><td valign="top"><b>Event</b></td>
+<td valign="top"><b>Free Memory<br>1024-Page Size</b></td>
+<td valign="top"><b>Free Memory<br>4096-Page Size</b></td>
+<td valign="top"><b>Comments</b></td></tr>
+
+<tr><td valign="top">Limited-memory state</td>
+<td valign="top">128 KB</td>
+<td valign="top">160 KB</td>
+<td valign="top">Send MWM_HIBERNATE messages to applications in reverse Z-order. Free stack space reclaimed as needed.</td></tr>
+
+<tr><td valign="top">Low-memory state</td>
+<td valign="top">64 KB</td>
+<td valign="top">96 KB</td>
+<td valign="top">Limit virtual allocs to 16 KB. Low-memory dialog displayed.</td></tr>
+
+<tr><td valign="top">Critical-memory state</td>
+<td valign="top">16 KB</td>
+<td valign="top">48 KB</td>
+<td valign="top">Limit virtual allocs to 8 KB.</td></tr>
+</table>
+
+<P><B>Figure 6-6.</B> <I>Memory thresholds for the Palm-size PC.</I>
+
+<P>
+<TABLE cellpadding=5 width="95%">
+<tr><td valign="top">Hibernate threshold</td>
+
+<td valign="top">200 KB</td>
+<td valign="top">224 KB</td>
+<td valign="top">Send WM_HIBERNATE messages to applications in reverse Z-order.</td></tr>
+
+<tr><td valign="top">Limited-memory state</td>
+<td valign="top">128 KB</td>
+<td valign="top">160 KB</td>
+<td valign="top">Begin to close applications in reverse Z-order. Free stack space reclaimed as needed.</td></tr>
+
+<tr><td valign="top">Low-memory state</td>
+<td valign="top">64 KB</td>
+<td valign="top">96 KB</td>
+<td valign="top">Limit virtual allocs to 16 KB.</td></tr>
+
+<tr><td valign="top">Critical-memory state</td>
+<td valign="top">16 KB</td>
+<td valign="top">48 KB</td>
+<td valign="top">Limit virtual allocs to 8 KB.</td></tr>
+</table>               
+
+
+<P>The effect of these memory states is to share the remaining wealth. First, WM_HIBERNATE messages are sent to the applications to ask them to reduce their memory footprint. After an application is sent a WM_HIBERNATE message, the system memory levels are checked to see whether the available memory is now above the threshold that caused the WM_HIBERNATE messages to be sent. If not, a WM_HIBERNATE message is sent to the next application. This continues until all applications have been sent a WM_HIBERNATE message.
+
+<P>The low-memory strategies of the Handheld PC and the Palm-size PC diverge at this point. If the memory level drops below the next threshold, limited for the Palm-size PC and Low for the H/PC, the system starts shutting down applications. On the H/PC, the system displays the OOM, the out-of-memory dialog, and requests that the user either select an application to close or reallocate some RAM dedicated to the object store to the program memory. If, after the selected application has been shut down or memory has been moved into program RAM, you still don't have enough memory, the out-of-memory dialog is displayed again. This process is repeated until there's enough memory to lift the H/PC above the threshold.
+
+<P>For the Palm-size PC, the actions are somewhat different. The Palm-size PC shell automatically starts shutting down applications in least recently used order without asking the user. If there still isn't enough memory after all applications except the foreground application and the shell are closed, the system uses its other techniques of scavenging free pages from stacks and limiting any allocations of virtual memory.
+
+<P>If, on either system, an application is requested to shut down and it doesn't, the system will purge the application after waiting approximately 8 seconds. This is the reason an application shouldn't allocate large amounts of stack space. If the application is shutting down due to low-memory conditions, it's quite possible that the stack space can't be allocated and the application will be suspended. If this happens after the system has requested that the application close, it could be purged from memory without properly saving its state.
+
+<P>In the low- and critical-memory states, applications are limited in the amount of memory they can allocate. In these states, a request for virtual memory larger than what's allowed is refused even if there's memory available to satisfy the request. Remember that it isn't just virtual memory allocations that are limited; allocations on the heap and stack are rejected if, to satisfy the request, those allocations require virtual memory allocations above the allowable limits.
+
+<P>I should point out that sending WM_HIBERNATE messages and automatically closing down applications is performed by the shell of the H/PC and Palm-size PC. The embedded version of Windows CE uses a much simpler shell that doesn't support these memory management techniques. On these embedded systems, you'll have to devise your own strategy for managing low-memory situations.
+
+<P>It should go without saying that applications should check the return codes of any memory allocation call, but since some still don't, I'll say it. <I>Check the return</I> <I>codes from calls that allocate memory.</I> There's a much better chance of a memory allocation failing under Windows CE than under Windows NT or Windows 98. Applications must be written to react gracefully to rejected memory allocations.
+
+<P>The Win32 memory management API isn't fully supported by Windows CE, but there's clearly enough support for you to use the limited memory of a Windows CE device to the fullest. A great source for learning about the intricacies of the Win32 memory management API is Jeff Richter's <I>Advanced Windows </I>(Microsoft Press, 1997). Jeff spends five chapters on memory management while I have summarized the same topic in one.
+
+<P>We've looked at the program RAM, the part of RAM that is available to applications. Now it's time, in the next chapter, to look at the other part of the RAM, the object store. The object store supports more than a file system. It also supports the registry API as well as a database API unique to Windows CE.
+
+</BODY>
+</HTML>
+
+
+
+

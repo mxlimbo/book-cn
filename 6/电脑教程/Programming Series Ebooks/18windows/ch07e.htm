@@ -1,0 +1,930 @@
+<HTML>
+<HEAD>
+	<LINK REL=StyleSheet HREF="petzoldi.css" TYPE="text/css">
+<title>Hit-Testing in Your Programs</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="194"><h1>Hit-Testing in Your Programs</h1></A>
+<p>Earlier I discussed how Windows Explorer responds to mouse clicks and double-clicks. Obviously, the program (or more precisely the list view control that Windows Explorer uses) must first determine exactly which file or directory the user is pointing at with the mouse.
+
+<p>This is called &quot;hit-testing.&quot; Just as <I>DefWindowProc</I> must do some hit-testing when processing WM_NCHITTEST messages, a window procedure often must do hit-testing of its own within the client area. In general, hit-testing involves calculations using the <I>x</I> and <I>y</I> coordinates passed to your window procedure in the <I>lParam</I> parameter of the mouse message.
+
+<A NAME="195"><h2>A Hypothetical Example</h2></A>
+<p>Here's an example. Suppose your program needs to display several columns of alphabetically sorted files. Normally, you would use the list view control because it does all the hit-testing work for you. But let's suppose you can't use it for some reason. You need to do it yourself. Let's assume that the filenames are stored in a sorted array of pointers to character strings named <I>szFileNames</I>.
+
+<p>Let's also assume that the file list starts at the top of the client area, which is <I>cxClient</I> pixels wide and <I>cyClient</I> pixels high. The columns are <I>cxColWidth</I> pixels wide; the characters are <I>cyChar</I> pixels high. The number of files you can fit in each column is
+
+<p><pre>
+iNumInCol = cyClient / cyChar ;
+</PRE>
+
+<p>When your program receives a mouse click message, you can obtain the <I>cxMouse</I> and <I>cyMouse</I> coordinates from <I>lParam</I>. You then calculate which column of filenames the user is pointing at by using this formula:
+
+<p><pre>
+iColumn = cxMouse / cxColWidth ;
+</PRE>
+
+<p>The position of the filename in relation to the top of the column is
+
+<p><pre>
+iFromTop = cyMouse / cyChar ;
+</PRE>
+
+<p>Now you can calculate an index to the <I>szFileNames</I> array.
+
+<p><pre>
+iIndex = iColumn * iNumInCol + iFromTop ;
+</PRE>
+
+<p>If <I>iIndex</I> exceeds the number of files in the array, the user is clicking on a blank area of the display.
+
+<p>In many cases, hit-testing is more complex than this example suggests. When you display a graphical image containing many parts, you must determine the coordinates for each item you display. In hit-testing calculations, you must go backward from the coordinates to the object. This can become quite messy in a word-processing program that uses variable font sizes, because you must work backward to find the character position with the string.
+
+<A NAME="196"><h2>A Sample Program</h2></A>
+<p>The CHECKER1 program, shown in Figure 7-4, demonstrates some simple hit-testing. The program divides the client area into a 5-by-5 array of 25 rectangles. If you click the mouse on one of the rectangles, the rectangle is filled with an X. If you click there again, the X is removed.
+
+<p><B>Figure 7-4.</B> <I>The CHECKER1 program.</I><table CELLPADDING=5 WIDTH="95%">
+<TR><TD>
+<A NAME="197"><p><h3>CHECKER1.C</h3></A>
+<p><pre>
+/*-------------------------------------------------
+   CHECKER1.C -- Mouse Hit-Test Demo Program No. 1
+                 (c) Charles Petzold, 1998
+  -------------------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+#define DIVISIONS 5
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR  szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName[] = TEXT (&quot;Checker1&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+     
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;Program requires Windows NT!&quot;), 
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Checker1 Mouse Hit-Test Demo&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAMlParam)
+{
+     static BOOL fState[DIVISIONS][DIVISIONS] ;
+     static int  cxBlock, cyBlock ;
+     HDC         hdc ;
+     int         x, y ;
+     PAINTSTRUCT ps ;
+     RECT        rect ;
+     
+     switch (message)
+     {
+     case WM_SIZE :
+          cxBlock = LOWORD (lParam) / DIVISIONS ;
+          cyBlock = HIWORD (lParam) / DIVISIONS ;
+          return 0 ;
+          
+     case WM_LBUTTONDOWN :
+          x = LOWORD (lParam) / cxBlock ;
+          y = HIWORD (lParam) / cyBlock ;
+          
+          if (x &lt; DIVISIONS &amp;&amp; y &lt; DIVISIONS)
+          {
+               fState [x][y] ^= 1 ;
+               
+               rect.left   = x * cxBlock ;
+               rect.top    = y * cyBlock ;
+               rect.right  = (x + 1) * cxBlock ;
+               rect.bottom = (y + 1) * cyBlock ;
+               
+               InvalidateRect (hwnd, &amp;rect, FALSE) ;
+          }
+          else
+               MessageBeep (0) ;
+          return 0 ;
+          
+     case WM_PAINT :
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+          
+          for (x = 0 ; x &lt; DIVISIONS ; x++)
+          for (y = 0 ; y &lt; DIVISIONS ; y++)
+          {
+               Rectangle (hdc, x * cxBlock, y * cyBlock,
+                         (x + 1) * cxBlock, (y + 1) * cyBlock) ;
+                    
+               if (fState [x][y])
+               {
+                    MoveToEx (hdc,  x    * cxBlock,  y    * cyBlock, NULL) ;
+                    LineTo   (hdc, (x+1) * cxBlock, (y+1) * cyBlock) ;
+                    MoveToEx (hdc,  x    * cxBlock, (y+1) * cyBlock, NULL) ;
+                    LineTo   (hdc, (x+1) * cxBlock,  y    * cyBlock) ;
+               }
+          }
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+               
+     case WM_DESTROY :
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</pre>
+</td></tr></table>
+
+<p>Figure 7-5 shows the CHECKER1 display. All 25 rectangles drawn by the program have the same width and the same height. These width and height values are stored in <I>cxBlock</I> and <I>cyBlock</I>, which are recalculated whenever the size of the client area changes. The WM_LBUTTONDOWN logic uses the mouse coordinates to determine which rectangle has been clicked. It flags the current state of the rectangle in the array <I>fState</I> and invalidates the rectangle to generate a WM_PAINT message.
+
+<p><A HREF="javascript:fullSize('F07zg05x.htm')"><img src="F07zg05.JPG" width=404 height=285 border=0 ALT="Click to view at full size."></a>
+
+<p><!-- caption --><B>Figure 7-5.</B> <I>The CHECKER1 display.</I><!-- /caption -->
+
+<p>If the width or height of the client area is not evenly divisible by five, a small strip of client area at the left or bottom will not be covered by a rectangle. For error processing, CHECKER1 responds to a mouse click in this area by calling <I>MessageBeep</I>.
+
+<p>When CHECKER1 receives a WM_PAINT message, it repaints the entire client area by drawing rectangles using the GDI <I>Rectangle</I> function. If the <I>fState</I> value is set, CHECKER1 draws two lines using the <I>MoveToEx</I> and <I>LineTo</I> functions. During WM_PAINT processing, CHECKER1 does not check whether each rectangular area lies within the invalid rectangle, but it could. One method for checking validity involves building a RECT structure for each rectangular block within the loop (using the same formulas as in the WM_LBUTTONDOWN logic) and checking whether that rectangle intersects the invalid rectangle (available as <I>ps.rcPaint</I>) by using the function <I>IntersectRect</I>.
+
+<A NAME="198"><h2>Emulating the Mouse with the Keyboard</h2></A>
+<p>To use CHECKER1, you need to use the mouse. We'll be adding a keyboard interface to the program shortly, as we did for the SYSMETS program in <a href="ch06a.htm#144">Chapter 6</a>. However, adding a keyboard interface to a program that uses the mouse cursor for pointing purposes requires that we also must worry about displaying and moving the mouse cursor.
+
+<p>Even if a mouse device is not installed, Windows can still display a mouse cursor. Windows maintains something called a &quot;display count&quot; for this cursor. If a mouse is installed, the display count is initially 0; if not, the display count is initially -1. The mouse cursor is displayed only if the display count is non-negative. You can increment the display count by calling
+
+<p><pre>
+ShowCursor (TRUE) ;
+
+</PRE>
+
+<p>and decrement it by calling
+
+<p><pre>
+ShowCursor (FALSE) ;
+</PRE>
+
+<p>You do not need to determine if a mouse is installed before using <I>ShowCursor</I>. If you want to display the mouse cursor regardless of the presence of the mouse, simply increment the display count by calling <I>ShowCursor</I>. After you increment the display count once, decrementing it will hide the cursor if no mouse is installed but leave it displayed if a mouse is present.
+
+<p>Windows maintains a current mouse cursor position even if a mouse is not installed. If a mouse is not installed and you display the mouse cursor, it might appear in any part of the display and will remain in that position until you explicitly move it. You can obtain the cursor position by calling
+
+<p><pre>
+GetCursorPos (&amp;pt) ;
+</PRE>
+
+<p>where <I>pt</I> is a POINT structure. The function fills in the POINT fields with the <I>x</I> and <I>y</I> coordinates of the mouse. You can set the cursor position by using
+
+<p><pre>
+SetCursorPos (x, y) ;
+</PRE>
+
+<p>In both cases, the <I>x</I> and <I>y</I> values are screen coordinates, not client-area coordinates. (This should be evident because the functions do not require a <I>hwnd</I> parameter.) As noted earlier, you can convert screen coordinates to client-area coordinates and vice versa by calling <I>ScreenToClient</I> and <I>ClientToScreen</I>.
+
+<p>If you call <I>GetCursorPos</I> while processing a mouse message and you convert to client-area coordinates, these coordinates might be slightly different from those encoded in the <I>lParam</I> parameter of the mouse message. The coordinates returned from <I>GetCursorPos</I> indicate the current position of the mouse. The coordinates in <I>lParam</I> are the coordinates of the mouse at the time the message was generated.
+
+<p>You'll probably want to write keyboard logic that moves the mouse cursor with the keyboard arrow keys and that simulates the mouse button with the Spacebar or Enter key. What you <I>don't</I> want to do is move the mouse cursor one pixel per keystroke. That forces a user to hold down an arrow key for too long a time to move it.
+
+<p>If you need to implement a keyboard interface to the mouse cursor but still maintain the ability to position the cursor at precise pixel locations, you can process keystroke messages in such as way that when you hold down an arrow key the mouse cursor starts moving slowly but then speeds up. You'll recall that the <I>lParam</I> parameter in WM_KEYDOWN messages indicates whether the keystroke messages are the result of typematic action. This is an excellent application of that information.
+
+<A NAME="199"><h2>Add a Keyboard Interface to CHECKER</h2></A>
+<p>The CHECKER2 program, shown in Figure 7-6, is the same as CHECKER1, except that it includes a keyboard interface. You can use the Left, Right, Up, and Down arrow keys to move the cursor among the 25 rectangles. The Home key sends the cursor to the upper left rectangle; the End key drops it down to the lower right rectangle. Both the Spacebar and Enter keys toggle the X mark.
+
+<p><B>Figure 7-6.</B> <I>The CHECKER2 program.</I>
+<table CELLPADDING=5 WIDTH="95%">
+<TR><TD>
+<A NAME="200"><p><h3>CHECKER2.C</h3></A>
+<p><pre>
+/*-------------------------------------------------
+   CHECKER2.C -- Mouse Hit-Test Demo Program No. 2
+                 (c) Charles Petzold, 1998
+  -------------------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+#define DIVISIONS 5
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName[] = TEXT (&quot;Checker2&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;Program requires Windows NT!&quot;), 
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Checker2 Mouse Hit-Test Demo&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static BOOL fState[DIVISIONS][DIVISIONS] ;
+     static int  cxBlock, cyBlock ;
+     HDC         hdc ;
+     int         x, y ;
+     PAINTSTRUCT ps ;
+     POINT       point ;
+     RECT        rect ;
+     
+     switch (message)
+     {
+     case WM_SIZE :
+          cxBlock = LOWORD (lParam) / DIVISIONS ;
+          cyBlock = HIWORD (lParam) / DIVISIONS ;
+          return 0 ;
+          
+     case WM_SETFOCUS :
+          ShowCursor (TRUE) ;
+          return 0 ;
+          
+     case WM_KILLFOCUS :
+          ShowCursor (FALSE) ;
+          return 0 ;
+          
+     case WM_KEYDOWN :
+          GetCursorPos (&amp;point) ;
+          ScreenToClient (hwnd, &amp;point) ;
+          x = max (0, min (DIVISIONS - 1, point.x / cxBlock)) ;
+          y = max (0, min (DIVISIONS - 1, point.y / cyBlock)) ;
+          
+          switch (wParam)
+          {
+          case VK_UP :
+               y-- ;
+               break ;
+               
+          case VK_DOWN :
+               y++ ;
+               break ;
+               
+          case VK_LEFT :
+               x-- ;
+               break ;
+               
+          case VK_RIGHT :
+               x++ ;
+               break ;
+               
+          case VK_HOME :
+               x = y = 0 ;
+               break ;
+               
+          case VK_END :
+               x = y = DIVISIONS - 1 ;
+               break ;
+               
+          case VK_RETURN :
+          case VK_SPACE :
+               SendMessage (hwnd, WM_LBUTTONDOWN, MK_LBUTTON,
+                            MAKELONG (x * cxBlock, y * cyBlock)) ;
+               break ;
+          }
+          x = (x + DIVISIONS) % DIVISIONS ;
+          y = (y + DIVISIONS) % DIVISIONS ;
+          
+          point.x = x * cxBlock + cxBlock / 2 ;
+          point.y = y * cyBlock + cyBlock / 2 ;
+          
+          ClientToScreen (hwnd, &amp;point) ;
+          SetCursorPos (point.x, point.y) ;
+          return 0 ;
+
+     case WM_LBUTTONDOWN :
+          x = LOWORD (lParam) / cxBlock ;
+          y = HIWORD (lParam) / cyBlock ;
+          
+          if (x &lt; DIVISIONS &amp;&amp; y &lt; DIVISIONS)
+          {
+               fState[x][y] ^= 1 ;
+               
+               rect.left   = x * cxBlock ;
+               rect.top    = y * cyBlock ;
+               rect.right  = (x + 1) * cxBlock ;
+               rect.bottom = (y + 1) * cyBlock ;
+               
+               InvalidateRect (hwnd, &amp;rect, FALSE) ;
+          }
+          else
+               MessageBeep (0) ;
+          return 0 ;
+          
+     case WM_PAINT :
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+          
+          for (x = 0 ; x &lt; DIVISIONS ; x++)
+          for (y = 0 ; y &lt; DIVISIONS ; y++)
+          {
+               Rectangle (hdc, x * cxBlock, y * cyBlock,
+                          (x + 1) * cxBlock, (y + 1) * cyBlock) ;
+                    
+               if (fState [x][y])
+               {
+                    MoveToEx (hdc,  x   *cxBlock,  y   *cyBlock, NULL) ;
+                    LineTo   (hdc, (x+1)*cxBlock, (y+1)*cyBlock) ;
+                    MoveToEx (hdc,  x   *cxBlock, (y+1)*cyBlock, NULL) ;
+                    LineTo   (hdc, (x+1)*cxBlock,  y   *cyBlock) ;
+               }
+          }
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+               
+     case WM_DESTROY :
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</pre>
+</TD></TR>
+</table>
+
+<p>The WM_KEYDOWN logic in CHECKER2 determines the position of the cursor using <I>GetCursorPos</I>, converts the screen coordinates to client-area coordinates using <I>ScreenToClient</I>, and divides the coordinates by the width and height of the rectangular block. This produces <I>x</I> and <I>y</I> values that indicate the position of the rectangle in the 5-by-5 array. The mouse cursor might or might not be in the client area when a key is pressed, so <I>x</I> and <I>y</I> must be passed through the <I>min</I> and <I>max</I> macros to ensure that they range from 0 through 4.
+
+<p>For arrow keys, CHECKER2 increments or decrements <I>x</I> and <I>y</I> appropriately. If the key is the Enter key or the Spacebar, CHECKER2 uses <I>SendMessage</I> to send a WM_LBUTTONDOWN message to itself. This technique is similar to the method used in the SYSMETS program in <a href="ch06a.htm#144">Chapter 6</a> to add a keyboard interface to the window scroll bar. The WM_KEYDOWN logic finishes by calculating client-area coordinates that point to the center of the rectangle, converting to screen coordinates using <I>ClientToScreen</I>, and setting the cursor position using <I>SetCursorPos</I>.
+
+<A NAME="201"><h2>Using Child Windows for Hit-Testing</h2></A>
+<p>Some programs (for example, the Windows Paint program) divide the client area into several smaller logical areas. The Paint program has an area at the left for its icon-based tool menu and an area at the bottom for the color menu. When Paint hit-tests these two areas, it must take into account the location of the smaller area within the entire client area before determining the actual item being selected by the user.
+
+<p>Or maybe not. In reality, Paint simplifies both the drawing and hit-testing of these smaller areas through the use of &quot;child windows.&quot; The child windows divide the entire client area into several smaller rectangular regions. Each child window has its own window handle, window procedure, and client area. Each child window procedure receives mouse messages that apply only to its own window. The <I>lParam</I> parameter in the mouse message contains coordinates relative to the upper left corner of the client area of the child window, not relative to the client area of the &quot;parent&quot; window (which is Paint's main application window).
+
+
+<p>Child windows used in this way can help you structure and modularize your programs. If the child windows use different window classes, each child window can have its own window procedure. The different window classes can also define different background colors and different default cursors. In <a href="ch09a.htm#806">Chapter 9</a>, we'll look at &quot;child window controls,&quot; which are predefined windows that take the form of scroll bars, buttons, and edit boxes. Right now, let's see how we can use child windows in the CHECKER program.
+
+<A NAME="202"><h2>Child Windows in CHECKER</h2></A>
+<p>Figure 7-7 shows CHECKER3. This version of the program creates 25 child windows to process mouse clicks. It does not have a keyboard interface, but one could be added as I'll demonstrate in CHECKER4 later in this chapter.
+
+
+<p><B>Figure 7-7.</B> <I>The CHECKER3 program.</I>
+<table CELLPADDING=5 WIDTH="95%">
+<TR><TD>
+<A NAME="203"><p><h3>CHECKER3.C</h3></A>
+<p><pre>
+/*-------------------------------------------------
+   CHECKER3.C -- Mouse Hit-Test Demo Program No. 3
+                 (c) Charles Petzold, 1998
+  -------------------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+#define DIVISIONS 5
+
+LRESULT CALLBACK WndProc   (HWND, UINT, WPARAM, LPARAM) ;
+LRESULT CALLBACK ChildWndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+TCHAR szChildClass[] = TEXT (&quot;Checker3_Child&quot;) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName[] = TEXT (&quot;Checker3&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+     
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;Program requires Windows NT!&quot;), 
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     wndclass.lpfnWndProc   = ChildWndProc ;
+     wndclass.cbWndExtra    = sizeof (long) ;
+     wndclass.hIcon         = NULL ;
+     wndclass.lpszClassName = szChildClass ;
+
+     RegisterClass (&amp;wndclass) ;
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Checker3 Mouse Hit-Test Demo&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static HWND hwndChild[DIVISIONS][DIVISIONS] ;
+     int         cxBlock, cyBlock, x, y ;
+     
+     switch (message)
+     {
+     case WM_CREATE :
+          for (x = 0 ; x &lt; DIVISIONS ; x++)
+               for (y = 0 ; y &lt; DIVISIONS ; y++)
+                    hwndChild[x][y] = CreateWindow (szChildClass, NULL,
+                              WS_CHILDWINDOW | WS_VISIBLE,
+                              0, 0, 0, 0,
+                              hwnd, (HMENU) (y &lt;&lt; 8 | x),
+                              (HINSTANCE) GetWindowLong (hwnd, GWL_HINSTANCE),
+                              NULL) ;
+          return 0 ;
+               
+     case WM_SIZE :
+          cxBlock = LOWORD (lParam) / DIVISIONS ;
+          cyBlock = HIWORD (lParam) / DIVISIONS ;
+          for (x = 0 ; x &lt; DIVISIONS ; x++)
+                for (y = 0 ; y &lt; DIVISIONS ; y++)
+                    MoveWindow (hwndChild[x][y],
+                                x * cxBlock, y * cyBlock,
+                                cxBlock, cyBlock, TRUE) ;
+          return 0 ;
+
+     case WM_LBUTTONDOWN :
+          MessageBeep (0) ;
+          return 0 ;
+          
+     case WM_DESTROY :
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+
+LRESULT CALLBACK ChildWndProc (HWND hwnd, UINT message, 
+                               WPARAM wParam, LPARAM lParam)
+{
+     HDC         hdc ;
+     PAINTSTRUCT ps ;
+     RECT        rect ;
+     
+     switch (message)
+     {
+     case WM_CREATE :
+          SetWindowLong (hwnd, 0, 0) ;       // on/off flag
+          return 0 ;
+          
+     case WM_LBUTTONDOWN :
+          SetWindowLong (hwnd, 0, 1 ^ GetWindowLong (hwnd, 0)) ;
+          InvalidateRect (hwnd, NULL, FALSE) ;
+          return 0 ;
+          
+     case WM_PAINT :
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+          
+          GetClientRect (hwnd, &amp;rect) ;
+          Rectangle (hdc, 0, 0, rect.right, rect.bottom) ;
+          
+          if (GetWindowLong (hwnd, 0))
+          {
+               MoveToEx (hdc, 0,          0, NULL) ;
+               LineTo   (hdc, rect.right, rect.bottom) ;
+               MoveToEx (hdc, 0,          rect.bottom, NULL) ;
+               LineTo   (hdc, rect.right, 0) ;
+          }
+          
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</pre>
+</TD></TR>
+</table>
+
+<p>CHECKER3 has two window procedures named <I>WndProc</I> and <I>ChildWndProc</I>. <I>WndProc</I> is still the window procedure for the main (or parent) window. <I>ChildWndProc</I> is the window procedure for the 25 child windows. Both window procedures must be defined as CALLBACK functions.
+
+<p>Because a window procedure is associated with a particular window class structure that you register with Windows by calling the <I>RegisterClass</I> function, CHECKER3 requires two window classes. The first window class is for the main window and has the name &quot;Checker3&quot;. The second window class is given the name &quot;Checker3_Child&quot;. You don't have to choose quite so reasonable names as these, though.
+
+<p>CHECKER3 registers both window classes in the <I>WinMain</I> function. After registering the normal window class, CHECKER3 simply reuses most of the fields in the <I>wndclass</I> structure for registering the Checker3_Child class. Four fields, however, are set to different values for the child window class:
+
+<p><ul>
+
+<p><li>The <I>lpfnWndProc</I> field is set to <I>ChildWndProc</I>, the window procedure for the child window class.
+
+<p><li>The <I>cbWndExtra</I> field is set to 4 bytes or, more precisely, <I>sizeof (long)</I>. This field tells Windows to reserve 4 bytes of extra space in an internal structure that Windows maintains for each window based on this window class. You can use this space to store information that might be different for each window.
+
+<p><li>The <I>hIcon</I> field is set to NULL because child windows such as the ones in CHECKER3 do not require icons.
+
+<p><li>The <I>pszClassName</I> field is set to &quot;Checker3_Child&quot;, the name of the class.
+</UL>
+
+<p>The <I>CreateWindow</I> call in <I>WinMain</I> creates the main window based on the Checker3 class. This is normal. However, when <I>WndProc</I> receives a WM_CREATE message, it calls <I>CreateWindow</I> 25 times to create 25 child windows based on the Checker3_Child class. The table below provides a comparison of the arguments to the <I>CreateWindow</I> call in <I>WinMain</I> and the <I>CreateWindow</I> call in <I>WndProc</I> that creates the 25 child windows.
+<p>
+
+<table CELLPADDING=5 WIDTH="95%"><TR>
+<TD VALIGN="TOP"><B><I>Argument</I></B></TD>
+<TD VALIGN="TOP"><B><I>Main Window</I></B></TD>
+<TD VALIGN="TOP"><B><I>Child Window</I></B></TD>
+</TR>
+<TR>
+<TD VALIGN="TOP">window class</TD>
+<TD VALIGN="TOP">&quot;Checker3&quot;</TD>
+<TD VALIGN="TOP">&quot;Checker3_Child&quot;</TD>
+</TR>
+<TR>          
+<TD VALIGN="TOP">window caption</TD>
+<TD VALIGN="TOP">&quot;Checker3&#8230;&quot;</TD>
+<TD VALIGN="TOP">NULL</TD>
+</TR>
+<TR>
+<TD VALIGN="TOP">window style</TD>
+<TD VALIGN="TOP">WS_OVERLAPPEDWINDOW</TD>
+<TD VALIGN="TOP">WS_CHILDWINDOW |WS_VISIBLE</TD>         
+</TR>
+<TR>
+<TD VALIGN="TOP">horizontal position</TD>
+<TD VALIGN="TOP">CW_USEDEFAULT</TD>
+<TD VALIGN="TOP">0</TD>         
+ </TR>
+<TR>
+<TD VALIGN="TOP">vertical position</TD>
+<TD VALIGN="TOP">CW_USEDEFAULT</TD>
+<TD VALIGN="TOP">0</TD>          
+</TR>
+<TR>
+<TD VALIGN="TOP">width</TD>
+<TD VALIGN="TOP">CW_USEDEFAULT</TD>
+<TD VALIGN="TOP">0</TD>
+</TR>
+<TR>
+<TD VALIGN="TOP">height</TD>
+<TD VALIGN="TOP">CW_USEDEFAULT</TD>
+<TD VALIGN="TOP">0</TD>
+</TR>
+<TR>
+<TD VALIGN="TOP">parent window handle</TD>
+<TD VALIGN="TOP">NULL</TD>
+<TD VALIGN="TOP">hwnd</TD>
+</TR>
+<TR>         
+<TD VALIGN="TOP">menu handle/child ID</TD>
+<TD VALIGN="TOP">NULL</TD>
+<TD VALIGN="TOP">(HMENU) (y &lt;&lt; 8 | x)</TD>
+</TR>
+<TR>
+<TD VALIGN="TOP">instance handle</TD>          
+<TD VALIGN="TOP">hInstance</TD>
+<TD VALIGN="TOP">(HINSTANCE) GetWindowLong (hwnd, GWL_HINSTANCE)</TD>
+</TR>
+<TR>
+<TD VALIGN="TOP">extra parameters</TD>
+<TD VALIGN="TOP">NULL</TD>
+<TD VALIGN="TOP">NULL</TD>              
+</TR>
+</TABLE>
+     
+
+<p>Normally, the position and size parameters are required for child window, but in CHECKER3 the child windows are positioned and sized later in <I>WndProc</I>. The parent window handle is NULL for the main window because it is the parent. The parent window handle is required when using the <I>CreateWindow</I> call to create a child window.
+
+<p>The main window doesn't have a menu, so that parameter is NULL. For child windows, the same parameter is called a &quot;child ID&quot; or a &quot;child windows ID.&quot; This is a number that uniquely identifies the child window. The child ID becomes much more important when working with child window controls in dialog boxes, as we'll see in <a href="ch11a.htm#331">Chapter 11</a>. For CHECKER3, I've simply set the child ID to a number that is a composite of the <I>x</I> and <I>y</I> positions that each child window occupies in the 5-by-5 array within the main window.
+
+<p>The <I>CreateWindow</I> function requires an instance handle. Within <I>WinMain</I>, the instance handle is easily available because it is a parameter to <I>WinMain</I>. When the child window is created, CHECKER3 must use <I>GetWindowLong</I> to extract the <I>hInstance</I> value from the structure that Windows maintains for the window. (Rather than use <I>GetWindowLong</I>, I could have saved the value of <I>hInstance</I> in a global variable and used it directly.)
+
+<p>Each child window has a different window handle that is stored in the <I>hwndChild</I> array. When <I>WndProc</I> receives a WM_SIZE message, it calls <I>MoveWindow</I> for each of the 25 child windows. The parameters to <I>MoveWindow</I> indicate the upper left corner of the child window relative to the parent window client-area coordinates, the width and height of the child window, and whether the child window needs repainting.
+
+
+<p>Now let's take a look at <I>ChildWndProc</I>. This window procedure processes messages for all 25 child windows. The <I>hwnd</I> parameter to <I>ChildWndProc</I> is the handle to the child window receiving the message. When <I>ChildWndProc</I> processes a WM_CREATE message (which will happen 25 times because there are 25 child windows), it uses <I>SetWindowWord</I> to store a 0 in the extra area reserved within the window structure. (Recall that we reserved this space by using the <I>cbWndExtra</I> field when defining the window class.) <I>ChildWndProc</I> uses this value to store the current state (X or no X) of the rectangle. When the child window is clicked, the WM_LBUTTONDOWN logic simply flips the value of this integer (from 0 to 1 or from 1 to 0) and invalidates the entire child window. This area is the rectangle being clicked. The WM_PAINT processing is trivial because the size of the rectangle it draws is the same size as its client area.
+
+<p>Because the C source code file and the .EXE file of CHECKER3 are larger than those for CHECKER1 (to say nothing of my explanation of the programs), I will not try to convince you that CHECKER3 is &quot;simpler&quot; than CHECKER1. But note that we no longer have to do any mouse hit-testing! If a child window in CHECKER3 gets a WM_LBUTTONDOWN message the window has been hit, and that's all it needs to know.
+
+<A NAME="204"><h2>Child Windows and the Keyboard</h2></A>
+<p>Adding a keyboard interface to CHECKER3 seems the logical last step in the CHECKER series. But in doing this, a different approach might be appropriate. In CHECKER2, the position of the mouse cursor indicated which square would get a check mark when the Spacebar was pressed. When we're dealing with child windows, we can take a cue from the functioning of dialog boxes. In dialog boxes, a child window indicates that it has the input focus (and hence will be toggled by the keyboard) with a flashing caret or a dotted rectangle.
+
+<p>We're not going to reproduce all the dialog box logic that exists internally in Windows; we're just going to get a rough idea of how you can emulate dialog boxes in an application. When exploring how to do this, one thing you'll discover is that the parent window and the child windows should probably share processing of keyboard messages. The child window should toggle the check mark when the Spacebar or Enter key is pressed. The parent window should move the input focus among the child windows when the cursor keys are pressed. The logic is complicated somewhat by the fact that when you click on a child window, the parent window rather than the child window gets the input focus.
+
+<p>CHECKER4.C is shown in Figure 7-8.
+
+<p><B>Figure 7-8.</B> <I>The CHECKER4 program.</I>
+<TABLE CELLPADDING=5 WIDTH="95%"><TR><TD>    
+<A NAME="205"><p><h3>CHECKER4.C</h3></A>
+<p><pre>
+/*-------------------------------------------------
+   CHECKER4.C -- Mouse Hit-Test Demo Program No. 4
+                 (c) Charles Petzold, 1998
+
+  -------------------------------------------------*/
+
+#include &lt;windows.h&gt;
+#define DIVISIONS 5
+
+LRESULT CALLBACK WndProc   (HWND, UINT, WPARAM, LPARAM) ;
+LRESULT CALLBACK ChildWndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int   idFocus = 0 ;
+TCHAR szChildClass[] = TEXT (&quot;Checker4_Child&quot;) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName[] = TEXT (&quot;Checker4&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+     
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;Program requires Windows NT!&quot;), 
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     wndclass.lpfnWndProc   = ChildWndProc ;
+     wndclass.cbWndExtra    = sizeof (long) ;
+     wndclass.hIcon         = NULL ;
+     wndclass.lpszClassName = szChildClass ;
+     
+     RegisterClass (&amp;wndclass) ;
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Checker4 Mouse Hit-Test Demo&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static HWND hwndChild[DIVISIONS][DIVISIONS] ;
+     int         cxBlock, cyBlock, x, y ;
+     
+     switch (message)
+     {
+     case WM_CREATE :
+          for (x = 0 ; x &lt; DIVISIONS ; x++)
+               for (y = 0 ; y &lt; DIVISIONS ; y++)
+                    hwndChild[x][y] = CreateWindow (szChildClass, NULL,
+                              WS_CHILDWINDOW | WS_VISIBLE,
+                              0, 0, 0, 0,
+                              hwnd, (HMENU) (y &lt;&lt; 8 | x),
+                              (HINSTANCE) GetWindowLong (hwnd, GWL_HINSTANCE),
+                              NULL) ;
+          return 0 ;
+               
+     case WM_SIZE :
+          cxBlock = LOWORD (lParam) / DIVISIONS ;
+          cyBlock = HIWORD (lParam) / DIVISIONS ;
+          
+          for (x = 0 ; x &lt; DIVISIONS ; x++)
+                for (y = 0 ; y &lt; DIVISIONS ; y++)
+                    MoveWindow (hwndChild[x][y],
+                                x * cxBlock, y * cyBlock,
+                                cxBlock, cyBlock, TRUE) ;
+          return 0 ;
+                       
+     case WM_LBUTTONDOWN :
+          MessageBeep (0) ;
+          return 0 ;
+
+          // On set-focus message, set focus to child window
+
+     case WM_SETFOCUS:
+          SetFocus (GetDlgItem (hwnd, idFocus)) ;
+          return 0 ;
+
+          // On key-down message, possibly change the focus window
+
+     case WM_KEYDOWN:
+          x = idFocus &amp; 0xFF ;
+          y = idFocus &gt;&gt; 8 ;
+
+          switch (wParam)
+          {
+          case VK_UP:    y-- ;                    break ;
+          case VK_DOWN:  y++ ;                    break ;
+          case VK_LEFT:  x-- ;                    break ;
+          case VK_RIGHT: x++ ;                    break ;
+          case VK_HOME:  x = y = 0 ;              break ;
+          case VK_END:   x = y = DIVISIONS - 1 ;  break ;
+          default:       return 0 ;
+          }
+
+          x = (x + DIVISIONS) % DIVISIONS ;
+          y = (y + DIVISIONS) % DIVISIONS ;
+
+          idFocus = y &lt;&lt; 8 | x ;
+
+          SetFocus (GetDlgItem (hwnd, idFocus)) ;
+          return 0 ;
+
+     case WM_DESTROY :
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+
+LRESULT CALLBACK ChildWndProc (HWND hwnd, UINT message, 
+                               WPARAM wParam, LPARAM lParam)
+{
+     HDC         hdc ;
+     PAINTSTRUCT ps ;
+     RECT        rect ;
+     
+     switch (message)
+     {
+     case WM_CREATE :
+          SetWindowLong (hwnd, 0, 0) ;       // on/off flag
+          return 0 ;
+
+     case WM_KEYDOWN:
+               // Send most key presses to the parent window
+          
+          if (wParam != VK_RETURN &amp;&amp; wParam != VK_SPACE)
+          {
+               SendMessage (GetParent (hwnd), message, wParam, lParam) ;
+               return 0 ;
+          }
+               // For Return and Space, fall through to toggle the square
+          
+     case WM_LBUTTONDOWN :
+          SetWindowLong (hwnd, 0, 1 ^ GetWindowLong (hwnd, 0)) ;
+          SetFocus (hwnd) ;
+          InvalidateRect (hwnd, NULL, FALSE) ;
+          return 0 ;
+
+               // For focus messages, invalidate the window for repaint
+          
+     case WM_SETFOCUS:
+          idFocus = GetWindowLong (hwnd, GWL_ID) ;
+
+               // Fall through
+
+     case WM_KILLFOCUS:
+          InvalidateRect (hwnd, NULL, TRUE) ;
+          return 0 ;
+          
+     case WM_PAINT :
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+          
+          GetClientRect (hwnd, &amp;rect) ;
+          Rectangle (hdc, 0, 0, rect.right, rect.bottom) ;
+
+               // Draw the &quot;x&quot; mark
+          
+          if (GetWindowLong (hwnd, 0))
+          {
+               MoveToEx (hdc, 0,          0, NULL) ;
+               LineTo   (hdc, rect.right, rect.bottom) ;
+               MoveToEx (hdc, 0,          rect.bottom, NULL) ;
+               LineTo   (hdc, rect.right, 0) ;
+          }
+
+               // Draw the &quot;focus&quot; rectangle
+          
+          if (hwnd == GetFocus ())
+          {
+               rect.left   += rect.right / 10 ;
+               rect.right  -= rect.left ;
+               rect.top    += rect.bottom / 10 ;
+               rect.bottom -= rect.top ;
+
+               SelectObject (hdc, GetStockObject (NULL_BRUSH)) ;
+               SelectObject (hdc, CreatePen (PS_DASH, 0, 0)) ;
+               Rectangle (hdc, rect.left, rect.top, rect.right, rect.bottom) ;
+               DeleteObject (SelectObject (hdc, GetStockObject (BLACK_PEN))) ;
+          }
+
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</pre>
+</TD></TR>
+</TABLE>
+
+<p>You'll recall that each child window has a unique &quot;child window ID&quot; number defined when the window is created by the <I>CreateWindow</I> call. In CHECKER3, this ID number is a combination of the <I>x</I> and <I>y</I> positions of the rectangle. A program can obtain a child window ID for a particular child window by calling:
+
+<p><pre>
+idChild = GetWindowLong (hwndChild, GWL_ID) ;
+</PRE>
+
+<p>This function does the same:
+
+<p><pre>
+idChild = GetDlgCtrlID (hwndChild) ;
+</PRE>
+
+<p>As the function name suggests, it's primarily used with dialog boxes and control windows. It's also possible to obtain the handle of a child window if you know the handle of the parent window and the child window ID:
+
+<p><pre>
+hwndChild = GetDlgItem (hwndParent, idChild) ;
+</PRE>
+
+<p>In CHECKER4, the global variable <I>idFocus</I> is used to save the child ID number of the window that currently has the input focus. I mentioned earlier that child windows don't automatically get the input focus when you click on them with the mouse. Thus, the parent window in CHECKER4 processes the WM_SETFOCUS message by calling
+
+<p><pre>
+SetFocus (GetDlgItem (hwnd, idFocus)) ;
+</PRE>
+
+<p>thus setting the input focus to one of the child windows.
+
+<p><I>ChildWndProc</I> processes both WM_SETFOCUS and WM_KILLFOCUS messages. For WM_SETFOCUS, it saves the child window ID receiving the input focus in the global variable <I>idFocus</I>. For both messages, the window is invalidated, generating a WM_PAINT message. If the WM_PAINT message is drawing the child window with the input focus, it draws a rectangle with a PS_DASH pen style to indicate that the window has the input focus.
+
+<p><I>ChildWndProc</I> also processes WM_KEYDOWN messages. For anything but the Spacebar and Return keys, the WM_KEYDOWN message is sent to the parent window. Otherwise, the window procedure does the same thing as a WM_LBUTTONDOWN message.
+
+<p>Processing the cursor movement keys is delegated to the parent window. In a manner similar to CHECKER2, this program obtains the <I>x</I> and <I>y</I> coordinates of the child window with the input focus and changes them based on the particular cursor key being pressed. The input focus is then set to the new child window with a call to <I>SetFocus</I>.
+
+</BODY>
+</HTML>
+
+
+
+
+

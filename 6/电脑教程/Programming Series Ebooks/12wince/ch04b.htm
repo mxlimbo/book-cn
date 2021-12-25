@@ -1,0 +1,782 @@
+<HTML>
+ <HEAD>
+	<LINK REL=StyleSheet HREF="prowice.css" TYPE="text/css">
+<TITLE>Child Windows</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="104"><H1>Child Windows</H1></A>
+
+<P>Each window is connected via a parent/child relationship scheme. Applications create a main window with no parent, called a <I>top-level window</I>. That window might (or might not) contain windows, called <I>child</I> windows. A child window is clipped to its parent. That is, no part of a child window is visible beyond the edge of its parent. Child windows are automatically destroyed when their parent windows are destroyed. Also, when a parent window moves, its child windows move with it.
+
+<P>Child windows are programmatically identical to top-level windows. You use the <I>CreateWindow</I> or <I>CreateWindowEx</I> function to create them, each has a window procedure that handles the same messages as its top-level window, and each can, in turn, contain its own child windows. To create a child window, use the WS_CHILD window style in the <I>dwStyle</I> parameter of <I>CreateWindow</I> or <I>CreateWindowEx</I>. In addition, the <I>hMenu</I> parameter, unused in top-level Windows CE windows, passes an ID value that you can use to reference the window.
+
+<P>Under Windows CE, there's one other major difference between top-level windows and child windows. Windows sends WM_HIBERNATE messages only to top-level windows that have the WS_OVERLAPPED and WS_VISIBLE styles. (Window visibility in this case has nothing to do with what a user sees. A window can be &quot;visible&quot; to the system and still not be seen by the user if other windows are above it in the Z-order.) This means that child windows and most dialog boxes aren't sent WM_HIBERNATE messages. Top-level windows must either manually send a WM_HIBERNATE message to their child windows as necessary or perform all the necessary tasks themselves to reduce the application's memory footprint. On Windows CE systems, such as the H/PC that support application buttons on the taskbar, the rules for determining the target of WM_HIBERNATE messages are also used to determine what windows get buttons on the taskbar.
+
+<P>In addition to the parent/child relationship, windows also have an owner/owned relationship. Owned windows aren't clipped to their owners. However, they always appear &quot;above&quot; (in Z-order) the window that owns them. If the owner window is minimized, all windows it owns are hidden. Likewise, if a window is destroyed, all windows it owns are destroyed. Windows CE 1.0 supports window ownership only for dialog boxes, but from version 2.0 on, Windows CE provides full support for owned windows.
+
+<A NAME="105"><H2>Window Management Functions</H2></A>
+
+<P>Given the windows-centric nature of Windows, it's not surprising that you can choose from a number of functions that enable a window to interrogate its environment so that it might determine its location in the window family tree. To find its parent, a window can call
+
+<P><pre>
+HWND GetParent (HWND hWnd);
+</pre>
+
+<P>This function is passed a window handle and returns the handle of the calling window's parent window. If the window has no parent, the function returns NULL.
+
+
+<A NAME="106"><H3>Enumerating windows</H3></A>
+
+<P><I>GetWindow</I>, prototyped as
+
+<P><pre>
+HWND GetWindow (HWND hWnd, UINT uCmd);
+</pre>
+
+<P>is an omnibus function that allows a window to query its children, owner, and siblings. The first parameter is the window's handle while the second is a constant that indicates the requested relationship. The GW_CHILD constant returns a handle to the first child window of a window. <I>GetWindow</I> returns windows in Z-order, so the first window in this case is the child window highest in the Z-order. If the window has no child windows, this function returns NULL. The two constants, GW_HWNDFIRST and GW_HWNDLAST, return the first and last windows in the Z-order. If the window handle passed is a top-level window, these constants return the first and last topmost windows in the Z-order. If the window passed is a child window, the GetWindow function returns the first and last sibling window. The GW_HWNDNEXT and GW_HWNDPREV constants return the next lower and next higher windows in the Z-order. These constants allow a window to iterate through all the sibling windows by getting the next window, then using that window handle with another call to <I>GetWindow</I> to get the next, and so on. Finally, the GW_OWNER constant returns the handle of the owner of a window.
+
+<P>Another way to iterate through a series of windows is
+
+<P><pre>
+BOOL EnumWindows (WNDENUMPROC lpEnumFunc, LPARAM lParam);
+</pre>
+
+<P>This function calls the callback function pointed to by <I>lpEnumFunc</I> once for each top-level window on the desktop, passing the the handle of each window in turn. The <I>lParam</I> value is an application-defined value, which is also passed to the enumeration function. This function is better than iterating through a <I>GetWindow</I> loop to find the top-level windows because it always returns valid window handles; it's possible that a <I>GetWindow</I> iteration loop will get a window handle whose window is destroyed before the next call to <I>GetWindow</I> can occur. However, since <I>EnumWindows</I> works only with top-level windows, <I>GetWindow</I> still has a place when iterating through a series of child windows.
+
+<A NAME="107"><H3>Finding a window</H3></A>
+
+<P>To get the handle of a specific window, use the function
+
+<P><pre>
+HWND FindWindow (LPCTSTR lpClassName, LPCTSTR lpWindowName);
+</pre>
+
+<P>This function can find a window either by means of its window class name or by means of a window's title text. This function is handy when an application is just starting up; it can determine whether another copy of the application is already running. All an application has to do is call <I>FindWindow</I> with the name of the window class for the main window of the application. Because an application almost always has a main window while it's running, a NULL returned by <I>FindWindow</I> indicates that the function can't locate another window with the specified window class&#8212;therefore, it's almost certain that another copy of the application isn't running.
+
+<A NAME="108"><H3>Editing the window structure values</H3></A>
+
+<P>The pair of functions
+
+<p><pre>
+LONG GetWindowLong (HWND hWnd, int nIndex);
+</pre>
+
+<P>and
+
+<p><pre>
+LONG SetWindowLong (HWND hWnd, int nIndex, LONG dwNewLong);
+</pre>
+
+<P>allow an application to edit data in the window structure for a window. Remember the WNDCLASS structure passed to the <I>RegisterClass</I> function has a field, <I>cbWndExtra</I>, that controls the number of extra bytes that are to be allocated after the structure. If you allocated extra space in the window structure when the window class was registered, you can access those bytes using the <I>GetWindowLong</I> and <I>SetWindowLong</I> functions. Under Windows CE, the data must be allocated and referenced in 4-byte (integer sized and aligned) blocks. So, if a window class was registered with 12 in the <I>cbWndExtra</I> field, an application can access those bytes by calling <I>GetWindowLong</I> or <I>SetWindowLong</I> with the window handle and by setting values of 0, 4, and 8 in the <I>nIndex</I> parameter.
+
+<P><I>GetWindowLong</I> and <I>SetWindowLong</I> support a set of predefined index values that allow an application access to some of the basic parameters of a window. Here is a list of the supported values for Windows CE.
+
+<UL>
+<p><LI><I>GWL_STYLE</I> The style flags for the window
+<p><LI><I>GWL_EXSTYLE</I> The extended style flags for the window
+<p><LI><I>GWL_WNDPROC</I> The pointer to the window procedure for the window
+<p><LI><I>GWL_ID</I> The ID value for the window
+<p><LI><I>GWL_USERDATA</I> An application-usable 32-bit value
+</UL>
+
+<P>Dialog box windows support the following additional values:
+
+<UL>
+<p><LI><I>DWL_DLGPROC</I> The pointer to the dialog procedure for the window
+<p><LI><I>DWL_MSGRESULT</I> The value returned when the dialog box function returns
+<p><LI><I>DWL_USER</I> An application-usable 32-bit value
+</UL>
+
+<P>Windows CE doesn't support the GWL_HINSTANCE and GWL_HWNDPARENT values supported by Windows NT and Windows 98.
+
+<A NAME="109"><H2>Scroll Bars and the FontList2 Example Program</H2></A>
+
+<P>To demonstrate a handy use for a child window, we return to the FontList program from <A HREF="ch02a.htm">Chapter 2</a>. As you might remember, the problem was that if a scroll bar were attached to the main window of the application, the scroll bar would extend upward, past the right side of the command bar. The reason for this is that a scroll bar attached to a window is actually placed in the nonclient area of that window. Because the command bar lies in the client space, we have no easy way to properly position the two controls in the same window.
+
+<P>An easy way to solve this problem is to use a child window. We place the child window so that it fills all of the client area of the top-level window not covered by the command bar. The scroll bar can then be attached to the child window so that it appears on the right side of the window but stops just beneath the command bar. Figure 4-1 shows the Fontlist2 window. Notice that the scroll bar now fits properly underneath the command bar. Also notice that the child window is completely undetectable by the user.
+
+<P><A HREF="javascript:fullSize('f04rg01x.htm')"> <img src="f04rg01.jpg" width=404 height=203 border="0" ALT="Click to view at full size."></a>
+<!-- caption --><P><B>Figure 4-1.</B> <I>The FontList2 window with the scroll bar properly positioned just beneath the command bar.</I><!-- /caption -->
+
+<P>The code for this fix, which isn't that much more complex than the original FontList example, is shown in Figure 4-2. Instead of one window procedure, there are now two, one for the top-level window, which I have labeled the Frame window, and one for the child window. I separated the code for these two windows into two different source files, FontList2.c and ClientWnd.c. ClientWnd.c also contains a function, <I>InitClient</I>, which registers the client window class.
+
+<P><B>Figure 4-2.</B> <I>The FontList2 program.</I>
+
+<TABLE cellpadding=5 width="95%"><TR><td>
+<A NAME="110"><H3>FontList2.h</H3></A>
+
+<p><pre>
+
+//======================================================================
+// Header file
+
+//
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//======================================================================
+// Returns number of elements
+#define dim(x) (sizeof(x) / sizeof(x[0]))
+
+//----------------------------------------------------------------------
+// Generic defines and data types
+//
+struct decodeUINT {                             // Structure associates
+    UINT Code;                                  // messages
+                                                // with a function.
+    LRESULT (*Fxn)(HWND, UINT, WPARAM, LPARAM);
+};
+struct decodeCMD {                              // Structure associates
+    UINT Code;                                  // menu IDs with a
+    LRESULT (*Fxn)(HWND, WORD, HWND, WORD);     // function.
+};
+
+//----------------------------------------------------------------------
+// Generic defines used by application
+#define  IDC_CMDBAR 1                           // Command bar ID
+#define  IDC_CLIENT 2                           // Client window ID
+
+//----------------------------------------------------------------------
+// Window prototypes and defines
+//
+#define FAMILYMAX   24
+typedef struct {
+    int nNumFonts;
+    TCHAR szFontFamily[LF_FACESIZE];
+} FONTFAMSTRUCT;
+typedef FONTFAMSTRUCT *PFONTFAMSTRUCT;
+
+typedef struct {
+    INT yCurrent;
+    HDC hdc;
+} PAINTFONTINFO;
+typedef PAINTFONTINFO *PPAINTFONTINFO;
+
+#define CLIENTWINDOW    TEXT (&quot;ClientWnd&quot;)
+
+int InitClient (HINSTANCE);
+int TermClient (HINSTANCE, int);
+
+//----------------------------------------------------------------------
+// Function prototypes
+//
+int InitApp (HINSTANCE);
+HWND InitInstance (HINSTANCE, LPWSTR, int);
+int TermInstance (HINSTANCE, int);
+
+// Window procedures
+LRESULT CALLBACK FrameWndProc (HWND, UINT, WPARAM, LPARAM);
+LRESULT CALLBACK ClientWndProc (HWND, UINT, WPARAM, LPARAM);
+
+// Message handlers
+LRESULT DoCreateFrame (HWND, UINT, WPARAM, LPARAM);
+LRESULT DoSizeFrame (HWND, UINT, WPARAM, LPARAM);
+LRESULT DoDestroyFrame (HWND, UINT, WPARAM, LPARAM);
+
+LRESULT DoCreateClient (HWND, UINT, WPARAM, LPARAM);
+LRESULT DoPaintClient (HWND, UINT, WPARAM, LPARAM);
+LRESULT DoVScrollClient (HWND, UINT, WPARAM, LPARAM);
+</pre>
+</td></tr></table>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><td>
+<A NAME="111"><H3>FontList2.c</H3></A>
+<p><pre>
+//======================================================================
+// FontList2 - Lists the available fonts in the system
+
+//
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//======================================================================
+#include &lt;windows.h&gt;                 // For all that Windows stuff
+#include &lt;commctrl.h&gt;                // Command bar includes
+#include &quot;FontList2.h&quot;               // Program-specific stuff
+//----------------------------------------------------------------------
+// Global data
+//
+const TCHAR szAppName[] = TEXT (&quot;FontList2&quot;);
+HINSTANCE hInst;                     // Program instance handle
+
+// Message dispatch table for FrameWindowProc
+const struct decodeUINT FrameMessages[] = {
+    WM_CREATE, DoCreateFrame,
+    WM_SIZE, DoSizeFrame,
+    WM_DESTROY, DoDestroyFrame,
+};
+//======================================================================
+// Program entry point
+//
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    LPWSTR lpCmdLine, int nCmdShow) {
+    MSG msg;
+    int rc = 0;
+    HWND hwndFrame;
+
+    // Initialize application.
+    rc = InitApp (hInstance);
+    if (rc) return rc;
+
+    // Initialize this instance.
+    hwndFrame = InitInstance (hInstance, lpCmdLine, nCmdShow);
+    if (hwndFrame == 0)
+        return 0x10;
+
+    // Application message loop
+    while (GetMessage (&amp;msg, NULL, 0, 0)) {
+        TranslateMessage (&amp;msg);
+        DispatchMessage (&amp;msg);
+    }
+    // Instance cleanup
+    return TermInstance (hInstance, msg.wParam);
+}
+//----------------------------------------------------------------------
+// InitApp - Application initialization
+//
+int InitApp (HINSTANCE hInstance) {
+    WNDCLASS wc;
+
+    // Register application frame window class.
+    wc.style = 0;                             // Window style
+    wc.lpfnWndProc = FrameWndProc;            // Callback function
+    wc.cbClsExtra = 0;                        // Extra class data
+    wc.cbWndExtra = 0;                        // Extra window data
+    wc.hInstance = hInstance;                 // Owner handle
+    wc.hIcon = NULL,                          // Application icon
+    wc.hCursor = NULL;                        // Default cursor
+    wc.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH);
+    wc.lpszMenuName =  NULL;                  // Menu name
+    wc.lpszClassName = szAppName;             // Window class name
+
+    if (RegisterClass (&amp;wc) == 0) return 1;
+
+    // Initialize client window class.
+    if (InitClient (hInstance) != 0) return 2;
+    return 0;
+}
+//----------------------------------------------------------------------
+// InitInstance - Instance initialization
+//
+HWND InitInstance (HINSTANCE hInstance, LPWSTR lpCmdLine, int nCmdShow) {
+    HWND hWnd;
+
+    // Save program instance handle in global variable.
+    hInst = hInstance;
+
+    // Create frame window.
+    hWnd = CreateWindow (szAppName,            // Window class
+                         TEXT (&quot;Font List 2&quot;), // Window title
+                         WS_VISIBLE,           // Style flags
+                         CW_USEDEFAULT,        // x position
+                         CW_USEDEFAULT,        // y position
+                         CW_USEDEFAULT,        // Initial width
+                         CW_USEDEFAULT,        // Initial height
+                         NULL,                 // Parent
+                         NULL,                 // Menu, must be null
+                         hInstance,            // Application instance
+                         NULL);                // Pointer to create
+                                               // parameters
+    // Return fail code if window not created.
+    if (!IsWindow (hWnd)) return 0;
+
+    // Standard show and update calls
+    ShowWindow (hWnd, nCmdShow);
+    UpdateWindow (hWnd);
+    return hWnd;
+}
+
+//----------------------------------------------------------------------
+// TermInstance - Program cleanup
+//
+int TermInstance (HINSTANCE hInstance, int nDefRC) {
+
+    return nDefRC;
+}
+//======================================================================
+// Message handling procedures for FrameWindow
+//----------------------------------------------------------------------
+// FrameWndProc - Callback function for application window
+//
+LRESULT CALLBACK FrameWndProc (HWND hWnd, UINT wMsg, WPARAM wParam,
+                               LPARAM lParam) {
+    INT i;
+    //
+    // Search message list to see if we need to handle this
+    // message.  If in list, call procedure.
+    //
+    for (i = 0; i &lt; dim(FrameMessages); i++) {
+        if (wMsg == FrameMessages[i].Code)
+            return (*FrameMessages[i].Fxn)(hWnd, wMsg, wParam, lParam);
+    }
+    return DefWindowProc (hWnd, wMsg, wParam, lParam);
+}
+//----------------------------------------------------------------------
+// DoCreateFrame - Process WM_CREATE message for window.
+//
+LRESULT DoCreateFrame (HWND hWnd, UINT wMsg, WPARAM wParam,
+                       LPARAM lParam) {
+    HWND hwndCB, hwndClient;
+    INT sHeight;
+    LPCREATESTRUCT lpcs;
+
+    // Convert lParam into pointer to create structure.
+    lpcs = (LPCREATESTRUCT) lParam;
+
+    // Create a command bar.
+    hwndCB = CommandBar_Create (hInst, hWnd, IDC_CMDBAR);
+    // Add exit button to command bar.
+    CommandBar_AddAdornments (hwndCB, 0, 0);
+    sHeight = CommandBar_Height (GetDlgItem (hWnd, IDC_CMDBAR));
+    //
+    // Create client window.  Size it so that it fits under
+    // the command bar and fills the remaining client area.
+    //
+    hwndClient = CreateWindow (CLIENTWINDOW, TEXT (&quot;&quot;),
+                               WS_VISIBLE | WS_CHILD | WS_VSCROLL,
+                               lpcs-&gt;x, lpcs-&gt;y + sHeight,
+                               lpcs-&gt;cx, lpcs-&gt;cy - sHeight,
+                               hWnd, (HMENU)IDC_CLIENT,
+                               lpcs-&gt;hInstance, NULL);
+
+    // Destroy frame if client window not created.
+    if (!IsWindow (hwndClient))
+        DestroyWindow (hWnd);
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoSizeFrame - Process WM_SIZE message for window.
+//
+LRESULT DoSizeFrame (HWND hWnd, UINT wMsg, WPARAM wParam, LPARAM lParam) {
+    RECT rect;
+    INT i;
+
+    GetClientRect (hWnd, &amp;rect);
+    i = CommandBar_Height (GetDlgItem (hWnd, IDC_CMDBAR));
+    rect.top += i;
+
+    SetWindowPos (GetDlgItem (hWnd, IDC_CLIENT), NULL, rect.left, rect.top,
+                  rect.right - rect.left, rect.bottom - rect.top,
+                  SWP_NOZORDER);
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoDestroyFrame - Process WM_DESTROY message for window.
+//
+LRESULT DoDestroyFrame (HWND hWnd, UINT wMsg, WPARAM wParam,
+                        LPARAM lParam) {
+    PostQuitMessage (0);
+    return 0;
+}MM
+</pre>
+</td></tr></table>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><td>
+<A NAME="112"><H3>ClientWnd.c</H3></A>
+<p><pre>
+//======================================================================
+
+// ClientWnd - Client window code for FontList2
+//
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//======================================================================
+#include &lt;windows.h&gt;                 // For all that Windows stuff
+#include &quot;FontList2.h&quot;               // Program-specific stuff
+
+extern HINSTANCE hInst;
+BOOL fFirst = TRUE;
+
+//----------------------------------------------------------------------
+// Global data
+//
+FONTFAMSTRUCT ffs[FAMILYMAX];
+INT sFamilyCnt = 0;
+INT sVPos = 0;
+INT sVMax = 0;
+
+// Message dispatch table for ClientWindowProc
+const struct decodeUINT ClientMessages[] = {
+    WM_CREATE, DoCreateClient,
+    WM_PAINT, DoPaintClient,
+    WM_VSCROLL, DoVScrollClient,
+};
+//----------------------------------------------------------------------
+// InitClient - Client window initialization
+//
+int InitClient (HINSTANCE hInstance) {
+    WNDCLASS wc;
+
+    // Register application client window class.
+    wc.style = 0;                             // Window style
+    wc.lpfnWndProc = ClientWndProc;           // Callback function
+    wc.cbClsExtra = 0;                        // Extra class data
+    wc.cbWndExtra = 0;                        // Extra window data
+    wc.hInstance = hInstance;                 // Owner handle
+    wc.hIcon = NULL,                          // Application icon
+    wc.hCursor = NULL;                        // Default cursor
+    wc.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH);
+    wc.lpszMenuName =  NULL;                  // Menu name
+    wc.lpszClassName = CLIENTWINDOW;          // Window class name
+
+    if (RegisterClass (&amp;wc) == 0) return 1;
+
+    return 0;
+}
+//----------------------------------------------------------------------
+// TermClient - Client window cleanup
+//
+int TermClient (HINSTANCE hInstance, int nDefRC) {
+    return nDefRC;
+}
+//======================================================================
+// Font callback functions
+//----------------------------------------------------------------------
+// FontFamilyCallback - Callback function that enumerates the font
+// families.
+//
+int CALLBACK FontFamilyCallback (CONST LOGFONT *lplf,
+                                 CONST TEXTMETRIC *lpntm,
+                                 DWORD nFontType, LPARAM lParam) {
+    int rc = 1;
+
+    // Stop enumeration if array filled.
+    if (sFamilyCnt &gt;= FAMILYMAX)
+        return 0;
+    // Copy face name of font.
+    lstrcpy (ffs[sFamilyCnt++].szFontFamily, lplf-&gt;lfFaceName);
+
+    return rc;
+}
+//----------------------------------------------------------------------
+// EnumSingleFontFamily - Callback function that enumerates the font
+// families
+//
+int CALLBACK EnumSingleFontFamily (CONST LOGFONT *lplf,
+                                   CONST TEXTMETRIC *lpntm,
+                                   DWORD nFontType, LPARAM lParam) {
+    PFONTFAMSTRUCT pffs;
+
+    pffs = (PFONTFAMSTRUCT) lParam;
+    pffs-&gt;nNumFonts++;    // Increment count of fonts in family.
+    return 1;
+}
+//----------------------------------------------------------------------
+// PaintSingleFontFamily - Callback function that enumerates the font
+// families.
+//
+int CALLBACK PaintSingleFontFamily (CONST LOGFONT *lplf,
+                                    CONST TEXTMETRIC *lpntm,
+                                    DWORD nFontType, LPARAM lParam) {
+    PPAINTFONTINFO ppfi;
+    TCHAR szOut[256];
+    INT nFontHeight, nPointSize;
+    TEXTMETRIC tm;
+    HFONT hFont, hOldFont;
+    ppfi = (PPAINTFONTINFO) lParam;  // Translate lParam into 
+                                     // structure pointer.
+
+    // Create the font from the LOGFONT structure passed.
+    hFont = CreateFontIndirect (lplf);
+
+    // Select the font into the device context.
+    hOldFont = SelectObject (ppfi-&gt;hdc, hFont);
+
+    // Get the height of the default font.
+    GetTextMetrics (ppfi-&gt;hdc, &amp;tm);
+    nFontHeight = tm.tmHeight + tm.tmExternalLeading;
+
+    // Compute font size.
+    nPointSize = (lplf-&gt;lfHeight * 72) /
+                  GetDeviceCaps(ppfi-&gt;hdc,LOGPIXELSY);
+
+    // Format string and paint on display.
+    wsprintf (szOut, TEXT (&quot;%s   Point:%d&quot;), lplf-&gt;lfFaceName,
+              nPointSize);
+    ExtTextOut (ppfi-&gt;hdc, 25, ppfi-&gt;yCurrent, 0, NULL,
+                szOut, lstrlen (szOut), NULL);
+
+    // Update new draw point.
+    ppfi-&gt;yCurrent += nFontHeight;
+    // Deselect font and delete.
+    SelectObject (ppfi-&gt;hdc, hOldFont);
+    DeleteObject (hFont);
+    return 1;
+}
+//======================================================================
+// Message handling procedures for ClientWindow
+//----------------------------------------------------------------------
+// ClientWndProc - Callback function for application window
+//
+LRESULT CALLBACK ClientWndProc (HWND hWnd, UINT wMsg, WPARAM wParam,
+                                LPARAM lParam) {
+    INT i;
+    //
+    // Search message list to see if we need to handle this
+    // message.  If in list, call procedure.
+    //
+    for (i = 0; i &lt; dim(ClientMessages); i++) {
+        if (wMsg == ClientMessages[i].Code)
+            return (*ClientMessages[i].Fxn)(hWnd, wMsg, wParam, lParam);
+    }
+    return DefWindowProc (hWnd, wMsg, wParam, lParam);
+}
+//----------------------------------------------------------------------
+// DoCreateClient - Process WM_CREATE message for window.
+//
+LRESULT DoCreateClient (HWND hWnd, UINT wMsg, WPARAM wParam,
+                        LPARAM lParam) {
+    HDC hdc;
+    INT i, rc;
+
+    //Enumerate the available fonts.
+    hdc = GetDC (hWnd);
+    rc = EnumFontFamilies ((HDC)hdc, (LPTSTR)NULL, FontFamilyCallback, 0);
+
+    for (i = 0; i &lt; sFamilyCnt; i++) {
+        ffs[i].nNumFonts = 0;
+        rc = EnumFontFamilies ((HDC)hdc, ffs[i].szFontFamily,
+                               EnumSingleFontFamily,
+                               (LPARAM)(PFONTFAMSTRUCT)&amp;ffs[i]);
+    }
+    ReleaseDC (hWnd, hdc);
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoPaintClient - Process WM_PAINT message for window.
+//
+LRESULT DoPaintClient (HWND hWnd, UINT wMsg, WPARAM wParam,
+                       LPARAM lParam) {
+    PAINTSTRUCT ps;
+    RECT rect;
+    HDC hdc;
+    TEXTMETRIC tm;
+    INT nFontHeight, i;
+    TCHAR szOut[256];
+    PAINTFONTINFO pfi;
+    SCROLLINFO si;
+
+    hdc = BeginPaint (hWnd, &amp;ps);
+
+    GetClientRect (hWnd, &amp;rect);
+
+    // Get the height of the default font.
+    GetTextMetrics (hdc, &amp;tm);
+    nFontHeight = tm.tmHeight + tm.tmExternalLeading;
+
+    // Initialize struct that is passed to enumerate function.
+    pfi.yCurrent = rect.top - sVPos;
+    pfi.hdc = hdc;
+    for (i = 0; i &lt; sFamilyCnt; i++) {
+
+        // Format output string and paint font family name.
+        wsprintf (szOut, TEXT (&quot;Family: %s   Number of fonts:%d&quot;),
+                  ffs[i].szFontFamily, ffs[i].nNumFonts);
+        ExtTextOut (hdc, 5, pfi.yCurrent, 0, NULL,
+                    szOut, lstrlen (szOut), NULL);
+        pfi.yCurrent += nFontHeight;
+
+        // Enumerate each family to draw a sample of that font.
+        EnumFontFamilies ((HDC)hdc, ffs[i].szFontFamily,
+                          PaintSingleFontFamily,
+                          (LPARAM)&amp;pfi);
+    }
+    // Compute the total height of the text in the window.
+    if (fFirst) {
+        sVPos = 0;
+        sVMax = (pfi.yCurrent - rect.top) - (rect.bottom - rect.top);
+
+        si.cbSize = sizeof (si);
+        si.nMin = 0;
+        si.nMax = pfi.yCurrent;
+        si.nPage = rect.bottom - rect.top;
+        si.nPos = sVPos;
+        si.fMask = SIF_ALL;
+        SetScrollInfo (hWnd, SB_VERT, &amp;si, TRUE);
+        fFirst = FALSE;
+    }
+    EndPaint (hWnd, &amp;ps);
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoVScrollClient - Process WM_VSCROLL message for window.
+//
+LRESULT DoVScrollClient (HWND hWnd, UINT wMsg, WPARAM wParam,
+                         LPARAM lParam) {
+    RECT rect;
+    SCROLLINFO si;
+    INT sOldPos = sVPos;
+
+    GetClientRect (hWnd, &amp;rect);
+    switch (LOWORD (wParam)) {
+    case SB_LINEUP:
+        sVPos -= 10;
+        break;
+
+    case SB_LINEDOWN:
+        sVPos += 10;
+        break;
+
+    case SB_PAGEUP:
+        sVPos -= rect.bottom - rect.top;
+        break;
+
+    case SB_PAGEDOWN:
+        sVPos += rect.bottom - rect.top;
+        break;
+
+    case SB_THUMBPOSITION:
+        sVPos = HIWORD (wParam);
+        break;
+    }
+    // Check range.
+    if (sVPos &lt; 0)
+        sVPos = 0;
+    if (sVPos &gt; sVMax)
+        sVPos = sVMax;
+
+    // If scroll position changed, update scrollbar and
+    // force redraw of window.
+    if (sVPos != sOldPos) {
+        si.cbSize = sizeof (si);
+        si.nPos = sVPos;
+        si.fMask = SIF_POS;
+        SetScrollInfo (hWnd, SB_VERT, &amp;si, TRUE);
+
+        InvalidateRect (hWnd, NULL, TRUE);
+    }
+    return 0;
+}
+</pre>
+</td></tr></table>
+
+<P>The window procedure for the frame window is quite simple. Just as in the original FontList program in <A HREF="ch02a.htm">Chapter 2</a>, the command bar is created in the WM_CREATE message handler, <I>DoCreateFram</I>e. Now, however, this procedure also calls <I>CreateWindow</I> to create the child window in the area underneath the command bar. The child window is created with three style flags: WS_VISIBLE, so that the window is initially visible; WS_CHILD, required because it will be a child window of the frame window; and WS_VSCROLL to add the vertical scroll bar to the child window.
+
+<P>The majority of the work for the program is handled in the client window procedure. Here the same font enumeration calls are made to query the fonts in the system. The WM_PAINT handler, <I>DoPaintClient,</I> has a new characteristic: it now bases what it paints on the new global variable <I>sVPos</I>, which provides vertical positioning. That variable is initialized to 0 in <I>DoCreateClient</I> and is changed in the handler for a new message, WM_VSCROLL.
+
+<A NAME="113"><H3>Scroll bar messages</H3></A>
+
+<P>A WM_VSCROLL message is sent to the owner of a vertical scroll bar any time the user taps on the scroll bar to change its position. A complementary message, WM_HSCROLL, is identical to WM_VSCROLL but is sent when the user taps on a horizontal scroll bar. For both these messages, the <I>wParam</I> and <I>lParam</I> assignments are the same. The low word of the <I>wParam</I> parameter contains a code indicating why the message was sent. Figure 4-3 shows a diagram of horizontal and vertical scroll bars and how tapping on different parts of the scroll bars results in different messages. The high word of <I>wParam</I> is the position of the thumb, but this value is valid only while you're processing the SB_THUMBPOSITION and SB_THUMBTRACK codes, which I'll explain shortly. If the scroll bar sending the message is a stand-alone control and not attached to a window, the <I>lParam</I> parameter contains the window handle of the scroll bar.
+
+<P><A HREF="javascript:fullSize('f04rg03x.htm')"> <img src="f04rg03.jpg" width=404 height=158 border="0" ALT="Click to view at full size."></a>
+<!-- caption --><P><B>Figure 4-3.</B> <I>Scroll bars and their hot spots.</I><!-- /caption -->
+
+<P>The scroll bar message codes sent by the scroll bar allow the program to react to all the different user actions allowable by a scroll bar. The response required by each code is listed in the following table, Figure 4-4.
+
+<P>The SB_LINE<I>xxx</I> and SB_PAGE<I>xxx</I> codes are pretty straightforward. You move the scroll position either a line or a page at a time. The SB_THUMBPOSITION and SB_THUMBTRACK codes can be processed in one of two ways. When the user drags the scroll bar thumb, the scroll bar sends SB_THUMBTRACK code so that a program can interactively track the dragging of the thumb. If your application is fast enough, you can simply process the SB_THUMBTRACK code and interactively update the display. If you field the SB_THUMBTRACK code, however, your application must be quick enough to redraw the display so that the thumb can be dragged without hesitation or jumping of the scroll bar. This is especially a problem on the slower devices that run Windows CE.
+
+<P><B>Figure 4-4.</B> <I>Scroll codes.</I>
+
+<TABLE cellpadding=5 width="95%">
+
+<tr><td valign="top"><b><i>Codes</i></b></td>
+<td valign="top"><b>Response</b></td></tr>
+
+<tr><td valign="top"><b>For WS_VSCROLL</b></td>
+<td valign="top"></td></tr>
+
+<tr><td valign="top">SB_LINEUP</td>
+<td valign="top">Program should scroll the screen up one line.</td></tr>
+
+<tr><td valign="top">SB_LINEDOWN</td>
+<td valign="top">Program should scroll the screen down one line.</td></tr>
+
+<tr><td valign="top">SB_PAGEUP</td>
+<td valign="top">Program should scroll the screen up one screen's worth of data.</td></tr>
+
+<tr><td valign="top">SB_PAGEDOWN</td>
+<td valign="top">Program should scroll the screen down one screen's worth of data.</td></tr>
+
+<tr><td valign="top"></td>
+<td valign="top"></td></tr>
+
+<tr><td valign="top"><b>For WS_HSCROLL</b></td>
+<td valign="top"></td></tr>
+
+<tr><td valign="top">SB_LINELEFT</td>
+<td valign="top">Program should scroll the screen left one character.</td></tr>
+
+<tr><td valign="top">SB_LINERIGHT</td>
+<td valign="top">Program should scroll the screen right one character.</td></tr>
+
+<tr><td valign="top">SB_PAGELEFT</td>
+<td valign="top">Program should scroll the screen left one screen's worth of data.</td></tr>
+
+<tr><td valign="top">SB_PAGERIGHT</td>
+<td valign="top">Program should scroll the screen right one screen's worth of data.</td></tr>
+
+<tr><td valign="top"></td>
+<td valign="top"></td></tr>
+
+<tr><td valign="top"><b>For both WS_VSCROLL and WS_HSCROLL</b></td>
+<td valign="top"></td></tr>
+
+<tr><td valign="top">SB_THUMBTRACK</td>
+<td valign="top">Programs with enough speed to keep up should update the display with the new scroll position.</td></tr>
+
+<tr><td valign="top">SB_THUMBPOSITION</td>
+<td valign="top">Programs that can't update the display fast enough to keep up with the SB_THUMBTRACK message should update the display with the new scroll position.</td></tr>
+
+<tr><td valign="top">SB_ENDSCROLL</td>
+<td valign="top">This code indicates that the scroll bar has completed the scroll event. No action is required by the program.</td></tr>
+
+<tr><td valign="top">SB_TOP</td>
+<td valign="top">Program should set the display to the top or left end of the data.</td></tr>
+
+<tr><td valign="top">SB_BOTTOM</td>
+<td valign="top">Program should set the display to the bottom or right end of the data.</td></tr>
+</table>
+
+<P>If your application (or the system it's running on) is too slow to quickly update the display for every SB_THUMBTRACK code, you can ignore the SB_THUMBTRACK and wait for the SB_THUMBPOSITION code that's sent when the user drops the scroll bar thumb. Then you have to update the display only once, after the user has finished moving the scroll bar thumb.
+
+<A NAME="114"><H3>Configuring a scroll bar</H3></A>
+
+<P>To use a scroll bar, an application should first set the minimum and maximum values&#8212;the range of the scroll bar, along with the initial position. Windows CE scroll bars, like their Win32 cousins, support proportional thumb sizes, which provide feedback to the user about the size of the current visible page compared to the entire scroll range. To set all these parameters, Windows CE applications should use the <I>SetScrollInfo</I> function, prototyped as
+
+<p><pre>
+int SetScrollInfo (HWND hwnd, int fnBar, LPSCROLLINFO lpsi, BOOL fRedraw);
+</pre>
+
+<P>The first parameter is either the handle of the window that contains the scroll bar or the window handle of the scroll bar itself. The second parameter, <I>fnBar</I>, is a flag that determines the use of the window handle. The scroll bar flag can be one of three values: SB_HORZ for a window's standard horizontal scroll bar, SB_VERT for a window's standard vertical scroll bar, or SB_CTL if the scroll bar being set is a stand-alone control. Unless the scroll bar is a control, the window handle is the handle of the window containing the scroll bar. With SB_CTL, however, the handle is the window handle of the scroll bar control itself. The last parameter is <I>fRedraw</I>, a Boolean value that indicates whether the scroll bar should be redrawn after the call has been completed.
+
+<P>The third parameter is a pointer to a SCROLLINFO structure, which is defined as
+
+<p><pre>
+typedef struct tagSCROLLINFO {
+    UINT cbSize;
+    UINT fMask;
+    int   nMin;
+    int   nMax;
+    UINT nPage;
+    int   nPos;
+    int   nTrackPos;
+} SCROLLINFO;
+</pre>
+
+<P>This structure allows you to completely specify the scroll bar parameters. The <I>cbSize</I> field must be set to the size of the SCROLLINFO structure. The <I>fMask</I> field contains flags indicating what other fields in the structure contain valid data. The <I>nMin</I> and <I>nMax</I> fields can contain the minimum and maximum scroll values the scroll bar can report. Windows looks at the values in these fields if the <I>fMask</I> parameter contains the SIF_RANGE flag. Likewise, the <I>nPos</I> field sets the position of the scroll bar within its predefined range if the <I>fMask</I> field contains the SIF_POS flag.
+
+<P>The <I>nPage</I> field allows a program to define the size of the currently viewable area of the screen in relation to the entire scrollable area. This allows a user to have a feel for how much of the entire scrolling range is currently visible. This field is used only if the <I>fMask</I> field contains the SIF_PAGE flag. The last member of the SCROLLINFO structure, <I>nTrackPos,</I> isn't used by the <I>SetScrollInfo</I> call and is ignored.
+
+<P>The <I>fMask</I> field can contain one last flag. Passing a SIF_DISABLENOSCROLL flag causes the scroll bar to be disabled, but still visible. This is handy when the entire scrolling range is visible within the viewable area and no scrolling is necessary. Disabling the scroll bar in this case is often preferable to simply removing the scroll bar completely.
+
+<P>Those with a sharp eye for detail will notice a problem with the width of the fields in the SCROLLINFO structure. The <I>nMin</I>, <I>nMax</I>, and <I>nPos</I> fields are integers and therefore in the world of Windows CE, are 32 bits wide. On the other hand, the WM_HSCROLL and WM_VSCROLL messages can return only a 16-bit position in the high word of the <I>wParam</I> parameter. If you're using scroll ranges greater than 65,535, use this function:
+
+<p><pre>
+BOOL GetScrollInfo (HWND hwnd, int fnBar, LPSCROLLINFO lpsi);
+</pre>
+
+<P>As with <I>SetScrollInfo</I>, the flags in the <I>fnBar</I> field indicate the window handle that should be passed to the function. The SCROLLINFO structure is identical to the one used in <I>SetScrollInfo</I>; however, before it can be passed to <I>GetScrollInfo</I>, it must be initialized with the size of the structure in <I>cbSize</I>. An application must also indicate what data it wants the function to return by setting the appropriate flags in the <I>fMask</I> field. The flags used in <I>fMask</I> are the same as the ones used in <I>SetScrollInfo</I> with a couple of additions. Now a SIF_TRACKPOS flag can be passed to have the scroll bar return its current thumb position. When called during a WM_<I>x</I>SCROLL message, the <I>nTrackPos</I> field contains the real time position while the <I>nPos</I> field contains the scroll bar position at the start of the drag of the thumb.
+
+<P>The scroll bar is an unusual control in that it can be added easily to windows simply by specifying a window style flag. It's also unusual in that the control is placed outside the client area of the window. The reason for this assistance is that scroll bars are commonly needed by applications, so the Windows developers made it easy to attach scroll bars to windows. Now let's look at the other basic Windows controls.
+
+</BODY>
+</HTML>
+
+
+
+

@@ -1,0 +1,115 @@
+<HTML>
+ <HEAD>
+	<LINK REL=StyleSheet HREF="prowice.css" TYPE="text/css">
+<TITLE>The Infrared Port</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="356"><H1>The Infrared Port</H1></A>
+
+<P>Windows CE devices almost always have an infrared, IrDA-compatible serial port. In fact, all H/PC and Palm-size PC  are guaranteed to have one. The IR ports on Windows CE devices are IrDA (Infrared Data Association) compliant. The IrDA standard specifies everything from the physical implementation, such as the frequency of light used, to the handshaking between devices and how remote systems find each other and converse.
+
+<P>The IR port can be used in a variety of ways. At the most basic level, the port can be accessed as a serial port with an IR transmitter and receiver attached. This method is known as <I>raw IR</I>. When you're using raw IR, the port isn't IrDA compliant because the IrDA standard requires the proper handshaking for the link. However, raw IR gives you the most control over the IR link. A word of warning: While all Windows CE devices I know currently support raw IR, some might not in the future.
+
+<P>You can also use the IR port in IrComm mode. In this mode, the IR link looks like a serial port. However, under the covers, Windows CE works to hide the differences between a standard serial port and the IR link. This is perhaps the easiest way to link two custom applications because the applications can use the rather simple Comm API while Windows CE uses the IrDA stack to handle the IR link.
+
+<P>The most robust and complex method of using the IR port is to use IrSock. In this mode, the IR link appears to be just another socket. IrSock is an extension to WinSock, the Windows version of the socket interface used by applications communicating with TCP/IP. I'll cover WinSock in <A HREF="ch10a.htm">Chapter 10</a>, so I'll defer any talk of IrSock until then.
+
+<A NAME="357"><H2>Raw IR</H2></A>
+
+<P>As I mentioned previously, when you use raw IR you're mainly on your own. You essentially have a serial port with an IR transceiver attached to it. Since both the transmitter and receiver use the same ether (the air), collisions occur if you transmit at the same time that you're receiving a stream of data from another device. This doesn't happen when a serial cable connects two serial ports because the cable gives you separate transmit and receive wires that can be used at the same time.
+
+<A NAME="358"><H3>Finding the raw IR port</H3></A>
+
+<P>To use raw IR, you must first find the serial port attached to the IR transceiver. On some Windows CE units, the serial port and the IR port use the same serial hardware. This means you can't use the serial port at the same time you use the IR port. Other Windows CE devices have separate serial hardware for the IR port. Regardless of how a device is configured, Windows CE gives you a separate instance of a COM driver for the IR port that's used for raw IR mode.
+
+<P>There is no official method of determining the COM port used for raw IR. However, the following technique works for current devices. To find the COM port used for raw IR, look in the registry in the \Comm\IrDA key under HKEY_LOCAL_MACHINE. There, you should find the Port key that contains the COM port number for the raw IR device. Below is a short routine that returns the device name of the raw IR port.
+
+<p><pre>
+//----------------------------------------------------------------------
+// GetRawIrDeviceName - Returns the device name for the RawIR com port
+//
+INT GetRawIrDeviceName (LPTSTR pDevName) {
+  DWORD dwSize, dwType, dwData;
+  HKEY hKey;
+  INT rc;
+
+  *pDevName = TEXT (`\0');
+  // Open the IrDA key.
+  if (RegOpenKeyEx (HKEY_LOCAL_MACHINE, TEXT (&quot;Comm\\IrDA&quot;), 0,
+                0, &amp;hKey) == ERROR_SUCCESS) {
+
+       // Query the device number.
+       dwSize = sizeof (dwData);
+       if (RegQueryValueEx (hKey, TEXT (&quot;Port&quot;), 0, &amp;dwType,
+                     (PBYTE)&amp;dwData, &amp;dwSize) == ERROR_SUCCESS)
+
+           // Check for valid port number. Assume buffer &gt; 5 chars.
+            if (dwData &lt; 10)
+              wsprintf (pDevName, TEXT (&quot;COM%d:&quot;), dwData);
+
+        RegCloseKey (hKey);
+    }
+    return lstrlen (pDevName);
+}
+</PRE>
+
+<A NAME="359"><H3>Using raw IR</H3></A>
+
+<P>Once you have the port name, you must perform one more task before you can use the port. If the COM port hardware is being shared by the serial port and the IR port, you must tell the driver to direct the serial stream through the IR transceiver. You do this by first opening the device and calling <I>EscapeCommFunction</I>. The command passed to the device is SETIR. When you've finished using the IR port, you should call <I>EscapeCommFunction</I> again with the command CLRIR to return the port back to its original serial function.
+
+<P>Once the port is set up, there's one main difference between raw IR and standard serial communication. You have to be careful when using raw IR not to transmit while another device is also transmitting. The two transmissions will collide, corrupting both data streams. With raw IR, you're also responsible for detecting the other device and handling the dropped bytes that will occur as the infrared beam between the two devices is occasionally broken.
+
+<A NAME="360"><H2>IrComm</H2></A>
+
+<P>Using IrComm is much easier than using raw IR. IrComm takes care of remote device detection, collision detection, and data buffering while communication with the other device is temporally interrupted. The disadvantage of IrComm is that it's a point-to-point protocol&#8212;only two devices can be connected. In most instances, however, this is sufficient.
+
+<A NAME="361"><H3>Finding the IrComm port</H3></A>
+
+<P>Here again, there's no official method for determining the IrComm port. But you should be able to find the IrComm port by looking in the registry at the Drivers\builtin\IrCOMM key under HKEY_LOCAL_MACHINE. The item to query is the <I>Index</I> value, which is the COM device number for the IrComm port. Following is a routine that returns the device name of the IrComm port.
+
+<p><pre>
+//----------------------------------------------------------------------
+// GetIrCommDeviceName - Returns the device name for the IrComm port
+//
+INT GetIrCommDeviceName (LPTSTR pDevName) {
+  DWORD dwSize, dwType, dwData;
+  HKEY hKey;
+
+  *pDevName = TEXT (`\0');
+  // Open the IrDA key.
+  if (RegOpenKeyEx (HKEY_LOCAL_MACHINE,
+                   TEXT (&quot;Drivers\\BuiltIn\\IrCOMM&quot;), 0,
+                  0, &amp;hKey) == ERROR_SUCCESS) {
+
+        // Query the device number.
+        dwSize = sizeof (dwData);
+        if (RegQueryValueEx (hKey, TEXT (&quot;Index&quot;), 0, &amp;dwType,
+                      (PBYTE)&amp;dwData, &amp;dwSize) == ERROR_SUCCESS)
+
+            // Check for valid port number. Assume buffer &gt; 5 chars.
+            if (dwData &lt; 10)
+              wsprintf (pDevName, TEXT (&quot;COM%d:&quot;), dwData);
+
+        RegCloseKey (hKey);
+    }
+    return lstrlen (pDevName);
+}
+</PRE>
+
+<P>The IrComm port is different in a number of ways from the serial port and the raw IR port. These differences arise from the fact that the IrComm port is a simulated port, not a real device. The IrComm driver uses IrSock to manage the IR link. The driver is then responsible only for reflecting the data stream and a few control characters to simulate the serial connection. If you try to query the communication settings for the IrComm port using <I>GetCommState</I>, the DCB returned is all zeros. If you try to set a baud rate or some of the other parameters, and later call <I>GetCommState</I> again, the DCB will still be 0. IrSock manages the speed and the handshaking protocol, so IrComm simply ignores your configuration requests.
+
+<P>On the other hand, the IrComm driver happily queues up pending writes waiting on another IrComm device to come within range. After the IrComm driver automatically establishes a link, it transmits the pending bytes to the other device. This assistance is a far cry from raw IR and is what makes using IrComm so easy.
+
+<P>The best way to learn about the characteristics of the two methods of IR communication I've described is to use them. Which brings us to this chapter's example program.
+
+</BODY>
+</HTML>
+
+
+
+

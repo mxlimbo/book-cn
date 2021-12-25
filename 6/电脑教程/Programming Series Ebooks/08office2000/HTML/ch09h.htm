@@ -1,0 +1,189 @@
+<HTML>
+<HEAD>
+<TITLE>Recalculating the Model on the Server</TITLE>
+<link rel="STYLESHEET" type="text/css" href="webcomp.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch09g.htm">[Previous]</A> <A HREF="ch09i.htm">[Next]</A><P>
+
+<A NAME="190"><H1>Recalculating the Model on the Server</H1></A>
+
+<P>After adjusting the inputs you want, uncheck the Return An Interactive 
+Spreadsheet Control check box and click the Calculate My Mortgage! button to see the results 
+of the calculation. In this section, I will discuss how I perform the calculation on 
+the server, which is what happens when you choose to not return an interactive 
+Spreadsheet control. This is the default and the only choice if the client browser does 
+not support COM controls.</P>
+ 
+<P>The form in the previous section has an action attribute set to return to the 
+same ASP page (Default.asp). It also contains default values for the various form fields 
+so that you do not have to type them all yourself. When the user clicks the 
+Calculate My Mortgage! button, Internet Explorer submits the form back to the server, 
+appending the assorted loan variables and options to the URL as query strings. Let's look at 
+the code that executes when this form is submitted and see how it processes the 
+request. I first start by extracting the query string values:</P>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+' Get the query string values
+m_nPrice = Request.QueryString(&quot;Price&quot;)
+m_nPctDown = Request.QueryString(&quot;PctDown&quot;)
+m_nRate = Request.QueryString(&quot;Rate&quot;)
+m_nYears = Request.QueryString(&quot;Years&quot;)
+m_nAddPayment = Request.QueryString(&quot;AddPayment&quot;)
+m_fInteractive = (LCase(Request.QueryString(&quot;Interactive&quot;)) = &quot;on&quot;)
+m_fPayTable = (LCase(Request.QueryString(&quot;PayTable&quot;)) = &quot;on&quot;)
+
+' Validate the inputs
+m_fValidInputs = ValidateInputs(m_nPrice, m_nPctDown, m_nRate, _
+                                m_nYears, m_nAddPayment, m_sErrText)
+<img src="images/grayvellip.JPG" width=3 height=13 border="0">
+</pre></td></tr></table></p>
+
+<P>Extracting the query string values is quite simple, as you have seen in the 
+other solutions I've described so far. However, one thing that surprised me when I 
+wrote this code was how check box values are sent to the server. I expected that a 
+checked option would appear in the query string as &quot;Interactive=True&quot;, &quot;Interactive=1&quot;, 
+or something that is coercible to a Boolean variable. However, a checked option 
+is actually passed as &quot;Interactive=on&quot;, and nothing is passed if the option is 
+unchecked. Therefore, you must compare a check box option to the string &quot;on&quot; to 
+determine whether the option was checked.</P>
+
+<P>After extracting the inputs, I pass them to a function called ValidateInputs. 
+This is a fairly long but uninteresting function that validates each input according to 
+some business rules I encoded. For example, I enforce that number values are 
+indeed numeric (in other words, the purchase price can't be &quot;hello world&quot;), that they 
+are positive, that the Years value is between 1 and 30, and so on. You can examine 
+this function on your own if you are curious to see how I checked for these 
+conditions. However, do note that the function also converts the string values passed in the 
+URL to real numeric variables (currency, long, and double) so that comparison 
+operations yield the correct results. If you do not convert to numeric form, when you 
+compare the string values &quot;500&quot; and &quot;200000&quot;, the script engine will return &quot;500&quot; as greater 
+than &quot;200000&quot; because &quot;500&quot; would sort alphabetically after &quot;200000&quot;. I naively 
+assumed that the Greater Than operator would first coerce strings to numbers if it could, 
+but that is not how Microsoft VBScript works.</P>
+
+<P>If the inputs are not valid, I do not load the model or perform any 
+calculations. Instead, I return some nasty error text to the browser and ask the user to correct 
+the bad input. Assuming that the inputs are valid, the code continues:</P>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+<img src="images/grayvellip.JPG" width=3 height=13 border="0">
+If m_fValidInputs Then
+    If m_fInteractive Then
+        ' Omitted for now...
+    Else
+        ' Write the results header, and flush it so that the user
+        ' sees it right away
+        If m_fUseCSS Then
+            Response.Write &quot;&lt;h3 style=&quot;&quot;font-family:Tahoma;&quot; &amp; _
+                &quot;font-size:14pt;&quot; &amp; _
+                &quot;font-weight:bold;background-color:&quot; &amp; _ 
+                &quot;#B0C4DE&quot;&quot;&gt;Your Mortgage Results...&lt;/h3&gt;&quot;
+        Else
+            Response.Write &quot;&lt;h3&gt;Your Mortgage Results...&lt;/h3&gt;&quot;
+        End If
+        Response.Write &quot;&lt;script&gt;&quot;
+        Response.Write &quot;window.status = &quot;&quot;Calculating your mortgage&quot; &amp; _
+            &quot;...please stand by...&quot;&quot;;&quot;
+        Response.Write &quot;&lt;/script&gt;&quot;
+        Response.Flush 
+
+        ' Create the Spreadsheet component, and load the mortgage model
+        Set m_ssMort = Server.CreateObject(&quot;OWC.Spreadsheet.9&quot;)
+        m_ssMort.HTMLURL = GetCurPath() &amp; &quot;Mortgage.htm&quot;
+
+        ' Push the new inputs into the model
+        Dim rngInputs           ' Temporary Range reference
+        Set rngInputs = m_ssMort.ActiveSheet.Range(&quot;B2:B6&quot;)
+        rngInputs.Value = Array(m_nPrice, m_nPctDown, m_nRate, _
+                                m_nYears, m_nAddPayment)
+    
+        ' Let the user know we are finished calculating
+        Response.Write &quot;&lt;script&gt;&quot;
+        Response.Write &quot;window.status = &quot;&quot;Finished calculation. &quot; &amp; _
+            &quot;Displaying Results...&quot;&quot;;&quot;
+        Response.Write &quot;&lt;/script&gt;&quot;
+        Response.Flush 
+        
+        ' Output results
+        If m_fPayTable Then
+            WriteRange m_ssMort.ActiveSheet.UsedRange, m_fUseCSS
+        Else
+            WriteRange m_ssMort.ActiveSheet.Range(&quot;A1:D10&quot;), m_fUseCSS
+        End If
+
+        ' Let the user know we are all done
+        Response.Write &quot;&lt;script&gt;&quot;
+        Response.Write &quot;window.status = &quot;&quot;All done!&quot;&quot;;&quot;
+        Response.Write &quot;&lt;/script&gt;&quot;
+        Response.Flush 
+
+    End If 'm_fInteractive
+End If 'm_fValidInputs
+</pre></td></tr></table></p>
+
+
+
+<P>The code first ensures that the inputs are valid. If the user requested an 
+interactive Spreadsheet control, the code writes the appropriate &lt;object&gt; tag. I 
+purposely omitted that code from this listing because I first want to describe how the 
+server-side calculation and static output work. I will discuss the interactive version later 
+in the chapter.</P>
+
+<P>The code then writes a header with the text &quot;Your Mortgage Results&#133;&quot; 
+and writes a curious script block. As you will remember, any script code not 
+contained in an event handler is executed immediately when it is parsed. After this script 
+block sets the window's status bar text to indicate that the calculation is happening, it 
+flushes the current output to the client. This causes the client browser to parse this script 
+and display the status bar message. If the calculation takes a while, it gives the user 
+some indication of what is happening.</P>
+
+<P>The code then creates a Spreadsheet component as an in-memory object 
+and will release that object when the script ends. (Refer to <A HREF="ch06a.htm">Chapter 6</A> for a discussion 
+on why you should not keep an instance of the component in the Session or 
+Application state object.) This code should look similar to the code in <A HREF="ch08a.htm">Chapter 8</A>, except 
+that this time I use the HTMLURL property to load the Mortgage.htm model. As I 
+described in <A HREF="ch02a.htm">Chapter 2</A>, the HTMLURL property can reference any URL that returns a 
+document containing an HTML table. If that table has the extra attributes for the cell 
+formula and full precision value written by Excel, the Spreadsheet component will notice 
+them and load the model appropriately. Because the Spreadsheet control and Excel 
+2000 share the same HTML file format, what one writes, the other can read.</P>
+
+<P>Pushing the inputs into the Spreadsheet component is also relatively 
+simple, though I use a trick here to improve performance. Whenever you set the value of 
+a cell that has dependencies, the Spreadsheet component will recalculate all the 
+dependent cells. This happens both when you set the cell value programmatically 
+and through the user interface. If you need to set five input values (as I do here), it 
+is much more efficient to set them all in one operation and then let the 
+Spreadsheet component recalculate the model once based on all the new values. To 
+accomplish this, set the Range object's Value property to an array of values, one element for 
+each cell. The Spreadsheet component will set all values and then perform one 
+recalculation. In this case, my range is one-dimensional, so it is obvious that each array 
+value maps to the corresponding cell in the range. However, if the range is 
+two-dimensional, the Spreadsheet control expects the array values to be in row/column 
+orientation, meaning the first dimension represents the rows and the second dimension 
+represents the columns.</P>
+
+<P>After setting the values, the results are recalculated and ready for output. I 
+send back another script block that sets the status bar to indicate that I am finished 
+recalculating and now writing back the output. If you run this solution, you will 
+notice that the recalculation takes little time compared to the time it takes for the server 
+to return the results and the browser to load them into view. I will discuss the 
+details of writing the results in the next section, but do note that I use the m_fPayTable 
+flag to determine how much of the spreadsheet to write back. If the user wants the 
+full payment table (360 rows), I write back the entire used range. If the user does 
+not want the full table, I write only the top three sections, which is the range A1:D10.</P>
+
+</BODY>
+</HTML>
+
+
+
+
+

@@ -1,0 +1,703 @@
+<HTML>
+ <HEAD>
+	<LINK REL=StyleSheet HREF="prowice.css" TYPE="text/css">
+<TITLE>Windows Networking Support</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="367"><H1>Windows Networking Support</H1></A>
+
+<P>The WNet API is a provider-independent interface that allows Windows applications to access network resources without regard for the network implementation. The Windows CE version of the WNet API has fewer functions but provides the basics so that a Windows CE application can gain access to shared network resources, such as disks and printers. The WNet API is implemented by a &quot;redirector&quot; DLL that translates the WNet functions into network commands for a specific network protocol.
+
+<P>By default, the only network supported by the WNet API is Windows Networking. Support for even this network is limited by the fact that redirector files that implement Windows Networking aren't bundled with most H/PCs or Palm-size PCs. The two files that implement this support, REDIR.DLL and NETBIOS.DLL, are available from Microsoft. As a convenience, I've also included them on the book's companion disc as well. As an aside, the NetBIOS DLL doesn't export a NetBIOS-like interface to applications or drivers.
+
+<A NAME="368"><H2>WNet Functions</H2></A>
+
+<P>Windows CE's support for the WNet functions started with Windows CE 2.0. As with other areas in Windows CE, the WNet implementation under Windows CE is a subset of the same API on the desktop, but support is provided for the critical functions while eliminating the overlapping and obsolete functions. For example, the standard WNet API contains four different and overlapping <I>WNetAddConnection</I> functions while Windows CE supports only one, <I>WNetAddConnection3</I>.
+
+<P>For the WNet API to work, the redirector DLLs must be installed in the \windows directory. In addition, the network control panel, also a supplementary component on most systems, must be used to configure the network card so that it can access the network. If the redirector DLLs aren't installed, or an error occurs configuring or initializing the network adapter, the WNet functions return the error code ERROR_NO_NETWORK.
+
+<A NAME="369"><H3>Conventions of UNC </H3></A>
+<P>Network drives can be accessed in one of two ways. The first method is to explicitly name the resource using the <I>Universal Naming Convention</I> (UNC) naming syntax, which is a combination of the name of the server and the shared resource. An example of this is <I>\\BIGSRVR\DRVC</I>, where the server name is BIGSERV and the resource on the server is named DRVC. The leading double backslashes immediately indicate that the name is a UNC name. Directories and filenames can be included in the UNC name, as in <I>\\bigservr\drvc\dir2\file1.ext</I>. Notice that I changed case in the two names. That doesn't matter because UNC paths are case insensitive.
+
+<P>As long as the WNet redirector is installed, you can use UNC names wherever you use standard filenames in the Windows CE API. You'll have problems, though, with some programs, including, in places, the Windows CE shell, where the application doesn't understand UNC syntax. For example, the Explorer in a Windows CE 2.0 H/PC device understands UNC names, but the File Open dialog box on the same system doesn't.
+
+<A NAME="370"><H3>Mapping a remote drive</H3></A>
+<P>To get around applications that don't understand UNC names, you can map a network drive to a local name. When a network drive is mapped on a Windows CE system, the remote drive appears as a folder in the \network folder in the object store. The \network folder isn't a standard folder; in fact, before Windows CE 2.1, it didn't even show up in the Explorer. (For systems based on Windows CE 2.1, the visibility of the \network folder depends on a registry setting.) Instead it's a placeholder name by which the local names of the mapped network drives can be addressed. For example, the network drive <I>\\BigSrvr\DrvC</I> could be mapped to the local name JoeBob. Files and directories on <I>\\BigSrvr\DrvC</I> would appear under the folder \network\joebob. Since Windows CE doesn't support drive letters, the local name can't be specified in the form of a drive, as in G:.
+
+<P>I mentioned that the \network folder is a virtual folder; this needs further explanation. Before Windows CE 2.1, the network folder wasn't visible to the standard file system functions. If you use the <I>FindFirstFile</I>/<I>FindNextFile</I> process to enumerate the directories in the root directory, the \network directory won't be enumerated. However, <I>FindFirstFile</I>/<I>FindNextFile</I> enumerates the mapped resources contained in the \network folder. So if the search string is <I>\*.*</I> to enumerate the root directory, the network isn't enumerated, but if you use <I>\network\*.*</I> as the search string, any mapped drives will be enumerated.
+
+<P>Starting with Windows CE 2.1, the \network folder can be enumerated by <I>FindFirstFile</I> and <I>FindNextFile</I> if the proper registry settings are made. However, even though the folder can be enumerated, you still can't place files or create folders within the \network folder. To make the \network folder visible, the DWORD value <I>RegisterFSRoot</I> under the key [HKEY_LOCAL_MACHINE]\comm\redir, must be set to a nonzero value.
+
+<P>The most direct way to map a remote resource is to call this function:
+
+<p><pre>
+DWORD WNetAddConnection3 (HWND hwndOwner, LPNETRESOURCE lpNetResource,
+                          LPTSTR lpPassword, LPTSTR lpUserName,
+                          DWORD dwFlags);
+</PRE>
+
+<P>The first parameter is a handle to a window that owns any network support dialogs that might need to be displayed to complete the connection. The window handle can be NULL if you don't want to specify an owner window. This effectively turns the <I>WNetAddConnection3</I> function into the <I>WNetAddConnection2</I> function supported under other versions of Windows.
+
+<P>The second parameter, <I>lpNetResource</I>, should point to a NETRESOURCE structure that defines the remote resource being connected. The structure is defined as
+
+<p><pre>
+typedef struct _NETRESOURCE {
+    DWORD  dwScope;
+    DWORD  dwType;
+    DWORD  dwDisplayType;
+    DWORD  dwUsage;
+    LPTSTR lpLocalName;
+    LPTSTR lpRemoteName;
+    LPTSTR lpComment;
+    LPTSTR lpProvider;
+} NETRESOURCE;
+</PRE>
+
+<P>Most of these fields aren't used for the <I>WNetAddConnection3</I> function and should be set to 0. All you need to do is to specify the UNC name of the remote resource in a string pointed to by <I>lpRemoteName</I> and the local name in a string pointed to by <I>lpLocalName</I>. The local name is limited to 64 characters in length. The other fields in this structure are used by the WNet enumeration functions that I'll describe shortly.
+
+<P>You use the next two parameters in <I>WNetAddConnection3</I>, <I>lpPassword</I> and <I>lpUserName</I>, when requesting access from the server to the remote device. If you don't specify a user name and Windows CE can't find user information for network access already defined in the registry, the system displays a dialog box requesting the user name and password. Finally, the <I>dwFlags</I> parameter can be either 0 or the flag CONNECT_UPDATE_PROFILE. When this flag is set, the connection is dubbed <I>persistent</I>. Windows CE stores the connection data for persistent connections in the registry. Unlike other versions of Windows, Windows CE doesn't restore persistent connections when the user logs on. Instead, the local name to remote name mapping is tracked only in the registry. If the local folder is later accessed after the original connection was dropped, a reconnection is automatically attempted when the local folder is accessed.
+
+<P>If the call to <I>WNetAddConnection3</I> is successful, it returns NO_ERROR. Unlike most Win32 functions, <I>WNetAddConnection3</I> returns an error code in the return value if an error occurs. This is a nod to compatibility that stretches back to the Windows 3.1 days. You can also call <I>GetLastError</I> to return the error information. As an aside, the function <I>WNetGetLastError</I> is supported under Windows CE in that it's redefined as <I>GetLastError</I>, so you can call that function if compatibility with other platforms is important.
+
+<P>The other function you can use under Windows CE to connect a remote resource is <I>WNetConnectionDialog1</I>. This function presents a dialog box to the user requesting the remote and local names for the connection. The function is prototyped as
+
+<p><pre>
+DWORD WNetConnectionDialog1 (LPCONNECTDLGSTRUCT lpConnectDlgStruc);
+</PRE>
+
+<P>The one parameter is a pointer to a CONNECTDLGSTRUCT structure defined as the following:
+
+<p><pre>
+typedef struct {
+    DWORD cbStructure;
+    HWND hwndOwner;
+    LPNETRESOURCE lpConnRes;
+    DWORD dwFlags;
+    DWORD dwDevNum;
+} CONNECTDLGSTRUCT;
+</PRE>
+
+<P>The first field in the structure is the size field and must be set with the size of the CONNECTDLGSTRUCT structure before you call <I>WNetConnectionDialog1</I>. The <I>hwndOwner</I> field should be filled with the handle of the owner window for the dialog box. The <I>lpConnRes</I> field should point to a NETRESOURCE structure. This structure should be filled with zeros except for the <I>lpRemoteName</I> field, which may be filled to specify the default remote name in the dialog. You can leave the <I>lpRemoteName</I> field 0 if you don't want to specify a suggested remote path.
+
+<P>The <I>dwFlags</I> field can either be 0 or set to the flag CONNDLG_RO_PATH. When this flag is specified, the user can't change the remote name field in the dialog box. Of course, this means that the <I>lpRemoteName</I> field in the NETRESOURCE structure must contain a valid remote name. Windows CE ignores the <I>dwDevNum</I> field in the CONNECTDLGSTRUCT structure.
+
+<P>When the function is called, it displays a dialog box that allows the user to specify a local and, if not invoked with the CONNDLG_RO_PATH flag, the remote name as well. If the user taps on the OK button, Windows attempts to make the connection specified. The connection, if successful, is recorded as a persistent connection in the registry.
+
+<P>If the connection is successful, the function returns NO_ERROR. If the user presses the Cancel button in the dialog box, the function returns -1. Other return codes indicate errors processing the function.
+
+<A NAME="371"><H3>Disconnecting a remote resource</H3></A>
+
+<P>You can choose from three ways to disconnect a connected resource. The first method is to delete the connection with this function:
+
+<p><pre>
+DWORD WNetCancelConnection2 (LPTSTR lpName, DWORD dwFlags,
+                             BOOL fForce);
+</PRE>
+
+<P>The <I>lpName</I> parameter points to either the local name or the remote network name of the connection you want to remove. The <I>dwFlags</I> parameter should be set to 0 or CONNECT_UPDATE_PROFILE. If CONNECT_UPDATE_PROFILE is set, the entry in the registry that references the connection is removed; otherwise the call won't change that information. Finally, the <I>fForce </I>parameter indicates whether the system should continue with the disconnect, even if there are open files or print jobs on the remote device. If the function is successful, it returns NO_ERROR.
+
+<P>You can prompt the user to specify a network resource to delete using this function:
+
+<p><pre>
+DWORD WNetDisconnectDialog (HWND hwnd, DWORD dwType);
+</PRE>
+
+<P>This function brings up a system provided dialog box that lists all connections currently defined. The user can select one from the list and tap on the OK button to disconnect that resource. The two parameters for this function are a handle to the window that owns the dialog box and <I>dwType</I>, which is supposed to define the type of resources&#8212;printer (RESOURCETYPE_PRINT) or disk (RESOURCETYPE_DISK)&#8212;enumerated in the dialog box. However, some systems ignore this parameter and enumerate both disk and print devices. This dialog, displayed by <I>WnetDisconnectDialog</I>, is actually implemented by the network driver. So it's up to each OEM to get this dialog to work correctly.
+
+<P>A more specific method to disconnect a network resource is to call
+
+<p><pre>
+DWORD WNetDisconnectDialog1 (LPDISCDLGSTRUCT lpDiscDlgStruc);
+</PRE>
+
+<P>This function is misleadingly named in that it won't display a dialog box if all the parameters in DISCDLGSTRUCT are correct and point to a resource not currently being used. The dialog part of this function appears when the resource is being used.
+
+<P>The DISCDLGSTRUCT is defined as
+
+<p><pre>
+typedef struct {
+    DWORD cbStructure;
+    HWND hwndOwner;
+    LPTSTR lpLocalName;
+    LPTSTR lpRemoteName;
+    DWORD dwFlags;
+} DISCDLGSTRUCT;
+</PRE>
+
+<P>As usual, the <I>cbStructure</I> field should be set to the size of the structure. The <I>hwndOwner</I> field should be set to the window that owns any dialog box displayed. The <I>lpLocalName</I> and <I>lpRemoteName</I> fields should be set to the local and remote names of the resource that's to be disconnected. Under current implementations, the <I>lpLocalName</I> is optional while the <I>lpRemoteName</I> field must be set for the function to work correctly. The <I>dwFlags</I> parameter can be either 0 or DISC_NO_FORCE. If this flag is set and the network resource is currently being used, the system simply fails the function. Otherwise, a dialog appears asking the user if he or she wants to disconnect the resource even though the resource is being used. Under the current implementations, the DISC_NO_FORCE flag is ignored.
+
+<A NAME="372"><H3>Enumerating network resources</H3></A>
+
+<P>It's all very well and good to connect to a network resource, but it helps if you know what resources are available to connect to. Windows CE supports three WNet functions used to enumerate network resources: <I>WNetOpenEnum</I>, <I>WNetEnumResource</I>, and <I>WNetCloseEnum</I>. The process is similar to enumerating files with <I>FileFindFirst</I>, <I>FileFindNext</I>, and <I>FileFindClose</I>.
+
+<P>To start the process of numerating network resources, first call the function
+
+<p><pre>
+DWORD WNetOpenEnum (DWORD dwScope, DWORD dwType, DWORD dwUsage,
+                    LPNETRESOURCE lpNetResource,
+                    LPHANDLE lphEnum);
+</PRE>
+
+<P>The first parameter <I>dwScope</I> specifies the scope of the enumeration. It can be one of the following flags:
+
+<UL>
+<P><LI><I>RESOURCE_CONNECTED</I> Enumerate the connected resources.
+<P><LI><I>RESOURCE_REMEMBERED</I> Enumerate the persistent network connections.
+<P><LI><I>RESOURCE_GLOBALNET</I> Enumerate all resources on the network.
+</UL>
+
+<P>The first two flags, RESOURCE_CONNECTED and RESOURCE_REMEMBERED, simply enumerate the resources already connected on your machine. The difference is that RESOURCE_CONNECTED returns the network resources that are connected at the time of the call, while RESOURCE_REMEMBERED returns those that are persistent regardless of whether they're currently connected. When using either of these flags, the <I>dwUsage</I> parameter is ignored and the <I>lpNetResource</I> parameters must be NULL.
+
+<P>The third flag, RESOURCE_GLOBALNET, allows you to enumerate resources&#8212;such as servers, shared drives, or printers out on the network&#8212;that aren't connected. The <I>dwType</I> parameter specifies what you're attempting to enumerate&#8212;shared disks (RESOURCETYPE_DISK), shared printers (RESOURCETYPE_PRINT), or both (RESOURCETYPE_ANY).
+
+<P>You use the third and fourth parameters only if the <I>dwScope</I> parameter is set to RESOURCE_GLOBALNET. The <I>dwUsage</I> parameter specifies the usage of the resource and can be 0 to enumerate any resource, RESOURCEUSAGE_CONNECTABLE to enumerate only connectable resources, or RESOURCEUSAGE_CONTAINER to enumerate only containers such as servers.
+
+<P>If the <I>dwScope</I> parameter is set to RESOURCE_GLOBALNET, the fourth parameter, <I>lpNetResource</I> must point to a NETRESOURCE structure; otherwise the parameter must be NULL. The NETRESOURCE structure should be initialized to specify the starting point on the network for the enumeration. The starting point is specified by a UNC name in the <I>lpRemoteName</I> field of NETRESOURCE. The <I>dwUsage</I> field of the NETRESOURCE structure must be set to RESOURCETYPE_CONTAINER. For example, to enumerate the shared resources on the server BIGSERV the <I>lpRemoteName</I> field would point to the string <I>\\BIGSERV</I>. To enumerate all servers in a domain, the <I>lpRemoteName</I> should simply specify the domain name. For the domain EntireNet, the <I>lpRemoteName</I> field should point to the string <I>EntireNet</I>. Because Windows CE doesn't allow you to pass a NULL into <I>lpRemoteName</I> when you use the RESOURCE_GLOBALNET flag, you can't enumerate all resources in the network namespace as you can under Windows 98 or Windows NT. This restriction exists because Windows CE doesn't support the concept of a Windows CE device belonging to a specific network context.
+
+<P>The final parameter of <I>WNetOpenEnum</I>, <I>lphEnum</I>, is a pointer to an enumeration handle that will be passed to the other functions in the enumeration process. <I>WNetOpenEnum</I> returns a value of NO_ERROR if successful. If the function isn't successful, you can call <I>GetLastError</I> to query the extended error information.
+
+<P>Once you have successfully started the enumeration process, you actually query data by calling this function:
+
+<p><pre>
+DWORD WNetEnumResource (HANDLE hEnum, LPDWORD lpcCount,
+                        LPVOID lpBuffer,
+                        LPDWORD lpBufferSize);
+</PRE>
+
+<P>The function takes the handle returned by <I>WNetOpenEnum</I> as its first parameter. The second parameter is a pointer to a variable that should be initialized with the number of resources you want to enumerate in each call to <I>WNetEnumResource</I>. You can specify a -1 in this variable if you want <I>WNetEnumResource</I> to return the data for as many resources as will fit in the return buffer specified by the <I>lpBuffer</I> parameter. The final parameter is a pointer to a DWORD that should be initialized with the size of the buffer pointed to by <I>lpBuffer</I>. If the buffer is too small to hold the data for even one resource, <I>WNetEnumResource</I> sets this variable to the required size for the buffer.
+
+<P>The information about the shared resources returned by data is returned in the form of an array of NETRESOURCE structures. While this is the same structure I described when I talked about the <I>WNetAddConnection3</I> function, I'll list the elements of the structure here again for convenience:
+
+<p><pre>
+typedef struct _NETRESOURCE {
+    DWORD  dwScope;
+    DWORD  dwType;
+    DWORD  dwDisplayType;
+    DWORD  dwUsage;
+    LPTSTR lpLocalName;
+    LPTSTR lpRemoteName;
+    LPTSTR lpComment;
+    LPTSTR lpProvider;
+} NETRESOURCE;
+</PRE>
+
+<P>The interesting fields in the context of enumeration start with the <I>dwType</I> field, which indicates the type of resource that was enumerated. The value can be RESOURCETYPE_DISK or RESOURCETYPE_PRINT. The <I>dwDisplayType</I> field provides even more information about the resource, demarcating domains (RESOURCEDISPLAYTYPE_DOMAIN) from servers (RESOURCEDISPLAYTYPE_SERVER) and from shared disks and printers (RESOURCEDISPLAYTYPE_SHARE). A fourth flag, RESOURCEDISPLAYTYPE_GENERIC, is returned if the display type doesn't matter.
+
+<P>The <I>lpLocalName</I> field points to a string containing the local name of the resource if the resource is currently connected or is a persistent connection. The <I>lpRemoteName</I> field points to the UNC name of the resource. The <I>lpComment</I> field contains the comment line describing the resource that's provided by some servers.
+
+<P><I>WNetEnumResource</I> either returns NO_ERROR, indicating the function passed (but you need to call it again to enumerate more resources), or ERROR_NO_MORE_ITEMS, indicating that you have enumerated all resources matching the specification passed in <I>WNetOpenEnum</I>. With any other return code, you should call <I>GetLastError</I> to further diagnose the problem.
+
+<P>You have few strategies when enumerating the network resources. You can specify a huge buffer and pass a -1 in the variable pointed to by <I>lpcCount</I>, telling <I>WNetEnumResource</I> to return as much information as possible in one shot. Or you can specify a smaller buffer and ask for only one or two resources for each call to <I>WNetEnumResource</I>. The one caveat on the small buffer approach is that the strings that contain the local and remote names are also placed in the specified buffer. The name pointers inside the NETRESOURCE structure then point to those strings. This means that you can't specify the size of the buffer to be exactly the size of the NETRESOURCE structure and expect to get any data back. A third possibility is to call <I>WNetEnumResource</I> twice, the first time with the <I>lpBuffer</I> parameter 0, and have Windows CE tell you the size necessary for the buffer. Then you allocate the buffer and call <I>WNetEnumResource</I> again to actually query the data. However you use <I>WnetEnumResource</I>, you'll need to check the return code to see whether it needs to be called again to enumerate more resources.
+
+<P>When you have enumerated all the resources, you must make one final call to the function:
+
+<p><pre>
+DWORD WNetCloseEnum (HANDLE hEnum);
+</PRE>
+
+<P>The only parameter to this function is the enumeration handle first returned by <I>WNetOpenEnum</I>. This function cleans up the system resources used by the enumeration process.
+
+<P>Following is a short routine that uses the enumeration functions to query the network for available resources. You pass to a function a UNC name to use as the root of the search. The function returns a buffer of zero-delimited strings that designate the local name, if any, and the UNC name of each shared resource found.
+
+<p><pre>
+// Helper routine
+int AddToList (LPTSTR *pPtr, INT *pnListSize, LPTSTR pszStr) {
+    INT nLen = lstrlen (pszStr) + 1;
+
+    if (*pnListSize &lt; nLen) return -1;
+    lstrcpy (*pPtr, pszStr);
+    *pPtr += nLen;
+    *pnListSize -= nLen;
+    return 0;
+}
+//----------------------------------------------------------------------
+// EnumNetDisks - Produces a list of shared disks on a network
+//
+int EnumNetDisks (LPTSTR pszRoot, LPTSTR pszNetList, int nNetSize){
+    INT i = 0, rc, nBuffSize = 1024;
+    DWORD dwCnt, dwSize;
+    HANDLE hEnum;
+    NETRESOURCE nr;
+    LPNETRESOURCE pnr;
+    PBYTE pPtr, pNew;
+
+    // Allocate buffer for enumeration data.
+    pPtr = (PBYTE) LocalAlloc (LPTR, nBuffSize);
+    if (!pPtr)
+        return -1;
+
+    // Initialize specification for search root.
+    memset (&amp;nr, 0, sizeof (nr));
+    nr.lpRemoteName = pszRoot;
+    nr.dwUsage = RESOURCEUSAGE_CONTAINER;
+
+    // Start enumeration.
+    rc = WNetOpenEnum (RESOURCE_GLOBALNET, RESOURCETYPE_DISK, 0, &amp;nr,
+                       &amp;hEnum);
+    if (rc != NO_ERROR)
+        return -1;
+
+    // Enumerate one item per loop.
+    do {
+        dwCnt = 1;
+        dwSize = nBuffSize;
+        rc = WNetEnumResource (hEnum, &amp;dwCnt, pPtr, &amp;dwSize);
+
+        // Process returned data.
+        if (rc == NO_ERROR) {
+            pnr = (NETRESOURCE *)pPtr;
+            if (pnr-&gt;lpRemoteName)
+                rc = AddToList (&amp;pszNetList, &amp;nNetSize,
+                                pnr-&gt;lpRemoteName);
+
+        // If our buffer was too small, try again.
+        } else if (rc == ERROR_MORE_DATA) {
+            pNew = LocalReAlloc (pPtr, dwSize, LMEM_MOVEABLE);
+            if (pNew) {
+                pPtr = pNew;
+                nBuffSize = LocalSize (pPtr);
+                rc = 0;
+            }
+        }
+    } while (rc == 0);
+
+    // If the loop was successful, add extra zero to list.
+    if (rc == ERROR_NO_MORE_ITEMS) {
+        rc = AddToList (&amp;pszNetList, &amp;nNetSize, TEXT (&quot;&quot;));
+        rc = 0;
+    }
+
+    // Clean up.
+    WNetCloseEnum (hEnum);
+    LocalFree (pPtr);
+    return rc;
+}
+</PRE>
+
+<P>While the enumeration functions work well to query what's available on the net, you can use another strategy for determining the current connected resources. At the simplest level, you can use <I>FileFindFirst</I> and <I>FileFindNext</I> to enumerate the locally connected network disks by searching the folders in the \network directory. Once you have the local name, a few functions are available to you for querying just what that local name is connected to.
+
+<A NAME="373"><H3>Querying connections and resources</H3></A>
+
+<P>The folders in the \network directory represent the local names of network shared disks that are persistently connected to network resources. To determine which of the folders are currently connected, you can use the function
+
+<p><pre>
+DWORD WNetGetConnection (LPCTSTR lpLocalName,
+                         LPTSTR lpRemoteName,
+                         LPDWORD lpnLength);
+</PRE>
+
+<P><I>WNetGetConnection</I> returns the UNC name of the network resource associated with a local device or folder. The <I>lpLocalName</I> parameter is filled with the local name of a shared folder or printer. The <I>lpRemoteName</I> parameter should point to a buffer that can receive the UNC name for the device. The <I>lpnLength</I> parameter points to a DWORD value that initially contains the length in characters of the remote name buffer. If the buffer is too small to receive the name, the length value is loaded with the number of characters required to hold the UNC name.
+
+<P>One feature (or problem, depending on how you look at it) of <I>WNetGetConnection</I> is that it fails unless the local folder or device has a current connection to the remote shared device. This allows us an easy way to determine which local folders are currently connected and which are just placeholders for persistent connections that aren't currently connected.
+
+<P>Sometimes you need to transfer a filename from one system to another and you need a common format for the filename that would be understood by both systems. The <I>WNetGetUniversalName</I> function translates a filename that contains a local network name into one using the UNC name of the connected resource. The prototype for <I>WNetGetUniversalName</I> is the following:
+
+<p><pre>
+DWORD WNetGetUniversalName (LPCTSTR lpLocalPath, DWORD dwInfoLevel,
+                            LPVOID lpBuffer, LPDWORD lpBufferSize);
+</PRE>
+
+<P>Like <I>WNetGetConnection</I>, this function returns a UNC name for a local name. There are two main differences between <I>WNetGetConnection</I> and <I>WNetGetUniversalName</I>. First, <I>WNetGetUniversalName</I> works even if the remote resource isn't currently connected. Second, you can pass a complete filename to <I>WNetGetUniversalName</I> instead of simply the local name of the shared resource, which is all that is accepted by <I>WNetGetConnection</I>.
+
+<P><I>WNetGetUniversalName</I> returns the remote information in two different formats. If the <I>dwInfoLevel</I> parameter is set to UNIVERSAL_NAME_INFO_LEVEL, the buffer pointed to by <I>lpBuffer</I> is loaded with the following structure:
+
+<p><pre>
+typedef struct _UNIVERSAL_NAME_INFO {
+    LPTSTR  lpUniversalName;
+} UNIVERSAL_NAME_INFO;
+</PRE>
+
+<P>The only field in the structure is a pointer to the UNC name for the shared resource. The string is returned in the buffer immediately following the structure. So, if a server \<I>\BigServ\DriveC</I> was attached as LocC and you pass <I>WnetGetUniversalName</I> the filename \network\LocC\win32\filename.ext, it returns the UNC name <I>\\BigServ\DriveC\win32\filename.ext</I>.
+
+<P>If the <I>dwInfoLevel</I> parameter is set to REMOTE_NAME_INFO_LEVEL, the buffer is filled with the following structure:
+
+<p><pre>
+typedef struct _REMOTE_NAME_INFO
+    LPTSTR  lpUniversalName;
+    LPTSTR  lpConnectionName;
+    LPTSTR  lpRemainingPath;
+} REMOTE_NAME_INFO;
+</PRE>
+
+<P>This structure returns not just the UNC name, but also parses the UNC name into the share name and the remaining path. So, using the same filename as in the previous example, \network\LocC\win32\filename.ext, the REMOTE_NAME_INFO fields would point to the following strings:
+
+<p><pre>
+<I>lpUniveralName:     \\BigServ\DriveC\win32\filename.ext
+lpConnectionName:   \\BigServ\DriveC
+lpRemainingPath:    \win32\filename.ext</I>
+</pre>
+
+<P>One more thing: you don't have to prefix the local share name with \network. In the preceding example, the filename \LocC\Win32\filename.ext would have produced the same results.
+
+<P>One final WNet function supported by Windows CE is
+
+
+<p><pre>
+DWORD WnetGetUser (LPCTSTR lpName, LPTSTR lpUserName,
+                   LPDWORD lpnLength);
+</PRE>
+
+<P>This function returns the name the system used to connect to the remote resource. <I>WnetGetUser</I> is passed the local name of the shared resource and returns the user name the system used when connecting to the remote resource in the buffer pointed to by <I>lpUserName</I>. The <I>lpnLengh</I> parameter should point to a variable that contains the size of the buffer. If the buffer isn't big enough to contain the user name, the variable pointed to by <I>lpnLength</I> is filled with the required size for the buffer.
+
+<A NAME="374"><H2>The ListNet Example Program</H2></A>
+
+<P>ListNet is a short program that lists the persistent network connections on a Windows CE machine. The program's window is a dialog box with three controls: a list box that displays the network connections, a Connect button that lets you add a new persistent connection, and a Disconnect button that lets you delete one of the connections. Double-clicking on a connection in the list box opens an Explorer window to display the contents of that network resource. Figure 10-1 shows the ListNet window while Figure 10-2 shows the ListNet source code.
+
+<P><A HREF="javascript:fullSize('f10rg01x.htm')"> <IMG SRC="F10RG01.JPG" width=404 height=152 ALIGN="BOTTOM" ALT="Click to view at full size."></a>
+
+<P><!-- caption --><B>Figure 10-1.</B> <I>The ListNet window containing a few network folders.</I><!-- /caption -->
+
+<P><B>Figure 10-2.</B> <I>The ListNet source.</I>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<A NAME="375"><h3>ListNet.rc</h3></A>
+
+
+
+<P><pre>
+//======================================================================
+// Resource file
+//
+// Written for the book Programming Windows CE
+
+// Copyright (C) 1998 Douglas Boling
+
+//======================================================================
+#include &quot;windows.h&quot;
+#include &quot;ListNet.h&quot;                      // Program-specific stuff
+
+//----------------------------------------------------------------------
+// Icons and bitmaps
+//
+ID_ICON ICON   &quot;ListNet.ico&quot;              // Program icon
+
+//----------------------------------------------------------------------
+// Main window dialog template
+//
+ListNet DIALOG discardable 10, 10, 120, 65
+STYLE  WS_OVERLAPPED | WS_VISIBLE | WS_CAPTION | WS_SYSMENU | 
+       DS_CENTER | DS_MODALFRAME 
+CAPTION &quot;ListNet&quot;
+BEGIN
+    LISTBOX                  IDD_NETLIST,   2,   2, 116,  46, 
+                          WS_TABSTOP | WS_VSCROLL |
+                          LBS_NOINTEGRALHEIGHT | LBS_USETABSTOPS
+    PUSHBUTTON &quot;&amp;Connect...&quot;,   IDD_CNCT,   2,  50,  55,  12, WS_TABSTOP
+    PUSHBUTTON &quot;&amp;Disconnect...&quot;,
+                               IDD_DCNCT,  61,  50,  55,  12, WS_TABSTOP
+END
+</PRE>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="376"><h3>ListNet.h</h3></A><P>
+<p><pre>
+
+//======================================================================
+// Header file
+
+//
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//======================================================================
+// Returns number of elements
+#define dim(x) (sizeof(x) / sizeof(x[0]))
+
+//----------------------------------------------------------------------
+// Generic defines and data types
+//
+struct decodeUINT {                            // Structure associates
+    UINT Code;                                 // messages 
+                                               // with a function. 
+    LRESULT (*Fxn)(HWND, UINT, WPARAM, LPARAM);
+}; 
+struct decodeCMD {                             // Structure associates
+    UINT Code;                                 // menu IDs with a 
+    LRESULT (*Fxn)(HWND, WORD, HWND, WORD);    // function.
+};
+//----------------------------------------------------------------------
+
+// Generic defines used by application
+
+
+#define  ID_ICON             1   
+
+#define  IDD_NETLIST         100               // Control IDs
+#define  IDD_CNCT            101
+#define  IDD_DCNCT           102
+
+//----------------------------------------------------------------------
+// Function prototypes
+//
+int InitApp (HINSTANCE);
+HWND InitInstance (HINSTANCE, LPWSTR, int);
+int TermInstance (HINSTANCE, int);
+INT RefreshLocalNetDrives (HWND hWnd);
+
+// Dialog window procedure
+BOOL CALLBACK MainWndProc (HWND, UINT, WPARAM, LPARAM);
+
+// Dialog window Message handlers
+BOOL DoCommandMain (HWND, UINT, WPARAM, LPARAM);
+
+// Command functions
+LPARAM DoMainCommandExit (HWND, WORD, HWND, WORD);
+LPARAM DoMainCommandViewDrive (HWND, WORD, HWND, WORD);
+LPARAM DoMainCommandMapDrive (HWND, WORD, HWND, WORD);
+LPARAM DoMainCommandFreeDrive  (HWND, WORD, HWND, WORD);
+</PRE>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="377"><h3>ListNet.c</h3></A>
+<p><pre>
+//======================================================================
+// ListNet - A network demo application for Windows CE
+
+//
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//======================================================================
+#include &lt;windows.h&gt;                 // For all that Windows stuff
+#include &lt;winnetwk.h&gt;                // Network includes
+#include &quot;ListNet.h&quot;                 // Program-specific stuff
+
+//----------------------------------------------------------------------
+// Global data
+//
+const TCHAR szAppName[] = TEXT (&quot;ListNet&quot;);
+HINSTANCE hInst;                     // Program instance handle
+
+BOOL fFirst = TRUE;
+
+// Command Message dispatch for MainWindowProc
+const struct decodeCMD MainCommandItems[] = {
+    IDOK, DoMainCommandExit,
+    IDCANCEL, DoMainCommandExit,
+    IDD_NETLIST, DoMainCommandViewDrive,
+    IDD_CNCT, DoMainCommandMapDrive,
+    IDD_DCNCT, DoMainCommandFreeDrive,
+};
+//======================================================================
+//
+// Program entry point
+//
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    LPWSTR lpCmdLine, int nCmdShow) {
+    // Save program instance handle in global variable.
+    hInst = hInstance;
+
+    // Create main window.
+    DialogBox (hInst, szAppName, NULL, MainWndProc);
+    return 0;
+}
+//======================================================================
+// Message handling procedures for main window
+//----------------------------------------------------------------------
+// MainWndProc - Callback function for application window
+//
+BOOL CALLBACK MainWndProc (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                           LPARAM lParam) {
+    INT i;
+    // With only two messages, do it the old-fashioned way.
+    switch (wMsg) {
+    case WM_INITDIALOG:
+        i = 75;
+        SendDlgItemMessage (hWnd, IDD_NETLIST, LB_SETTABSTOPS, 1, 
+                            (LPARAM)&amp;i);
+        RefreshLocalNetDrives (hWnd);
+        break;
+
+    case WM_COMMAND:
+    return DoCommandMain (hWnd, wMsg, wParam, lParam);
+    }
+    return FALSE;
+}
+//----------------------------------------------------------------------
+// DoCommandMain - Process WM_COMMAND message for window.
+
+//
+BOOL DoCommandMain (HWND hWnd, UINT wMsg, WPARAM wParam, LPARAM lParam){
+    WORD idItem, wNotifyCode;
+    HWND hwndCtl;
+    INT  i;
+
+    // Parse the parameters.
+    idItem = (WORD) LOWORD (wParam);
+    wNotifyCode = (WORD) HIWORD (wParam);
+    hwndCtl = (HWND) lParam;
+
+    // Call routine to handle control message.
+    for (i = 0; i &lt; dim(MainCommandItems); i++) {
+        if (idItem == MainCommandItems[i].Code) {
+            (*MainCommandItems[i].Fxn)(hWnd, idItem, hwndCtl, 
+                                       wNotifyCode);
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+//======================================================================
+// Command handler routines
+//----------------------------------------------------------------------
+// DoMainCommandExit - Process Program Exit command
+//
+LPARAM DoMainCommandExit (HWND hWnd, WORD idItem, HWND hwndCtl, 
+                          WORD wNotifyCode) {
+    EndDialog (hWnd, 0);
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoMainCommandViewDrive - Process list box double clicks
+//
+LPARAM DoMainCommandViewDrive (HWND hWnd, WORD idItem, HWND hwndCtl, 
+                               WORD wNotifyCode) {
+    TCHAR szCmdLine[128], szFolder[MAX_PATH];
+    PROCESS_INFORMATION pi;
+    HCURSOR hOld;
+    INT i, rc;
+
+    // We're only interested in list box double-clicks.
+    if (wNotifyCode != LBN_DBLCLK) 
+        return 0;
+
+    i = SendMessage (hwndCtl, LB_GETCURSEL, 0, 0);
+
+    if (i == LB_ERR) return 0;
+    i = SendMessage (hwndCtl, LB_GETTEXT, i, (LPARAM)szFolder);
+
+    hOld = SetCursor (LoadCursor (NULL, IDC_WAIT));
+    lstrcpy (szCmdLine, TEXT (&quot;\\network\\&quot;));
+    lstrcat (szCmdLine, szFolder);
+
+    rc = CreateProcess (TEXT (&quot;Explorer&quot;), szCmdLine, NULL, NULL,
+                       FALSE, 0, NULL, NULL, NULL, &amp;pi);
+    if (rc) {
+        CloseHandle (pi.hProcess);
+        CloseHandle (pi.hThread);
+    }
+    SetCursor (hOld);
+    return TRUE;
+}
+//----------------------------------------------------------------------
+// DoMainCommandMapDrive - Process map network drive command.
+//
+LPARAM DoMainCommandMapDrive (HWND hWnd, WORD idItem, HWND hwndCtl, 
+                              WORD wNotifyCode) {
+    DWORD rc; 
+    CONNECTDLGSTRUCT cds;
+    NETRESOURCE nr;
+    TCHAR szRmt[256];
+
+    memset (&amp;nr, 0, sizeof (nr));
+    nr.dwType = RESOURCETYPE_DISK;
+    memset (szRmt, 0, sizeof (szRmt));
+
+    cds.cbStructure = sizeof (cds);
+    cds.hwndOwner = hWnd;
+    cds.lpConnRes = &amp;nr;
+    cds.dwFlags = CONNDLG_PERSIST;
+    // Display dialog box.
+    rc = WNetConnectionDialog1 (&amp;cds);
+    if (rc == NO_ERROR) 
+        RefreshLocalNetDrives (hWnd);
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoMainCommandFreeDrive - Process disconnect network drive command.
+//
+LPARAM DoMainCommandFreeDrive (HWND hWnd, WORD idItem, HWND hwndCtl, 
+                               WORD wNotifyCode) {
+
+    WNetDisconnectDialog (hWnd, RESOURCETYPE_DISK);
+    RefreshLocalNetDrives (hWnd);
+    return 0;
+}
+//======================================================================
+// Network browsing functions
+//----------------------------------------------------------------------
+// EnumerateLocalNetDrives - Add an item to the list view control.
+//
+INT RefreshLocalNetDrives (HWND hWnd) {
+    HWND hwndCtl = GetDlgItem (hWnd, IDD_NETLIST);
+    INT rc, nBuffSize = 1024;
+    DWORD dwCnt, dwSize;
+    HANDLE hEnum;
+    LPNETRESOURCE pnr;
+    NETRESOURCE nr;
+    PBYTE pPtr, pNew;
+    TCHAR szText[256];
+
+    SendMessage (hwndCtl, LB_RESETCONTENT, 0, 0);
+
+    // Allocate buffer for enumeration data.
+    pPtr = (PBYTE) LocalAlloc (LPTR, nBuffSize);
+    if (!pPtr) 
+        return -1;
+
+    // Initialize specification for search root.
+    memset (&amp;nr, 0, sizeof (nr));
+    lstrcpy (szText, TEXT (&quot;\\sjdev&quot;));
+    nr.lpRemoteName = szText;
+    nr.dwUsage = RESOURCEUSAGE_CONTAINER;
+
+    // Start enumeration.
+    rc = WNetOpenEnum (RESOURCE_REMEMBERED, RESOURCETYPE_ANY, 0, 0, 
+                       &amp;hEnum);
+    if (rc != NO_ERROR) return -1;
+
+    // Enumerate one item per loop.
+    do {
+        dwCnt = 1;
+        dwSize = nBuffSize;
+        rc = WNetEnumResource (hEnum, &amp;dwCnt, pPtr, &amp;dwSize);
+        pnr = (NETRESOURCE *)pPtr;
+        lstrcpy (szText, pnr-&gt;lpLocalName);
+        // Process returned data.
+        if (rc == NO_ERROR) {
+            switch (pnr-&gt;dwType) {
+            case RESOURCETYPE_ANY:
+                lstrcat (szText, TEXT (&quot;\t Share&quot;));
+                break;
+            case RESOURCETYPE_PRINT:
+                lstrcat (szText, TEXT (&quot;\t Printer&quot;));
+                break;
+            case RESOURCETYPE_DISK:
+                lstrcat (szText, TEXT (&quot;\t Disk&quot;));
+                break;
+            }
+            SendMessage (hwndCtl, LB_ADDSTRING, 0, (LPARAM)szText);
+
+        // If our buffer was too small, try again.
+        } else if (rc == ERROR_MORE_DATA) {
+            pNew = LocalReAlloc (pPtr, dwSize, LMEM_MOVEABLE);
+            if (pNew) {
+                pPtr = pNew;
+                nBuffSize = LocalSize (pPtr);
+                rc = 0;
+            } else 
+                break;
+        }
+    } while (rc == 0);
+    // Clean up.
+    WNetCloseEnum (hEnum);
+    LocalFree (pPtr);
+    return 0;
+}
+</PRE>
+</td></tr></table>
+
+<P>The heart of the networking code is at the end of ListNet, in the routine <I>RefreshLocalNetDrives</I>. This routine uses the WNet enumerate functions to determine the persistent network resources mapped to the system. Network connections and disconnections are accomplished with calls to <I>WNetConnectionDialog1 </I>and <I>WnetDisconnectDialog</I> respectively. You open an Explorer window containing the shared network disk by launching EXPLORER.EXE with a command line that's the path of the folder to open.
+
+</BODY>
+
+</HTML>
+
+
+
+

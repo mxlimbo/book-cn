@@ -1,0 +1,110 @@
+<HTML>
+<HEAD>
+<LINK REL=StyleSheet HREF="basicIE4.css" TYPE="text/css">
+<TITLE>Asynchronous Moniker Files</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY>
+<A NAME="916"><H1>Asynchronous Moniker Files</H1></A><P>Just when you thought you knew all the ways to download a file from 
+the Internet, you're going to learn about another one. With asynchronous 
+moniker files, you'll be doing all your programming in your application's main 
+thread without blocking the user interface. Sounds like magic, doesn't it? The 
+magic is inside the Windows URLMON DLL, which depends on WinInet and is 
+used by Microsoft Internet Explorer. The MFC 
+<I>CAsyncMonikerFile</I> class makes the programming easy, but you should know a little theory first.
+<A NAME="917"><H2>Monikers</H2></A><P>A <U>moniker</U> is a &quot;surrogate&quot; COM object that holds the name (URL) of the 
+&quot;real&quot; object, which could be an embedded component but more often is just an 
+Internet file (HTML, JPEG, GIF, and so on). Monikers implement the 
+<I>IMoniker</I> interface, which has two important member functions: 
+<I>BindToObject</I> and<I> BindToStorage</I>. The 
+<I>BindToObject</I> function puts an object into the running state, 
+and the <I>BindToStorage </I>function provides an 
+<I>IStream</I> or an <I>IStorage</I> pointer from which the object's data can be read. A moniker has an associated 
+<I>IBindStatusCallback</I> interface with member functions such as 
+<I>OnStartBinding</I> and <I>OnDataAvailable</I>, which are called during the process of reading data from a URL.
+<P>The callback functions are called in the thread that created the 
+moniker. This means that the URLMON DLL must set up an invisible window in 
+the calling thread and send the calling thread messages from another thread, 
+which uses WinInet functions to read the URL. The window's message handlers 
+call the callback functions.
+<A NAME="918"><H2>The MFC <I>CAsyncMonikerFile</I> Class</H2></A><P>Fortunately, MFC can shield you from the COM interfaces described above. 
+The <I>CAsyncMonikerFile</I> class is derived from 
+<I>CFile</I>, so it acts like a regular file. Instead of opening a disk file, the class's 
+<I>Open</I> member function gets an 
+<I>IMoniker</I> pointer and encapsulates the 
+<I>IStream</I> interface returned from a call to 
+<I>BindToStorage</I>. Furthermore, the class has virtual functions that are tied to the 
+member functions of <I>IBindStatusCallback</I>. Using this class is a breeze; you 
+construct an object or a derived class and call the 
+<I>Open</I> member function, which returns immediately. Then you wait for calls to overridden virtual functions such 
+as <I>OnProgress</I> and <I>OnDataAvailable</I>, named, not coincidentally, after their 
+<I>IBindStatusCallback</I> equivalents.
+<A NAME="919"><H2>Using the <I>CAsyncMonikerFile</I> Class in a Program</H2></A><P>Suppose your application downloads data from a dozen URLs but has only 
+one class derived from <I>CAsyncMonikerFile</I>. The overridden callback functions 
+must figure out where to put the data. That means you must associate each 
+derived class object with some UI element in your program. The steps listed below 
+illustrate one of many ways to do this. Suppose you want to list the text of 
+an HTML file in an edit control that's part of a form view. This is what you can do:<P>
+<OL><LI>Use ClassWizard to derive a class from 
+<I>CAsyncMonikerFile</I>.
+<P><LI>Add a character pointer data member 
+<I>m_buffer</I>. Invoke <I>new </I>for this pointer in the constructor; invoke 
+<I>delete </I>in the destructor.
+<P><LI>Add a public data member 
+<I>m_edit</I> of class <I>CEdit</I>.
+<P><LI>Override the <I>OnDataAvailable</I> function thus:
+<P><PRE>void CMyMonikerFile::OnDataAvailable(DWORD dwSize, DWORD bscfFlag) 
+{
+    try {
+        UINT nBytesRead = Read(m_buffer, MAXBUF - 1);
+        TRACE(&quot;nBytesRead = %d\n&quot;, nBytesRead);
+        m_buffer[nBytesRead] = `\0'; // necessary for edit control
+        // The following two lines add text to the edit control
+        m_edit.SendMessage(EM_SETSEL, (WPARAM) 999999, 1000000);
+        m_edit.SendMessage(EM_REPLACESEL, (WPARAM) 0,
+            (LPARAM) m_buffer);
+    }
+    catch(CFileException* pe) {
+        TRACE(&quot;File exception %d\n, pe-&gt;m_cause&quot;);
+        pe-&gt;Delete();
+    }
+}</PRE>
+<P><LI>Embed an object of your new moniker file class in your view class.
+<P><LI>In you view's 
+<I>OnInitialUpdate</I> function, attach the 
+<I>CEdit</I> member to the edit control like this:
+<P><PRE>m_myEmbeddedMonikerFile.m_edit.SubClassDlgItem(ID_MYEDIT, this);</PRE>
+<P><LI>In your view class, open the moniker file like this:
+<P><PRE>m_myEmbeddedMonikerFile.Open(&quot;http://host/filename&quot;);</PRE>
+<P>For a large file, <I>OnDataAvailable</I> will be called several times, each 
+time adding text to the edit control. If you override 
+<I>OnProgress</I> or <I>OnStopBinding</I> in your derived moniker file class, your program can be alerted when the 
+transfer is finished. You can also check the value of 
+<I>bscfFlag</I> in <I>OnDataAvailable</I> to determine whether the transfer is completed. Note that everything here is in 
+your main thread and&#151;most important&#151;the moniker file object must exist for as 
+long as the transfer is in progress. That's why it's a data member of the view class.
+</OL>
+<A NAME="920"><H2>Asynchronous Moniker Files vs. WinInet Programming</H2></A><P>In the WinInet examples earlier in this chapter, you started a worker thread 
+that made blocking calls and sent a message to the main thread when it was 
+finished. With asynchronous moniker files, the same thing happens&#151;the transfer 
+takes place in another thread, which sends messages to the main thread. You just 
+don't see the other thread. There is one very important difference, however, 
+between asynchronous moniker files and WinInet programming: with blocking 
+WinInet calls, you need a separate thread for each transfer; with asynchronous 
+moniker files, only one extra thread handles all transfers together. For example, if 
+you're writing a browser that must download 50 bitmaps simultaneously, using 
+asynchronous moniker files saves 49 threads, which makes the program much 
+more efficient.
+<P>Of course, you have some extra control with WinInet, and it's easier 
+to get information from the response headers, such as total file length. Your 
+choice of programming tools, then, depends on your application. The more you 
+know about your options, the better your choice will be.
+</BODY>
+</HTML>
+
+
+

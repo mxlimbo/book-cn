@@ -1,0 +1,1485 @@
+<HTML>
+<HEAD>
+<TITLE>Socket I/O Models</title>
+<link rel="STYLESHEET" type="text/css" href="Library.css">
+
+
+</head>
+<BODY BGCOLOR="#FFFFFF" TEXT="#000000">
+<SCRIPT LANGUAGE="JavaScript">
+<!--
+
+function fullSize(sURL){
+	window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+
+function LibraryHeaderNav(sBackward, sForward, sImgLeftOff, sImgLeftOn, sImgRightOff, sImgRightOn, iH, iW, sImgLeftStyle, sImgRightStyle, sImgRuleStyle, sRuleColor, sRuleSize){
+	var tableStr;
+	//validate questionable args for defs
+	tableStr = "<TABLE BORDER=0 CELLPADDING=0 CELLSPACING=0 border=0 width=100%>";
+	tableStr += "<TR VALIGN=top ALIGN=right>";
+
+	tableStr += "<TD align=right class=" + sImgRuleStyle + ">&nbsp;</TD>";	
+	
+	tableStr += "<TD width=34 align=right class=" + sImgLeftStyle + ">";
+	tableStr += "<A href='" + sBackward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgLeftOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgLeftOff + '\'\"';
+	tableStr += " SRC='" + sImgLeftOff + "' vspace=0 hspace=0></a></TD>";
+	
+	tableStr += "<TD width=34 align=left class=" + sImgRightStyle + ">";
+	tableStr += "<A href='" + sForward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgRightOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgRightOff + '\'\"';
+	tableStr += " SRC='" + sImgRightOff + "' vspace=0 hspace=0></a></TD></TR>";
+
+	tableStr += "<TR VALIGN=top>";
+	tableStr += "<TD height=3 align=center colspan=3 class=" + sImgRuleStyle + ">";
+	tableStr += "<HR color=" + sRuleColor + " size=" + sRuleSize + "></TD></TR></TABLE>";
+	//alert(tableStr);
+	document.write(tableStr);
+}
+
+ 																						     //purple is: #aa22aa   orange is: #ff9900
+LibraryHeaderNav("ch08b.htm" , "ch08d.htm", "images/unit_o_a1.gif", "images/unit_o_a2.gif", "images/unit_o_b1.gif", "images/unit_o_b2.gif", 18, 34, "unit01", "unit02", "headerrule", "#ff9900", "2");
+//--></SCRIPT>
+
+
+
+<A NAME="180"><H1>Socket I/O Models</H1></A>
+
+<p>Essentially five types of socket I/O models are available that allow Winsock applications to manage I/O: <i>select, WSAAsyncSelect</i>, <i>WSAEventSelect</i>, <i>overlapped,</i> and <i>completion port.</i> This section explains the features of each I/O model and outlines how to use the model to develop an application that can manage one or more socket requests. On the companion CD, you will find one or more sample applications for each I/O model demonstrating how to develop a simple TCP echo server using the principles described in each model.</p>
+
+<A NAME="181"><h2>The <i>select</i> Model</h2></A>
+<p>The <i>select</i> model is the most widely available I/O model in Winsock. We call it the <i>select</i> model because it centers on using the <i>select</i> function to manage I/O. The design of this model originated on Unix-based computers featuring Berkeley socket implementations. The <i>select</i> model was incorporated into Winsock 1.1 to allow applications that want to avoid blocking on socket calls the ability to manage multiple sockets in an organized manner. Because Winsock 1.1 is backward-compatible with Berkeley socket implementations, a Berkeley socket application that uses the <i>select</i> function should technically be able to run without modification.</p>
+
+<p>The <i>select</i> function can be used to determine whether there is data on a socket and whether a socket can be written to. The whole reason for having this function is to prevent your application from blocking on an I/O bound call such as <i>send</i> or <i>recv</i> when a socket is in a blocking mode and to prevent the <i>WSAEWOULDBLOCK</i> error when a socket is in nonblocking mode. The <i>select</i> function blocks for I/O operations until the conditions specified as parameters are met. The function prototype for <i>select</i> is as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+int select(
+    int nfds,
+    fd_set FAR * readfds,
+    fd_set FAR * writefds,
+    fd_set FAR * exceptfds,
+    const struct timeval FAR * timeout
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The first parameter, <i>nfds</i>, is ignored and is included only for compatibility with Berkeley socket applications. You'll notice that there are three <i>fd_set</i> parameters: one for checking readability (<i>readfds</i>), one for writability (<i>writefds</i>), and one for out-of-band data (<i>exceptfds</i>). Essentially, the <i>fd_set</i> data type represents a collection of sockets. The <i>readfds</i> set identifies sockets that meet one of the following conditions:</p>
+
+<ul>
+<p><li> Data is available for reading.</li></p>
+
+<p><li> Connection has been closed, reset, or terminated.</li></p>
+
+<p><li> If <i>listen</i> has been called and a connection is pending, the <i>accept</i> function will succeed.</li></p>
+
+<p>The <i>writefds</i> set identifies sockets in which one of the following is true:</p>
+
+<p><li> Data can be sent.</li></p>
+
+<p><li> If a nonblocking connect call is being processed, the connection has succeeded.</li></p>
+
+<p>Finally, the <i>exceptfds</i> set identifies sockets in which one of the following is true:</p>
+
+<p><li> If a nonblocking connect call is being processed, the connection attempt failed.</li></p>
+
+<p><li> Out-of-band (OOB) data is available for reading.</li></p>
+</ul>
+
+
+
+<p>For example, when you want to test a socket for readability, you must add your socket to the <i>readfds</i> set and wait for the <i>select</i> function to complete. When the <i>select</i> call completes, you have to determine whether your socket is still part of the <i>readfds</i> set. If so, the socket is readable&#8212;you can begin to retrieve data from the socket. Any two of the three parameters (<i>readfds</i>, <i>writefds</i>, <i>exceptfds</i>) can be null values (at least one must not be null), and any non-null set must contain at least one socket handle; otherwise, the <i>select</i> function won't have anything to wait for. The final parameter, <i>timeout</i>, is a pointer to a <i>timeval</i> structure that determines how long the <i>select</i> function will wait for I/O to complete. If <i>timeout</i> is a null pointer, <i>select</i> will block indefinitely until at least one descriptor meets the specified criteria. The <i>timeval</i> structure is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+struct timeval 
+{
+    long tv_sec; 
+    long tv_usec;
+};
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>tv_sec</i> field indicates how long to wait in seconds; the <i>tv_usec</i> field indicates how long to wait in milliseconds. The timeout value {0, 0} indicates <i>select</i> will return immediately, allowing an application to poll on the <i>select</i> operation. This should be avoided for performance reasons. When <i>select</i> completes successfully, it returns the total number of socket handles that have I/O operations pending in the <i>fd_set</i> structures. If the <i>timeval</i> limit expires, it returns 0. If <i>select</i> fails for any reason, it returns <i>SOCKET_ERROR</i>.</p>
+
+<p>Before you can begin to use <i>select</i> to monitor sockets, your application has to set up either one or all of the read, write, and exception <i>fd_set</i> structures by assigning socket handles to a set. When you assign a socket to one of the sets, you are asking <i>select</i> to let you know whether the I/O activities described above have occurred on a socket. Winsock provides the following set of macros to manipulate and check the <i>fd_set</i> sets for I/O activity.</p>
+
+<ul>
+<p><li><b><i>FD_CLR(s, *set)</i></b> Removes socket <i>s</i> from <i>set</i></li></p>
+
+<p><li><b><i>FD_ISSET(s, *set)</i></b> Checks to see whether <i>s</i> is a member of <i>set</i> and returns <i>TRUE</i> if so</li></p>
+
+<p><li><b><i>FD_SET(s, *set)</i></b> Adds socket <i>s</i> to <i>set</i></li></p>
+
+<p><li><b><i>FD_ZERO(*set)</i></b> Initializes <i>set</i> to the empty set</li></p>
+</ul>
+
+
+
+<p>For example, if you want to find out when it is safe to read data from a socket without blocking, simply assign your socket to the <i>fd_read</i> set using the <i>FD_SET</i> macro and then call <i>select</i>. To test whether your socket is still part of the <i>fd_read</i> set, use the <i>FD_ISSET</i> macro. The following steps describe the basic flow of an application that uses <i>select</i> with one or more socket handles:</p>
+
+<ol>
+<p><li> Initialize each <i>fd_set</i> of interest, using the <i>FD_ZERO</i> macro.</li></p>
+
+<p><li> Assign socket handles to each of the <i>fd_set</i> sets of interest, using the <i>FD_SET</i> macro.</li></p>
+
+<p><li> Call the <i>select</i> function, and wait until I/O activity sets one or more of the socket handles in each <i>fd_set</i> set provided. When <i>select</i> completes, it returns the total number of socket handles that are set in all of the <i>fd_set</i> sets and updates each set accordingly.</li></p>
+
+<p><li> Using the return value of <i>select</i>, your application can determine which application sockets have I/O pending by checking each <i>fd_set</i> set using the <i>FD_ISSET</i> macro.</li></p>
+
+<p><li> After determining which sockets have I/O pending in each of the sets, process the I/O and go to step 1 to continue the <i>select</i> process.</li></p>
+</ol>
+
+<p>When select returns, it modifies each of the <i>fd_set</i> structures by removing the socket handles that do not have pending I/O operations. This is why you should use the <i>FD_ISSET</i> macro as in step 4 above to determine whether a particular socket is part of a set. Figure 8-4 outlines the basic steps needed to set up the select model for a single socket. Adding more sockets to this application simply involves maintaining a list or an array of additional sockets.</p>
+
+<p><b>Figure 8-4.</b> <i>Managing I/O on a socket using</i> select </p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+SOCKET  s;
+fd_set  fdread;
+int     ret;
+
+// Create a socket, and accept a connection
+
+// Manage I/O on the socket
+while(TRUE)
+{
+    // Always clear the read set before calling 
+    // select()
+    FD_ZERO(&amp;fdread);
+
+    // Add socket s to the read set
+    FD_SET(s, &amp;fdread);
+
+    if ((ret = select(0, &amp;fdread, NULL, NULL, NULL)) 
+        == SOCKET_ERROR) 
+    {
+
+        // Error condition
+    }
+
+    if (ret &gt; 0)
+    {
+        // For this simple case, select() should return
+        // the value 1. An application dealing with 
+        // more than one socket could get a value 
+        // greater than 1. At this point, your 
+        // application should check to see whether the 
+        // socket is part of a set.
+
+        if (FD_ISSET(s, &amp;fdread))
+        {
+            // A read event has occurred on socket s
+        }
+    }
+}
+</pre>
+</td></tr></table>
+</p>
+
+<A NAME="182"><h2>The <i>WSAAsyncSelect</i> Model</h2></A>
+<p>Winsock provides a useful asynchronous I/O model that allows an application to receive Windows message-based notification of network events on a socket. This is accomplished by calling the <i>WSAAsyncSelect</i> function after creating a socket. This model originally existed in Winsock 1.1 implementations to help application programmers cope with the cooperative multitasking message-based environment of 16-bit Windows platforms, such as Windows for Workgroups. Applications can still benefit from this model, especially if they manage window messages in a standard Windows procedure, normally referred to as a <i>winproc</i>. This model is also used by the Microsoft Foundation Class (MFC) <i>CSocket</i> object.</p>
+
+<A NAME="183"><H3>Message notification</H3></A>
+
+<p>To use the <i>WSAAsyncSelect</i> model, your application must first create a window using the <i>CreateWindow</i> function and supply a window procedure (<i>winproc</i>) support function for this window. You can also use a dialog box with a dialog procedure instead of a window because dialog boxes <i>are</i> windows. For our purposes, we will demonstrate this model using a simple window with a supporting window procedure. Once you have set up the window infrastructure, you can begin creating sockets and turning on window message notification by calling the <i>WSAAsyncSelect</i> function, which is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+int WSAAsyncSelect(
+    SOCKET s,
+    HWND hWnd,
+    unsigned int wMsg,
+    long lEvent
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>s</i> parameter represents the socket we are interested in. The <i>hWnd</i> parameter is a window handle identifying the window or the dialog box that receives a message when a network event occurs. The <i>wMsg</i> parameter identifies the message to be received when a network event occurs. This message is posted to the window that is identified by the <i>hWnd</i> window handle. Normally applications set this message to a value greater than the Windows <i>WM_USER</i> value to avoid confusing a network window message with a predefined standard window message. The last parameter, <i>lEvent</i>, represents a bitmask that specifies a combination of network events&#8212;listed in Table 8-3&#8212;that the application is interested in. Most applications are typically interested in the <i>FD_READ</i>, <i>FD_WRITE</i>, <i>FD_ACCEPT</i>, <i>FD_CONNECT</i>, and <i>FD_CLOSE</i> network event types. Of course, the use of the <i>FD_ACCEPT</i> or the <i>FD_CONNECT</i> type depends on whether your application is a
+client or a server. If your application is interested in more than one network event, simply set this field by performing a bitwise OR on the types and assigning them to <i>lEvent</i>. For example:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+WSAAsyncSelect(s, hwnd, WM_SOCKET, 
+    FD_CONNECT | FD_READ | FD_WRITE | FD_CLOSE);
+</pre>
+</td></tr></table>
+</p>
+
+<p>This allows our application to get connect, send, receive, and socket-closure network event notifications on socket <i>s.</i> It is impossible to register multiple events one at a time on the socket. Also note that once you turn on event notification on a socket, it remains on unless the socket is closed by a call to <i>closesocket</i> or the application changes the registered network event types by calling <i>WSAAsyncSelect</i> (again, on the socket). Setting the <i>lEvent</i> parameter to 0 effectively stops all network event notification on the socket.</p>
+
+<p>When your application calls <i>WSAAsyncSelect</i> on a socket, the socket mode is automatically changed from blocking to the nonblocking mode that we described earlier. As a result, if a Winsock I/O call such as <i>WSARecv</i> is called and has to wait for data, it will fail with error <i>WSAEWOULDBLOCK</i>. To avoid this error, applications should rely on the user-defined window message specified in the <i>wMsg</i> parameter of <i>WSAAsyncSelect</i> to indicate when network event types occur on the socket.</p>
+
+<p><b>Table 8-3.</b> <i>Network event types for the</i> WSAAsyncSelect <i>function</i></p>
+
+<p>
+<table cellpadding=5 width="95%">
+<tr> 
+<th>Event Type  </th>
+<th>Meaning  </th></tr>
+<tr>
+<td valign="top"><i>FD_READ</i>  </td>
+<td valign="top">The application wants to receive notification of readiness for reading.  </td></tr>
+<tr>
+<td valign="top"><i>FD_WRITE</i>  </td>
+<td valign="top">The application wants to receive notification of readiness for writing.  </td></tr>
+<tr>
+<td valign="top"><i>FD_OOB</i>  </td>
+<td valign="top">The application wants to receive notification of the arrival of out-of-band (OOB) data.  </td></tr>
+<tr>
+<td valign="top"><i>FD_ACCEPT</i>  </td>
+<td valign="top">The application wants to receive notification of incoming connections.  </td></tr>
+<tr>
+<td valign="top"><i>FD_CONNECT</i>  </td>
+<td valign="top">The application wants to receive notification of a completed connection or a multipoint <i>join</i> operation.  </td></tr>
+<tr>
+<td valign="top"><i>FD_CLOSE</i>  </td>
+<td valign="top">The application wants to receive notification of socket closure.  </td></tr>
+<tr>
+<td valign="top"><i>FD_QOS</i>  </td>
+<td valign="top">The application wants to receive notification of socket Quality of Service (QOS) changes.  </td></tr>
+<tr>
+<td valign="top"><i>FD_GROUP_QOS</i>  </td>
+<td valign="top">The application wants to receive notification of socket group Quality of Service (QOS) changes (reserved for future use with socket groups).  </td></tr>
+<tr>
+<td valign="top"><i>FD_ROUTING_INTERFACE_CHANGE</i>  </td>
+<td valign="top">The application wants to receive notification of routing interface changes for the specified destination(s).  </td></tr>
+<tr>
+<td valign="top"><i>FD_ADDRESS_LIST_CHANGE</i>  </td>
+<td valign="top">The application wants to receive notification of local address list changes for the socket's protocol family.  </td></tr>
+</table></p>
+ 
+<p>After your application successfully calls <i>WSAAsyncSelect</i> on a socket, the application begins to receive network event notification as Windows messages in the window procedure associated with the <i>hWnd</i> parameter window handle. A window procedure is normally defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+LRESULT CALLBACK WindowProc(
+    HWND hWnd,
+    UINT uMsg,
+    WPARAM wParam,
+    LPARAM lParam
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>hWnd</i> parameter is a handle to the window that invoked the window procedure. The <i>uMsg</i> parameter indicates which message needs to be processed. In our case, we will be looking for the message defined in the <i>WSAAsyncSelect</i> call. The <i>wParam</i> parameter identifies the socket on which a network event has occurred. This is important if you have more than one socket assigned to this window procedure. The <i>lParam</i> parameter contains two important pieces of information&#8212;the low word of <i>lParam</i> specifies the network event that has occurred, and the high word of <i>lParam</i> contains any error code.</p>
+
+<p>When network event messages arrive at a window procedure, the application should first check the <i>lParam</i> high-word bits to determine whether a network error has occurred on the socket. There is a special macro, <i>WSAGETSELECTERROR</i>, which returns the value of the high-word bits error information. After the application has verified that no error occurred on the socket, the application should determine which network event type caused the Windows message to fire by reading the low-word bits of <i>lParam</i>. Another special macro, <i>WSAGETSELECTEVENT</i>, returns the value of the low-word portion of <i>lParam</i>.</p>
+
+<p>Figure 8-5 demonstrates how to manage window messages when using the <i>WSAAsyncSelect</i> I/O model. The figure highlights the steps needed to develop a basic server application and removes the programming details of developing a fully featured Windows application.</p>
+
+<p><b>Figure 8-5.</b> WSAAsyncSelect <i>server sample code</i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+#define WM_SOCKET WM_USER + 1
+#include &lt;windows.h&gt;
+
+int WINAPI WinMain(HINSTANCE hInstance, 
+    HINSTANCE hPrevInstance, LPSTR lpCmdLine,
+    int nCmdShow)
+{
+    SOCKET Listen;
+    HWND Window;
+
+    // Create a window and assign the ServerWinProc
+    // below to it
+
+    Window = CreateWindow();
+    // Start Winsock and create a socket
+
+    WSAStartup(...);
+    Listen = Socket();
+
+    // Bind the socket to port 5150
+    // and begin listening for connections
+
+    InternetAddr.sin_family = AF_INET;
+    InternetAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    InternetAddr.sin_port = htons(5150);
+
+    bind(Listen, (PSOCKADDR) &amp;InternetAddr,
+        sizeof(InternetAddr));
+
+    // Set up window message notification on
+    // the new socket using the WM_SOCKET define
+    // above
+
+    WSAAsyncSelect(Listen, Window, WM_SOCKET,
+        FD_ACCEPT | FD_CLOSE);
+
+    listen(Listen, 5);
+
+    // Translate and dispatch window messages
+    // until the application terminates
+}
+
+BOOL CALLBACK ServerWinProc(HWND hDlg,WORD wMsg,
+    WORD wParam, DWORD lParam)
+{
+    SOCKET Accept;
+
+    switch(wMsg)
+    {
+        case WM_PAINT:
+            // Process window paint messages
+            break;
+
+        case WM_SOCKET:
+
+            // Determine whether an error occurred on the
+            // socket by using the WSAGETSELECTERROR() macro
+
+            if (WSAGETSELECTERROR(lParam))
+            {
+                // Display the error and close the socket
+                closesocket(wParam);
+                break;
+            }
+
+            // Determine what event occurred on the
+            // socket
+
+            switch(WSAGETSELECTEVENT(lParam))
+            {
+                case FD_ACCEPT:
+
+                    // Accept an incoming connection
+                    Accept = accept(wParam, NULL, NULL);
+
+                    // Prepare accepted socket for read,
+                    // write, and close notification
+
+                    WSAAsyncSelect(Accept, hwnd, WM_SOCKET,
+                        FD_READ | FD_WRITE | FD_CLOSE);
+                    break;
+
+                case FD_READ:
+
+                    // Receive data from the socket in
+                    // wParam
+                    break;
+
+                case FD_WRITE:
+
+                    // The socket in wParam is ready
+                    // for sending data
+                    break;
+
+                case FD_CLOSE:
+
+                    // The connection is now closed
+                    closesocket(wParam);
+                    break;
+            }
+            break;
+    }
+    return TRUE;
+}
+</pre>
+</td></tr></table>
+</p>
+
+<p>One final detail worth noting is how applications should process <i>FD_WRITE</i> event notifications. <i>FD_WRITE</i> notifications are sent under only three conditions:</p>
+
+<ul>
+<p><li> After a socket is first connected with connect or WSAConnect</li></p>
+
+<p><li> After a socket is accepted with accept or WSAAccept</li></p>
+
+<p><li> When a <i>send</i>, <i>WSASend</i>, <i>sendto</i>, or <i>WSASendTo</i> operation fails with <i>WSAEWOULDBLOCK</i> and buffer space becomes available</li></p>
+</ul>
+
+
+
+<p>Therefore, an application should assume that sends are always possible on a socket starting from the first <i>FD_WRITE</i> message and lasting until a <i>send</i>, <i>WSASend</i>, <i>sendto</i>, or <i>WSASendTo</i> returns the socket error <i>WSAEWOULDBLOCK</i>. After such failure, another <i>FD_WRITE</i> message notifies the application that sends are once again possible.</p>
+
+<A NAME="184"><h2>The <i>WSAEventSelect</i> Model</h2></A>
+<p>Winsock provides another useful asynchronous I/O model that is similar to the <i>WSAAsyncSelect</i> model that allows an application to receive event-based notification of network events on one or more sockets. This model is similar to the <i>WSAAsyncSelect</i> model in that your application receives and processes the same network events listed in Table 8-3 that the <i>WSAAsyncSelect</i> model uses. The major difference with this model is that network events are posted to an event object handle instead of a window procedure.</p>
+
+<A NAME="185"><H3>Event notification</H3></A>
+
+<p>The event notification model requires your application to create an event object for each socket used by calling the <i>WSACreateEvent</i> function, which is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+WSAEVENT WSACreateEvent(void);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>WSACreateEvent</i> function simply returns an event object handle. Once you have an event object handle, you have to associate it with a socket and register the network event types of interest, as shown in Table 8-3. This is accomplished by calling the <i>WSAEventSelect</i> function, which is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+int WSAEventSelect(
+    SOCKET <i>s</i>,
+    WSAEVENT hEventObject,
+    long lNetworkEvents
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>s</i> parameter represents the socket of interest. The <i>hEventObject</i> parameter represents the event object&#8212;obtained with <i>WSACreateEvent</i>&#8212;to associate with the socket. The last parameter, <i>lNetworkEvents</i>, represents a bitmask that specifies a combination of network event types (listed in Table 8-3) that the application is interested in. For a detailed discussion of these event types, see the <i>WSAAsyncSelect</i> I/O model discussed earlier.</p>
+
+<p>The event created for <i>WSAEventSelect</i> has two operating states and two operating modes. The operating states are known as <i>signaled</i> and <i>nonsignaled</i>. The operating modes are known as <i>manual reset</i> and <i>auto reset</i>. <i>WSACreateEvent</i> initially creates event handles in a nonsignaled operating state with a manual reset operating mode. As network events trigger an event object associated with a socket, the operating state changes from nonsignaled to signaled. Because the event object is created in a manual reset mode, your application is responsible for changing the operating state from signaled to nonsignaled after processing an I/O request. This can be accomplished by calling the <i>WSAResetEvent</i> function, which is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+BOOL WSAResetEvent(WSAEVENT hEvent);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The function takes an event handle as its only parameter and returns <i>TRUE</i> or <i>FALSE</i> based on the success or failure of the call. When an application is finished with an event object, it should call the <i>WSACloseEvent</i> function to free the system resources used by an event handle. The <i>WSACloseEvent</i> function is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+BOOL WSACloseEvent(WSAEVENT hEvent);
+</pre>
+</td></tr></table>
+</p>
+
+<p>This function also takes an event handle as its only parameter and returns <i>TRUE</i> if successful or <i>FALSE</i> if the call fails.</p>
+
+<p>Once a socket is associated with an event object handle, the application can begin processing I/O by waiting for network events to trigger the operating state of the event object handle. The <i>WSAWaitForMultipleEvents</i> function is designed to wait on one or more event object handles and returns either when one or all of the specified handles are in the signaled state or when a specified timeout interval expires. <i>WSAWaitForMultipleEvents</i> is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+DWORD WSAWaitForMultipleEvents(
+    DWORD cEvents,
+    const WSAEVENT FAR * lphEvents,
+    BOOL fWaitAll,
+    DWORD dwTimeout,
+    BOOL fAlertable
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>cEvents</i> and <i>lphEvents</i> parameters define an array of <i>WSAEVENT</i> objects in which <i>cEvents</i> represents the number of event objects in the array and <i>lphEvents</i> is a pointer to the array. <i>WSAWaitForMultipleEvents</i> can support only a maximum of <i>WSA_MAXIMUM_WAIT_EVENTS</i> objects, which is defined as 64. Therefore, this I/O model is capable of supporting only a maximum of 64 sockets at a time for each thread that makes the <i>WSAWaitForMultipleEvents</i> call. If you need to have this model manage more than 64 sockets, you should create additional worker threads to wait on more event objects. The <i>fWaitAll</i> parameter specifies how <i>WSAWaitForMultipleEvents</i> waits for objects in the event array. If <i>TRUE</i>, the function returns when all event objects in the <i>lphEvents</i> array are signaled. If <i>FALSE</i>, the function returns when any one of the event objects is signaled. In the latter case, the return value indicates which event object caused the
+function to return. Typically, applications set this parameter to <i>FALSE</i> and service one socket event at a time. The <i>dwTimeout</i> parameter specifies how long (in milliseconds) <i>WSAWaitForMultipleEvents</i> will wait for a network event to occur. The function returns if the interval expires, even if conditions specified by the <i>fWaitAll</i> parameter are not satisfied. If the timeout value is 0, the function tests the state of the specified event objects and returns immediately, which effectively allows an application to poll on the event objects. Setting the timeout value to 0 should be avoided for performance reasons. If no events are ready for processing, <i>WSAWaitForMultipleEvents</i> returns <i>WSA_WAIT_TIMEOUT</i>. If <i>dwsTimeout</i> is set to <i>WSA_INFINITE</i>, the function returns only when a network event signals an event object. The final parameter, <i>fAlertable</i>, can be ignored when you're using the <i>WSAEventSelect</i> model and should be set to <i>FALSE</i>. It is
+intended for use in processing completion routines in the overlapped I/O model, which will be described later in this chapter.</p>
+
+<p>When <i>WSAWaitForMultipleEvents</i> receives network event notification of an event object, it returns a value indicating the event object that caused the function to return. As a result, your application can determine which network event type is available on a particular socket by referencing the signaled event in the event array and matching it with the socket associated with the event. When you reference the events in the event array, you should reference them using the return value of <i>WSAWaitForMultipleEvents</i> minus the predefined value <i>WSA_WAIT_EVENT_0</i>. For example:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+Index = WSAWaitForMultipleEvents(...);
+MyEvent = EventArray[Index _ WSA_WAIT_EVENT_0];
+</pre>
+</td></tr></table>
+</p>
+
+<p>Once you have the socket that caused the network event, you can determine which network events are available by calling the <i>WSAEnumNetworkEvents</i> function, which is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+int WSAEnumNetworkEvents(
+    SOCKET s,
+    WSAEVENT hEventObject,
+    LPWSANETWORKEVENTS lpNetworkEvents
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>s</i> parameter represents the socket that caused the network event. The <i>hEventObject</i> parameter is an optional parameter representing an event handle identifying an associated event object to be reset. Since our event object is in a signaled state, we can pass it in and it will be set to a nonsignaled state. If you don't want to use the <i>hEventObject</i> parameter for resetting events, you can use the <i>WSAResetEvent</i> function, which we described earlier. The final parameter, <i>lpNetworkEvents</i>, takes a pointer to a <i>WSANETWORKEVENTS</i> structure, which is used to retrieve network event types that occurred on the socket and any associated error codes. The <i>WSANETWORKEVENTS</i> structure is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+typedef struct _WSANETWORKEVENTS
+{
+    long lNetworkEvents;
+    int  iErrorCode[FD_MAX_EVENTS];
+} WSANETWORKEVENTS, FAR * LPWSANETWORKEVENTS;
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>lNetworkEvents</i> parameter is a value that indicates all the network event types (see Table 8-3) that have occurred on the socket.</p>
+
+<p><div class="note"><blockquote><b>NOTE</b><hr>More than one network event type can occur when an event is signaled. For example, a busy server application might receive <i>FD_READ</i> and <i>FD_WRITE</i> notification at the same time.</blockquote></div>
+</p>
+
+<p>The <i>iErrorCode</i> parameter is an array of error codes that are associated with the events in <i>lNetworkEvents</i>. For each network event type, there exists a special event index similar to the event type names&#8212;except for an additional &quot;_BIT&quot; string appended to the event name. For example, for the <i>FD_READ</i> event type, the index identifier for the <i>iErrorCode</i> array is named <i>FD_READ_BIT</i>. The following code fragment demonstrates this for an <i>FD_READ</i> event:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+// Process FD_READ notification
+if (NetworkEvents.lNetworkEvents &amp; FD_READ)
+{
+    if (NetworkEvents.iErrorCode[FD_READ_BIT] != 0)
+    {
+       printf(&quot;FD_READ failed with error %d\n&quot;, 
+           NetworkEvents.iErrorCode[FD_READ_BIT]);
+    }
+}
+</pre>
+</td></tr></table>
+</p>
+
+<p>After you process the events in the <i>WSANETWORKEVENTS</i> structure, your application should continue waiting for more network events on all of the available sockets. Figure 8-6 demonstrates how to develop a server and manage event objects when using the <i>WSAEventSelect</i> I/O model. The figure highlights the steps needed to develop a basic server application capable of managing one or more sockets at a time.</p>
+
+<p><b>Figure 8-6.</b> WSAEventSelect <i>I/O model server sample code</i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+SOCKET Socket[WSA_MAXIMUM_WAIT_EVENTS];
+WSAEVENT Event[WSA_MAXIMUM_WAIT_EVENTS];
+SOCKET Accept, Listen;
+DWORD EventTotal = 0;
+DWORD Index;
+
+// Set up a TCP socket for listening on port 5150
+Listen = socket (PF_INET, SOCK_STREAM, 0);
+
+InternetAddr.sin_family = AF_INET;
+InternetAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+InternetAddr.sin_port = htons(5150);
+
+bind(Listen, (PSOCKADDR) &amp;InternetAddr,
+    Sizeof(InternetAddr));
+
+NewEvent = WSACreateEvent();
+
+WSAEventSelect(Listen, NewEvent,
+    FD_ACCEPT | FD_CLOSE);
+
+listen(Listen, 5);
+
+Socket[EventTotal] = Listen;
+Event[EventTotal] = NewEvent;
+EventTotal++;
+
+while(TRUE)
+{
+    // Wait for network events on all sockets
+    Index = WSAWaitForMultipleEvents(EventTotal,
+        EventArray, FALSE, WSA_INFINITE, FALSE);
+ 
+    WSAEnumNetworkEvents(
+        SocketArray[Index - WSA_WAIT_EVENT_0],
+        EventArray[Index - WSA_WAIT_EVENT_0], 
+        &amp;NetworkEvents);
+
+    // Check for FD_ACCEPT messages     
+    if (NetworkEvents.lNetworkEvents &amp; FD_ACCEPT)
+    {
+        if (NetworkEvents.iErrorCode[FD_ACCEPT_BIT] != 0)
+        {
+            printf(&quot;FD_ACCEPT failed with error %d\n&quot;, 
+                NetworkEvents.iErrorCode[FD_ACCEPT_BIT]);
+            break;
+        }
+
+        // Accept a new connection, and add it to the
+        // socket and event lists
+        Accept = accept(
+            SocketArray[Index - WSA_WAIT_EVENT_0],
+            NULL, NULL);
+
+        // We cannot process more than 
+        // WSA_MAXIMUM_WAIT_EVENTS sockets, so close
+        // the accepted socket
+        if (EventTotal &gt; WSA_MAXIMUM_WAIT_EVENTS)
+        {
+            printf(&quot;Too many connections&quot;);
+            closesocket(Accept);
+            break;
+        }
+
+        NewEvent = WSACreateEvent();
+
+        WSAEventSelect(Accept, NewEvent,
+            FD_READ | FD_WRITE | FD_CLOSE);
+
+        Event[EventTotal] = NewEvent;
+        Socket[EventTotal] = Accept;
+        EventTotal++;
+
+        printf(&quot;Socket %d connected\n&quot;, Accept);
+    }
+
+    // Process FD_READ notification
+    if (NetworkEvents.lNetworkEvents &amp; FD_READ)
+    {
+        if (NetworkEvents.iErrorCode[FD_READ_BIT] != 0)
+        {
+            printf(&quot;FD_READ failed with error %d\n&quot;, 
+                NetworkEvents.iErrorCode[FD_READ_BIT]);
+            break;
+        }
+
+        // Read data from the socket
+        recv(Socket[Index - WSA_WAIT_EVENT_0],
+            buffer, sizeof(buffer), 0);
+    }
+
+    // Process FD_WRITE notification
+    if (NetworkEvents.lNetworkEvents &amp; FD_WRITE)
+    {
+        if (NetworkEvents.iErrorCode[FD_WRITE_BIT] != 0)
+        {
+            printf(&quot;FD_WRITE failed with error %d\n&quot;, 
+                NetworkEvents.iErrorCode[FD_WRITE_BIT]);
+            break;
+        }
+
+        send(Socket[Index - WSA_WAIT_EVENT_0],
+
+            buffer, sizeof(buffer), 0);
+    }
+
+    if (NetworkEvents.lNetworkEvents &amp; FD_CLOSE)
+    {
+        if (NetworkEvents.iErrorCode[FD_CLOSE_BIT] != 0)
+        {
+            printf(&quot;FD_CLOSE failed with error %d\n&quot;, 
+                NetworkEvents.iErrorCode[FD_CLOSE_BIT]);
+            break;
+        }
+
+        closesocket(Socket[Index - WSA_WAIT_EVENT_0]);
+
+        // Remove socket and associated event from
+        // the Socket and Event arrays and decrement
+        // EventTotal
+        CompressArrays(Event, Socket, &amp;EventTotal);
+    }
+}
+</pre>
+</td></tr></table>
+</p>
+
+<A NAME="186"><H2>The Overlapped Model</H2></A>
+
+<p>The overlapped I/O model in Winsock offers applications better system performance than any of the I/O models explained so far. The basic design of the overlapped model allows your application to post one or more Winsock I/O requests at a time using an overlapped data structure. At a later point, the application can service the submitted requests after they have completed. This model is available on all Windows platforms except Windows CE. The overall design of the model is based on the Win32 overlapped I/O mechanisms available for performing I/O operations on devices using the <i>ReadFile</i> and <i>WriteFile</i> functions.</p>
+
+<p>Originally, the Winsock overlapped I/O model was available only to Winsock 1.1 applications running on Windows NT. Applications could take advantage of the model by calling <i>ReadFile</i> and <i>WriteFile</i> on a socket handle and specifying an overlapped structure that we will describe later. Since the release of Winsock 2, overlapped I/O has been incorporated into new Winsock functions, such as <i>WSASend</i> and <i>WSARecv</i>. As a result, the overlapped I/O model is now available on all Windows platforms that feature Winsock 2.</p>
+
+<p><div class="note"><blockquote><b>NOTE</b><hr>With the release of Winsock 2, overlapped I/O can still be used with the functions <i>ReadFile</i> and <i>WriteFile</i> under Windows NT and Windows 2000. However, this functionality was not added to Windows 95 and Windows 98. For compatibility across platforms and for performance reasons, you should always consider using the <i>WSARecv</i> and <i>WSASend</i> functions instead of the Win32 <i>ReadFile</i> and <i>WriteFile</i> functions. This section will only describe how to use overlapped I/O through the new Winsock 2 functions.</blockquote></div>
+</p>
+
+<p>To use the overlapped I/O model on a socket, you must first create a socket by using the flag <i>WSA_FLAG_OVERLAPPED</i>, as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+s = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0,
+    WSA_FLAG_OVERLAPPED);
+</pre>
+</td></tr></table>
+</p>
+
+<p>If you create a socket using the <i>socket</i> function instead of the <i>WSASocket</i> function, <i>WSA_FLAG_OVERLAPPED</i> is implied. After you successfully create a socket and bind it to a local interface, overlapped I/O operations can commence by calling the Winsock functions listed below and specifying an optional <i>WSAOVERLAPPED</i> structure.</p>
+
+<ul>
+<p><li> <i>WSASend</i></li></p>
+
+<p><li> <i>WSASendTo</i></li></p>
+
+<p><li> <i>WSARecv</i></li></p>
+
+<p><li> <i>WSARecvFrom</i></li></p>
+
+<p><li> <i>WSAIoctl</i></li></p>
+
+<p><li> <i>AcceptEx</i></li></p>
+
+<p><li> <i>TransmitFile</i></li></p>
+</ul>
+
+
+
+<p>As you probably already know, each one of these functions is associated with sending data, receiving data, and accepting connections on a socket. As a result, this activity can potentially take a long time to complete. This is why each function can accept a <i>WSAOVERLAPPED</i> structure as a parameter. When these functions are called with a <i>WSAOVERLAPPED</i> structure, they complete immediately&#8212;regardless of whether the socket is set to blocking mode (described at the beginning of this chapter). They rely on the <i>WSAOVERLAPPED</i> structure to manage the return of an I/O request. There are essentially two methods for managing the completion of an overlapped I/O request: your application can wait for <i>event object notification,</i> or it can process completed requests through <i>completion routines</i>. The functions listed above (except <i>AcceptEx</i>) have another parameter in common: <i>lpCompletionROUTINE</i>. This parameter is an optional pointer to a completion routine function that
+gets called when an overlapped request completes. We will explore the event notification method next. Later in this chapter, you will learn how to use optional completion routines instead of events to process completed overlapped requests.</p>
+
+<A NAME="187"><H3>Event notification</H3></A>
+
+<p>The event notification method of overlapped I/O requires associating Win32 event objects with <i>WSAOVERLAPPED</i> structures. When I/O calls such as <i>WSASend</i> and <i>WSARecv</i> are made using a <i>WSAOVERLAPPED</i> structure, they return immediately. Typically you will find that these I/O calls fail with the return value <i>SOCKET_ERROR.</i> The <i>WSAGetLastError</i> function reports a <i>WSA_IO_PENDING</i> error status. This error status simply means that the I/O operation is in progress. At some later time, your application will need to determine when an overlapped I/O request completes by waiting on the event object associated with the <i>WSAOVERLAPPED</i> structure. The <i>WSAOVERLAPPED</i> structure provides the communication medium between the initiation of an overlapped I/O request and its subsequent completion, and is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+typedef struct WSAOVERLAPPED
+{ 
+    DWORD    Internal;
+    DWORD    InternalHigh;
+    DWORD    Offset;
+    DWORD    OffsetHigh;
+    WSAEVENT hEvent;
+} WSAOVERLAPPED, FAR * LPWSAOVERLAPPED;
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>Internal, InternalHigh, Offset</i>, and <i>OffsetHigh</i> fields are all used internally by the system and should not be manipulated or used directly by an application. The <i>hEvent</i> field, on the other hand, is a special field that allows an application to associate an event object handle with a socket. You might be wondering how to get an event object handle to assign to this field. As we described in the <i>WSAEventSelect</i> model, you can use the <i>WSACreateEvent</i> function to create an event object handle. Once an event handle is created, simply assign the overlapped structure's <i>hEvent</i> field to the event handle and begin calling a Winsock function&#8212;such as <i>WSASend</i> or <i>WSARecv</i>&#8212;using the overlapped structure.</p>
+
+<p>When an overlapped I/O request finally completes, your application is responsible for retrieving the overlapped results. In the event notification method, Winsock will change the event-signaling state of an event object that is associated with a <i>WSAOVERLAPPED</i> structure from nonsignaled to signaled when an overlapped request finally completes. Because an event object is assigned to the <i>WSAOVERLAPPED</i> structure, you can easily determine when an overlapped I/O call completes by calling the <i>WSAWaitForMultipleEvents</i> function, which we also described in the <i>WSAEventSelect</i> I/O model. <i>WSAWaitForMultipleEvents</i> waits a specified amount of time for one or more event objects to become signaled. We can't stress this point enough: remember that <i>WSAWaitForMultipleEvents</i> is capable of waiting on only 64 event objects at a time. Once you determine which overlapped request has completed, you need to determine the success or failure of the overlapped call by calling <i>
+WSAGetOverlappedResult</i>, which is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+BOOL WSAGetOverlappedResult( 
+    SOCKET <i>s</i>,
+    LPWSAOVERLAPPED lpOverlapped, 
+    LPDWORD lpcbTransfer, 
+    BOOL fWait, 
+    LPDWORD lpdwFlags
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>s</i> parameter identifies the socket that was specified when the overlapped operation was started. The <i>lpOverlapped</i> parameter is a pointer to the <i>WSAOVERLAPPED</i> structure that was specified when the overlapped operation was started. The <i>lpcbTransfer</i> parameter is a pointer to a <i>DWORD</i> variable that receives the number of bytes that were actually transferred by an overlapped send or receive operation. The <i>fWait</i> parameter determines whether the function should wait for a pending overlapped operation to complete. If <i>fWait</i> is <i>TRUE</i>, the function does not return until the operation has been completed. If <i>fWait</i> is <i>FALSE</i> and the operation is still pending, <i>WSAGetOverlappedResult</i> returns <i>FALSE</i> with the error <i>WSA_IO_INCOMPLETE</i>. Since in our case we waited on a signaled event for overlapped completion, this parameter has no effect. The final parameter, <i>lpdwFlags,</i> is a pointer to a <i>DWORD</i> that will receive resulting
+flags if the originating overlapped call was made with the <i>WSARecv</i> or the <i>WSARecvFrom</i> function.</p>
+
+<p>If the <i>WSAGetOverlappedResult</i> function succeeds, the return value is <i>TRUE</i>. This means that your overlapped operation has completed successfully and that the value pointed to by <i>lpcbTransfer</i> has been updated. If the return value is <i>FALSE</i>, one of the following statements is true:</p>
+
+<ul>
+<p><li> The overlapped I/O operation is still pending (as described above).</li></p>
+
+<p><li> The overlapped operation completed, but with errors.</li></p>
+
+<p><li> The overlapped operation's completion status could not be determined because of errors in one or more of the parameters supplied to <i>WSAGetOverlappedResult</i>.</li></p>
+</ul>
+
+
+
+<p>Upon failure, the value pointed to by <i>lpcbTransfer</i> will not be updated, and your application should call the <i>WSAGetLastError</i> function to determine the cause of the failure.</p>
+
+<p>Figure 8-7 demonstrates how to structure a simple server application that is capable of managing overlapped I/O on one socket, using the event notification described above. The application outlines the following programming steps:</p>
+
+<ol>
+<p><li> Create a socket, and begin listening for a connection on a specified port.</li></p>
+
+<p><li> Accept an inbound connection.</li></p>
+
+<p><li> Create a <i>WSAOVERLAPPED</i> structure for the accepted socket, and assign an event object handle to the structure. Also assign the event object handle to an event array to be used later by the <i>WSAWaitForMultipleEvents</i> function.</li></p>
+
+<p><li> Post an asynchronous <i>WSARecv</i> request on the socket by specifying the <i>WSAOVERLAPPED</i> structure as a parameter.</li></p>
+</ol>
+
+<p><div class="note"><blockquote><b>NOTE</b><hr>This function will normally fail with <i>SOCKET_ERROR</i> error status <i>WSA_IO_PENDING</i>.</blockquote></div>
+</p>
+
+<ol>
+<p><li value="5"> Call <i>WSAWaitForMultipleEvents</i> using the event array, and wait for the event associated with the overlapped call to become signaled.</li></p>
+
+<p><li> After <i>WSAWaitForMultipleEvents</i> completes, reset the event object by using <i>WSAResetEvent</i> with the event array, and process the completed overlapped request.</li></p>
+
+<p><li> Determine the return status of the overlapped call by using <i>WSAGetOverlappedResult</i>.</li></p>
+
+<p><li> Post another overlapped <i>WSARecv</i> request on the socket.</li></p>
+
+<p><li> Repeat steps 5-8.</li></p>
+</ol>
+
+<p>This example can easily be expanded to handle more than one socket by moving the overlapped I/O processing portion of the code to a separate thread and allowing the main application thread to service additional connection requests.</p>
+
+<p><b>Figure 8-7.</b> <i>Simple overlapped example using events</i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+void main(void)
+{
+    WSABUF DataBuf;
+    DWORD EventTotal = 0;
+    WSAEVENT EventArray[WSA_MAXIMUM_WAIT_EVENTS];
+    WSAOVERLAPPED AcceptOverlapped;
+    SOCKET ListenSocket, AcceptSocket;
+
+    // Step 1:
+    //  Start Winsock and set up a listening socket
+    ...
+
+    // Step 2:
+    //  Accept an inbound connection
+    AcceptSocket = accept(ListenSocket, NULL, NULL);
+
+    // Step 3:
+    //  Set up an overlapped structure
+
+    EventArray[EventTotal] = WSACreateEvent();
+
+    ZeroMemory(&amp;AcceptOverlapped,
+        sizeof(WSAOVERLAPPED));
+
+    AcceptOverlapped.hEvent = EventArray[EventTotal];
+
+    DataBuf.len = DATA_BUFSIZE;
+    DataBuf.buf = buffer;
+
+    EventTotal++;
+
+    // Step 4:
+    //  Post a WSARecv request to begin receiving data
+    //  on the socket
+
+    WSARecv(AcceptSocket, &amp;DataBuf, 1, &amp;RecvBytes,
+        &amp;Flags, &amp;AcceptOverlapped, NULL);
+
+    // Process overlapped receives on the socket.
+
+    while(TRUE)
+    {
+        // Step 5:
+        //  Wait for the overlapped I/O call to complete
+        Index = WSAWaitForMultipleEvents(EventTotal,
+            EventArray, FALSE, WSA_INFINITE, FALSE);
+
+        // Index should be 0 because we 
+        // have only one event handle in EventArray
+
+        // Step 6:
+        //  Reset the signaled event
+        WSAResetEvent(
+            EventArray[Index - WSA_WAIT_EVENT_0]);
+
+        // Step 7:
+        //  Determine the status of the overlapped
+        //  request
+        WSAGetOverlappedResult(AcceptSocket,
+            &amp;AcceptOverlapped, &amp;BytesTransferred,
+            FALSE, &amp;Flags);
+    
+        // First check to see whether the peer has closed
+        // the connection, and if so, close the
+        // socket
+
+        if (BytesTransferred == 0)
+        {
+            printf(&quot;Closing socket %d\n&quot;, AcceptSocket);
+
+            closesocket(AcceptSocket);
+
+            WSACloseEvent(
+                EventArray[Index - WSA_WAIT_EVENT_0]);
+            return;
+        }
+
+        // Do something with the received data. 
+        // DataBuf contains the received data.
+        ...
+
+        // Step 8:
+        //  Post another WSARecv() request on the socket
+
+        Flags = 0;
+        ZeroMemory(&amp;AcceptOverlapped,
+            sizeof(WSAOVERLAPPED));
+
+        AcceptOverlapped.hEvent = EventArray[Index - 
+            WSA_WAIT_EVENT_0];
+
+        DataBuf.len = DATA_BUFSIZE;
+        DataBuf.buf = Buffer;
+
+        WSARecv(AcceptSocket, &amp;DataBuf, 1,
+            &amp;RecvBytes, &amp;Flags, &amp;AcceptOverlapped,
+            NULL);
+    }
+}
+</pre>
+</td></tr></table>
+</p>
+
+<p>On Windows NT and Windows 2000, the overlapped I/O model also allows applications to accept connections in an overlapped fashion by calling the <i>AcceptEx</i> function on a listening socket. <i>AcceptEx</i> is a special Winsock 1.1 extension function that is available in the Mswsock.h header file and the Mswsock.lib library file. This function was originally intended to work with Win32 overlapped I/O on Windows NT and Windows 2000, but it also works with overlapped I/O in Winsock 2. <i>AcceptEx</i> is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+BOOL AcceptEx (
+    SOCKET sListenSocket,
+    SOCKET sAcceptSocket,
+    PVOID lpOutputBuffer,
+    DWORD dwReceiveDataLength,
+    DWORD dwLocalAddressLength,
+    DWORD dwRemoteAddressLength,
+    LPDWORD lpdwBytesReceived,
+    LPOVERLAPPED lpOverlapped
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>sListenSocket</i> parameter represents a listening socket. The <i>sAcceptSocket</i> parameter is a socket to accept an incoming connection. The <i>AcceptEx</i> function is different from the <i>accept</i> function in that you have to supply the accepted socket instead of having the function create it for you. Supplying the socket requires you to call the <i>socket</i> or <i>WSASocket</i> function to create a socket that you can pass to <i>AcceptEx</i> via the <i>sAcceptSocket</i> parameter. The <i>lpOutputBuffer</i> parameter is a special buffer because it receives three pieces of data: the local address of the server, the remote address of the client, and the first block of data sent on a new connection. The <i>dwReceiveDataLength</i> parameter specifies the number of bytes in <i>lpOutputBuffer</i> used for receiving data. If this parameter is specified as 0, no data will be received in conjunction with accepting the connection. The <i>dwLocalAddressLength</i> and <i>dwRemoteAddressLength</i>
+parameters represent how many bytes in <i>lpOutputBuffer</i> are reserved for storing local and remote address information when a socket is accepted. These buffer sizes must be at least 16 bytes more than the maximum address length for the transport protocol in use. For example, if you are using the TCP/IP protocol, the size should be set to the size of a <i>SOCKADDR_IN</i> structure + 16 bytes. The <i>lpdwBytesReceived</i> parameter returns the number of data bytes received. This parameter is set only if the operation completes synchronously. If the <i>AcceptEx</i> function returns <i>ERROR_IO_PENDING</i>, this parameter is never set and you must obtain the number of bytes read from the completion notification mechanism. The final parameter, <i>lpOverlapped</i>, is an <i>OVERLAPPED</i> structure that allows <i>AcceptEx</i> to be used in an asynchronous fashion. As we mentioned earlier, this function works with event object notification only in an overlapped application because it does not feature a
+completion routine parameter.</p>
+
+<p>A Winsock extension function named <i>GetAcceptExSockaddrs</i> parses out the local and remote address elements from <i>lpOutputBuffer</i>. <i>GetAcceptExSockaddrs</i> is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+VOID GetAcceptExSockaddrs( 
+    PVOID lpOutputBuffer, 
+    DWORD dwReceiveDataLength, 
+    DWORD dwLocalAddressLength, 
+    DWORD dwRemoteAddressLength, 
+    LPSOCKADDR *LocalSockaddr, 
+    LPINT LocalSockaddrLength, 
+    LPSOCKADDR *RemoteSockaddr, 
+    LPINT RemoteSockaddrLength
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>lpOutputBuffer</i> parameter should be set to the <i>lpOutputBuffer</i> returned from <i>AcceptEx</i>. The <i>dwReceiveDataLength</i>, <i>dwLocalAddressLength</i>, and <i>dwRemoteAddressLength</i> parameters should be set to the same values as the <i>dwReceiveDataLength</i>, <i>dwLocalAddressLength</i>, and <i>dwRemoteAddressLength</i> parameters that were passed to <i>AcceptEx</i>. The <i>LocalSockaddr</i> and <i>RemoteSockaddr</i> parameters, which are pointers to <i>SOCKADDR</i> structures with the local and remote address information, receive a pointer offset from the originating <i>lpOutputBuffer</i> parameter. This makes it easy to reference the elements of a <i>SOCKADDR</i> structure from the address information contained in <i>lpOutputBuffer</i>. The <i>LocalSockaddrLength</i> and <i>RemoteSockaddrLength</i> parameters receive the size of the local and remote addresses.</p>
+
+<A NAME="188"><H3>Completion routines</H3></A>
+
+<p>Completion routines are the other method your application can use to manage completed overlapped I/O requests. Completion routines are simply functions that you optionally pass to an overlapped I/O request and that the system invokes when an overlapped I/O request completes. Their primary role is to service a completed I/O request using the caller's thread. Additionally, applications can continue overlapped I/O processing through the completion routine.</p>
+
+<p>To use completion routines for overlapped I/O requests, your application must specify a completion routine, along with a <i>WSAOVERLAPPED</i> structure, to an I/O bound Winsock function (described earlier). A completion routine must have the following function prototype:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+void CALLBACK CompletionROUTINE(
+    DWORD dwError,
+    DWORD cbTransferred,
+    LPWSAOVERLAPPED lpOverlapped,
+    DWORD dwFlags
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>When an overlapped I/O request completes using a completion routine, the parameters contain the following information:</p>
+
+<ul>
+<p><li> The parameter <i>dwError</i> specifies the completion status for the overlapped operation as indicated by <i>lpOverlapped</i>.</li></p>
+
+<p><li> The <i>cbTransferred</i> parameter specifies the number of bytes that were transferred during the overlapped operation.</li></p>
+
+<p><li> The <i>lpOverlapped</i> parameter is the <i>WSAOVERLAPPED</i> structure passed into the originating I/O call.</li></p>
+
+<p><li> The <i>dwFlags</i> parameter is not used and will be set to 0.</li></p>
+</ul>
+
+
+
+<p>There is a major difference between overlapped requests submitted with a completion routine and overlapped requests submitted with an event object. The <i>WSAOVERLAPPED</i> structure's event field, <i>hEvent</i>, is not used, which means you cannot associate an event object with the overlapped request. Once you make an overlapped I/O call with a completion routine, your calling thread must eventually service the completion routine once it has completed. This requires you to place your calling thread in an <i>alertable wait state</i> and process the completion routine later, after the I/O operation has completed. The <i>WSAWaitForMultipleEvents</i> function can be used to put your thread in an alertable wait state. The catch is that you must also have at least one event object available for the <i>WSAWaitForMultipleEvents</i> function. If your application handles only overlapped requests with completion routines, you are not likely to have any event objects around for processing. As an alternative,
+your application can use the Win32 <i>SleepEx</i> function to set your thread in an alertable wait state. Of course, you can also create a dummy event object that is not associated with anything. If your calling thread is always busy and not in an alertable wait state, no posted completion routine will ever get called.</p>
+
+<p>As you saw earlier, <i>WSAWaitForMultipleEvents</i> normally waits for event objects associated with <i>WSAOVERLAPPED</i> structures. This function is also designed to place your thread in an alertable wait state and to process completion routines for completed overlapped I/O requests if you set the parameter <i>fAlertable</i> to <i>TRUE</i>. When overlapped I/O requests complete with a completion routine, the return value is <i>WSA_IO_COMPLETION</i> instead of an event object index in the event array. The <i>SleepEx</i> function provides the same behavior as <i>WSAWaitForMultipleEvents</i> except that it does not need any event objects. The <i>SleepEx</i> function is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+DWORD SleepEx(
+    DWORD dwMilliseconds, 
+    BOOL bAlertable
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>dwMilliseconds</i> parameter defines how long in milliseconds <i>SleepEx</i> will wait. If <i>dwMilliseconds</i> is set to <i>INFINITE</i>, <i>SleepEx</i> waits indefinitely. The <i>bAlertable</i> parameter determines how a completion routine will execute. If <i>bAlertable</i> is set to <i>FALSE</i> and an I/O completion callback occurs, the I/O completion function is not executed and the function does not return until the wait period specified in <i>dwMilliseconds</i> has elapsed. If it is set to <i>TRUE</i>, the completion routine executes and the <i>SleepEx</i> function returns <i>WAIT_IO_COMPLETION</i>.</p>
+
+<p>Figure 8-8 outlines how to structure a simple server application that is capable of managing one socket request using completion routines as described above. The application illustrates the following programming steps:</p>
+
+<ol>
+<p><li> Create a socket and begin listening for a connection on a specified port.</li></p>
+
+<p><li> Accept an inbound connection.</li></p>
+
+<p><li> Create a <i>WSAOVERLAPPED</i> structure for the accepted socket.</li></p>
+
+<p><li> Post an asynchronous <i>WSARecv</i> request on the socket by specifying the <i>WSAOVERLAPPED</i> structure as a parameter and supplying a completion routine.</li></p>
+
+<p><li> Call <i>WSAWaitForMultipleEvents</i> with the <i>fAlertable</i> parameter set to <i>TRUE</i>, and wait for an overlapped request to complete. When an overlapped request completes, the completion routine automatically executes and <i>WSAWaitForMultipleEvents</i> returns <i>WSA_IO_COMPLETION</i>. Inside the completion routine, post another overlapped <i>WSARecv</i> request with a completion routine.</li></p>
+
+<p><li> Verify that <i>WSAWaitForMultipleEvents</i> returns <i>WSA_IO_COMPLETION</i>.</li></p>
+
+<p><li> Repeat steps 5 and 6.</li></p>
+</ol>
+
+<p><b>Figure 8-8.</b> <i>Simple overlapped sample using completion routines </i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+SOCKET AcceptSocket;
+WSABUF DataBuf;
+
+void main(void)
+{
+    WSAOVERLAPPED Overlapped;
+
+    // Step 1:
+    //  Start Winsock, and set up a listening socket
+    ...
+
+    // Step 2:
+    //  Accept a new connection
+    AcceptSocket = accept(ListenSocket, NULL, NULL);
+
+    // Step 3:
+    //  Now that we have an accepted socket, start
+    //  processing I/O using overlapped I/O with a
+    //  completion routine. To get the overlapped I/O
+    //  processing started, first submit an
+    //  overlapped WSARecv() request.
+
+    Flags = 0;
+        
+    ZeroMemory(&amp;Overlapped, sizeof(WSAOVERLAPPED));
+
+    DataBuf.len = DATA_BUFSIZE;
+    DataBuf.buf = Buffer;
+
+    // Step 4:
+    //  Post an asynchronous WSARecv() request
+    //  on the socket by specifying the WSAOVERLAPPED
+    //  structure as a parameter, and supply  
+    //  the WorkerRoutine function below as the 
+    //  completion routine
+
+    if (WSARecv(AcceptSocket, &amp;DataBuf, 1, &amp;RecvBytes, 
+        &amp;Flags, &amp;Overlapped, WorkerRoutine) 
+        == SOCKET_ERROR)
+    {
+        if (WSAGetLastError() != WSA_IO_PENDING)
+        {
+            printf(&quot;WSARecv() failed with error %d\n&quot;, 
+                WSAGetLastError());
+            return;
+        }
+    }
+
+    // Since the WSAWaitForMultipleEvents() API
+    // requires waiting on one or more event objects,
+    // we will have to create a dummy event object.
+    // As an alternative, we can use SleepEx()
+    // instead.
+
+    EventArray[0] = WSACreateEvent(); 
+
+    while(TRUE)
+    {
+        // Step 5:
+        Index = WSAWaitForMultipleEvents(1, EventArray,
+            FALSE, WSA_INFINITE, TRUE);
+
+        // Step 6:
+        if (Index == WAIT_IO_COMPLETION)
+        {
+            // An overlapped request completion routine
+            // just completed. Continue servicing 
+            // more completion routines.
+            break;
+        }
+        else
+        {
+            // A bad error occurred--stop processing!
+            // If we were also processing an event
+            // object, this could be an index to
+            // the event array.
+
+            return;
+        }
+    }
+}
+
+void CALLBACK WorkerRoutine(DWORD Error, 
+                            DWORD BytesTransferred, 
+                            LPWSAOVERLAPPED Overlapped,
+                            DWORD InFlags)
+{
+    DWORD SendBytes, RecvBytes;
+    DWORD Flags;
+
+    if (Error != 0 || BytesTransferred == 0)
+    {
+        // Either a bad error occurred on the socket
+        // or the socket was closed by a peer
+        closesocket(AcceptSocket);
+        return;
+    }
+
+    // At this point, an overlapped WSARecv() request
+    // completed successfully. Now we can retrieve the
+    // received data that is contained in the variable
+    // DataBuf. After processing the received data, we 
+    // need to post another overlapped WSARecv() or
+    // WSASend() request. For simplicity, we will post 
+    // another WSARecv() request.
+
+    Flags = 0;
+        
+    ZeroMemory(&amp;Overlapped, sizeof(WSAOVERLAPPED));
+
+    DataBuf.len = DATA_BUFSIZE;
+    DataBuf.buf = Buffer;
+
+    if (WSARecv(AcceptSocket, &amp;DataBuf, 1, &amp;RecvBytes, 
+        &amp;Flags, &amp;Overlapped, WorkerRoutine) 
+        == SOCKET_ERROR)
+    {
+        if (WSAGetLastError() != WSA_IO_PENDING )
+        {
+            printf(&quot;WSARecv() failed with error %d\n&quot;, 
+                WSAGetLastError());
+            return;
+        }
+    }
+}
+</pre>
+</td></tr></table>
+</p>
+
+<A NAME="189"><H2>The Completion Port Model</H2></A>
+
+<p>The completion port model is by far the most complicated I/O model. However, it offers the best system performance possible when an application has to manage many sockets at once. Unfortunately, it's available only on Windows NT and Windows 2000. Because of the complexity of its design, you should consider using the completion port model only if you need your application to manage hundreds or even thousands of sockets simultaneously and you want your application to scale well when more CPUs are added to the system. The most important point to remember is that the I/O completion port model is your best choice if you are developing a high-performance server for Windows NT or Windows 2000 that is expected to service many socket I/O requests (a Web server, for example).</p>
+
+<p>Essentially the completion port model requires you to create a Win32 completion port object that will manage overlapped I/O requests using a specified number of threads to service the completed overlapped I/O requests. Note that a completion port is actually a Win32, Windows NT, and Windows 2000 I/O construct that is capable of accepting more than just socket handles. However, this section will describe only how to take advantage of the completion port model by using socket handles. To begin using this model, you are required to create an I/O completion port object that will be used to manage multiple I/O requests for any number of socket handles. This is accomplished by calling the <i>CreateIoCompletionPort</i> function, which is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+HANDLE CreateIoCompletionPort(
+    HANDLE FileHandle,
+    HANDLE ExistingCompletionPort,
+    DWORD CompletionKey,
+    DWORD NumberOfConcurrentThreads
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>Before examining the parameters in detail, be aware that this function is actually used for two distinct purposes:</p>
+
+<ul>
+<p><li> To create a completion port object</li></p>
+
+<p><li> To associate a handle with a completion port</li></p>
+</ul>
+
+
+
+<p>When you initially create a completion port, the only parameter of interest is <i>NumberOfConcurrentThreads</i>; the first three parameters are ignored. The <i>NumberOfConcurrentThreads</i> parameter is special in that it defines the number of threads that are allowed to execute concurrently on a completion port. Ideally, you want only one thread per processor to service the completion port to avoid thread context switching. The value 0 for this parameter tells the system to allow as many threads as there are processors in the system. You can use the code below to create an I/O completion port.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+CompletionPort = CreateIoCompletionPort(INVALID_HANDLE_VALUE,
+    NULL, 0, 0);
+</pre>
+</td></tr></table>
+</p>
+
+<p>This will return a handle that is used to identify the completion port when a socket handle is assigned to it.</p>
+
+<A NAME="190"><H3>Worker threads and completion ports</H3></A>
+
+<p>After a completion port is successfully created, you can begin to associate socket handles with the object. Before associating sockets, though, you have to create one or more worker threads to service the completion port when socket I/O requests are posted to the completion port object. At this point, you might wonder how many threads should be created to service the completion port. This is actually one of the more complicated aspects of the completion port model because the number needed to service I/O requests depends on the overall design of your application. It's important to note the distinction between number of concurrent threads to specify when calling <i>CreateIoCompletionPort</i> vs. the number of worker threads to create; they do not represent the same thing. We recommended earlier that you should have the <i>CreateIoCompletionPort</i> function specify one thread per processor to avoid thread context switching. The <i>NumberOfConcurrentThreads</i> parameter of <i>CreateIoCompletionPort</i>
+explicitly tells the system to allow only <i>n</i> threads to operate at a time on the completion port. If you create more than <i>n</i> worker threads on the completion port, only <i>n</i> threads will be allowed to operate at a time. (Actually, the system might exceed this value for a short amount of time, but the system will quickly bring it down to the value you specify in <i>CreateIoCompletionPort.</i>) You might be wondering why you would create more worker threads than the number specified by the <i>CreateIoCompletionPort</i> call. As we mentioned earlier, this depends on the overall design of your application. If one of your worker threads calls a function&#8212;such as <i>Sleep</i> or <i>WaitForSingleObject</i>&#8212;and becomes suspended, another thread will be allowed to operate in its place. In other words, you always want to have as many threads available for execution as the number of threads you allow to execute in the <i>CreateIoCompletionPort</i> call. Thus, if you expect your worker thread to
+ever become blocked, it is reasonable to create more worker threads than the value specified in <i>CreateIoCompletionPort</i>'s <i>NumberOfConcurrentThreads</i> parameter.</p>
+
+<p>Once you have enough worker threads to service I/O requests on the completion port, you can begin to associate socket handles with the completion port. This requires calling the <i>CreateIoCompletionPort</i> function on an existing completion port and supplying the first three parameters&#8212;<i>FileHandle</i>, <i>ExistingCompletionPort</i>, and <i>CompletionKey</i>&#8212;with socket information. The <i>FileHandle</i> parameter represents a socket handle to associate with the completion port. The <i>ExistingCompletionPort</i> parameter identifies the completion port. The <i>CompletionKey</i> parameter identifies <i>per-handle data</i> that you can associate with a particular socket handle. Applications are free to store any type of information associated with a socket by using this key. We call it per-handle data because it represents data associated with a socket handle. It is useful to store the socket handle using the key as a pointer to a data structure containing the socket handle and other
+socket-specific information. As we will see later in this chapter, the thread routines that service the completion port can retrieve socket-handle-specific information using this key.</p>
+
+<p>Let's begin to construct a basic application framework from what we've learned so far. Figure 8-9 demonstrates how to start developing an echo server application using the completion port model. In this figure, we take the following preparation steps:</p>
+
+<ol>
+<p><li> Create a completion port. The fourth parameter is left as 0, specifying that only one worker thread per processor will be allowed to execute at a time on the completion port.</li></p>
+
+<p><li> Determine how many processors exist on the system.</li></p>
+
+<p><li> Create worker threads to service completed I/O requests on the completion port using processor information in step 2. In the case of this simple example, we create one worker thread per processor because we do not expect our threads to ever get in a suspended condition in which there would not be enough threads to execute for each processor. When the <i>CreateThread</i> function is called, you must supply a worker routine that the thread executes upon creation. We will discuss the worker thread's responsibilities later in this section.</li></p>
+
+<p><li> Prepare a listening socket to listen for connections on port 5150.</li></p>
+
+<p><li> Accept inbound connections using the <i>accept</i> function.</li></p>
+
+<p><li> Create a data structure to represent per-handle data and save the accepted socket handle in the structure.</li></p>
+
+<p><li> Associate the new socket handle returned from <i>accept</i> with the completion port by calling <i>CreateIoCompletionPort</i>. Pass the per-handle data structure to <i>CreateIoCompletionPort</i> via the completion key parameter.</li></p>
+
+<p><li> Start processing I/O on the accepted connection. Essentially, you want to post one or more asynchronous <i>WSARecv</i> or <i>WSASend</i> requests on the new socket using the overlapped I/O mechanism. When these I/O requests complete, a worker thread services the I/O requests and continues processing future I/O requests, as we will see later in the worker routine specified in step 3.</li></p>
+
+<p><li> Repeat steps 5-8 until server terminates.</li></p>
+</ol>
+
+<p><b>Figure 8-9.</b> <i>Setting up a completion port </i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+StartWinsock();
+
+// Step 1:
+// Create an I/O completion port
+
+CompletionPort = CreateIoCompletionPort(
+    INVALID_HANDLE_VALUE, NULL, 0, 0);
+
+// Step 2:
+// Determine how many processors are on the system
+
+GetSystemInfo(&amp;SystemInfo);
+
+// Step 3:
+// Create worker threads based on the number of
+// processors available on the system. For this
+// simple case, we create one worker thread for each
+// processor.
+
+for(i = 0; i &lt; SystemInfo.dwNumberOfProcessors;
+    i++)
+{
+    HANDLE ThreadHandle;
+
+    // Create a server worker thread, and pass the
+    // completion port to the thread. NOTE: the
+    // ServerWorkerThread procedure is not defined
+    // in this listing.
+
+    ThreadHandle = CreateThread(NULL, 0,
+        ServerWorkerThread, CompletionPort,
+        0, &amp;ThreadID);
+
+    // Close the thread handle
+    CloseHandle(ThreadHandle);
+}
+
+// Step 4:
+// Create a listening socket
+
+Listen = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0,
+    WSA_FLAG_OVERLAPPED);
+
+InternetAddr.sin_family = AF_INET;
+InternetAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+InternetAddr.sin_port = htons(5150);
+
+bind(Listen, (PSOCKADDR) &amp;InternetAddr,
+    sizeof(InternetAddr));
+
+// Prepare socket for listening
+
+listen(Listen, 5);
+
+while(TRUE)
+{
+    // Step 5:
+    // Accept connections and assign to the completion
+    // port
+
+    Accept = WSAAccept(Listen, NULL, NULL, NULL, 0);
+
+    // Step 6:
+    // Create per-handle data information structure to 
+    // associate with the socket
+    PerHandleData = (LPPER_HANDLE_DATA) 
+        GlobalAlloc(GPTR, sizeof(PER_HANDLE_DATA));
+
+    printf(&quot;Socket number %d connected\n&quot;, Accept);
+    PerHandleData-&gt;Socket = Accept;
+
+    // Step 7:
+    // Associate the accepted socket with the
+    // completion port
+
+    CreateIoCompletionPort((HANDLE) Accept,
+        CompletionPort, (DWORD) PerHandleData, 0);
+
+    // Step 8:
+    //  Start processing I/O on the accepted socket.
+    //  Post one or more WSASend() or WSARecv() calls
+    //  on the socket using overlapped I/O.
+    WSARecv(...);
+}
+</pre>
+</td></tr></table>
+</p>
+
+<A NAME="191"><H3>Completion ports and overlapped I/O</H3></A>
+
+<p>After associating a socket handle with a completion port, you can begin processing I/O requests by posting send and receive requests on the socket handle. You can now start to rely on the completion port for I/O completion notification. Essentially, the completion port model takes advantage of the Win32 overlapped I/O mechanism in which Winsock API calls such as <i>WSASend</i> and <i>WSARecv</i> return immediately when called. It is up to your application to retrieve the results of the calls at a later time through an <i>OVERLAPPED</i> structure. In the completion port model, this is accomplished by having one or more worker threads wait on the completion port using the <i>GetQueuedCompletionStatus</i> function, which is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+BOOL GetQueuedCompletionStatus(
+    HANDLE CompletionPort, 
+    LPDWORD lpNumberOfBytesTransferred, 
+    LPDWORD lpCompletionKey, 
+    LPOVERLAPPED * lpOverlapped, 
+    DWORD dwMilliseconds
+); 
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>CompletionPort</i> parameter represents the completion port to wait on. The <i>lpNumberOfBytesTransferred</i> parameter receives the number of bytes transferred after a completed I/O operation, such as <i>WSASend</i> or <i>WSARecv</i>. The <i>lpCompletionKey</i> parameter returns per-handle data for the socket that was originally passed into the <i>CreateIoCompletionPort</i> function. As we mentioned earlier, we recommend saving the socket handle in this key. The <i>lpOverlapped</i> parameter receives the overlapped result of the completed I/O operation. This is actually an important parameter because it can be used to retrieve <i>per I/O_operation data</i>. The final parameter, <i>dwMilliseconds</i>, specifies the number of milliseconds that the caller is willing to wait for a completion packet to appear on the completion port. If you specify <i>INFINITE</i>, the call waits forever.</p>
+
+<A NAME="192"><H3>Per-handle data and per&#8211;I/O operation data</H3></A>
+
+<p>When a worker thread receives I/O completion notification from the <i>GetQueuedCompletionStatus</i> API call, the <i>lpCompletionKey</i> and <i>lpOverlapped</i> parameters contain socket information that can be used to continue processing I/O on a socket through the completion port. Two types of important socket data are available through these parameters: per-handle data and per-I/O operation data.</p>
+
+<p>The <i>lpCompletionKey</i> parameter contains what we call per-handle data because the data is related to a socket handle when a socket is first associated with the completion port. This is the data that is passed as the <i>CompletionKey</i> parameter of the <i>CreateIoCompletionPort</i> API call. As we noted earlier, your application can pass any type of socket information through this parameter. Typically, applications will store the socket handle related to the I/O request here.</p>
+
+<p>The <i>lpOverlapped</i> parameter contains an <i>OVERLAPPED</i> structure followed by what we call per-I/O operation data, which is anything that your worker thread will need to know when processing a completion packet (echo the data back, accept the connection, post another read, and so on). Per-I/O operation data is any number of bytes attached to the end of an <i>OVERLAPPED</i> structure that you pass into a function that expects an <i>OVERLAPPED</i> structure. A simple way to make this work is to define a structure and place an <i>OVERLAPPED</i> structure as the first element of the new structure. For example, we declare the following data structure to manage per-I/O operation data:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+typedef struct
+{
+    OVERLAPPED Overlapped;
+    WSABUF     DataBuf;
+    CHAR       Buffer[DATA_BUFSIZE];
+    BOOL       OperationType;
+} PER_IO_OPERATION_DATA;
+</pre>
+</td></tr></table>
+</p>
+
+<p>This structure demonstrates some important data elements you might want to relate to an I/O operation, such as the type of I/O operation (a send or receive request) that just completed. In this structure, we consider the data buffer for the completed I/O operation to be useful. To call a Winsock API function that expects an <i>OVERLAPPED</i> structure, you can either cast your structure as an <i>OVERLAPPED</i> pointer or simply dereference the <i>OVERLAPPED</i> element of your structure. For example,</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+PER_IO_OPERATION_DATA PerIoData;
+
+// You would call a function either as
+    WSARecv(socket, ..., (OVERLAPPED *)&amp;PerIoData);
+// or as
+    WSARecv(socket, ..., &amp;(PerIoData.Overlapped));
+</pre>
+</td></tr></table>
+</p>
+
+<p>Later in the worker thread, when <i>GetQueuedCompletionStatus</i> returns with an overlapped structure (and completion key), you can determine which operation was posted on this handle by dereferencing the <i>OperationType</i> member. (Just cast the returned overlapped structure to your <i>PER_IO_OPERATION_DATA</i> structure.) One of the biggest benefits of per-I/O operation data is that it allows you to manage multiple I/O operations (read/write, multiple reads, multiple writes, and so on) on the same handle. You might ask why you would want to post more than one I/O operation at a time on a socket. The answer is scalability. For example, if you have a multiple-processor machine with a worker thread using each processor, you could potentially have several processors sending and receiving data on a socket at the same time.</p>
+
+<p>To complete the simple echo server sample from above, we need to supply a <i>ServerWorkerThread</i> function. Figure 8-10 outlines how to develop a worker thread routine that uses per-handle data and per-I/O operation data to service I/O requests.</p>
+
+<p><b>Figure 8-10.</b> <i>Completion port worker thread </i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+DWORD WINAPI ServerWorkerThread(
+    LPVOID CompletionPortID)
+{
+    HANDLE CompletionPort = (HANDLE) CompletionPortID;
+    DWORD BytesTransferred;
+    LPOVERLAPPED Overlapped;
+    LPPER_HANDLE_DATA PerHandleData;
+    LPPER_IO_OPERATION_DATA PerIoData;
+    DWORD SendBytes, RecvBytes;
+    DWORD Flags;
+    
+    while(TRUE)
+    {
+        // Wait for I/O to complete on any socket
+        // associated with the completion port
+    
+        GetQueuedCompletionStatus(CompletionPort,
+            &amp;BytesTransferred,(LPDWORD)&amp;PerHandleData,
+            (LPOVERLAPPED *) &amp;PerIoData, INFINITE);
+
+        // First check to see whether an error has occurred
+        // on the socket; if so, close the 
+        // socket and clean up the per-handle data
+        // and per-I/O operation data associated with
+        // the socket
+
+        if (BytesTransferred == 0 &amp;&amp;
+            (PerIoData-&gt;OperationType == RECV_POSTED ||
+             PerIoData-&gt;OperationType == SEND_POSTED))
+        {
+            // A zero BytesTransferred indicates that the
+            // socket has been closed by the peer, so
+            // you should close the socket. Note: 
+            // Per-handle data was used to reference the
+            // socket associated with the I/O operation.
+ 
+            closesocket(PerHandleData-&gt;Socket);
+
+            GlobalFree(PerHandleData);
+            GlobalFree(PerIoData);
+            continue;
+        }
+
+        // Service the completed I/O request. You can
+        // determine which I/O request has just
+        // completed by looking at the OperationType
+        // field contained in the per-I/O operation data.
+
+        if (PerIoData-&gt;OperationType == RECV_POSTED)
+        {
+            // Do something with the received data
+            // in PerIoData-&gt;Buffer
+        }
+
+        // Post another WSASend or WSARecv operation.
+        // As an example, we will post another WSARecv()
+        // I/O operation.
+
+        Flags = 0;
+
+        // Set up the per-I/O operation data for the next
+        // overlapped call
+        ZeroMemory(&amp;(PerIoData-&gt;Overlapped),
+            sizeof(OVERLAPPED));
+
+        PerIoData-&gt;DataBuf.len = DATA_BUFSIZE;
+        PerIoData-&gt;DataBuf.buf = PerIoData-&gt;Buffer;
+        PerIoData-&gt;OperationType = RECV_POSTED;
+
+        WSARecv(PerHandleData-&gt;Socket, 
+            &amp;(PerIoData-&gt;DataBuf), 1, &amp;RecvBytes,
+            &amp;Flags, &amp;(PerIoData-&gt;Overlapped), NULL);
+    }
+}
+</pre>
+</td></tr></table>
+</p>
+
+<p>One final detail not outlined in the simple server examples in Figures 8-9 and 8-10 or on the companion CD is how to properly close an I/O completion port, especially if you have one or more threads in progress performing I/O on several sockets. The main thing to avoid is freeing an <i>OVERLAPPED</i> structure when an overlapped I/O operation is in progress. The best way to prevent this is to call <i>closesocket</i> on every socket handle&#8212;any overlapped I/O operations pending will complete. Once all socket handles are closed, you need to terminate all worker threads on the completion port. This can be accomplished by sending a special completion packet to each worker thread using the <i>PostQueuedCompletionStatus</i> function, which informs each thread to exit immediately. <i>PostQueuedCompletionStatus</i> is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+BOOL PostQueuedCompletionStatus(
+    HANDLE CompletionPort,
+    DWORD dwNumberOfBytesTransferred, 
+    DWORD dwCompletionKey, 
+    LPOVERLAPPED lpOverlapped
+); 
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>CompletionPort</i> parameter represents the completion port object to which you want to send a completion packet. The <i>dwNumberOfBytesTransferred</i>, <i>dwCompletionKey,</i> and <i>lpOverlapped</i> parameters each allow you to specify a value that will be sent directly to the corresponding parameter of the <i>GetQueuedCompletionStatus</i> function. Thus, when a worker thread receives the three passed parameters of <i>GetQueuedCompletionStatus</i>, it can determine when it should exit based on a special value set in one of the three parameters. For example, you could pass the value 0 in the <i>dwCompletionKey</i> parameter, which a worker thread could interpret as an instruction to terminate. Once all the worker threads are closed, you can close the completion port using the <i>CloseHandle</i> function and finally exit your program safely.</p>
+
+<A NAME="193"><H3>Other issues</H3></A>
+
+<p>Several techniques can further improve overall I/O performance of a socket application using completion ports. One technique worth considering is experimenting with socket buffer sizes to increase I/O performance and application scalability. For example, if your application uses one large buffer with only one <i>WSARecv</i> request instead of three small buffers with three <i>WSARecv</i> requests, your application will not scale well to multiprocessor machines. This is because a single buffer can be processed by only one thread at a time. Furthermore, the single-buffer approach has performance consequences: you might not be keeping the network protocol driver busy enough if you are doing only one receive operation at a time. That is, if you wait for one <i>WSARecv</i> to complete before you receive more data, you effectively let the protocol rest between the <i>WSARecv</i> completion and the next receive.</p>
+
+<p>Another performance gain worth considering results from using the socket options <i>SO_SNDBUF</i> and <i>SO_RCVBUF</i> to control the size of internal socket buffers. These options allow an application to change the size of the internal data buffer of a socket. If you set this value to 0, Winsock will use your application buffer directly in an overlapped I/O call to transmit data to and from the protocol stack, thereby reducing a buffer copy between your application and Winsock. The following code fragment demonstrates how to call the <i>setsockopt</i> function using the <i>SO_SNDBUF</i> option:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+int nZero = 0;
+
+setsockopt(socket, SOL_SOCKET, SO_SNDBUF, 
+    (char *)&amp;nZero, sizeof(nZero));
+</pre>
+</td></tr></table>
+</p>
+
+<p>Note that setting these buffer sizes to 0 has only a positive impact on your application when multiple I/O requests are posted at a given time. <a href="ch09a.htm">Chapter 9</A> describes these socket options in greater detail.</p>
+
+<p>A final performance gain worth considering results from using the <i>AcceptEx</i> API call for connection requests that deliver small amounts of data. This allows your application to service an accept request and retrieve data through a single API call, thereby reducing the overhead of separate <i>accept</i> and <i>WSARecv</i> calls. As an added benefit, you can service <i>AcceptEx</i> requests using the completion port since it also features an <i>OVERLAPPED</i> structure. <i>AcceptEx</i> is useful if your server expects to handle a small amount of <i>recv</i>-<i>send</i> transactions once a connection is established (as with a Web server). Otherwise, if your application is performing hundreds or thousands of data transfers after accepting a connection, this operation offers no real gain.</p>
+
+<p>On a final note, Winsock applications should not use the <i>ReadFile</i> and <i>WriteFile</i> Win32 functions for processing I/O on a completion port in Winsock. These functions do feature an <i>OVERLAPPED</i> structure and can be successfully used on a completion port; however, the <i>WSARecv</i> and <i>WSASend</i> functions are better optimized for processing I/O in Winsock 2. Using <i>ReadFile</i> and <i>WriteFile</i> involves making many more unnecessary kernel/user mode procedure call transitions, thread context switches, and parameter marshaling, resulting in a significant performance penalty.</p>
+
+</BODY>
+</HTML>
+
+
+
+

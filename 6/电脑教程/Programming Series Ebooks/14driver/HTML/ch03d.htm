@@ -1,0 +1,1267 @@
+<HTML>
+<HEAD>
+<TITLE>Memory Management</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch03c.htm">[Previous]</A> <A HREF="ch03e.htm">[Next]</a>
+</p>
+
+<A NAME="78"><H1>Memory Management</H1></A>
+
+<p>In this section, I'll discuss the topic of memory management. Windows 2000 divides the
+available virtual address space in several ways. One division&#8212;a very firm one based on
+security and integrity concerns&#8212;is between user-mode addresses and kernel-mode addresses.
+Another division, which is almost but not quite coextensive with the first, is between paged
+and nonpaged memory. All user-mode addresses and some kernel-mode addresses reference page
+frames that the Memory Manager swaps to and from the disk over time, while some kernel-mode
+addresses always reference the same page frames in physical memory. Since Windows 2000 allows
+portions of drivers to be paged, I'll explain how you control the pagability of your driver
+at the time you build your driver and at run time.</p>
+
+<p>Windows 2000 provides several methods for managing memory. I'll describe two basic
+service functions&#8212;ExAllocatePool and ExFreePool&#8212;that you use for allocating and
+releasing randomly sized blocks from a heap. I'll also describe the primitives that you use
+for organizing memory blocks into linked lists of structures. Finally, I'll describe the
+concept of a <i>lookaside list</i>, which allows you to efficiently allocate and release blocks
+that are all the same size.</p>
+
+<A NAME="79"><H2>User-Mode and Kernel-Mode Address Spaces</H2></A>
+
+<p>Windows NT and Microsoft Windows 98 run on computers that support a virtual address space,
+wherein virtual addresses are mapped either to physical memory or (conceptually, anyway) to
+page frames within a swap file on disk. To grossly simplify matters, you can think of the
+virtual address space as being divided into two parts: a kernel-mode part and a user-mode part.
+See Figure 3-7.</p>
+
+<p>
+<img src="images/F03wi07.JPG" width=286 height=303 border="0">
+</p><p>
+<!--caption--><b>Figure 3-7.</b> <i>User-mode and kernel-mode portions of the address space.</i><!--/caption-->
+</p>
+
+
+<p>Each user-mode process has its own address context, which maps the user-mode virtual
+addresses to a unique collection of physical page frames. In other words, the meaning of any
+particular virtual address changes from one moment to the next as the Windows NT scheduler
+switches from a thread in one process to a thread in another process. Part of the work in
+switching threads is to change the page tables used by a processor so that they refer to the
+incoming thread's process context.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+If you're familiar with the Alpha and you're a stickler for accuracy,
+you'll know that Alphas don't have <i>page tables</i>. They have something different
+called <i>translation buffers</i> that map virtual page addresses to physical page addresses.
+To me, this is a distinction without a difference&#8212;on a par with saying that <i>The</i> <i>
+Odyssey</i> was written by a different Homer than the one historians used to think wrote it.
+But someone would have sent me an email pointing this out if I didn't say it
+first.</blockquote></div>
+</p>
+
+<p>It's generally unlikely that a WDM driver will execute in the same thread context as the
+initiator of the I/O requests it handles. We say that we're running &quot;in arbitrary
+thread context&quot; if we don't know for sure to which process the current user-mode
+address context belongs. In arbitrary thread context, we simply can't use a virtual address
+that belongs to user mode because we can't have any idea to what physical memory it might
+point. In view of this uncertainty, we generally obey the following rule inside a driver
+program:</p>
+
+<blockquote><b>Never (well, hardly ever) directly reference user-mode memory.</b></blockquote>
+
+<p>In other words, don't take an address that a user-mode application provides and treat
+that address as a pointer that we can directly dereference. I'll discuss in later chapters
+a few techniques for accessing data buffers that originate in user mode. All we need to know
+right now, though, is that we're (nearly) always going to be using kernel-mode virtual
+addresses whenever we want to access the computer's memory.</p>
+
+<A NAME="80"><H3>How Big Is a Page?</H3></A>
+
+<p>In a virtual memory system, the operating system organizes physical memory and the swap file
+into like-sized page frames. In a WDM driver, you can use the manifest constant PAGE_SIZE to
+tell you how big a page is. In some Windows NT computers, a page is 4096 bytes long; in others,
+it's 8192 bytes long. There's a related constant named PAGE_SHIFT that equals the page
+size as a power of two. That is:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+PAGE_SIZE == 1 &lt;&lt; PAGE_SHIFT
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>For your convenience, you can use a few preprocessor macros in your code when you're
+working with the size of a page:</p>
+
+<ul>
+<p><li> ROUND_TO_PAGES rounds a size in bytes to the next higher page boundary. For example,
+ROUND_TO_PAGES(1) is 4096 on a 4 KB_page computer.</li></p>
+
+<p><li> BYTES_TO_PAGES determines how many pages are required to hold a given number of bytes
+beginning at the start of a page. For example, BYTES_TO_PAGES(42) would be 1 on all platforms,
+and BYTES_TO_PAGES(5000) would be 2 on some platforms and 1 on others.</li></p>
+
+<p><li> BYTE_OFFSET returns the byte offset portion of a virtual address. That is, it calculates
+the starting offset within some page frame of a given address. On a 4 KB_page computer,
+BYTE_OFFSET(0x12345678) would be 0x678.</li></p>
+
+<p><li> PAGE_ALIGN rounds a virtual address down to a page boundary. On a 4 KB_page computer,
+PAGE_ALIGN(0x12345678) would be 0x12345000.</li></p>
+
+<p><li> ADDRESS_AND_SIZE_TO_SPAN_PAGES returns the number of page frames occupied by a specified
+number of bytes beginning at a specified virtual address. For example,
+ADDRESS_AND_SIZE_TO_SPAN_PAGES(0x12345FFF, 2) is 2 on a 4 KB_page machine because the two bytes span a page
+boundary.</li></p>
+</ul>
+
+
+<A NAME="81"><H3>Paged and Nonpaged Memory</H3></A>
+
+<p>The whole point of a virtual memory system is that you can have a virtual address space
+that's much bigger than the amount of physical memory on the computer. To accomplish this
+feat, the Memory Manager needs to swap page frames in and out of physical memory. Certain parts
+of the operating system can't be paged, though, because they're needed to support the
+Memory Manager itself. The most obvious example of something that must always be resident in
+memory is the code that handles page faults (the exceptions that occur when a page frame
+isn't physically present when needed) and the data structures used by the page fault
+handler. But the category of &quot;must be resident&quot; stuff is much broader than that.</p>
+
+<p>Windows NT divides the kernel-mode address space into paged and nonpaged memory pools. (The
+user-mode address space is always pagable.) Things that must always be resident are in the
+nonpaged pool; things that can come and go on demand are in the paged pool. Windows NT provides
+a simple rule for deciding whether your code and the data it uses must be resident. I'll
+elaborate on the rule in the next chapter, but here it is anyway:</p>
+
+
+<blockquote><b>Code executing at or above interrupt request level (IRQL) DISPATCH_LEVEL cannot cause page faults.</b>
+</blockquote>
+
+<p>You can use the PAGED_CODE preprocessor macro (declared in wdm.h) to help you discover
+violations of this rule in the checked build of your driver. For example:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+NTSTATUS DispatchPower(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  PAGED_CODE()
+  ...
+  }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>PAGED_CODE contains conditional compilation. In the checked-build environment, it prints a
+message and generates an assertion failure if the current IRQL is too high. In the free-build
+environment, it doesn't do anything. If you were to test your driver in a situation where
+the page containing <b>DispatchPower</b> happened fortuitously to be in memory, you would never
+discover that it had been called at an elevated IRQL. PAGED_CODE will detect the problem even
+so. A bug check would occur if the page happened to not be present, so you would certainly
+learn about the problem then!</p>
+
+
+<p><div class="sidebar"><blockquote>
+<b>The Driver Verifier</b>
+
+<p>The Driver Verifier feature of Windows 2000 helps you debug many features of your driver,
+including the placement of programs into sections, your use of the memory heap, and so on. This
+feature was still in flux at press time, so I can't say much more about it here. But notice
+that the PAGED_CODE macro spots a problem only in the checked build of your driver that exists
+at the point where you invoke it. The Driver Verifier can diagnose a problem arising anywhere
+in a function, even with the free build of the driver.</p>
+</blockquote></div>
+</p>
+
+
+<A NAME="82"><H3>Compile-Time Control of Pagability</H3></A>
+
+<p>Given that some parts of your driver must always be resident and some parts can be paged,
+you need a way to control the assignment of your code and data to the paged and nonpaged pools.
+You accomplish part of this job by instructing the compiler how to apportion your code and data
+among various sections. The run-time loader uses the names of the sections to put parts of your
+driver in the places you intend. You can also accomplish parts of this job at run time by
+calling various Memory Manager routines that I'll discuss in the next section.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+Win32 executable files, including kernel-mode drivers, are internally composed
+of one or more <i>sections.</i> A section can contain code or data and, generally speaking, has
+additional attributes such as being readable, writable, sharable, executable, and so on. A
+section is also the smallest unit that you can designate when you're specifying pagability.
+When loading a driver image, the system puts sections whose literal names begin with
+&quot;page&quot; or &quot;.eda&quot; (the start of &quot;.edata&quot;) into the paged pool
+unless the <b>DisablePagingExecutive</b> value in the HKLM\System\CurrentControlSet\Control\Session Manager\Memory Management key happens to be set
+(in which case no driver paging occurs). In one of the little twists of fate that affect us all
+from time to time, running Soft-Ice/W on Windows 2000 requires you to disable kernel paging in
+this way. This certainly makes it harder to find bugs caused by misplacement of driver code or
+data into the paged pool! If you use this debugger, I recommend that you religiously use the
+PAGED_CODE macro <i>and</i> the Driver Verifier.
+</blockquote></div>
+</p>
+
+<p>The traditional way of telling the compiler to put code into a particular section is to use
+the <b>alloc_text</b> pragma. Since not every compiler will necessarily support the pragma, the
+DDK headers either define or don't define the constant ALLOC_PRAGMA to tell you whether to use the pragma. You can then invoke the pragma to specify the
+section placement of individual subroutines in your driver, as follows:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+#ifdef ALLOC_PRAGMA
+  #pragma alloc_text(PAGE, AddDevice)
+  #pragma alloc_text(PAGE, DispatchPnp)
+  ...
+#endif
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>These statements serve to place the <b>AddDevice</b> and <b>DispatchPnp</b> functions into
+the paged pool.</p>
+
+<p>The Microsoft C/C++ compiler places two annoying restrictions on using alloc_text:</p>
+
+<ul>
+<p><li> The pragma must follow the declaration of a function but precede the definition. One way
+to obey this rule is to declare all the functions in your driver in a standard header file and
+invoke alloc_text at the start of the source file that contains a given function but after you
+include that header.</li></p>
+
+<p><li> The pragma can be used only with functions that have C-linkage. In other words, it
+won't work for class member functions or for functions in a C++ source file that you
+didn't declare using <b>extern &quot;C&quot;</b>.</li></p>
+</ul>
+
+
+<p>To control the placement of data variables, you use a different pragma under control of a
+different preprocessor macro symbol:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+#ifdef ALLOC_DATA_PRAGMA
+  #pragma data_seg(&quot;PAGE&quot;)
+#endif
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The <b>data_seg</b> pragma causes all static data variables declared in a source module
+after the appearance of the pragma to go into the paged pool. You'll notice that this
+pragma differs in a fundamental way from alloc_text. A pagable section starts where <b>#pragma
+data_seg(&quot;PAGE&quot;)</b> appears and ends where a countervailing <b>#pragma
+data_seg()</b> appears. Alloc_text, on the other hand, applies to a specific function.</p>
+
+<p>Think twice before putting some of your data into a pagable section, because you might
+actually be making things worse. The smallest unit that can be paged is PAGE_SIZE long.
+It's probably silly to put just a few bytes into a pagable section. You'll end up using
+an entire page worth of memory. Consider, too, that a data page is often &quot;dirty&quot;
+(that is, changed since it was fetched from disk) and would need to be rewritten to disk before
+its physical page frame could be reused for another purpose.</p>
+
+
+<p><div class="sidebar"><blockquote>
+<b>More About Section Placement</b>
+
+<p>In general, I find it more convenient to specify the section placement of whole blocks of
+code by using the Microsoft <b>code_seg</b> pragma, which works the same way as data_seg, only
+for code. That is, you can tell the Microsoft compiler to start putting functions into the
+paged pool like this:</p>
+
+
+<p>
+<table cellpadding=5><tr><td>
+<pre>
+#pragma code_seg(&quot;PAGE&quot;)
+NTSTATUS AddDevice(...){...}
+NTSTATUS DispatchPnp(...){...}
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The <b>AddDevice</b> and <b>DispatchPnp</b> functions would both end up in the
+paged pool. You can check to see whether you're compiling with the Microsoft compiler by
+testing the existence of the predefined preprocessor macro <b>_MSC_VER</b>.</p>
+
+<p>To revert to the default code section, just code <b>#pragma code_seg</b> with no
+argument:</p>
+
+
+<p>
+<table cellpadding=5><tr><td>
+<pre>
+#pragma code_seg()
+</pre>
+</td></tr>
+</table>
+</p>
+<p>Similarly, to revert to the regular nonpaged data section, code <b>#pragma
+data_seg</b> with no argument:</p>
+
+<p>
+<table cellpadding=5><tr><td>
+<pre>
+#pragma data_seg()
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>This sidebar is also the logical place to mention that you can also direct code
+into the INIT section if it's not needed once your driver finishes initializing. For
+example:</p>
+
+<p>
+<table cellpadding=5><tr><td>
+<pre>
+#pragma alloc_text(INIT, DriverEntry)
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>This statement forces the <b>DriverEntry</b> function into the INIT section. The
+system will release the memory it occupies when it returns. This small savings is not very
+important in the grand scheme of things because a WDM driver's DriverEntry function
+doesn't do much work. Previous Windows NT drivers had large DriverEntry functions that had
+to create device objects, locate resources, configure devices, and so on. For them, using this
+feature offered significant memory savings.</p>
+
+<p>You can use the DUMPBIN utility that comes with Microsoft Visual C++ to easily see how much
+of your driver is initially pagable. Your marketing department might even want to crow about
+how much less nonpaged memory you use than your competitors.</p>
+</blockquote></div>
+</p>
+
+
+<A NAME="83"><H3>Run-Time Control of Pagability</H3></A>
+
+<p>Table 3-2 lists the service functions you can use at run time to fine-tune the pagability of
+your driver in various situations. The purpose of these routines is to let you release the
+physical memory that would otherwise be tied up by your code and data during periods when it
+won't be needed. In <A HREF="ch08a.htm">Chapter 8</A>, for example, I'll discuss how you can register your
+device with the Power Manager so that you're automatically powered down after a period of
+inactivity. Powering down might be a good time to release your locked pages.</p>
+
+<p>
+<b>Table 3-2.</b> <i>Routines for dynamically locking and unlocking driver pages.</i>
+</p>
+
+<p>
+<table valign="top" cellpadding="5" width="95%">
+<tr>
+<th><i>Service Function</i></th>
+<th><i>Description</i></th>
+</tr>
+<tr>
+<td valign="top">MmLockPagableCodeSection</td>
+<td valign="top">Lock a code section given an address inside it</td>
+</tr>
+<tr>
+<td valign="top">MmLockPagableDataSection</td>
+<td valign="top">Lock a data section given an address inside it</td>
+</tr>
+<tr>
+<td valign="top">MmLockPagableSectionByHandle</td>
+<td valign="top">Lock a code section by using a handle from a previous MmLockPagableCodeSection call (Windows 2000 only)</td>
+</tr>
+<tr>
+<td valign="top">MmPageEntireDriver</td>
+<td valign="top">Unlock all pages belonging to driver</td>
+</tr>
+<tr>
+<td valign="top">MmResetDriverPaging</td>
+<td valign="top">Restore compile-time pagability attributes for entire driver</td>
+</tr>
+<tr>
+<td valign="top">MmUnlockPagableImageSection</td>
+<td valign="top">Unlock a locked code or data section</td>
+</tr>
+</table>
+</p>
+
+
+<p>I'm going to describe one way to use these functions to control the pagability of code
+in your driver. You might want to read the DDK descriptions to learn about other ways to use
+them. First distribute subroutines in your driver into separately named code sections, like
+this:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+#pragma alloc_text(PAGEIDLE, DispatchRead)
+#pragma alloc_text(PAGEIDLE, DispatchWrite)
+...
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>That is, define a section name beginning with &quot;PAGE&quot; and ending in any
+four-character suffix you please. Then use the alloc_text pragma to place some group of your
+own routines into that special section. You can have as many special pagable sections as you
+want, but your logistical problems will grow as you subdivide your driver in this way.</p>
+
+<p>During initialization (say, in <b>DriverEntry</b>), lock your pagable sections like
+this:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+PVOID hPageIdleSection;
+NTSTATUS DriverEntry(...)
+  {
+  hPageIdleSection = MmLockPagableCodeSection((PVOID) DispatchRead);
+  }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>When you call <b>MmLockPagableCodeSection</b>, you specify any address at all within the
+section you're trying to lock. The real purpose of making this call during DriverEntry is
+to obtain the handle value it returns, which I've shown you saving in a global variable
+named <b>hPageIdleSection</b>. You'll use that handle much later on, when you decide you
+don't need a particular section in memory for a while:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+MmUnlockPagableImageSection(hPageIdleSection);
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>This call will unlock the pages containing the PAGEIDLE section and allow them to move in
+and out of memory on demand. If you later discover that you need those pages back again, you
+make this call:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+MmLockPagableSectionByHandle(hPageIdleSection);
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Following this call, the PAGEIDLE section will once again be in nonpaged memory (but not
+necessarily the same physical memory as previously). <i>Note that this function call is
+available to you only in Windows 2000, and then only if you've included ntddk.h instead of
+wdm.h. In other situations, you will have to call MmLockPagableCodeSection again.</i></p>
+
+<p>You can do something similar to place data objects into pagable sections:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+PVOID hPageDataSection;
+
+#pragma data_seg(&quot;PAGE&quot;)
+ULONG ulSomething;
+#pragma data_seg()
+
+hPageDataSection = MmLockPagableDataSection((PVOID) &amp;ulSomething);
+
+MmUnlockPagableImageSection(hPageDataSection);
+
+MmLockPagableSectionByHandle(hPageDataSection);
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>I've played fast and loose with my syntax here&#8212;these statements would appear in
+widely disparate parts of your driver.</p>
+
+<p>The key idea behind the Memory Manager service functions I just described is that you initially
+lock a section containing one or more pages and obtain a handle for use in subsequent calls.
+You can then unlock the pages in a particular section by calling <b>MmUnlockPagableImageSection</b> and passing the corresponding handle. Relocking the section
+later on requires a call to <b>MmLockPagableSectionByHandle</b>.</p>
+
+<p>A quick shortcut is available if you're sure that <i>none</i> of your driver will need to
+be resident for a while. <b>MmPageEntireDriver</b> will mark all the sections in a driver's
+image as being pagable. Conversely, <b>MmResetDriverPaging</b> will restore the compile-time
+pagability attributes for the entire driver. To call these routines, you just need the address
+of some piece of code or data in the driver. For example:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+MmPageEntireDriver((PVOID) DriverEntry);
+...
+MmResetDriverPaging((PVOID) DriverEntry);
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>You need to exercise care when using any of the Memory Manager routines I've just
+described if your device uses an interrupt. Spurious interrupts have been known to happen, and
+it will be very difficult for anyone to discover that the reason for some random crash is that
+the system tried to call your missing interrupt service routine (ISR) to handle one. The rule
+stated in the DDK is that you simply mustn't page your ISR or any deferred procedure call
+(DPC) routine it might schedule after connecting your interrupt.</p>
+
+<A NAME="84"><H2>Heap Allocator</H2></A>
+
+<p>The basic heap allocation service function in kernel mode used to be <b>ExAllocatePool</b>.
+This service is still the one referred to in most discussions of heap allocation and used by
+sample drivers. You call it like this:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+PVOID p = ExAllocatePool(type, nbytes);
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The <b>type</b> argument is one of the POOL_TYPE enumeration constants described in Table
+3-3, and <b>nbytes</b> is the number of bytes you want to allocate. The return value is a
+kernel-mode virtual address pointer to the allocated memory block. Unless you specify either
+<b>NonPagedPoolMustSucceed</b> or <b>NonPagedPoolCacheAlignedMustS</b> for the pool type, you
+can receive back a NULL pointer if enough memory isn't available to satisfy your request.
+If you specify either of those two must-succeed types, lack of memory will cause a bug check
+with the code MUST_SUCCEED_POOL_EMPTY.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+Drivers should not allocate memory using one of the &quot;must succeed&quot;
+specifiers. This is because they can fail whatever operation is underway with a status code if
+memory is unavailable. Causing a system crash in a low-memory situation is not something a
+driver should do. Furthermore, only a limited pool of &quot;must succeed&quot; memory exists in
+the entire system, and the operating system might not be able to allocate memory needed to keep
+the computer running if drivers tie up some. In fact, Microsoft wishes they had never
+documented the must-succeed options in the DDK to begin with.</blockquote></div>
+</p>
+
+<p><b>Table 3-3.</b> <i>Pool type arguments for ExAllocatePool.</i></p>
+<p>
+<table valign="top" cellpadding="5" width="95%">
+<tr>
+<th><i>Pool Type</i></th>
+<th><i>Description</i></th>
+</tr>
+<tr>
+<td valign="top">NonPagedPool</td>
+<td valign="top">Allocate from the nonpaged pool of memory</td>
+</tr>
+<tr>
+<td valign="top">PagedPool</td>
+<td valign="top">Allocate from the paged pool of memory</td>
+</tr>
+<tr>
+<td valign="top">NonPagedPoolMustSucceed</td>
+<td valign="top">Allocate from the nonpaged pool; bugcheck if unable to do so</td>
+</tr>
+<tr>
+<td valign="top">NonPagedPoolCacheAligned</td>
+<td valign="top">Allocate from the nonpaged pool and ensure that memory is aligned with the CPU cache</td>
+</tr>
+<tr>
+<td valign="top">NonPagedPoolCacheAlignedMustS</td>
+<td valign="top">Like NonPagedPoolCacheAligned, but bugcheck if unable to allocate</td>
+</tr>
+<tr>
+<td valign="top">PagedPoolCacheAligned</td>
+<td valign="top">Allocate from the paged pool of memory and ensure that memory is aligned with the CPU cache</td>
+</tr>
+</table>
+</p>
+
+<p>The most basic decision you must make when you call ExAllocatePool is whether the allocated
+memory block should be swapped out of memory. That choice depends simply on which parts of your
+driver will need to access the memory block. If you will be using a memory block at or above
+DISPATCH_LEVEL, you must allocate it from the nonpaged pool. If you'll always use the
+memory block below DISPATCH_LEVEL, you can allocate from the paged or nonpaged pool as you choose.</p>
+
+<p>The memory block you receive will be aligned to at least an 8-byte boundary. If you place an
+instance of some structure into the allocated memory, members to which the compiler assigns an
+offset divisible by 4 or 8 will therefore occupy an address divisible by 4 or 8, too. On some
+RISC platforms, of course, you must have doubleword and quadword values aligned in this way.
+For performance reasons, you might want to be sure that the memory block will fit in the fewest
+possible number of processor cache lines. You can specify one of the <i>
+Xxx</i><b>CacheAligned</b> type codes to achieve that result. If you ask for at least a
+page's worth of memory, the block will start on a page boundary.</p>
+
+<A NAME="85"><H3>Releasing a Memory Block</H3></A>
+
+<p>To release a memory block you previously allocated with ExAllocatePool, you call <b>ExFreePool</b>:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+ExFreePool((PVOID) p);
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>You do need to keep track somehow of the memory you've allocated from the pool in order
+to release it when it's no longer needed. No one else will do that for you. You must
+sometimes closely read the DDK documentation of the functions you call with an eye toward
+memory ownership. For example, in the AddDevice function I showed you in the previous chapter,
+there's a call to IoRegisterDeviceInterface. That function has a side effect: it allocates
+a memory block to hold the string that names the interface. <i>You</i> are responsible for
+releasing that memory later on.</p>
+
+<p>It should go without saying that you need to be extra careful when accessing memory
+you've allocated from the free storage pools in kernel mode. Since driver code executes in
+the most privileged mode possible for the processor, there's almost no protection from wild
+stores.</p>
+
+<A NAME="86"><H3>ExAllocatePoolWithTag</H3></A>
+
+<p>I said that <b>ExAllocatePool</b> <i>used</i> to be the standard way to allocate memory from
+a kernel-mode heap. For some time, there has been a variant of ExAllocatePool named <b>
+ExAllocatePoolWithTag</b> that provides a useful extra feature. For reasons I'll explain
+presently, you should prefer to use this variant in new drivers even though neither I nor the
+authors of the DDK samples currently do. This is a clear case of &quot;do as I [actually the
+people inside Microsoft who make wishes about how programmers use the DDK] say, not as I
+do.&quot;</p>
+
+<p>When you use ExAllocatePoolWithTag, the system allocates 4 more bytes of memory than you
+asked for and returns you a pointer that's 4 bytes into that block. The tag occupies the
+initial 4 bytes and therefore precedes the pointer you receive. The tag will be visible to you
+when you examine memory blocks while debugging or while poring over a crash dump, and it can
+help you identify the source of a memory block that's involved in some problem or another.
+For example:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+PVOID p = ExAllocatePoolWithTag(PagedPool, 42, 'KNUJ');
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Here, I used a 32-bit integer constant as the tag value. On a little-endian computer like an
+x86, the bytes that compose this value will be reversed in memory to spell out a common word in
+the English language.</p>
+
+<p>Pool tags are also useful as a way of controlling certain features of the Driver Verifier.
+Please consult the DDK documentation for more information.</p>
+
+<p>It turns out that you're using ExAllocatePoolWithTag even when you think you're
+calling ExAllocatePool. The declarations of memory allocation functions in wdm.h are under
+control of a preprocessor macro named POOL_TAGGING. WDM.H (and NTDDK.H too, for that matter)
+unconditionally defines POOL_TAGGING, with the result that the without-tag functions are
+actually macro'ed to the equivalent with-tag functions with a tag value of <b>'mdW'</b> 
+(that is, a space followed by the mirror image of &quot;Wdm&quot;). If
+POOL_TAGGING were not to be defined in some future release of the DDK, the with-tag functions
+would be macro'ed to the without-tag versions. Microsoft has no current plans to change the
+setting of POOL_TAGGING.</p>
+
+<p>Because of the POOL_TAGGING macros, when you write a call to ExAllocatePool in your program,
+you end up calling ExAllocatePoolWithTag, but the tag you specify is too generic to be of much
+help. As it turns out, even if you managed to call ExAllocatePool by some subterfuge or
+another, ExAllocatePool internally calls ExAllocatePoolWithTag with a tag value of <b>
+'enoN'</b> (that is, &quot;None&quot;). Since you can't get away from memory
+tagging, you might as well explicitly call ExAllocatePoolWithTag and specify a usefully unique
+tag of your own devising. In fact, Microsoft strongly encourages you to do this.</p>
+
+<A NAME="87"><H3>Variations on ExAllocatePool</H3></A>
+
+<p>Although ExAllocatePoolWithTag is the function you should use for heap allocation, you would
+use some variations in special circumstances:</p>
+
+<ul>
+<p><li> <b>ExAllocatePoolWithQuota</b> allocates a memory block and charges the current
+thread's scheduling quota. This function is for use by file system drivers and other
+drivers running in a nonarbitrary thread context for allocating memory that belongs to the
+current thread.</li></p>
+
+<p><li> <b>ExAllocatePoolWithQuotaTag</b> allocates a block with a tag <i>and</i> charges the
+current thread's quota.</li></p>
+</ul>
+
+<A NAME="88"><H2>Linked Lists</H2></A>
+
+<p>Windows NT makes extensive use of linked lists as a way of organizing collections of similar
+data structures. In this chapter, I'll discuss the basic service functions you use to
+manage doubly-linked and singly-linked lists. Separate service functions allow you to share
+linked lists between threads and across multiple processors; I'll describe those functions
+in the next chapter after I've explained the synchronization primitives on which they
+depend.</p>
+
+<p>Whether you organize data structures into a doubly-linked or a singly-linked list, you
+normally embed a linking substructure&#8212;either a LIST_ENTRY or a SINGLE_LIST_ENTRY&#8212;into your own data structure. You also reserve a list head element somewhere
+that uses the same structure as the linking element. For example:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+typedef struct _TWOWAY 
+  {
+  ...
+  LIST_ENTRY linkfield;
+  ...
+  } TWOWAY, *PTWOWAY;
+
+LIST_ENTRY DoubleHead;
+
+typedef struct _ONEWAY
+  {
+  ...
+  SINGLE_LIST_ENTRY linkfield;
+  ...
+  } ONEWAY, *PONEWAY;
+
+SINGLE_LIST_ENTRY SingleHead;
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>When you call one of the list-management service functions, you always work with the linking
+field or the list head&#8212;never directly with the containing structures themselves. So,
+suppose you've got a pointer (<b>pdElement</b>) to one of your TWOWAY structures. To put
+that structure onto a list, you'd reference the embedded linking field like this:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+InsertTailList(&amp;DoubleHead, &amp;pdElement-&gt;linkfield);
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Similarly, when you retrieve an element from a list, you're really getting the address
+of the embedded linking field. To recover the address of the containing structure, you can use
+the <b>CONTAINING_RECORD</b> macro. (See Figure 3-8.)</p>
+
+<p>
+<img src="images/F03wi08.JPG" width=372 height=265 border="0">
+</p><p>
+<!--caption--><b>Figure 3-8.</b> <i>The CONTAINING_RECORD macro.</i><!--/caption-->
+</p>
+
+
+<p>So, if you wanted to process and discard all the elements in a singly-linked list, your code
+would look something like this:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+PSINGLE_LIST_ENTRY psLink = PopEntryList(&amp;SingleHead);
+while (psLink)
+  {
+  PONEWAY psElement = (PONEWAY) CONTAINING_RECORD(psLink,
+    ONEWAY, linkfield);
+  ...
+  ExFreePool(psElement);
+  psLink = PopEntryList(&amp;SingleHead);
+  }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Just before the start of this loop, and again after every iteration, you retrieve the
+current first element of the list by calling <b>PopEntryList</b>. PopEntryList returns the
+address of the linking field within a ONEWAY structure, or else it returns NULL to signify that
+the list is empty. Don't just indiscriminately use CONTAINING_RECORD to develop an element
+address that you then test for NULL&#8212;you need to test the link field address that
+PopEntryList returns!</p>
+
+<A NAME="89"><H3>Doubly-Linked Lists</H3></A>
+
+<p>A doubly-linked list links its elements both backward and forward in a circular fashion. See
+Figure 3-9. That is, starting with any element, you can proceed forward or backward in a circle
+and get back to the same element. The key feature of a doubly-linked list is that you can add
+or remove elements anywhere in the list.</p>
+
+<p>
+<img src="images/F03wi09.JPG" width=334 height=332 border="0">
+</p><p>
+<!--caption--><b>Figure 3-9.</b> <i>Topology of a doubly-linked list.</i><!--/caption-->
+</p>
+
+
+<p>Table 3-4 lists the service functions you use to manage a doubly-linked list.</p>
+
+<p><b>Table 3-4.</b> <i>Service functions for use with doubly-linked lists.</i></p>
+<p>
+<table valign="top" cellpadding="5" width="95%">
+<tr>
+<th><i>Service Function or Macro</i></th>
+<th><i>Description</i></th>
+</tr>
+
+<tr>
+<td valign="top">InitializeListHead</td>
+<td valign="top">Initialize the LIST_ENTRY at the head of the list</td>
+</tr>
+
+<tr>
+<td valign="top">InsertHeadList</td>
+<td valign="top">Insert element at the beginning</td>
+</tr>
+
+<tr>
+<td valign="top">InsertTailList</td>
+<td valign="top">Insert element at the end</td>
+</tr>
+
+<tr>
+<td valign="top">IsListEmpty</td>
+<td valign="top">Is list empty?</td>
+</tr>
+
+<tr>
+<td valign="top">RemoveEntryList</td>
+<td valign="top">Remove element</td>
+</tr>
+
+<tr>
+<td valign="top">RemoveHeadList</td>
+<td valign="top">Remove first element</td>
+</tr>
+
+<tr>
+<td valign="top">RemoveTailList</td>
+<td valign="top">Remove last element</td>
+</tr>
+</table>
+</p>
+
+
+<p>Here is a fragment of a fictitious program to illustrate how to use some of these
+functions:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr>
+<td valign=top>
+<pre>
+
+
+
+
+
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+2 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+3 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+4 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+</pre>
+</td>
+<td>
+<pre>
+  typedef struct _TWOWAY {
+    ...
+    LIST_ENTRY linkfield;
+    ...
+    } TWOWAY, *PTWOWAY;
+
+  LIST_ENTRY DoubleHead;
+  InitializeListHead(&amp;DoubleHead);
+  ASSERT(IsListEmpty(&amp;DoubleHead));
+
+  PTWOWAY pdElement = (PTWOWAY) ExAllocatePool(PagedPool,
+    sizeof(TWOWAY));
+  InsertTailList(&amp;DoubleHead, &amp;pdElement-&gt;linkfield);
+  ...
+  if (!IsListEmpty(&amp;DoubleHead))
+    {
+    PLIST_ENTRY pdLink = RemoveHeadList(&amp;DoubleHead);
+    pdElement = CONTAINING_RECORD(pdLink, TWOWAY, linkfield);
+    ...
+    ExFreePool(pdElement);
+    }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> <b>InitializeListHead</b> initializes a LIST_ENTRY to point (both backward and forward)
+to itself. That configuration indicates that the list is empty.</li></p>
+
+<p><li> <b>InsertTailList</b> puts an element at the end of the list. Notice that you specify
+the address of the embedded linking field instead of your own TWOWAY structure. You could call
+<b>InsertHeadList</b> to put the element at the beginning of the list instead of the end. By
+supplying the address of the link field in some existing TWOWAY structure, you could put the
+new element either just before or just after the existing one.</li></p>
+
+<p><li> Recall that an empty doubly-linked list has the list head pointing to itself,
+both backward and forward. Use <b>IsListEmpty</b> to simplify making this check. The return
+value from <b>Remove</b><i>Xxx</i><b>List</b> will never be NULL!</li></p>
+
+<p><li> <b>RemoveHeadList</b> removes the element at the head of the list and gives you back the
+address of the linking field inside it. <b>RemoveTailList</b> does the same thing, just with
+the element at the end of the list instead.</li></p>
+</ol>
+
+<p>It's important to know the exact way RemoveHeadList and RemoveTailList are implemented
+if you want to avoid errors. For example, consider the following innocent looking
+statement.</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+if (<i>&lt;some-expr&gt;</i>)
+  pdLink = RemoveHeadList(&amp;DoubleHead);
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>What I obviously intended with this construction was to conditionally extract the first
+element from a list. <i>C'est raisonnable, n'est-ce pas?</i> But no, when you debug
+this later on, you find that elements keep mysteriously disappearing from the list. You
+discover that <b>pdLink</b> gets updated only when the <b>if</b> expression is TRUE but that
+RemoveHeadList seems to get called even when the expression is FALSE.</p>
+
+<p><i>Mon dieu!</i> What's going on here? Well, RemoveHeadList is really a macro that expands
+into multiple statements. Here's what the compiler really sees in the above statement:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+if (<i>&lt;some-expr&gt;</i>)
+  pdLink = (&amp;DoubleHead)-&gt;Flink;
+{{
+PLIST_ENTRY _EX_Blink;
+PLIST_ENTRY _EX_Flink;
+_EX_Flink = ((&amp;DoubleHead)-&gt;Flink)-&gt;Flink;
+_EX_Blink = ((&amp;DoubleHead)-&gt;Flink)-&gt;Blink;
+_EX_Blink-&gt;Flink = _EX_Flink;
+_EX_Flink-&gt;Blink = _EX_Blink;
+}}
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Aha! Now the reason for the mysterious disappearance of list elements becomes clear. The
+TRUE branch of the <b>if</b> statement consists of just the single statement <b>pdLink =
+(&amp;DoubleHead)-&gt;Flink</b> that stores a pointer to the first element. The logic that
+removes a list element stands alone outside the scope of the <b>if</b> statement and is
+therefore always executed. Both RemoveHeadList and RemoveTailList amount to an expression plus
+a compound statement, and you dare not use either of them in a spot where the syntax requires
+an expression or statement alone. <i>Zut alors!</i></p>
+
+<p>The other list-manipulation macros don't have this problem, by the way. The difficulty with
+RemoveHeadList and RemoveTailList arises because they have to return a value and do some list
+manipulation. The other macros do only one or the other, and they're syntactically safe
+when used as intended.</p>
+
+<A NAME="90"><H3>Singly-Linked Lists</H3></A>
+
+<p>A singly-linked list links its elements in only one direction, as illustrated in Figure 3-10.
+Windows NT uses singly-linked lists to implement pushdown stacks, as suggested by the names of
+the service routines in Table 3-5. Just as was true for doubly-linked lists, these
+&quot;functions&quot; are actually implemented as macros in wdm.h, and similar cautions apply.
+<b>PushEntryList</b> and <b>PopEntryList</b> generate multiple statements, so you can use them
+only on the right side of an equal sign in a context where the compiler is expecting multiple
+statements.</p>
+
+<p><b>Table 3-5.</b> <i>Service functions for use with singly-linked lists.</i></p>
+
+<p>
+<table valign="top" cellpadding="5" width="95%">
+<tr>
+<th><i>Service Function or Macro</i></th>
+<th><i>Description</i></th>
+</tr>
+
+<tr>
+<td valign="top">PushEntryList</td>
+<td valign="top">Add element to top of list</td>
+</tr>
+
+<tr>
+<td valign="top">PopEntryList</td>
+<td valign="top">Remove topmost element</td>
+</tr>
+</table>
+</p>
+
+<p>
+<img src="images/F03wi10.JPG" width=78 height=382 border="0">
+</p><p>
+<!--caption--><b>Figure 3-10.</b> <i>Topology of a singly-linked list.</i><!--/caption-->
+</p>
+
+
+<p>The following pseudofunction illustrates how to manipulate a singly-linked list:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr>
+<td valign=top>
+<pre>
+
+
+
+
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+2 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+3 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+</pre>
+</td>
+<td>
+<pre>
+  typedef struct _ONEWAY {
+  ...
+  SINGLE_LIST_ENTRY linkfield;
+  } ONEWAY, *PONEWAY;
+
+  SINGLE_LIST_ENTRY SingleHead;
+  SingleHead.Next = NULL;
+
+  PONEWAY psElement = (PONEWAY) ExAllocatePool(PagedPool,
+    sizeof(ONEWAY));
+  PushEntryList(&amp;SingleHead, &amp;psElement-&gt;linkfield);
+
+  SINGLE_LIST_ENTRY psLink = PopEntryList(&amp;SingleHead);
+  if (psLink)
+    {
+    psElement = CONTAINING_RECORD(psLink, ONEWAY, linkfield);
+    ...
+    ExFreePool(psElement);
+    }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> Instead of invoking a service function to initialize the head of a singly-linked
+list, just set the <b>Next</b> field to NULL. Note also the absence of a service function for
+testing whether this list is empty; just test Next yourself.</li></p>
+
+<p><li> <b>PushEntryList</b> puts an element at the head of the list, which is the only part of
+the list that's directly accessible. Notice that you specify the address of the embedded
+linking field instead of your own ONEWAY structure.</li></p>
+
+<p><li> <b>PopEntryList</b> removes the first entry from the list and gives you back a pointer
+to the link field inside it. Unlike doubly-linked lists, a NULL value indicates that the list
+is empty. In fact, there's no counterpart to IsListEmpty for use with a singly-linked
+list.</li></p>
+</ol>
+
+<A NAME="91"><H2>Lookaside Lists</H2></A>
+
+<p>Even employing the best possible algorithms, a heap manager that deals with randomly sized
+blocks of memory will require some scarce processor time to coalesce adjacent free blocks from
+time to time. Figure 3-11 illustrates how, when something returns block B to the heap at a time
+when blocks A and C are already free, the heap manager can combine blocks A, B, and C to form a
+single large block. The large block is then available to satisfy some later request for a block
+bigger than any of the original three components.</p>
+
+<p>
+<A HREF="javascript:fullSize('F03wi11x.htm')"> <img src="images/F03wi11.JPG" width=404 height=70 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 3-11.</b> <i>Coalescing adjacent free blocks in a heap.</i><!--/caption-->
+</p>
+
+
+<p>If you know you're always going to be working with fixed-size blocks of memory, you can
+craft a much more efficient scheme for managing a heap. You could, for example, preallocate a
+large block of memory that you subdivide into pieces of the given fixed size. Then you could
+devise some scheme for knowing which blocks are free and which are in use, as suggested by
+Figure 3-12. Returning a block to such a heap merely involves marking it as free&#8212;you
+don't need to coalesce it with adjacent blocks because you never need to satisfy randomly
+sized requests.</p>
+
+<p>Merely allocating a large block that you subdivide might not be the best way to implement a
+fixed-size heap, though. In general, it's hard to guess how much memory to preallocate. If
+you guess too high, you'll be wasting memory. If you guess too low, your algorithm will
+either fail when it runs out (bad!) or make too frequent trips to a surrounding random heap
+manager to get space for more blocks (better). Microsoft has created the <i>lookaside list</i>
+object and a set of adaptive algorithms to deal with these shortcomings.</p>
+
+<p>
+<img src="images/F03wi12.JPG" width=186 height=252 border="0">
+</p><p>
+<!--caption--><b>Figure 3-12.</b> <i>A heap containing fixed-size blocks.</i><!--/caption-->
+</p>
+
+
+<p>Figure 3-13 illustrates the concept of a lookaside list. Imagine that you had a glass that you
+could (somehow&#8212;the laws of physics don't exactly make this easy!) balance upright in a
+swimming pool. The glass represents the lookaside list object. When you initialize the object,
+you tell the system how big the memory blocks (water drops, in this analogy) are that
+you'll be working with. In earlier versions of Windows NT, you could also specify the
+capacity of the glass, but the operating system now determines that adaptively. To allocate a
+memory block, the system first tries to remove one from the list (remove a water drop from the
+glass). If there are no more, the system dips into the surrounding memory pool. Conversely, to
+return a memory block, the system first tries to put it back onto the list (add a water drop to
+the glass). But if the list is full, the block goes back into the pool using the regular heap
+manager routine (the drop slops over into the swimming pool).</p>
+
+<p>
+<A HREF="javascript:fullSize('F03wi13x.htm')"> <img src="images/F03wi13.JPG" width=404 height=219 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 3-13.</b> <i>Lookaside lists.</i><!--/caption-->
+</p>
+
+
+
+<p>The system periodically adjusts the depths of all lookaside lists based on actual usage. The
+details of the algorithm aren't really important, and they're subject to change in any
+case. Basically (in the current release, anyway), the system will reduce the depth of lookaside
+lists that haven't been accessed recently or that aren't forcing pool access at least 5
+percent of the time. The depth never goes below 4, however, which is also the initial depth of
+a new list.</p>
+
+<p>Table 3-6 lists the eight service functions that you use when you work with a lookaside
+list. There are really two sets of four functions, one set for a lookaside list that manages
+paged memory (the <b>Ex</b><i>Xxx</i><b>PagedLookasideList</b> set) and another for a lookaside
+list that manages nonpaged memory (the <b>Ex</b><i>Xxx</i><b>NPagedLookasideList</b> set). The
+first thing you must do is reserve nonpaged memory for a PAGED_LOOKASIDE_LIST or an NPAGED_LOOKASIDE_LIST object. These objects are similar. The paged
+variety uses a FAST_MUTEX for synchronization, whereas the nonpaged variety uses a spin lock.
+(See the next chapter for a discussion of both of these synchronization objects.) Even the
+paged variety of object needs to be in nonpaged memory because the system might access it at an
+elevated IRQL.</p>
+
+<p><b>Table 3-6.</b> <i>Service functions for lookaside lists.</i></p>
+<p>
+<table valign="top" cellpadding="5" width="95%">
+<tr>
+<th><i>Service Function</i></th>
+<th><i>Description</i></th>
+</tr>
+
+<tr>
+<td valign="top">ExInitializeNPagedLookasideList<br>
+ExInitializePagedLookasideList</td>
+<td valign="top">Initialize a lookaside list</td>
+</tr>
+
+<tr>
+<td valign="top">ExAllocateFromNPagedLookasideList<br>
+ExAllocateFromPagedLookasideList</td>
+<td valign="top">Allocate a fixed-size block</td>
+</tr>
+
+<tr>
+<td valign="top">ExFreeToNPagedLookasideList<br>
+ExFreeToPagedLookasideList</td>
+<td valign="top">Release a block back to a lookaside list</td>
+</tr>
+
+<tr>
+<td valign="top">ExDeleteNPagedLookasideList<br>
+ExDeletePagedLookasideList</td>
+<td valign="top">Destroy a lookaside list</td>
+</tr>
+</table>
+</p>
+
+
+<p>After reserving storage for the lookaside list object somewhere, you call the appropriate
+initialization routine:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+PPAGED_LOOKASIDE_LIST pagedlist;
+PNPAGED_LOOKASIDE_LIST nonpagedlist;
+
+ExInitializePagedLookasideList(pagedlist, Allocate, Free,
+  0, blocksize, tag, 0);
+ExInitializeNPagedLookasideList(nonpagedlist, Allocate, Free,
+  0, blocksize, tag, 0);
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>(The only difference between the two examples is the spelling of the function name and the
+first argument.)</p>
+
+<p>The first argument to either of these functions points to the [N]PAGED_LOOKASIDE_LIST object for which you've already reserved space. <b>Allocate</b> and <b>
+Free</b> are pointers to routines you can write to allocate or release memory from a random
+heap. You can use NULL for either or both of these parameters, in which case
+ExAllocatePoolWithTag and ExFreePool will be used, respectively. The <b>blocksize</b> parameter
+is the size of the memory blocks you will be allocating from the list, and <b>tag</b> is the
+32-bit tag value you want placed in front of each such block. (Look back to the section
+entitled &quot;<A HREF="ch03d.htm#87">Variations on ExAllocatePool</A>&quot; for an explanation of the tagging concept.)
+The two zero arguments are placeholders for values that you supplied in previous versions of
+Windows NT but which the system now determines on its own; these values are flags to control
+the type of allocation and the depth of the lookaside list.</p>
+
+<p>To allocate a memory block from the list, call the appropriate <b>AllocateFrom</b> 
+function:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+PVOID p = ExAllocateFromPagedLookasideList(pagedlist);
+PVOID q = ExAllocateFromNPagedLookasideList(nonpagedlist);
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>To put a block back onto the list, call the appropriate <b>FreeTo</b> function:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+ExFreeToPagedLookasideList(pagedlist, p);
+ExFreeToNPagedLookasideList(nonpagedlist, q);
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Finally, to destroy a list, call the appropriate <b>Delete</b> function:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+ExDeletePagedLookasidelist(pagedlist);
+ExDeleteNPagedLookasideList(nonpagedlist);
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>It's a common mistake to forget to delete a lookaside list. You won't be making such
+a mistake of course, but you might need to advise one of your coworkers about how to avoid
+it(!). You can tell him or her, &quot;Be sure to do that before your lookaside list passes out
+of scope. If you created a lookaside list during AddDevice, for example, you probably put the
+object into your device object and want to delete the list before you call <b>
+IoDeleteDevice</b>. If you created a lookaside list during DriverEntry, you probably put the
+object into a global variable and want to delete the list before you return from your <b>
+DriverUnload</b> routine.&quot;</p>
+
+</BODY>
+</HTML>
+
+
+
+
+

@@ -1,0 +1,196 @@
+<html>
+<head>
+<title>Chapter 5 -- Jobs</title>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<A HREF="ch04f.htm">[Previous]</A> <A HREF="ch05b.htm">[Next]</A><P>
+
+<font size="+3">Chapter 5</font>
+
+<A NAME="67"><H1>Jobs</H1></A>
+
+<p>You often need to treat a group of processes as a single entity. For
+example, when you tell Microsoft Developer Studio to build a project,
+it spawns Cl.exe, which might have to spawn additional processes (such
+as the individual passes of the compiler). But if the user wants to
+prematurely stop the build, Developer Studio must somehow be able to
+terminate Cl.exe and all its child processes. Solving this simple (and
+common) problem in Windows has been notoriously difficult because
+Windows doesn't maintain a parent/child relationship between
+processes. In particular, child processes continue to execute even
+after their parent process has been terminated.</p>
+
+<p>When you design a server, you must also treat a set of processes as
+a single group. For instance, a client might request that a server
+execute an application (which might spawn children of its own) and
+return the results back to the client. Since many clients might connect
+to this server, it would be nice if the server could somehow restrict
+what a client can request to prevent any single client from
+monopolizing all of its resources. These restrictions might include:
+maximum CPU time that can be allocated to the client's request,
+minimum and maximum working set sizes, preventing the client's
+application from shutting down the computer, and security
+restrictions.</p>
+
+<p>Microsoft Windows 2000 offers a new job kernel object that lets you
+group processes together and create a &quot;sandbox&quot; that
+restricts what the processes can do. It is best to think of a job
+object as a container of processes. However, it is useful to create
+jobs that contain a single process because you can place restrictions
+on that process that you normally cannot.</p>
+
+<p>My <i>StartRestrictedProcess</i> function (Figure 5-1) places a
+process in a job that restricts the process's ability to do certain
+things.</p>
+
+<p><div class="note"><blockquote><b>Windows 98</b><HR>
+Windows 98 does not support jobs.
+</blockquote></div></p>
+
+<p><b>Figure 5-1.</b> <i>The</i> StartRestrictedProcess <i>function</i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+void StartRestrictedProcess() {
+   // Create a job kernel object.
+   HANDLE hjob = CreateJobObject(NULL, NULL);
+
+   // Place some restrictions on processes in the job.
+
+   // First, set some basic restrictions.
+   JOBOBJECT_BASIC_LIMIT_INFORMATION jobli = { 0 };
+
+   // The process always runs in the idle priority class.
+   jobli.PriorityClass = IDLE_PRIORITY_CLASS;
+
+   // The job cannot use more than 1 second of CPU time.
+   jobli.PerJobUserTimeLimit.QuadPart = 10000000; // 1 sec in 100-ns intervals
+
+   // These are the only 2 restrictions I want placed on the job (process).
+   jobli.LimitFlags = JOB_OBJECT_LIMIT_PRIORITY_CLASS 
+      | JOB_OBJECT_LIMIT_JOB_TIME;
+   SetInformationJobObject(hjob, JobObjectBasicLimitInformation, &amp;jobli, 
+      sizeof(jobli));
+
+   // Second, set some UI restrictions.
+   JOBOBJECT_BASIC_UI_RESTRICTIONS jobuir;
+   jobuir.UIRestrictionsClass  = JOB_OBJECT_UILIMIT_NONE;     // A fancy zero
+
+   // The process can't log off the system.
+   jobuir.UIRestrictionsClass |= JOB_OBJECT_UILIMIT_EXITWINDOWS;
+
+   // The process can't access USER objects (such as other windows) 
+   // in the system.
+   jobuir.UIRestrictionsClass |= JOB_OBJECT_UILIMIT_HANDLES;
+
+   SetInformationJobObject(hjob, JobObjectBasicUIRestrictions, &amp;jobuir, 
+      sizeof(jobuir));
+
+   // Spawn the process that is to be in the job.
+   // Note: You must first spawn the process and then place the process in
+   //       the job. This means that the process's thread must be initially 
+   //       suspended so that it can't execute any code outside of the job's 
+   //       restrictions.
+
+   STARTUPINFO si = { sizeof(si) };
+   PROCESS_INFORMATION pi;
+   CreateProcess(NULL, &quot;CMD&quot;, NULL, NULL, FALSE, 
+      CREATE_SUSPENDED, NULL, NULL, &amp;si, &amp;pi);
+   // Place the process in the job.
+   // Note: If this process spawns any children, the children are 
+   //       automatically part of the same job.
+   AssignProcessToJobObject(hjob, pi.hProcess);
+
+   // Now we can allow the child process's thread to execute code.
+   ResumeThread(pi.hThread);
+   CloseHandle(pi.hThread);
+
+   // Wait for the process to terminate or 
+   // for all the job's allotted CPU time to be used.
+   HANDLE h[2];
+   h[0] = pi.hProcess;
+   h[1] = hjob;
+   DWORD dw = WaitForMultipleObjects(2, h, FALSE, INFINITE);
+   switch (dw _ WAIT_OBJECT_0) {
+      case 0:
+         // The process has terminated...
+         break;
+      case 1:
+         // All of the job's allotted CPU time was used...
+         break;
+   }
+
+   // Clean up properly.
+   CloseHandle(pi.hProcess);
+   CloseHandle(hjob);
+}
+</pre></td></tr></table></p>
+
+<p>Now, let me explain how <i>StartRestrictedProcess</i> works. I first
+create a new job kernel object by calling the following:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HANDLE CreateJobObject(
+   PSECURITY_ATTRIBUTES psa, 
+   PCTSTR pszName); 
+</pre></td></tr></table></p>
+
+<p>Like all kernel objects, the first parameter associates security
+information with the new job object and tells the system whether you
+want the returned handle to be inheritable. The last parameter names
+the job object so that it can be accessed by another process via the
+<i>OpenJobObject</i> function shown below.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HANDLE OpenJobObject(
+   DWORD dwDesiredAccess, 
+   BOOL bInheritHandle, 
+   PCTSTR pszName); 
+</pre></td></tr></table></p>
+
+<p>As always, if you know that you will no longer access the job object
+in your code, you must close its handle by calling <i>CloseHandle</i>.
+You can see this at the end of my <i>StartRestrictedProcess</i>
+function. Be aware that closing a job object does not force all the
+processes in the job to be terminated. The job object is actually
+marked for deletion and is destroyed automatically only after all of
+the processes within the job have been terminated. </p>
+<p>Note that closing the job's handle causes the job to be
+inaccessible to all processes even though the job still exists, as
+shown in the following code:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// Create a named job object.
+HANDLE hjob = CreateJobObject(NULL, TEXT(&quot;Jeff&quot;));
+
+// Put our own process in the job. 
+AssignProcessToJobObject(hjob, GetCurrentProcess());
+
+// Closing the job does not kill our process or the job.
+// But the name (&quot;Jeff&quot;) is immediately disassociated with the job.
+CloseHandle(hjob);
+
+// Try to open the existing job.
+hjob = OpenJobObject(JOB_OBJECT_ALL_ACCESS, FALSE, TEXT(&quot;Jeff&quot;));
+// OpenJobObject fails and returns NULL here because the name (&quot;Jeff&quot;)  
+// was disassociated from the job when CloseHandle was called.
+// There is no way to get a handle to this job now. 
+</pre></td></tr></table></p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

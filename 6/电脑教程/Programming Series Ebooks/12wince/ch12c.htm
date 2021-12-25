@@ -1,0 +1,369 @@
+<HTML>
+ <HEAD>
+	<LINK REL=StyleSheet HREF="prowice.css" TYPE="text/css">
+<TITLE>The Taskbar</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="451"><H1>The Taskbar</H1></A>
+
+<P>The taskbar interface under Windows CE is almost identical to the taskbar interface under Windows 95 and Windows NT 4.0. I've already talked about how you can configure the items in the Start menu. The taskbar also supports <I>annunciators</I>, those tiny icons on the far right of the taskbar. The taskbar icons are programmed by the identical methods used in Windows 95. The only limitation under the current Windows CE shell is that it doesn't support tool tips on the taskbar icons.
+
+<P>Programs can add, change, and delete taskbar icons using this function:
+
+<p><pre>
+BOOL Shell_NotifyIcon (DWORD dwMessage, PNOTIFYICONDATA pnid);
+</PRE>
+
+<P>The first parameter, <I>dwMessage</I>, indicates the task to accomplish by calling the function. This parameter can be one of the following three values:
+
+<UL>
+<P><LI><I>NIM_ADD</I> Adds an annunciator to the taskbar
+<P><LI><I>NIM_DELETE</I> Deletes an annunciator from the taskbar
+<P><LI><I>NIM_MODIFY</I> Modifies an existing annunciator on the taskbar
+</UL>
+
+<P>The other parameter points to a NOTIFYICONDATA structure, which is defined as
+
+<p><pre>
+typedef struct _NOTIFYICONDATA { 
+   DWORD cbSize;
+   HWND hWnd; 
+   UINT uID; 
+   UINT uFlags; 
+   UINT uCallbackMessage; 
+   HICON hIcon; 
+   WCHAR szTip[64]; 
+} NOTIFYICONDATA;
+</PRE>
+
+<P>The first field, <I>cbSize</I>, must be filled with the size of the structure before a call is made to <I>Shell_NotifyIcon</I>. The <I>hWnd</I> field should be set to the window handle that owns the icon. This window receives messages notifying the window that the user has tapped, double-tapped, or moved her pen on the icon. The <I>uID</I> field identifies the icon being added, deleted, or modified. This practice allows an application to have more than one icon on the taskbar. The <I>uFlags</I> field should contain flags that identify which of the remaining fields in the structure contain valid data.
+
+<P>When you're adding an icon, the <I>uCallbackMessage</I> field should be set to a message identifier that can be used by the taskbar when notifying the window of user actions on the icon. This value is usually based on WM_USER so that the message value won't conflict with other messages the window receives. The taskbar looks at this field only if <I>uFlags</I> contains the NIF_MESSAGE flag.
+
+<P>The <I>hIcon</I> field should be loaded with the handle to the 16-by-16-pixel icon to be displayed on the taskbar. You should use <I>LoadImage</I> to load the icon because <I>LoadIcon</I> doesn't return a small format icon. The taskbar looks at this field only if the NIF_ICON flag is set in <I>uFlags</I>. Finally, the <I>szTip</I> field would contain the tool-tip text for the icon on other Windows systems but is ignored by the current Windows CE shells.
+
+<P>Managing a taskbar icon involves handling the notification messages the taskbar sends and acting appropriately. The messages are sent with the message identifier you defined in the call to <I>Shell_NotifyIcon</I>. The <I>wParam</I> parameter of the message contains the ID value of the taskbar icon that the message references. The <I>lParam</I> parameter contains a code indicating the reason for the message. These values are actually the message codes for various mouse events. For example, if the user taps on your taskbar icon, the <I>lParam</I> value in the notification message will be WM_LBUTTONDOWN, followed by another message containing WM_LBUTTONUP.
+
+<A NAME="452"><H2>The TBIcons Example Program</H2></A>
+
+<P>The TBIcons program demonstrates adding and deleting taskbar annunciator icons. Figure 12-1 shows the TBIcons window. The buttons at the bottom of the window allow you to add and delete icons from the taskbar. The list box that takes up most of the window displays the callback messages as the taskbar sends them. In the taskbar, you can see two icons that TBIcons has added. The list box contains a list of messages that have been sent by the taskbar back to the TBIcons window.
+
+<P><A HREF="javascript:fullSize('f12rg01x.htm')"> <img src="f12rg01.jpg" width=404 height=303 border=0 ALT="Click to view at full size."> </A>
+
+<P><!-- caption --><B>Figure 12-1.</B> <I>The Windows CE desktop with a TBIcons window.</I><!-- /caption -->
+
+<P>The source code for TBIcons is shown in Figure 12-2. The program uses a dialog box as its main window. The routines that add and delete taskbar icons are <I>DoMainCommandAddIcon</I> and <I>DoMainCommandDelIcon</I>. Both these routines simply fill in a NOTIFYICONDATA structure and call <I>Shell_NotifyIcon</I>. The routine that handles the notification messages is <I>DoTaskBarNotifyMain</I>. This routine is called when the window receives the user-defined message MYMSG_TASKBARNOTIFY, which is defined in TBIcons.h as <I>WM_USER+100</I>. Remember that dialog boxes use some of the WM_USER message constants, so it's a good practice not to use the first hundred values above WM_USER to avoid any conflicts.
+
+<P><B>Figure 12-2.</B> <I>TBIcons source code.</I>
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="453"><H3>TBIcons.rc</H3></A>
+
+<p><pre>
+//======================================================================
+// Resource file
+//
+
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//======================================================================
+#include &quot;windows.h&quot;
+#include &quot;TBIcons.h&quot;                        // Program-specific stuff
+
+//----------------------------------------------------------------------
+// Icons and bitmaps
+//
+ID_ICON ICON   &quot;TBIcons.ico&quot;                // Program icon
+
+//----------------------------------------------------------------------
+TBIcons DIALOG discardable  25, 5, 120, 110
+STYLE  WS_OVERLAPPED | WS_VISIBLE | WS_CAPTION | WS_SYSMENU | 
+       DS_CENTER | DS_MODALFRAME 
+CAPTION &quot;TBIcons&quot;
+BEGIN
+    LISTBOX                  IDD_OUTPUT,   2,   2, 116,  90, 
+                          WS_TABSTOP | WS_VSCROLL | LBS_NOINTEGRALHEIGHT
+    PUSHBUTTON &quot;&amp;Add Icon&quot;, IDD_ADDICON,   2,  95,  55,  12, WS_TABSTOP
+    PUSHBUTTON &quot;&amp;Delete Icon&quot;,
+                            IDD_DELICON,  61,  95,  55,  12, WS_TABSTOP
+END
+</PRE>
+</td></tr></table>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<A NAME="454"><H3>TBIcons.h</H3></A>
+
+<P><pre>
+//======================================================================
+// Header file
+
+//
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//======================================================================
+// Returns number of elements
+#define dim(x) (sizeof(x) / sizeof(x[0])) 
+
+//----------------------------------------------------------------------
+// Generic defines and data types
+//
+struct decodeUINT {                            // Structure associates
+    UINT Code;                                 // messages 
+                                               // with a function. 
+    BOOL (*Fxn)(HWND, UINT, WPARAM, LPARAM);
+}; 
+struct decodeCMD {                             // Structure associates
+    UINT Code;                                 // menu IDs with a 
+    LRESULT (*Fxn)(HWND, WORD, HWND, WORD);    // function.
+};
+//----------------------------------------------------------------------
+// Generic defines used by application
+
+#define  ID_ICON             1   
+
+#define  IDD_ADDICON         10                // Control IDs
+#define  IDD_DELICON         11
+#define  IDD_OUTPUT          12
+
+#define MYMSG_TASKBARNOTIFY  (WM_USER + 100)
+
+//----------------------------------------------------------------------
+// Function prototypes
+//
+void Add2List (HWND hWnd, LPTSTR lpszFormat, ...);
+
+// Window procedures
+BOOL CALLBACK MainDlgProc (HWND, UINT, WPARAM, LPARAM);
+
+// Message handlers
+BOOL DoInitDlgMain (HWND, UINT, WPARAM, LPARAM);
+BOOL DoCommandMain (HWND, UINT, WPARAM, LPARAM);
+BOOL DoTaskBarNotifyMain (HWND, UINT, WPARAM, LPARAM);
+
+// Command functions
+LPARAM DoMainCommandExit (HWND, WORD, HWND, WORD);
+LPARAM DoMainCommandAddIcon (HWND, WORD, HWND, WORD);
+LPARAM DoMainCommandDelIcon (HWND, WORD, HWND, WORD);
+</pre>
+</td></tr></table>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<A NAME="455"><H3>TBIcons.c</H3></A>
+
+<P><pre>
+//======================================================================
+
+// TBIcons _ Taskbar icon demonstration for Windows CE
+//
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//======================================================================
+#include &lt;windows.h&gt;                 // For all that Windows stuff
+#include &quot;TBIcons.h&quot;                 // Program-specific stuff
+
+//----------------------------------------------------------------------
+// Global data
+//
+const TCHAR szAppName[] = TEXT (&quot;TBIcons&quot;);
+HINSTANCE hInst;                     // Program instance handle
+INT nIconID = 0;                     // ID values for taskbar icons
+BOOL fPalm = FALSE;
+
+// Message dispatch table for MainWindowProc
+const struct decodeUINT MainMessages[] = {
+    WM_INITDIALOG, DoInitDlgMain,
+    WM_COMMAND, DoCommandMain,
+    MYMSG_TASKBARNOTIFY, DoTaskBarNotifyMain,
+};
+// Command Message dispatch for MainWindowProc
+const struct decodeCMD MainCommandItems[] = {
+    IDOK, DoMainCommandExit,
+    IDCANCEL, DoMainCommandExit,
+    IDD_ADDICON, DoMainCommandAddIcon,
+    IDD_DELICON, DoMainCommandDelIcon,
+};
+//======================================================================
+// Program entry point
+//
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    LPWSTR lpCmdLine, int nCmdShow) {
+    hInst = hInstance;
+
+    // Display dialog box as main window.
+    DialogBoxParam (hInstance, szAppName, NULL, MainDlgProc, 0);
+    return 0;
+}
+//======================================================================
+// Message handling procedures for main window
+//----------------------------------------------------------------------
+// MainDlgProc - Callback function for application window
+//
+BOOL CALLBACK MainDlgProc (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                           LPARAM lParam) {
+    INT i;
+    //
+    // Search message list to see if we need to handle this
+    // message.  If in list, call procedure.
+    //
+    for (i = 0; i &lt; dim(MainMessages); i++) {
+        if (wMsg == MainMessages[i].Code)
+            return (*MainMessages[i].Fxn)(hWnd, wMsg, wParam, lParam);
+    }
+    return FALSE;
+}
+//----------------------------------------------------------------------
+// DoInitDlgMain - Process WM_INITDIALOG message for window.
+//
+BOOL DoInitDlgMain (HWND hWnd, UINT wMsg, WPARAM wParam, LPARAM lParam){
+    TCHAR szType[256];
+
+    SystemParametersInfo (SPI_GETPLATFORMTYPE, dim(szType), szType, 0);
+    if (lstrcmp (szType, TEXT (&quot;Palm PC&quot;)) == 0) {
+        fPalm = TRUE;
+        PostMessage (hWnd, WM_COMMAND, 
+                     MAKELONG (IDD_ADDICON, BN_CLICKED), 0);
+    }
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoCommandMain - Process WM_COMMAND message for window.
+//
+BOOL DoCommandMain (HWND hWnd, UINT wMsg, WPARAM wParam, LPARAM lParam){
+    WORD idItem, wNotifyCode;
+    HWND hwndCtl;
+    INT  i;
+
+    // Parse the parameters.
+    idItem = (WORD) LOWORD (wParam);
+    wNotifyCode = (WORD) HIWORD (wParam);
+    hwndCtl = (HWND) lParam;
+    // Call routine to handle control message.
+    for (i = 0; i &lt; dim(MainCommandItems); i++) {
+        if (idItem == MainCommandItems[i].Code) {
+            (*MainCommandItems[i].Fxn)(hWnd, idItem, hwndCtl, 
+                                       wNotifyCode);
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+//----------------------------------------------------------------------
+// DoTaskBarNotifyMain - Process MYMSG_TASKBARNOTIFY message for window.
+//
+BOOL DoTaskBarNotifyMain (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                          LPARAM lParam) {
+    TCHAR szText[128];
+
+    SetForegroundWindow (hWnd);
+    wsprintf (szText, 
+              TEXT (&quot;icon %d &quot;), wParam);
+    switch (lParam) {
+    case WM_MOUSEMOVE:
+        lstrcat (szText, TEXT (&quot;WM_MOUSEMOVE&quot;));
+        break;
+    case WM_LBUTTONDOWN:
+        lstrcat (szText, TEXT (&quot;WM_LBUTTONDOWN&quot;));
+        break;
+    case WM_LBUTTONUP:
+        lstrcat (szText, TEXT (&quot;WM_LBUTTONUP&quot;));
+        break;
+    case WM_LBUTTONDBLCLK:
+        lstrcat (szText, TEXT (&quot;WM_LBUTTONDBLCLK&quot;));
+        break;
+    }
+    Add2List (hWnd, szText);
+    return 0;
+}
+//======================================================================
+// Command handler routines
+//----------------------------------------------------------------------
+// DoMainCommandExit - Process Program Exit command.
+//
+
+LPARAM DoMainCommandExit (HWND hWnd, WORD idItem, HWND hwndCtl, 
+                          WORD wNotifyCode) {
+    NOTIFYICONDATA nid;
+
+    // Delete any remaining taskbar icons.
+    memset (&amp;nid, 0, sizeof nid);
+    nid.cbSize = sizeof (NOTIFYICONDATA);
+    nid.hWnd = hWnd;
+    while (nIconID) {
+        nid.uID = nIconID--;
+        Shell_NotifyIcon (NIM_DELETE, &amp;nid);
+    }
+    
+    EndDialog (hWnd, 0);
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoMainCommandAddIcon - Process Add Icon button.
+//
+LPARAM DoMainCommandAddIcon (HWND hWnd, WORD idItem, HWND hwndCtl, 
+                             WORD wNotifyCode) {
+    NOTIFYICONDATA nid;
+
+    nIconID++;
+    nid.cbSize = sizeof (NOTIFYICONDATA);
+    nid.hWnd = hWnd;
+    nid.uID = nIconID;
+    nid.uFlags = NIF_ICON | NIF_MESSAGE;   // NIF_TIP not supported
+    nid.uCallbackMessage = MYMSG_TASKBARNOTIFY;
+    nid.hIcon = LoadImage (hInst, MAKEINTRESOURCE (ID_ICON), 
+                           IMAGE_ICON, 16,16,0);
+    nid.szTip[0] = `\0';
+
+    Shell_NotifyIcon (NIM_ADD, &amp;nid);
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoMainCommandDelIcon - Process Del Icon button.
+//
+LPARAM DoMainCommandDelIcon (HWND hWnd, WORD idItem, HWND hwndCtl, 
+                             WORD wNotifyCode) {
+    NOTIFYICONDATA nid;
+
+    // Leave one icon on for Palm-size PC, so user can get back to the
+    // window. Otherwise, don't delete an icon if none currently exists.
+    if ((fPalm &amp;&amp; (nIconID == 1)) || (nIconID == 0))
+        return 0;
+
+    memset (&amp;nid, 0, sizeof nid);
+    nid.cbSize = sizeof (NOTIFYICONDATA);
+    nid.hWnd = hWnd;
+    nid.uID = nIconID--;
+
+    Shell_NotifyIcon (NIM_DELETE, &amp;nid);
+    return 0;
+}
+//----------------------------------------------------------------------
+// Add2List - Add string to the report list box.
+//
+void Add2List (HWND hWnd, LPTSTR lpszFormat, ...) {
+    int i, nBuf;
+    TCHAR szBuffer[512];
+
+    va_list args;
+    va_start(args, lpszFormat);
+
+    nBuf = _vstprintf(szBuffer, lpszFormat, args);
+    i = SendDlgItemMessage (hWnd, IDD_OUTPUT, LB_ADDSTRING, 0, 
+                            (LPARAM)(LPCTSTR)szBuffer);
+    if (i != LB_ERR)
+        SendDlgItemMessage (hWnd, IDD_OUTPUT, LB_SETTOPINDEX, i, 
+                            (LPARAM)(LPCTSTR)szBuffer);
+    va_end(args);
+}
+</pre>
+</td></tr></table>
+
+</BODY>
+</HTML>
+
+
+
+

@@ -1,0 +1,121 @@
+<HTML>
+<HEAD>
+<TITLE>Collecting Performance Data</TITLE>
+<link rel="STYLESHEET" type="text/css" href="prosrvwin.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR = "#ffffff">
+<A HREF="ch07c.htm">[Previous]</A> <A HREF="ch07e.htm">[Next]</A><P>
+
+<A NAME="112"><h1>Collecting Performance Data</h1></A>
+<p>The System Monitor control requests performance information by making registry calls. To collect performance information, the requesting application must first call <i>RegQueryValueEx</i> as follows:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+// Special registry key used to query performance data
+HKEY hkeyPerf = HKEY_PERFORMANCE_DATA;
+
+// Size of buffer to get performance data
+DWORD cb = 10240;
+// Allocate buffer to get performance data
+PBYTE pbPerfData = (PBYTE) malloc(cb);
+
+// Request all (&quot;Global&quot;) performance data offered on the 
+// local machine
+while (RegQueryValueEx(hkeyPerf, TEXT(&quot;Global&quot;), 0, NULL,
+   pbPerfData, &amp;cb) == ERROR_MORE_DATA) {
+
+   // Buffer was too small; make it bigger and try again
+   cb += 1024;
+   pbPerfData = (PBYTE) realloc(pbPerfData, cb);
+}
+
+// Buffer was big enough
+// pbPerfData contains the performance counter information
+</pre></td></tr></table>
+</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+For the sake of clarity, the preceding code does not conduct any error checking. Please add the proper error checking when adding code like this into your own application.</blockquote>
+</div>
+</p>
+
+<p>To repeatedly request performance information, just call <i>RegQueryValueEx</i> again. The &quot;Global&quot; in the call to <i>RegQueryValueEx</i> tells the system that you want performance information returned for all components in the system. This can be a lot of information; if you want a subset of the available information, simply replace &quot;Global&quot; with a set of object numbers (separated by spaces). For example, if you want the performance information for the System and Memory objects, you would pass a string of &quot;2 4&quot; to <i>RegQueryValuEx</i>. You always pass object numbers to <i>RegQueryValueEx</i>, and the corresponding DLL always returns all the counter and instance information associated with the specified object.</p> 
+
+<p>If an application wants to request performance information from a remote computer, all it has to do is call <i>RegConnectRegistry</i> before entering the <i>while</i> loop shown in the preceding code:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+RegConnectRegistry(TEXT(&quot;\\\\RemoteMachineName&quot;),
+   HKEY_PERFORMANCE_DATA, &amp;hkeyPerf);
+</pre></td></tr></table>
+</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+By default, Administrators and the System have full access to a system's performance counter information, while Interactive users are allowed only read access. The permissions applied to the following registry subkey determine who can access the performance counter information:
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft Windows NT\CurrentVersion\Perflib
+</pre></td></tr></table>
+</p>
+You can use the RegEdt32.exe tool to alter the permissions.
+</blockquote></div>
+</p>
+
+<p>If you're not going to make any more requests of performance information, you should close the registry by calling</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+RegCloseKey (hkeyPerf) ;
+</pre></td></tr></table>
+</p>
+
+<p>Notice that you should make this call even though you never explicitly call <i>RegOpenKeyEx</i> to open this key.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+Do not close the key after every call to <i>RegQueryValueEx</i>&#8212;this action will severely undermine your application's performance. When a component such as the System Monitor control calls <i>RegQueryValueEx</i> to request performance information, the system looks in the target machine's HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services subkey and loads the specified DLL for each entry that contains a Performance subkey. If this is the first time the DLL is loaded, the DLL's <i>Open</i> function is called. When <i>RegCloseKey</i> is called, the system calls each DLL's <i>Close</i> function and unloads the DLL from the process's address space. Calling <i>RegCloseKey</i> only when your application is terminating greatly improves performance.
+</blockquote>
+</div>
+</p>
+
+<p>Once loaded and initialized, the system calls each DLL's <i>Collect</i> function. This gives the DLL the chance to load the memory buffer with its performance information. The <i>Collect</i> function should appear as follows:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+DWORD __declspec(dllexport) WINAPI Collect(PWSTR pszValueName, 
+   PVOID* ppvData, PDWORD pcbTotalBytes, PDWORD pdwNumObjectTypes) {
+
+   // Collect the performance data
+   return(ERROR_SUCCESS);   // or ERROR_MORE_DATA if buffer too small
+}
+</pre></td></tr></table>
+</p>
+
+<p>The first parameter, <i>pszValueName</i>, is a Unicode string that is the same value that was passed to <i>RegQueryValueEx</i>. If this string is &quot;Global&quot;, the <i>Collect</i> function must return all the performance information that it is responsible for. If the string contains a set of space-separated numbers, the DLL must determine whether it offers information about the requested objects and, if so, return only this information.</p>
+
+<p> The <i>ppvData</i> parameter is a pointer to a memory address. On input to the <i>Collect</i> function, <i>*ppvData</i> points to the memory buffer where the DLL should write its information. Before returning from <i>Collect</i>, <i>*ppvData</i> should be updated so that it points to the memory address immediately following the new data that was placed into the buffer. The next performance DLL will append its data starting at this new address.</p>
+
+<p> The <i>pcbTotalBytes</i> parameter is a pointer to a DWORD that indicates the size of the buffer. On input to the <i>
+Collect</i> function, <i>*pcbTotalBytes</i> indicates the number of bytes that are available in the buffer for your DLL to add its information. After the DLL appends its data to the buffer, <i>Collect</i> must set <i>*pcbTotalBytes</i> to the total number of bytes added to the buffer. When the <i>Collect</i> function returns, the system will subtract this value from the remaining buffer size and pass this new number to the next performance DLL.</p>
+
+<p> The <i>pdwNumObjectTypes</i> parameter also points to a DWORD, but this DWORD means nothing on input to the <i>Collect</i> function. A single <i>Collect</i> function can return performance information for several objects. Before <i>Collect</i> returns, <i>*pdwNumObjectTypes</i> should be set to the number of objects whose performance information was added to the data buffer.</p>
+
+<p> If, for example, the <i>Collect</i> function is called and the <i>pszValueName</i> parameter doesn't indicate any of the objects the DLL is responsible for, the <i>Collect</i> function should
+leave <i>*ppvData</i> unchanged, set <i>*pcbTotalBytes</i> and <i>*pdwNumObjectTypes</i> to 0, and return ERROR_SUCCESS.</p>
+
+<p>If the <i>Collect</i> function determines that the data buffer is too small for the amount of data you need to return, you should leave <i>*ppvData</i> unchanged, set both <i>*pcbTotalBytes</i> and <i>*pdwNumObjectTypes</i> to 0, and return ERROR_MORE_DATA.</p>
+
+<p>If the <i>Collect</i> function does successfully append information to the buffer, it adds the number of bytes appended to <i>*ppvData</i>, sets <i>*pcbTotalBytes</i> to the number of bytes appended, sets <i>*pdwNumObjectTypes</i> to the number of objects added, and returns ERROR_SUCCESS.</p>
+
+</BODY>
+</HTML>
+
+
+
+

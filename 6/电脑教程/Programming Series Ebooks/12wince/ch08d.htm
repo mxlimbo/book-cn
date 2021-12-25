@@ -1,0 +1,308 @@
+<HTML>
+ <HEAD>
+	<LINK REL=StyleSheet HREF="prowice.css" TYPE="text/css">
+<TITLE>Synchronization</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="318"><H1>Synchronization</H1></A>
+
+<P>With multiple threads running around the system, you need to coordinate the activities. Fortunately, Windows CE supports almost the entire extensive set of standard Win32 synchronization objects. The concept of synchronization objects is fairly simple. A thread <I>waits</I> on a synchronization object. When the object is signaled, the waiting thread is unblocked and is scheduled (according to the rules governing the thread's priority) to run.
+
+<P>Windows CE doesn't support some of the synchronization primitives supported by Windows NT. These unsupported elements include semaphores, file change notifications, and waitable timers. Support for semaphores is planed for Windows CE in the near future. The lack of waitable timer support can easily be worked around using the more flexible Notification API, unique to Windows CE.
+
+<P>One aspect of Windows CE unique to it is that the different synchronization objects don't share the same namespace. This means that if you have an event named Bob, you can also have a <I>mutex </I>named Bob. (I'll talk about mutexes later in this chapter.) This naming convention is different from Windows NT's rule, where all kernel objects (of which synchronization objects are a part) share the same namespace. While having the same names in Windows CE is possible, it's not advisable. Not only does the practice make your code incompatible with Windows NT, there's no telling whether a redesign of the internals of Windows CE might just enforce this restriction in the future.
+
+<A NAME="319"><H2>Events </H2></A>
+
+<P>The first synchronization primitive I'll describe is the <I>event object</I>. An event object is a synchronization object that can be in a <I>signaled</I> or <I>nonsignaled</I> state. Events are useful to a thread to let it be known that, well, an event has occurred. Event objects can either be created to automatically reset from a signaled state to a nonsignaled state or require a manual reset to return the object to its nonsignaled state. Starting with Windows CE 2.0, events can be named and therefore shared across different processes allowing interprocess synchronization.
+
+<P>An event is created by means of this function:
+
+<p><pre>
+HANDLE CreateEvent (LPSECURITY_ATTRIBUTES lpEventAttributes, 
+                    BOOL bManualReset, BOOL bInitialState,
+                    LPTSTR lpName);
+</pre>
+
+<P>As with all calls in Windows CE, the security attributes parameter, <I>lpEventAttributes</I>, should be set to NULL. The second parameter indicates whether the event being created requires a manual reset or will automatically reset to a nonsignaled state immediately after being signaled. Setting <I>bManualReset</I> to TRUE creates an event that must be manually reset. The <I>bInitialState</I> parameter specifies whether the event object is initially created in the signaled or nonsignaled state. Finally, the <I>lpName</I> parameter points to an optional string that names the event. Events that are named can be shared across processes. If two processes create event objects of the same name, the processes actually share the same object. This allows one process to signal the other process using event objects. If you don't want a named event, the <I>lpname</I> parameter can be set to NULL.
+
+<P>To share an event object across processes, each process must individually create the event object. You can't simply create the event in one process and send the handle of that event to another process. To determine whether a call to <I>CreateEvent</I> created a new event object or opened an already created object, you can call <I>GetLastError</I> immediately following the call to <I>CreateEvent</I>. If <I>GetLastError</I> returns ERROR_ALREADY_EXISTS, the call opened an existing event.
+
+<P>Once you have an event object, you'll need to be able to signal the event. You accomplish this using either of the following two functions:
+
+<p><pre>
+BOOL SetEvent (HANDLE hEvent);
+</pre>
+
+<P>or
+
+<P><pre>
+BOOL PulseEvent (HANDLE hEvent);
+</pre>
+
+<P>The difference between these two functions is that <I>SetEvent</I> doesn't automatically reset the event object to a nonsignaled state. For autoreset events, <I>SetEvent</I> is all you need because the event is automatically reset once a thread unblocks on the event. For manual reset events, you must manually reset the event with this function:
+
+<p><pre>
+BOOL ResetEvent (HANDLE hEvent);
+</pre>
+
+<P>These event functions sound like they overlap, so let's review. An event object can be created to reset itself or require a manual reset. If it can reset itself, a call to <I>SetEvent</I> signals the event object. The event is then automatically reset to the nonsignaled state when <I>one</I> thread is unblocked after waiting on that event. An event that resets itself doesn't need <I>PulseEvent</I> or <I>ResetEvent</I>. If, however, the event object was created requiring a manual reset, the need for <I>ResetEvent</I> is obvious.
+
+<P><I>PulseEvent</I> signals the event and then resets the event, which allows <I>all </I>threads waiting on that event to be unblocked. So, the difference between <I>PulseEvent</I> on a manually resetting event and <I>SetEvent</I> on an automatic resetting event is that using <I>SetEvent</I> on an automatic resetting event frees only one thread to run even if many threads are waiting on that event. <I>PulseEvent</I> frees all threads waiting on that event.
+
+<P>You destroy event objects by calling <I>CloseHandle</I>. If the event object is named, Windows maintains a use count on the object so one call to <I>CloseHandle</I> must be made for every call to <I>CreateEvent</I>.
+
+<A NAME="320"><H2>Waiting&#8230;</H2></A>
+
+<P>It's all well and good to have event objects; the question is how to use them. Threads wait on events, as well as on the soon to be described mutex, using one of the following functions: <I>WaitForSingleObject</I>, <I>WaitForMultipleObjects</I>, <I>MsgWaitForMultipleObjects</I>, or <I>MsgWaitForMultipleObjectsEx</I>. Under Windows CE, the <I>WaitForMultiple</I> functions are limited in that they can't wait for all objects of a set of objects to be signaled. These functions support waiting for <I>one</I> object in a set of objects being signaled. Whatever the limitations of waiting, I can't emphasize enough that waiting is good. While a thread is blocked with one of these functions, the thread enters an extremely efficient state that takes very little CPU processing power and battery power.
+
+<P>Another point to remember is that the thread responsible for handling a message loop in your application (usually the application's primary thread) shouldn't be blocked by <I>WaitForSingleObject</I> or <I>WaitForMultipleObjects</I> because the thread can't be retrieving and dispatching messages in the message loop if it's blocked waiting on an object. The function <I>MsgWaitForMultipleObjects</I> gives you a way around this problem, but in a multithreaded environment, it's usually easier to let the primary thread handle the message loop and secondary threads handle the shared resources that require blocking on events.
+
+<A NAME="321"><H3>Waiting on a single object</H3></A>
+
+<P>A thread can wait on a synchronization object with the function:
+
+<p><pre>
+DWORD WaitForSingleObject (HANDLE hHandle, DWORD dwMilliseconds);
+</pre>
+
+<P>The function takes two parameters: the handle to the object being waited on and a timeout value. If you don't want the wait to time out, you can pass the value INFINITE in the <I>dwMilliseconds</I> parameter. The function returns a value that indicates why the function returned. Calling <I>WaitForSingleObject</I> blocks the thread until the event is signaled, the synchronization object is abandoned, or the timeout value is reached.
+
+<P><I>WaitForSingleObject</I> returns one of the following values:
+
+<UL>
+<P><LI><I>WAIT_OBJECT_0</I> The specified object was signaled.
+<P><LI><I>WAIT_TIMEOUT</I> The timeout interval elapsed, and the object's state remains nonsignaled.
+<P><LI><I>WAIT_ABANDONED</I> The thread that owned a mutex object being waited on ended without freeing the object.
+<P><LI><I>WAIT_FAILED</I> The handle of the synchronization object was invalid.
+</UL>
+
+<P>You must check the return code from <I>WaitForSingleObject</I> to determine whether the event was signaled or simply that the timeout had expired. (The WAIT_ABANDONED return value will be relevant when I talk about mutexes soon.)
+
+<A NAME="322"><H3>Waiting on processes and threads</H3></A>
+
+<P>I've talked about waiting on events, but you can also wait on handles to processes and threads. These handles are signaled when their processes or threads terminate. This allows a process to monitor another process (or thread) and perform some action when the process terminates. One common use for this feature is for one process to launch another, and then by blocking on the handle to the newly created process, wait until that process terminates.
+
+
+<P>The rather irritating routine below is a thread that demonstrates this technique by launching an application, blocking until that application closes, and then relaunching the application:
+
+<p><pre>
+DWORD WINAPI KeepRunning (PVOID pArg) {
+    PROCESS_INFORMATION pi;
+    TCHAR szFileName[MAX_PATH];
+    INT rc = 0;
+
+    // Copy the filename.
+    Lstrcpy (szFileName, (LPTSTR)pArg);
+    while (1) {
+        // Launch the application.
+        rc = CreateProcess (szFileName, NULL, NULL, NULL, FALSE, 
+                            0, NULL, NULL, NULL, &amp;pi);
+        // If the application didn't start, terminate thread.
+        if (!rc) 
+            return -1;
+        // Close the new process's primary thread handle.
+        CloseHandle (pi.hThread);
+
+        // Wait for user to close the application.
+        rc = WaitForSingleObject (pi.hProcess, INFINITE);
+
+        // Close the old process handle.
+        CloseHandle (pi.hProcess);
+
+        // Make sure we returned from the wait correctly.
+        if (rc != WAIT_OBJECT_0) 
+            return -2;
+    }
+    return 0;  //This should never get executed.
+}
+</pre>
+
+<P>This code simply launches the application using <I>CreateProcess</I> and waits on the process handle returned in the PROCESS_INFORMATION structure. Notice that the thread closes the child process's primary thread handle and, after the wait, the handle to the child process itself.
+
+<A NAME="323"><H3>Waiting on multiple objects</H3></A>
+
+<P>A thread can also wait on a number of events. The wait can end when any one of the events is signaled. The function that enables a thread to wait on multiple objects is this one:
+
+<p><pre>
+DWORD WaitForMultipleObjects (DWORD nCount, CONST HANDLE *lpHandles, 
+                              BOOL bWaitAll, DWORD dwMilliseconds);
+</pre>
+
+<P>The first two parameters are a count of the number of events or mutexes to wait on and a pointer to an array of handles to these events. The <I>bWaitAll</I> parameter must be set to FALSE to indicate the function should return if any of the events are signaled. The final parameter is a timeout value, in milliseconds. As with <I>WaitForSingleObject</I>, passing INFINITE in the timeout parameter disables the timeout. Windows CE doesn't support the use of <I>WaitForMultipleObjects</I> to enable waiting for all events in the array to be signaled before returning.
+
+<P>Like <I>WaitForSingleObject</I>, <I>WaitForMultipleObjects</I> returns a code that indicates why the function returned. If the function returned due to a synchronization object being signaled, the return value will be WAIT_OBJECT_0 plus an index into the handle array that was passed in the <I>lpHandles</I> parameter. For example, if the first handle in the array unblocked the thread, the return code would be WAIT_OBJECT_0; if the second handle was the cause, the return code would be WAIT_OBJECT_0 + 1. The other return codes used by <I>WaitForSingleObject</I>&#8212;WAIT_TIMEOUT, WAIT_ABANDONED, and WAIT_FAILED&#8212;are also returned by <I>WaitForMultipleObjects</I> for the same reasons.
+
+<A NAME="324"><H3>Waiting while dealing with messages</H3></A>
+
+
+<P>The Win32 API provides other functions that allow you to wait on a set of objects as well as messages: these are <I>MsgWaitForMultipleObjects</I> and <I>MsgWaitForMultipleObjectsEx</I>. Under Windows CE, these functions act identically, so I'll describe only <I>MsgWaitForMultipleObjects</I>. This function essentially combines the wait function, <I>MsgWaitForMultipleObjects</I>, with an additional check into the message queue so that the function returns if any of the selected categories of messages are received during the wait. The prototype for this function is the following:
+
+<p><pre>
+DWORD MsgWaitForMultipleObjectsEx (DWORD nCount, LPHANDLE pHandles, 
+                                   BOOL fWaitAll, DWORD dwMilliseconds,
+                                   DWORD dwWakeMasks);
+</pre>
+
+<P>This function has a number of limitations under Windows CE. As with <I>WaitForMultipleObjects</I>, <I>MsgWaitForMultipleObjectsEx</I> can't wait for all objects to be signaled. Nor are all the <I>dwWakeMask</I> flags supported by Windows CE. Windows CE supports the following flags in <I>dwWakeMask</I>. Each flag indicates a category of messages that, when received in the message queue of the thread, causes the function to return.
+
+<UL>
+<P><LI><I>QS_ALLINPUT</I> Any message has been received.
+<P><LI><I>QS_INPUT</I> An input message has been received.
+<P><LI><I>QS_KEY</I> A key up, key down, or syskey up or down message has been received.
+<P><LI><I>QS_MOUSE</I> A mouse move or mouse click message has been received.
+<P><LI><I>QS_MOUSEBUTTON</I> A mouse click message has been received.
+<P><LI><I>QS_MOUSEMOVE</I> A mouse move message has been received.
+<P><LI><I>QS_PAINT</I> A WM_PAINT message has been received.
+<P><LI><I>QS_POSTMESSAGE</I> A posted message, other than those in this list, has been received.
+<P><LI><I>QS_SENDMESSAGE</I> A sent message, other than those in this list, has been received.
+<P><LI><I>QS_TIMER</I> A WM_TIMER message has been received.
+</UL>
+
+<P>The function is used inside the message loop, so that an action or actions can take place in response to the signaling of a synchronization object while your program is still processing messages.
+
+<P>The return value is WAIT_OBJECT_0 up to WAIT_OBJECT_0 + <I>nCount</I> - 1 for the objects in the handle array. If a message causes the function to return, the return value is WAIT_OBJECT_0 + <I>nCount</I>. An example of how this function might be used follows. In this code, the handle array has only one entry, <I>hSyncHandle</I>.
+
+<p><pre>
+fContinue = TRUE;
+while (fContinue) {
+    rc = MsgWaitForMultipleObjects (1, &amp;hSyncHandle, FALSE, 
+                                    INFINITE, QS_ALLINPUT);
+    if (rc == WAIT_OBJECT_0) {
+        //
+        // Do work as a result of sync object.
+        //
+    } else if (rc == WAIT_OBJECT_0 + 1) {
+        // It's a message, process it.
+        PeekMessage (&amp;msg, hWnd, 0, 0, PM_REMOVE);
+        if (msg.message == WM_QUIT)
+            fContinue = FALSE;
+        else {
+            TranslateMessage (&amp;msg);
+            DispatchMessage (&amp;msg);
+        }
+    }
+}
+</pre>
+
+<A NAME="325"><H2>Mutexes</H2></A>
+
+<P>Earlier I described the event object. That object resides in either a signaled or nonsignaled state. Another synchronization object is the <I>mutex</I>. A mutex is a synchronization object that's signaled when it's not owned by a thread and nonsignaled when it <I>is</I> owned. Mutexes are extremely useful for coordinating exclusive access to a resource such as a block of memory across multiple threads.
+
+<P>A thread gains ownership by waiting on that mutex with one of the wait functions. When no other threads own the mutex, the thread waiting on the mutex is unblocked, and implicitly gains ownership of the mutex. After the thread has completed the work that requires ownership of the mutex, the thread must explicitly release the mutex with a call to <I>ReleaseMutex</I>.
+
+<P>To create a mutex, call this function:
+
+<p><pre>
+HANDLE CreateMutex (LPSECURITY_ATTRIBUTES lpMutexAttributes, 
+                    BOOL bInitialOwner, LPCTSTR lpName);
+</pre>
+
+<P>The <I>lpMutexAttributes</I> parameter should be set to NULL. The <I>bInitialOwner</I> parameter lets you specify that the calling thread should immediately own the mutex being created. Finally, the <I>lpName</I> parameter lets you specify a name for the object so that it can be shared across other processes. When calling <I>CreateMutex</I> with a name specified in the <I>lpName</I> parameter, Windows CE checks whether a mutex with the same name has already been created. If so, a handle to the previously created mutex is returned. To determine whether the mutex already exists, call <I>GetLastError</I>. It returns ERROR_ALREADY_EXISTS if the mutex has been previously created.
+
+<P>Gaining immediate ownership of a mutex using the <I>bInitialOwner</I> parameter works only if the mutex is being created. Ownership isn't granted if you're opening a previously created mutex. If you need ownership of a mutex, be sure to call <I>GetLastError</I> to determine whether the mutex had been previously committed. If so, call <I>WaitForSingleObject</I> to gain ownership of the mutex.
+
+<P>You release the mutex with this function:
+
+<p><pre>
+BOOL ReleaseMutex (HANDLE hMutex);
+</pre>
+
+<P>The only parameter is the handle to the mutex.
+
+<P>If a thread owns a mutex and calls one of the wait functions to wait on that same mutex, the wait call immediately returns because the thread already owns the mutex. Since mutexes retain an ownership count for the number of times the wait functions are called, a call to <I>ReleaseMutex</I> must be made for each nested call to the wait function.
+
+<A NAME="326"><H2>Critical Sections</H2></A>
+
+<P>Using <I>critical sections</I> is another method of thread synchronization. Critical sections are good for protecting sections of code from being executed by two different threads at the same time. Critical sections work by having a thread call <I>EnterCriticalSection</I> to indicate that it has entered a critical section of code. If another thread calls <I>EnterCriticalSection</I> referencing the same critical section object, it's blocked until the first thread makes a call to <I>LeaveCriticalSection</I>. Critical sections can protect more than one linear section of code. All that's required is that all sections of code that need to be protected use the same critical section object. The one limitation of critical sections is that they can be used to coordinate threads only within a process.
+
+<P>To use a critical section, you first create a critical section handle with this function:
+
+<p><pre>
+void InitializeCriticalSection (LPCRITICAL_SECTION lpCriticalSection);
+</pre>
+
+<P>The only parameter is a pointer to a CRITICAL_SECTION structure that you define somewhere in your application. Be sure not to allocate this structure on the stack of a function that will be deallocated as soon the function returns. You should also not move or copy the critical section structure. Since the other critical section functions require a pointer to this structure, you'll need to allocate it within the scope of all functions using the critical section. While the CRITICAL_SECTION structure is defined in WINBASE.H, an application doesn't need to manipulate any of the fields in that structure. So, for all practical purposes, think of a pointer to a CRITICAL_SECTION structure as a handle, instead of as a pointer to a structure of a known format.
+
+<P>When a thread needs to enter a protected section of code, it should call this function:
+
+<p><pre>
+void EnterCriticalSection (LPCRITICAL_SECTION lpCriticalSection);
+</pre>
+
+<P>The function takes as its only parameter a pointer to the critical section structure initialized with <I>InitializeCriticalSection</I>. If the critical section is already owned by another thread, this function blocks the new thread and doesn't return until the other thread releases the critical section. If the thread calling <I>EnterCriticalSection</I> already owns the critical section, then a use count is incremented and the function returns immediately.
+
+<P>When a thread leaves a critical section, it should call this function:
+
+<p><pre>
+void LeaveCriticalSection (LPCRITICAL_SECTION lpCriticalSection);
+</pre>
+
+<P>As with all the critical section functions, the only parameter is the pointer to the critical section structure. Since critical sections track a use count, one call to <I>LeaveCriticalSection</I> must be made for each call to <I>EnterCriticalSection</I> by the thread that owns the section.
+
+<P>Finally, when you're finished with the critical section, you should call
+
+<p><pre>
+void DeleteCriticalSection (LPCRITICAL_SECTION lpCriticalSection);
+</pre>
+
+<P>This cleans up any system resources used to manage the critical section.
+
+<A NAME="327"><H2>Interlocked Variable Access</H2></A>
+
+<P>Here's one more low-level method for synchronizing threads&#8212;using the functions for interlocked access to variables. While programmers with multithread experience already know this, I need to warn you that Murphy's Law<SUP>1</SUP> seems to come into its own when you're using multiple threads in a program. One of the sometimes overlooked issues in a preemptive multitasking system is that a thread can be preempted in the middle of incrementing or checking a variable. For example, a simple code fragment such as
+
+
+<p><pre>
+if (!i++) {
+    // Do something because i was zero.
+}
+</pre>
+
+<P>can cause a great deal of trouble. To understand why, let's look into how that statement might be compiled. The assembly code for that if statement might look something like this:
+
+<p><pre>
+load     reg1, [addr of i]             ;Read variable 
+add      reg2, reg1, 1                 ;reg2 = reg1 + 1
+store    reg2, [addr of i]             ;Save incremented var
+bne      reg1, zero, skipblk           ;Branch reg1 != zero
+</pre>
+
+<P>There's no reason that the thread executing this section of code couldn't be preempted by another thread after the load instruction and before the store instruction. If this
+
+happened, two threads could enter the block of code when that isn't the way the code is supposed to work. Of course, I've already described a number of methods (such as critical sections and the like) that you can use to prevent such incidents from occurring. But for something like this, a critical section is overkill. What you need is something lighter.
+
+<P>Windows CE supports three of the <I>interlocked</I> functions from the Win32 API; <I>InterlockedIncriment</I>, <I>InterlockedDecriment</I>, and <I>InterlockedExchange</I>. Each of these allows a thread to increment, decrement, and exchange a variable without your having to worry about the thread being preempted in the middle of the operation. The functions are prototyped here:
+
+<p><pre>
+LONG InterlockedIncrement(LPLONG lpAddend);
+
+LONG InterlockedDecrement(LPLONG lpAddend);
+
+LONG InterlockedExchange(LPLONG Target, LONG Value);
+</pre>
+
+<P>For the interlocked increment and decrement, the one parameter is a pointer to the variable to increment or decrement. The returned value is the new value of the variable after it has been incremented or decremented. The <I>InterlockedExchange</I> function takes a pointer to the target variable and the new value for the variable. It returns the previous value of the variable. Rewriting the previous code fragment so that it's thread safe produces this code:
+
+<p><pre>
+if (!InterlockedIncrement(&amp;i)) {
+    // Do something because i was zero.
+}
+</pre>
+
+<P><div class="sidebar"><blockquote><ol>
+<P><LI> Murphy's Law: Anything that can go wrong will go wrong. Murphy's first corollary: When something goes wrong, it happens at the worst possible moment.
+</ol></blockquote></div>
+
+
+</BODY>
+</HTML>
+
+
+
+

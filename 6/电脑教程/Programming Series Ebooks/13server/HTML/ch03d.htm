@@ -1,0 +1,543 @@
+<HTML>
+<HEAD>
+<TITLE>The Windows Service Application Architecture</TITLE>
+<link rel="STYLESHEET" type="text/css" href="prosrvwin.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR = "#ffffff">
+<A HREF="ch03c.htm">[Previous]</A> <A HREF="ch03e.htm">[Next]</A><P>
+
+<A NAME="49"><H1>The Windows Service Application Architecture</H1></A>
+<p>In this section, I explain the additional infrastructure that turns a server 
+application into a service, thus allowing your application to be remotely 
+administered. I've found Microsoft's service architecture to be a little difficult to 
+understand at first. The difficulty is due to the fact that every service process always 
+contains at least two threads, and these threads must communicate with one 
+another. So you have to deal with thread synchronization issues and 
+interthread communication issues.</p>
+
+<p>Another issue you need to consider is that a single executable file 
+can contain several services. If you look back at Table 3-1, you'll see that 
+many services are contained inside the Services.exe file. Most of these services (such 
+as DHCP Client, Messenger, and Alerter) are fairly simple in their 
+implementation. It would be very inefficient if each of these services had to run as a 
+separate process, with its own address space and additional process overhead. 
+Because of this overhead, Microsoft allows a single executable to contain several 
+services. The Services.exe file actually contains about 20 different services inside of 
+it, including the three just mentioned.</p>
+
+<p>When designing a service executable, you must concern yourself with 
+three kinds of functions:</p>
+
+<UL>
+<p><li><B>Process's entry-point function</B> This function is your standard 
+<I>(w)main</I> or <I>(w)WinMain </I>function with which you should be 
+extremely familiar by now. For a service, this function initializes 
+the process as a whole and then calls a special function that connects 
+the process with the local system's SCM. At this point, the 
+SCM takes control of your primary thread for its own purposes. Your 
+code will regain control only when all of the services in the 
+executable have stopped running.</li></p>
+
+<p><li><B>Service's <I>ServiceMain </I>function</B> You must implement 
+a <I>ServiceMain </I>function for each service contained inside your 
+executable file. To run a service, the SCM spawns a thread in your 
+process that executes your <I>ServiceMain </I>function. When the thread 
+returns from <I>ServiceMain</I>, the SCM considers the service stopped. Note 
+that this function does not have to be called <I>ServiceMain</I>; you can 
+give it any name you desire.</li></p>
+
+<p><li><B>Service's <I>HandlerEx </I>function</B> Each service must have 
+a <I>HandlerEx </I>function associated with it. The SCM communicates 
+with the service by calling the service's <I>HandlerEx 
+</I>function. The code in the <I>HandlerEx </I>function is executed by your process's 
+primary thread. The <I>HandlerEx</I> function either executes the necessary 
+action, or it must communicate the SCM's instructions to the 
+thread that is executing the service's <I>ServiceMain</I> function by 
+using some form of interthread communication. Note that each service can 
+have its own <I>HandlerEx </I>function, or multiple services (in a single 
+executable) can share a single <I>HandlerEx </I>function. One of the 
+parameters passed to the <I>HandlerEx </I>function indicates which service the 
+SCM wishes to communicate with. Note that this function does not 
+have to be called <I>HandlerEx</I>; you can give it any name you desire.</li></p>
+</UL>
+ 
+<p>Figure 3-7 will help you put this architecture in perspective. It shows 
+the functions necessary to implement a service executable that houses two 
+services as well as the lines of interprocess communication (IPC) and interthread 
+communication (ITC). In the upcoming sections, I will examine these three 
+functions in detail and flesh out exactly what their responsibilities are. I recommend 
+that you refer to this figure while reading.</p>
+
+<p>
+<A HREF="javascript:fullSize('F03fj07x.htm')"> <img src="images/F03fj07.JPG" width=404 height=531 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!-- caption --><b>Figure 3-7.</b> <i>Windows service application architecture</i><!-- /caption -->
+</p>
+
+<A NAME="50"><H2>The Process Entry-Point Function: <I>(w)main </I>or <I>(w)WinMain</I></H2></A>
+<p>When an administrator wants to start a service, the SCM determines 
+whether or not the executable file containing the service is already running. If it is 
+not running, the SCM spawns the executable file. The process's primary thread 
+is responsible for performing the process-wide initialization. 
+(Service-specific initialization should be done in the appropriate service's 
+<I>ServiceMain </I>function.)</p>
+
+<p>After the process is initialized, the entry-point function must contact 
+the SCM, which now takes over control of the process. To contact the SCM, 
+the entry-point function must first allocate and initialize an array of 
+SERVICE_TABLE_ENTRY structures:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+typedef struct _SERVICE_TABLE_ENTRY {
+   PTSTR                   lpServiceName;   // Service's internal name
+   LPSERVICE_MAIN_FUNCTION lpServiceProc;   // Service's ServiceMain
+} SERVICE_TABLE_ENTRY, *LPSERVICE_TABLE_ENTRY;
+</pre></td></tr></table>
+</p>
+
+<p>The first member indicates the internal, programmatic name of the 
+service, and the second member is the address of the service's 
+<I>ServiceMain </I>callback function. If the executable houses just 
+one service, the array of SERVICE_TABLE_ENTRY structures must 
+be initialized as follows:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+SERVICE_TABLE_ENTRY ServiceTable[] = {
+   { TEXT(&quot;ServiceName1&quot;), ServiceMain1 },
+   { NULL, NULL }   // Marks end of array
+};
+</pre></td></tr></table>
+</p>
+
+<p>If your executable contains three services, you must initialize the 
+array like this:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+SERVICE_TABLE_ENTRY ServiceTable[] = {
+   { TEXT(&quot;ServiceName1&quot;), ServiceMain1 },
+   { TEXT(&quot;ServiceName2&quot;), ServiceMain2 },
+   { TEXT(&quot;ServiceName3&quot;), ServiceMain3 },
+   { NULL, NULL }   // Marks end of array
+};
+</pre></td></tr></table>
+</p>
+
+<p>The last structure in the array must have both members set to NULL 
+to indicate the end of the array. Now the process connects itself to the SCM 
+by calling <I>StartServiceCtrlDispatcher</I>:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+BOOL StartServiceCtrlDispatcher(
+   CONST SERVICE_TABLE_ENTRY* pServiceTable);
+</pre></td></tr></table>
+</p>
+
+<p>Calling this function and passing in the address of the service table 
+array is how the executable process indicates which services are contained within 
+the process. At this point, the SCM knows which service it was trying to start 
+and iterates through the array looking for it. Once the service is found, a thread 
+is created and begins executing the service's <I>ServiceMain 
+</I>function (whose address is obtained from the SERVICE_TABLE_ENTRY array).</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+The SCM keeps close tabs on how a service is doing. For example, 
+when the SCM spawns a service executable, the SCM waits for the 
+primary thread in the executable to call <I>StartServiceCtrlDispatcher</I>. 
+If <I>StartServiceCtrlDispatcher </I>is not called within 30 seconds, the 
+SCM thinks that the service executable is malfunctioning and 
+calls <I>TerminateProcess </I>to forcibly kill the process. For this reason, if 
+your process requires more than 30 seconds to initialize, you must 
+spawn another thread to handle the initialization so that the primary 
+thread can quickly call <I>StartServiceCtrlDispatcher</I>. Note that I'm 
+discussing process-wide initialization here. Individual services should 
+initialize themselves using their own <I>ServiceMain </I>functions.
+</blockquote></div>
+</p>
+
+<p><I>StartServiceCtrlDispatcher </I>does not return until all services in the 
+executable have stopped running. While at least one service is running, the 
+SCM controls what the process's primary thread executes. Usually, this thread 
+has nothing to do and just sleeps, not wasting precious CPU time. If the 
+administrator attempts to start another service implemented in the same executable, 
+the SCM does not spawn another instance of the executable. Instead, the 
+SCM communicates to the executable's primary thread and has it iterate the list 
+of services again, this time looking for the service that is being started. Once 
+found, a new thread is spawned, which executes the appropriate service's 
+<I>ServiceMain </I>function.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+When determining whether to spawn a new service process or a 
+new thread in an existing service process, the SCM performs a strict 
+comparison of the service pathname strings. For example, say that two 
+services are implemented in a single executable file, MyServices.exe. 
+The first service is added to the SCM's database using an executable 
+pathname of &quot;%windir%\System32\MyService.exe&quot;, but the second 
+service is added to the database using &quot;C:\WinNT\System32\MyService.exe&quot;. 
+If both services are started, the SCM will spawn two separate processes, both of 
+them running the same MyService.exe service application. To ensure the SCM uses 
+a single process for all services in a single executable file, use the same pathname 
+string when adding the services to the SCM's database.
+</blockquote></div>
+</p>
+
+<p>Internally, the system is keeping track of which services within the 
+process are executing. When each service exits (usually because the 
+<I>ServiceMain </I>function returns), the system checks to see whether 
+any services are still running. If no services are running, then and only then 
+does the entry-point function's call to <I>StartServiceCtrlDispatcher </I>return. 
+Your code should perform any process-wide cleanup, and then the entry-point 
+function should return, causing the process to terminate. Note that you must 
+complete your clean-up code in 30 seconds or the SCM kills the process.</p>
+
+<A NAME="51"><H2>The <I>ServiceMain </I>Function</H2></A>
+<p>Each service in the executable file must have its own 
+<I>ServiceMain </I>function:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+VOID WINAPI ServiceMain(
+   DWORD  dwArgc,
+   PTSTR* pszArgv);
+</pre></td></tr></table>
+</p>
+
+<p>The SCM starts a service by creating a new thread; this thread begins 
+its execution with the <I>ServiceMain </I>function. As I mentioned earlier, I call 
+this particular function <I>ServiceMain</I>, but the function can have any name 
+you choose. The name you choose for the function is not important because you pass 
+its address in the SERVICE_TABLE_ENTRY's <I>lpServiceProc </I>member. However, 
+you can't have two <I>ServiceMain</I> functions with the same name in a single 
+executable file; if you do,<I> </I>the compiler or linker will generate an error when 
+you try to build your project.</p> 
+
+<p>Two parameters are passed to a <I>ServiceMain </I>function. These 
+parameters create a mechanism that allows an administrator to start a service with 
+some command-line parameters via the <I>StartService </I>function (discussed 
+in the <a href="ch04a.htm">next chapter</a>). Personally, I don't know of any service that references these 
+parameters, and I encourage you to ignore them. Having a service configure itself 
+by reading settings out of the following registry subkey is better than using 
+parameters passed to <I>ServiceMain</I>. (The <I>ServiceName </I>portion of 
+the key should be replaced with the actual name of the service.)</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\<I>ServiceName</I>\Parameters
+</pre></td></tr></table>
+</p>
+
+<p>Many services ship with a client application that allows an 
+administrator to configure the service's settings. The client application simply saves 
+these settings in the registry subkey. When the service starts, it retrieves the 
+settings from the registry.</p>
+
+<p>If a service is running when its configuration changes, three options 
+are available to it:</p>
+
+<UL>
+<p><li>The service ignores the changed configuration settings until the 
+next time the service starts. This is the simplest choice, and many 
+services existing today have taken this approach.</li></p>
+
+<p><li>The service can be explicitly told that it should reconfigure itself. 
+An SCP does this by calling the <I>ServiceControl 
+</I>function, passing the SERVICE_CONTROL_PARAMCHANGE value. <A HREF="ch04a.htm">Chapter 4</A> 
+describes how to do this.</li></p>
+
+<p><li>The service can call the <I>RegNotifyChangeKeyValue </I>function 
+to receive a notification when an external application has changed 
+its registry settings. This allows a service to reconfigure itself on 
+the fly. The RegNotify sample application in <A HREF="ch05a.htm">Chapter 5</A> shows how 
+to accomplish this.</li></p>
+</UL>
+ 
+<p>The first task that the <I>ServiceMain </I>function must perform is telling 
+the SCM the address of the service's <I>HandlerEx </I>callback function. It 
+does this by calling <I>RegisterServiceCtrlHandlerEx</I>:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+SERVICE_STATUS_HANDLE RegisterServiceCtrlHandlerEx(
+   PCTSTR                pszServiceName, // Service's internal name
+   LPHANDLER_FUNCTION_EX pfnHandler,     // Service's HandlerEx function
+   PVOID                 pvContext);     // User-defined value
+</pre></td></tr></table>
+</p>
+
+<p>The first parameter indicates the service for which you are setting 
+a <I>HandlerEx </I>function, and the second parameter is the address of the 
+<I>HandlerEx </I>function. The <I>pszServiceName 
+</I>parameter must match the name used when the array of 
+SERVICE_TABLE_ENTRYs was initialized and passed to 
+<I>StartServiceCtrlDispatcher</I>. The last parameter, 
+<I>pvContext</I>, is a user-defined value that is passed to the service's 
+<I>HandlerEx </I>function. I'll discuss the <I>HandlerEx 
+</I>function in the next section.</p>
+
+<p> <I>RegisterServiceCtrlHandlerEx </I>returns a 
+SERVICE_STATUS_HANDLE, which is a value that uniquely identifies the service to the SCM. All 
+future communication from the service to the SCM will require this handle instead 
+of the service's internal string name.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+Unlike most handles in the system, the handle returned from 
+<I>RegisterServiceCtrlHandlerEx </I>is never closed by you.
+</blockquote></div>
+</p>
+
+<p>After <I>RegisterServiceCtrlHandlerEx </I>returns, the 
+<I>ServiceMain </I>thread should immediately tell the SCM 
+that the service is continuing to initialize. It 
+does this by calling the <I>SetServiceStatus </I>function:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+BOOL SetServiceStatus(
+   SERVICE_STATUS_HANDLE hService, 
+   LPSERVICE_STATUS      pServiceStatus);
+</pre></td></tr></table>
+</p>
+
+<p>This function requires that you pass it the handle identifying your 
+service (which is returned from the call to 
+<I>RegisterServiceCtrlHandlerEx</I>) and the 
+address of an initialized SERVICE_STATUS structure:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+typedef struct _SERVICE_STATUS {
+   DWORD dwServiceType;
+   DWORD dwCurrentState; 
+   DWORD dwControlsAccepted; 
+   DWORD dwWin32ExitCode; 
+   DWORD dwServiceSpecificExitCode; 
+   DWORD dwCheckPoint; 
+   DWORD dwWaitHint; 
+} SERVICE_STATUS, *LPSERVICE_STATUS;
+</pre></td></tr></table>
+</p>
+
+<p>The SERVICE_STATUS structure contains seven members that reflect 
+the current status of the service. All of these members, described in the 
+following list, must be set correctly before you pass the structure to 
+<I>SetServiceStatus</I>.</p>
+
+<UL>
+<p><li><I><B>dwServiceType</B> </I>This member indicates what type of service 
+executable you have implemented. Set this member to SERVICE_WIN32_OWN_PROCESS 
+when your executable houses a single service, 
+or to SERVICE_WIN32_SHARE_PROCESS when your 
+executable houses two or more services. In addition to these two flags, you 
+can OR in the SERVICE_INTERACTIVE_PROCESS flag when 
+your service needs to interact with the desktop. (You should avoid 
+interactive services as much as possible.) The value of 
+<I>dwServiceType</I> should never change during the lifetime of your service.</li></p>
+
+<p><li><I><B>dwCurrentState</B> </I>This member is the most important member 
+of the SERVICE_STATUS structure. It tells the SCM the current 
+state of your service. To report that your service is still initializing, 
+you should set this member to SERVICE_START_PENDING. I'll 
+explain the other possible values when we talk about the 
+<I>HandlerEx </I>function in the section &quot;<A HREF="ch03e.htm#54">Codes Requiring Status Reporting</A>.&quot;</li></p>
+
+<p><li><B><I>dwControlsAccepted</I></B> This member indicates what control 
+notifications the service is willing to accept. If you allow a service 
+control program to pause and continue your service, specify 
+SERVICE_ACCEPT_PAUSE_CONTINUE. Many services do not 
+support pausing and continuing; you have to decide if this 
+functionality makes sense for your service. If you allow a service control 
+program to stop your service, specify SERVICE_ACCEPT_STOP. If 
+you want your service to be notified when the operating system is 
+being shut down, specify SERVICE_ACCEPT_SHUTDOWN. You 
+can also indicate whether you want to receive parameter change, 
+hardware profile change, and power event notifications by 
+specifying SERVICE_ACCEPT_PARAMCHANGE, 
+SERVICE_ACCEPT_HARDWAREPROFILECHANGE, 
+or SERVICE_ACCEPT_POWEREVENT, respectively.</li></p>
+
+<p>Use the OR operator to combine the desired set of flags. 
+Note that your service can change the controls it accepts while it is 
+running. For example, I have written services that allowed 
+themselves to be paused as long as no clients were connected to them.</p>
+
+<p><li><B><I>dwWin32ExitCode and dwServiceSpecificExitCode</I></B> 
+These two members allow the service to report error codes. If a service wants 
+to report a Win32 error code (as defined in WinError.h), it sets 
+the <I>dwWin32ExitCode </I>member to the desired code. A service can 
+also report errors that are specific to the service and do not map to a 
+predefined Win32 error code. To make the service do this, you must 
+set the <I>dwWin32ExitCode </I>member to ERROR_SERVICE_SPECIFIC_ERROR and then set the 
+<I>dwServiceSpecificExitCode </I>member to the service-specific error code. Note that a 
+customized SCP would be required to report this error code. Set 
+the <I>dwWin32ExitCode </I>member to NO_ERROR when the service 
+is running normally and has no error to report.</li></p>
+
+<p><li><I><B>dwCheckPoint </B> </I><B>and<I> dwWaitHint</I></B> These members allow a service 
+to report its progress. When you set <I>dwCurrentState </I>to SERVICE_START_PENDING, 
+you should set <I>dwCheckPoint </I>to 1 and set <I>dwWaitHint </I>to the number of milliseconds required for the 
+service to reach its next <I>SetServiceStatus </I>call. Once the service is fully 
+initialized, you should re-initialize the SERVICE_STATUS 
+structure's members so that <I>dwCurrentState </I>is SERVICE_RUNNING, 
+and then set both <I>dwCheckPoint </I>and <I>dwWaitHint 
+</I>to 0.</li></p>
+
+<p> The <I>dwCheckPoint </I>member exists for your own benefit. It 
+allows a service to report how far its processing has progressed. Each 
+time you call <I>SetServiceStatus</I>, you should increment 
+<I>dwCheckPoint </I>to a number that indicates what &quot;step&quot; your service has executed. It is 
+totally up to you how frequently to report your service's progress. 
+If you do decide to report each step of your service's initialization, 
+the <I>dwWaitHint </I>member should be set to indicate how many 
+milliseconds you think you need to reach the next step 
+(checkpoint)&#8212;not the number of milliseconds required for the service to complete 
+its processing.</p>
+</UL>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+The <I>ServiceMain </I>function must call 
+<I>SetServiceStatus </I>within 80 seconds of starting, or the SCM thinks that the service has failed to start. If 
+no other services are running in the service process, the SCM kills the process.
+</blockquote></div>
+</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+Just before creating your service's thread, the SCM sets your 
+service's status to indicate a current state of START_PENDING, a 
+checkpoint of 0, and a wait hint of 2000 milliseconds. If your 
+<I>ServiceMain </I>function requires more than 2000 milliseconds to initialize, the very first 
+time you call <I>SetServiceStatus</I>, you should indicate a current state 
+of SERVICE_START_PENDING, a checkpoint of 1, and a wait hint 
+as desired. Notice that the checkpoint should be set to 1. A very 
+common mistake developers make is setting the checkpoint to 0 the first time 
+they call <I>SetServiceStatus</I>, which can confuse the administrator's SCP 
+program by causing it to believe the service is not responding properly. 
+If your service requires more initialization, you can continue to report 
+a state of SERVICE_START_PENDING, incrementing the 
+checkpoint and setting the wait hint as desired.
+</blockquote></div>
+</p>
+
+<p>After your service's initialization is complete, your service calls 
+<I>SetServiceStatus </I>to indicate SERVICE_RUNNING (with the checkpoint and wait 
+hint both set to 0). Now your service is running. Usually a service runs by 
+placing itself in a loop. Inside the loop, the service thread suspends itself, waiting for 
+a network request or a notification indicating that the service should pause, 
+continue, stop, shut down, and so on. If a network request comes in, the service 
+thread wakes up, processes the request, and loops back around to wait for the 
+next request or notification.</p>
+
+<p>If the service wakes because of a notification, it processes the 
+notification. If the service receives a stop or shutdown notification, the loop is 
+terminated, and the service's <I>ServiceMain </I>function returns, killing the thread. If the 
+service is the last service running, the process also terminates.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+The <I>SetServiceStatus </I>function examines the 
+SERVICE_STATUS structure's <I>dwCurrentState 
+</I>member. If this member is set to SERVICE_STOPPED, 
+<I>SetServiceStatus </I>closes the service's status handle (which 
+is the first parameter to <I>SetServiceStatus</I>). This is why you never have 
+to explicitly close the handle returned from 
+<I>RegisterServiceCtrlHandlerEx</I> and, even more importantly, why you should never call 
+<I>SetServiceStatus </I>after you have called it with a current state of 
+SERVICE_STOPPED. Attempting to do so will raise an invalid handle exception when 
+running the service under a debugger.
+</blockquote></div>
+</p>
+
+<A NAME="52"><H2>The <I>HandlerEx </I>Function</H2></A>
+<p>Each service in the executable file has to be associated with a 
+<I>HandlerEx </I>function:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+DWORD WINAPI HandlerEx(
+   DWORD dwControl,
+   DWORD dwEventType,
+   PVOID pvEventData,
+   PVOID pvContext);
+</pre></td></tr></table>
+</p>
+
+<p>I call this function <I>HandlerEx</I>,<I> </I>but the function can have any name 
+you choose. The actual name is not important because you pass the function's 
+address as a parameter to the <I>RegisterServiceCtrlHandlerEx 
+</I>function. However, you can't have two 
+<I>HandlerEx</I> functions with the same name in a single 
+executable file; if you do, the compiler or linker will generate an error when 
+you try to build your project.</p>
+
+<p> Most of the time, the process's primary thread is suspended inside the 
+call to <I>StartServiceCtrlDispatcher</I>. When an SCP program wants to control a 
+service, the SCM communicates the control to the process's primary thread. 
+The thread wakes up and calls the appropriate service's <I>HandlerEx </I>function. 
+For example, when an administrator uses the Services snap-in to stop a service, 
+the snap-in communicates the administrator's desire to the local or remote 
+SCM. The SCM then wakes the service executable's primary thread, which calls 
+the service's <I>HandlerEx </I>function, passing it a 
+SERVICE_CONTROL_STOP control code.</p>
+
+<p> The SCM also sends device, hardware profile, and power event 
+notifications to a service's <I>HandlerEx </I>function. These notifications allow the 
+service to reconfigure itself appropriately and to participate in granting or 
+denying system changes.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+Because the process's primary thread executes every service's 
+<I>HandlerEx </I>function, you should implement these 
+<I>HandlerEx </I>functions so that they execute quickly. Failure to do so will prevent other services in the 
+same process from receiving their desired actions in a reasonable 
+amount of time.
+</blockquote></div>
+</p>
+
+<p>Since the primary thread executes the <I>HandlerEx 
+</I>function but the service is executed by another thread, it might be necessary for 
+<I>HandlerEx </I>to communicate actions or notifications to the service thread. There is no standard 
+way to perform this communication; the method really depends on how you 
+implement the service. You can queue an asynchronous procedure call (APC), 
+post an I/O completion status, post a window message, or whatever. I 
+recommend that you choose a queuing mechanism such as the ones just mentioned to 
+avoid synchronizing the <I>HandlerEx </I>thread with the 
+<I>ServiceMain </I>thread. I always handle this communication by posting an I/O completion status.</p>
+
+<p>The <I>HandlerEx </I>function is passed four parameters. The first 
+parameter, <I>dwControl</I>, indicates the requested action or notification. If 
+<I>dwControl </I>identifies a device, hardware profile, or power event notification, the 
+<I>dwEventType </I>and <I>pvEventData </I>parameters offer more specific information about the action 
+or notification. The <I>pvContext </I>parameter is simply the user-defined value 
+originally passed to the <I>RegisterServiceCtrlHandlerEx 
+</I>function. Using this value, you can create a single 
+<I>HandlerEx </I>function that is used by all services in a single 
+executable; the <I>pvContext </I>value could be used to determine the specific service 
+that the <I>HandlerEx </I>function needs to communicate with. In the next section, 
+I'll talk about how to handle these control codes and notifications.</p>
+
+<p>The <I>HandlerEx </I>function's return value allows a service's handler to 
+return some information back to the SCM. If the 
+<I>HandlerEx </I>function doesn't handle a particular control code, return ERROR_CALL_NOT_IMPLEMENTED. 
+If the <I>HandlerEx </I>function handles a device, hardware profile, or power 
+event request, return NO_ERROR. To deny a request, return any other Win32 
+error code. For any other control codes, the <I>HandlerEx 
+</I>function should return NO_ERROR.</p>
+
+</BODY>
+</HTML>
+
+
+
+

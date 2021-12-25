@@ -1,0 +1,956 @@
+<HTML>
+<HEAD>
+<TITLE>The JobLab Sample Application</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch05f.htm">[Previous]</A> <A HREF="ch06a.htm">[Next]</A><P>
+
+<A NAME="73"><H1>The JobLab Sample Application</H1></A>
+
+<p>The JobLab application, &quot;05 JobLab.exe&quot; (listed in Figure
+5-6), allows you to easily experiment with jobs. The source code and
+resource files for the application are in the 05-JobLab directory on
+the companion CD-ROM. When you start the program, the window shown in
+Figure 5-5 appears.</p>
+
+<p>When the process initializes, it creates a job object. I created
+this job object with the name JobLab so you can use the MMC Performance
+Monitor Snap-In to see it and monitor its performance. The application
+also creates an I/O completion port and associates the job object with
+it. This allows notifications from the job to be monitored and
+displayed in the list box at the bottom of the window. </p>
+<p>Initially, the job has no processes and no limits or restrictions. The
+fields at the top set basic and extended limits on the job object. All
+you do is fill them in with valid values and click on the Apply Limits
+button. If you leave a field empty, that limit will not be applied.
+Besides the basic and extended limits, you can turn various UI
+restrictions on and off. Note that the Preserve Job Time When Applying
+Limits check box does not set a limit; it simply allows you to change
+the job's limits without resetting the <i>
+ThisPeriodTotalUserTime</i> and <i>ThisPeriodTotalKernelTime</i>
+members when querying the basic accounting information. This check box
+is disabled when you apply a per-job time limit.</p>
+
+<p>
+<A HREF="javascript:fullSize('F05si05x.htm')"> <img src="images/F05si05.JPG" width=404 height=380 border=0 ALT="Click to view at full size."> </A>
+</p><p>
+<!-- CAPTION --><b>Figure 5-5.</b> <i>JobLab sample application</i><!-- /CAPTION -->
+</p>
+
+ 
+<p>The remaining buttons let you manipulate the job in other ways. The
+Terminate Processes button kills all the processes in the job. The
+Spawn CMD In Job button spawns a command shell process that is
+associated with the job. From this command shell, you can spawn
+additional child processes and see how they behave as part of the job.
+I found this very useful for experimenting. The last button, Put PID In
+Job, lets you associate an existing jobless process with the job.</p> 
+<p>The list box at the bottom of the window shows updated status
+information about the job. Every 10 seconds, this window shows the
+basic and I/O accounting information as well as the peak process/job
+memory usage. The process ID for each process currently in the job is
+also shown. </p>
+<p>In addition to all this statistical information, the list box displays
+any notifications that come from the job to the application's I/O
+completion port. Whenever a notification is posted to the list box, the
+status information at that time is also displayed.</p>
+
+<p>One last note: if you modify the source code and create the job
+kernel object without a name, you can run multiple copies of this
+application to create two or more job objects on the same machine and
+perform more experiments that way.</p>
+
+<p>As far as the source code goes, there isn't anything special to
+discuss because the source code is well annotated. I did, however,
+create a Job.h file that defines a CJob C++ class that encapsulates the
+operating system's job object. This made things a little easier to
+work with since I didn't have to pass around the job's handle.
+This class also reduces the amount of casting that I would ordinarily
+need to do when calling the <i>QueryInformationJobObject</i> and <i>
+SetInformationJobObject</i> functions.</p>
+
+<p><b>Figure 5-6.</b> <i>The JobLab sample application</i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><b>JobLab.cpp</b></p>
+<PRE>
+/******************************************************************************
+Module:  JobLab.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#include &quot;..\CmnHdr.h&quot;
+#include &lt;windowsx.h&gt;
+#include &lt;process.h&gt;    // for _beginthreadex
+#include &lt;tchar.h&gt;
+#include &lt;stdio.h&gt;
+#include &quot;Resource.h&quot;
+#include &quot;Job.h&quot;
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+CJob   g_job;           // Job object
+
+HWND   g_hwnd;          // Handle to dialog box (accessible by all threads)
+
+HANDLE g_hIOCP;         // Completion port that receives Job notifications
+HANDLE g_hThreadIOCP;   // Completion port thread
+
+// Completion keys for the completion port
+#define COMPKEY_TERMINATE  ((UINT_PTR) 0)
+#define COMPKEY_STATUS     ((UINT_PTR) 1)
+#define COMPKEY_JOBOBJECT  ((UINT_PTR) 2)
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+DWORD WINAPI JobNotify(PVOID) {
+   TCHAR sz[2000];
+   BOOL fDone = FALSE;
+
+   while (!fDone) {
+      DWORD dwBytesXferred;
+      ULONG_PTR CompKey;
+      LPOVERLAPPED po;
+      GetQueuedCompletionStatus(g_hIOCP, 
+         &amp;dwBytesXferred, &amp;CompKey, &amp;po, INFINITE);
+
+      // The app is shutting down, exit this thread
+      fDone = (CompKey == COMPKEY_TERMINATE);
+
+      HWND hwndLB = FindWindow(NULL, TEXT(&quot;Job Lab&quot;));
+      hwndLB = GetDlgItem(hwndLB, IDC_STATUS);
+
+
+      if (CompKey == COMPKEY_JOBOBJECT) {
+         lstrcpy(sz, TEXT(&quot;--&gt; Notification: &quot;));
+         LPTSTR psz = sz + lstrlen(sz);
+         switch (dwBytesXferred) {
+         case JOB_OBJECT_MSG_END_OF_JOB_TIME:
+            wsprintf(psz, TEXT(&quot;Job time limit reached&quot;));
+            break;
+
+         case JOB_OBJECT_MSG_END_OF_PROCESS_TIME:
+            wsprintf(psz, TEXT(&quot;Job process (Id=%d) time limit reached&quot;), po);
+            break;
+
+         case JOB_OBJECT_MSG_ACTIVE_PROCESS_LIMIT:
+            wsprintf(psz, TEXT(&quot;Too many active processes in job&quot;));
+            break;
+
+         case JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO:
+            wsprintf(psz, TEXT(&quot;Job contains no active processes&quot;));
+            break;
+
+         case JOB_OBJECT_MSG_NEW_PROCESS:
+            wsprintf(psz, TEXT(&quot;New process (Id=%d) in Job&quot;), po);
+            break;
+
+         case JOB_OBJECT_MSG_EXIT_PROCESS:
+            wsprintf(psz, TEXT(&quot;Process (Id=%d) terminated&quot;), po);
+            break;
+
+         case JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS:
+            wsprintf(psz, TEXT(&quot;Process (Id=%d) terminated abnormally&quot;), po);
+            break;
+
+         case JOB_OBJECT_MSG_PROCESS_MEMORY_LIMIT:
+            wsprintf(psz, TEXT(&quot;Process (Id=%d) exceeded memory limit&quot;), po);
+            break;
+
+         case JOB_OBJECT_MSG_JOB_MEMORY_LIMIT:
+            wsprintf(psz, 
+               TEXT(&quot;Process (Id=%d) exceeded job memory limit&quot;), po);
+            break;
+
+         default:
+            wsprintf(psz, TEXT(&quot;Unknown notification: %d&quot;), dwBytesXferred);
+            break;
+         }
+         ListBox_SetCurSel(hwndLB, ListBox_AddString(hwndLB, sz));
+         CompKey = 1;   // Force a status update when a notification arrives
+      }
+
+
+      if (CompKey == COMPKEY_STATUS) {
+
+         static int s_nStatusCount = 0;
+         _stprintf(sz, TEXT(&quot;--&gt; Status Update (%u)&quot;), s_nStatusCount++);
+         ListBox_SetCurSel(hwndLB, ListBox_AddString(hwndLB, sz));
+
+         // Show the basic accounting information
+         JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION jobai;
+         g_job.QueryBasicAccountingInfo(&amp;jobai);
+
+         _stprintf(sz, TEXT(&quot;Total Time: User=%I64u, Kernel=%I64u        &quot;)
+            TEXT(&quot;Period Time: User=%I64u, Kernel=%I64u&quot;), 
+            jobai.BasicInfo.TotalUserTime.QuadPart, 
+            jobai.BasicInfo.TotalKernelTime.QuadPart,
+            jobai.BasicInfo.ThisPeriodTotalUserTime.QuadPart, 
+            jobai.BasicInfo.ThisPeriodTotalKernelTime.QuadPart);
+         ListBox_SetCurSel(hwndLB, ListBox_AddString(hwndLB, sz));
+
+         _stprintf(sz, TEXT(&quot;Page Faults=%u, Total Processes=%u, &quot;)
+            TEXT(&quot;Active Processes=%u, Terminated Processes=%u&quot;), 
+            jobai.BasicInfo.TotalPageFaultCount, 
+            jobai.BasicInfo.TotalProcesses, 
+            jobai.BasicInfo.ActiveProcesses, 
+            jobai.BasicInfo.TotalTerminatedProcesses);
+         ListBox_SetCurSel(hwndLB, ListBox_AddString(hwndLB, sz));
+
+         // Show the I/O accounting information
+         _stprintf(sz, TEXT(&quot;Reads=%I64u (%I64u bytes), &quot;)
+            TEXT(&quot;Write=%I64u (%I64u bytes), Other=%I64u (%I64u bytes)&quot;), 
+            jobai.IoInfo.ReadOperationCount,  jobai.IoInfo.ReadTransferCount, 
+            jobai.IoInfo.WriteOperationCount, jobai.IoInfo.WriteTransferCount, 
+            jobai.IoInfo.OtherOperationCount, jobai.IoInfo.OtherTransferCount);
+         ListBox_SetCurSel(hwndLB, ListBox_AddString(hwndLB, sz));
+
+         // Show the peak per-process and job memory usage
+         JOBOBJECT_EXTENDED_LIMIT_INFORMATION joeli;
+         g_job.QueryExtendedLimitInfo(&amp;joeli);
+         _stprintf(sz, TEXT(&quot;Peak memory used: Process=%I64u, Job=%I64u&quot;), 
+            (_ _int64) joeli.PeakProcessMemoryUsed, 
+            (_ _int64) joeli.PeakJobMemoryUsed);
+         ListBox_SetCurSel(hwndLB, ListBox_AddString(hwndLB, sz));
+
+         // Show the set of Process IDs 
+         DWORD dwNumProcesses = 50, dwProcessIdList[50];
+         g_job.QueryBasicProcessIdList(dwNumProcesses, 
+            dwProcessIdList, &amp;dwNumProcesses);
+         _stprintf(sz, TEXT(&quot;PIDs: %s&quot;), 
+            (dwNumProcesses == 0) ? TEXT(&quot;(none)&quot;) : TEXT(&quot;&quot;));
+         for (DWORD x = 0; x &lt; dwNumProcesses; x++) {
+            _stprintf(_tcschr(sz, 0), TEXT(&quot;%d &quot;), dwProcessIdList[x]);
+         }
+         ListBox_SetCurSel(hwndLB, ListBox_AddString(hwndLB, sz));
+      }
+   }
+   return(0);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL Dlg_OnInitDialog (HWND hwnd, HWND hwndFocus, LPARAM lParam) {
+
+   chSETDLGICONS(hwnd, IDI_JOBLAB);
+
+   // Save our window handle so that the completion port thread can access it
+   g_hwnd = hwnd; 
+   
+   HWND hwndPriorityClass = GetDlgItem(hwnd, IDC_PRIORITYCLASS);
+   ComboBox_AddString(hwndPriorityClass, TEXT(&quot;No limit&quot;));
+   ComboBox_AddString(hwndPriorityClass, TEXT(&quot;Idle&quot;));
+   ComboBox_AddString(hwndPriorityClass, TEXT(&quot;Below normal&quot;));
+   ComboBox_AddString(hwndPriorityClass, TEXT(&quot;Normal&quot;));
+   ComboBox_AddString(hwndPriorityClass, TEXT(&quot;Above normal&quot;));
+   ComboBox_AddString(hwndPriorityClass, TEXT(&quot;High&quot;));
+   ComboBox_AddString(hwndPriorityClass, TEXT(&quot;Realtime&quot;));
+   ComboBox_SetCurSel(hwndPriorityClass, 0); // Default to &quot;No Limit&quot;
+
+   HWND hwndSchedulingClass = GetDlgItem(hwnd, IDC_SCHEDULINGCLASS);
+   ComboBox_AddString(hwndSchedulingClass, TEXT(&quot;No limit&quot;));
+   for (int n = 0; n &lt;= 9; n++) {
+      TCHAR szSchedulingClass[2] = { (TCHAR) (TEXT('0') + n), 0 };
+      ComboBox_AddString(hwndSchedulingClass, szSchedulingClass);
+   }
+   ComboBox_SetCurSel(hwndSchedulingClass, 0); // Default to &quot;No Limit&quot;
+   SetTimer(hwnd, 1, 10000, NULL);             // 10 second accounting update
+   return(TRUE);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+void Dlg_ApplyLimits(HWND hwnd) {
+   const int nNanosecondsPerSecond = 100000000;
+   const int nMillisecondsPerSecond = 1000;
+   const int nNanosecondsPerMillisecond = 
+      nNanosecondsPerSecond / nMillisecondsPerSecond;
+   BOOL f;
+   _ _int64 q;
+   SIZE_T s;
+   DWORD d;
+
+   // Set Basic and Extended Limits
+   JOBOBJECT_EXTENDED_LIMIT_INFORMATION joeli = { 0 };
+   joeli.BasicLimitInformation.LimitFlags = 0;
+   
+   q = GetDlgItemInt(hwnd, IDC_PERPROCESSUSERTIMELIMIT, &amp;f, FALSE);
+   if (f) {
+      joeli.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_TIME;
+      joeli.BasicLimitInformation.PerProcessUserTimeLimit.QuadPart = 
+         q * nNanosecondsPerMillisecond / 100;
+   }
+
+   q = GetDlgItemInt(hwnd, IDC_PERJOBUSERTIMELIMIT, &amp;f, FALSE);
+   if (f) {
+      joeli.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_JOB_TIME;
+      joeli.BasicLimitInformation.PerJobUserTimeLimit.QuadPart = 
+         q * nNanosecondsPerMillisecond / 100;
+   }
+
+   s = GetDlgItemInt(hwnd, IDC_MINWORKINGSETSIZE, &amp;f, FALSE);
+   if (f) {
+      joeli.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_WORKINGSET;
+      joeli.BasicLimitInformation.MinimumWorkingSetSize = s * 1024 * 1024;
+      s = GetDlgItemInt(hwnd, IDC_MAXWORKINGSETSIZE, &amp;f, FALSE);
+      if (f) {
+         joeli.BasicLimitInformation.MaximumWorkingSetSize = s * 1024 * 1024;
+      } else {
+         joeli.BasicLimitInformation.LimitFlags &amp;=~JOB_OBJECT_LIMIT_WORKINGSET;
+         chMB(&quot;Both minimum and maximum working set sizes must be set.\n&quot;
+            &quot;The working set limits will NOT be in effect.&quot;);
+      }
+   }
+
+   d = GetDlgItemInt(hwnd, IDC_ACTIVEPROCESSLIMIT, &amp;f, FALSE);
+   if (f) {
+      joeli.BasicLimitInformation.LimitFlags |= 
+         JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+      joeli.BasicLimitInformation.ActiveProcessLimit = d;
+   }
+
+   s = GetDlgItemInt(hwnd, IDC_AFFINITYMASK, &amp;f, FALSE);
+   if (f) {
+      joeli.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_AFFINITY;
+      joeli.BasicLimitInformation.Affinity = s;
+   }
+
+   joeli.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PRIORITY_CLASS;
+   switch (ComboBox_GetCurSel(GetDlgItem(hwnd, IDC_PRIORITYCLASS))) {
+      case 0: 
+         joeli.BasicLimitInformation.LimitFlags &amp;= 
+            ~JOB_OBJECT_LIMIT_PRIORITY_CLASS;
+         break;
+
+      case 1: 
+         joeli.BasicLimitInformation.PriorityClass = 
+            IDLE_PRIORITY_CLASS;
+         break;
+      case 2: 
+         joeli.BasicLimitInformation.PriorityClass = 
+            BELOW_NORMAL_PRIORITY_CLASS; 
+         break;
+
+      case 3: 
+         joeli.BasicLimitInformation.PriorityClass = 
+            NORMAL_PRIORITY_CLASS;       
+         break;
+
+      case 4: 
+         joeli.BasicLimitInformation.PriorityClass = 
+            ABOVE_NORMAL_PRIORITY_CLASS; 
+         break;
+
+      case 5: 
+         joeli.BasicLimitInformation.PriorityClass = 
+            HIGH_PRIORITY_CLASS;         
+         break;
+
+      case 6: 
+         joeli.BasicLimitInformation.PriorityClass = 
+            REALTIME_PRIORITY_CLASS;     
+         break;
+   }
+
+   int nSchedulingClass = 
+      ComboBox_GetCurSel(GetDlgItem(hwnd, IDC_SCHEDULINGCLASS));
+   if (nSchedulingClass &gt; 0) {
+      joeli.BasicLimitInformation.LimitFlags |= 
+         JOB_OBJECT_LIMIT_SCHEDULING_CLASS;
+      joeli.BasicLimitInformation.SchedulingClass = nSchedulingClass - 1;
+   }
+
+   s = GetDlgItemInt(hwnd, IDC_MAXCOMMITPERJOB, &amp;f, FALSE);
+   if (f) {
+      joeli.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_JOB_MEMORY;
+      joeli.JobMemoryLimit = s * 1024 * 1024;
+   }
+
+   s = GetDlgItemInt(hwnd, IDC_MAXCOMMITPERPROCESS, &amp;f, FALSE);
+   if (f) {
+      joeli.BasicLimitInformation.LimitFlags |= 
+         JOB_OBJECT_LIMIT_PROCESS_MEMORY;
+      joeli.ProcessMemoryLimit = s * 1024 * 1024;
+   }
+
+   if (IsDlgButtonChecked(hwnd, IDC_CHILDPROCESSESCANBREAKAWAYFROMJOB))
+      joeli.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_BREAKAWAY_OK;
+
+   if (IsDlgButtonChecked(hwnd, IDC_CHILDPROCESSESDOBREAKAWAYFROMJOB))
+      joeli.BasicLimitInformation.LimitFlags |= 
+      JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK;
+
+   if (IsDlgButtonChecked(hwnd, IDC_TERMINATEPROCESSONEXCEPTIONS))
+      joeli.BasicLimitInformation.LimitFlags |= 
+      JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
+
+   f = g_job.SetExtendedLimitInfo(&amp;joeli, 
+      ((joeli.BasicLimitInformation.LimitFlags &amp; JOB_OBJECT_LIMIT_JOB_TIME) 
+         != 0) ? FALSE : 
+         IsDlgButtonChecked(hwnd, IDC_PRESERVEJOBTIMEWHENAPPLYINGLIMITS));
+   chASSERT(f);
+
+   // Set UI Restrictions
+   DWORD jobuir =  JOB_OBJECT_UILIMIT_NONE;  // A fancy zero (0)
+   if (IsDlgButtonChecked(hwnd, IDC_RESTRICTACCESSTOOUTSIDEUSEROBJECTS))
+      jobuir |=  JOB_OBJECT_UILIMIT_HANDLES;
+
+   if (IsDlgButtonChecked(hwnd, IDC_RESTRICTREADINGCLIPBOARD))
+      jobuir |=  JOB_OBJECT_UILIMIT_READCLIPBOARD;
+
+   if (IsDlgButtonChecked(hwnd, IDC_RESTRICTWRITINGCLIPBOARD))
+      jobuir |=  JOB_OBJECT_UILIMIT_WRITECLIPBOARD;
+
+   if (IsDlgButtonChecked(hwnd, IDC_RESTRICTEXITWINDOW))
+      jobuir |=  JOB_OBJECT_UILIMIT_EXITWINDOWS;
+
+   if (IsDlgButtonChecked(hwnd, IDC_RESTRICTCHANGINGSYSTEMPARAMETERS))
+      jobuir |=  JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS;
+   
+   if (IsDlgButtonChecked(hwnd, IDC_RESTRICTDESKTOPS))
+      jobuir |= JOB_OBJECT_UILIMIT_DESKTOP;
+
+   if (IsDlgButtonChecked(hwnd, IDC_RESTRICTDISPLAYSETTINGS))
+      jobuir |= JOB_OBJECT_UILIMIT_DISPLAYSETTINGS;
+
+   if (IsDlgButtonChecked(hwnd, IDC_RESTRICTGLOBALATOMS))
+      jobuir |=  JOB_OBJECT_UILIMIT_GLOBALATOMS;
+   
+   chVERIFY(g_job.SetBasicUIRestrictions(jobuir));
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+void Dlg_OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify) {
+
+   switch (id) {
+      case IDCANCEL:
+         // User is terminating our app, kill the job too.
+         KillTimer(hwnd, 1);
+         g_job.Terminate(0);  
+         EndDialog(hwnd, id);
+         break;
+
+      case IDC_PERJOBUSERTIMELIMIT:
+         {
+         // The job time must be reset if setting a job time limit
+         BOOL f;
+         GetDlgItemInt(hwnd, IDC_PERJOBUSERTIMELIMIT, &amp;f, FALSE);
+         EnableWindow(
+            GetDlgItem(hwnd, IDC_PRESERVEJOBTIMEWHENAPPLYINGLIMITS), !f);
+         }
+         break;
+
+      case IDC_APPLYLIMITS:
+         Dlg_ApplyLimits(hwnd);
+         PostQueuedCompletionStatus(g_hIOCP, 0, COMPKEY_STATUS, NULL);
+         break;
+
+      case IDC_TERMINATE:
+         g_job.Terminate(0);  
+         PostQueuedCompletionStatus(g_hIOCP, 0, COMPKEY_STATUS, NULL);
+         break;
+
+      case IDC_SPAWNCMDINJOB:
+         {
+         // Spawn a command shell and place it in the job
+         STARTUPINFO si = { sizeof(si) };
+         PROCESS_INFORMATION pi;
+         TCHAR sz[] = TEXT(&quot;CMD&quot;);
+         CreateProcess(NULL, sz, NULL, NULL, 
+            FALSE, CREATE_SUSPENDED, NULL, NULL, &amp;si, &amp;pi);
+         g_job.AssignProcess(pi.hProcess);
+         ResumeThread(pi.hThread);
+         CloseHandle(pi.hProcess);
+         CloseHandle(pi.hThread);
+         }
+         PostQueuedCompletionStatus(g_hIOCP, 0, COMPKEY_STATUS, NULL);
+         break;
+
+      case IDC_ASSIGNPROCESSTOJOB:
+         {
+         DWORD dwProcessId = GetDlgItemInt(hwnd, IDC_PROCESSID, NULL, FALSE);
+         HANDLE hProcess = OpenProcess(
+            PROCESS_SET_QUOTA | PROCESS_TERMINATE, FALSE, dwProcessId);
+         if (hProcess != NULL) {
+            chVERIFY(g_job.AssignProcess(hProcess));
+            CloseHandle(hProcess);
+         } else chMB(&quot;Could not assign process to job.&quot;);
+         }
+         PostQueuedCompletionStatus(g_hIOCP, 0, COMPKEY_STATUS, NULL);
+         break;
+   }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+void WINAPI Dlg_OnTimer(HWND hwnd, UINT id) {
+
+   PostQueuedCompletionStatus(g_hIOCP, 0, COMPKEY_STATUS, NULL);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+INT_PTR WINAPI Dlg_Proc (HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+
+   switch (uMsg) {
+      chHANDLE_DLGMSG(hwnd, WM_INITDIALOG, Dlg_OnInitDialog);
+      chHANDLE_DLGMSG(hwnd, WM_TIMER,      Dlg_OnTimer);
+      chHANDLE_DLGMSG(hwnd, WM_COMMAND,    Dlg_OnCommand);
+   }
+
+   return(FALSE);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+int WINAPI _tWinMain(HINSTANCE hinstExe, HINSTANCE, LPTSTR pszCmdLine, int) {
+
+   // Create the completion port that receives job notifications
+   g_hIOCP = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
+
+   // Create a thread that waits on the completion port
+   g_hThreadIOCP = chBEGINTHREADEX(NULL, 0, JobNotify, NULL, 0, NULL);
+
+   // Create the job object
+   g_job.Create(NULL, TEXT(&quot;JobLab&quot;));
+   g_job.SetEndOfJobInfo(JOB_OBJECT_POST_AT_END_OF_JOB);
+   g_job.AssociateCompletionPort(g_hIOCP, COMPKEY_JOBOBJECT);
+
+   DialogBox(hinstExe, MAKEINTRESOURCE(IDD_JOBLAB), NULL, Dlg_Proc);
+
+   // Post a special key that tells the completion port thread to terminate
+   PostQueuedCompletionStatus(g_hIOCP, 0, COMPKEY_TERMINATE, NULL);
+
+   // Wait for the completion port thread to terminate
+   WaitForSingleObject(g_hThreadIOCP, INFINITE);
+   
+   // Clean up everything properly
+   CloseHandle(g_hIOCP);
+   CloseHandle(g_hThreadIOCP);
+
+   // NOTE: The job is closed when the g_job's destructor is called.
+   return(0);
+}
+
+///////////////////////////////// End Of File /////////////////////////////////
+</PRE>
+</TD></TR></TABLE>
+</P>
+
+<P><table cellpadding=5 width="95%"><TR><TD>
+<p><b>Job.h</b></p>
+<PRE>
+/******************************************************************************
+Module:  Job.h
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#pragma once
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+#include &lt;malloc.h&gt;  // for _alloca
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+class CJob {
+public:
+   CJob(HANDLE hJob = NULL);
+   ~CJob();
+
+   operator HANDLE() const { return(m_hJob); }
+
+   // Functions to create/open a job object
+   BOOL Create(LPSECURITY_ATTRIBUTES psa = NULL, LPCTSTR pszName = NULL);
+   BOOL Open(LPCTSTR pszName, DWORD dwDesiredAccess, 
+      BOOL fInheritHandle = FALSE);
+
+   // Functions that manipulate a job object
+   BOOL AssignProcess(HANDLE hProcess);
+   BOOL Terminate(UINT uExitCode = 0);
+
+   // Functions that set limits/restrictions on the job
+   BOOL SetExtendedLimitInfo(PJOBOBJECT_EXTENDED_LIMIT_INFORMATION pjoeli, 
+      BOOL fPreserveJobTime = FALSE);
+   BOOL SetBasicUIRestrictions(DWORD fdwLimits);
+   BOOL GrantUserHandleAccess(HANDLE hUserObj, BOOL fGrant = TRUE);
+   BOOL SetSecurityLimitInfo(PJOBOBJECT_SECURITY_LIMIT_INFORMATION pjosli);
+
+   // Functions that query job limits/restrictions
+   BOOL QueryExtendedLimitInfo(PJOBOBJECT_EXTENDED_LIMIT_INFORMATION pjoeli);
+   BOOL QueryBasicUIRestrictions(PDWORD pfdwRestrictions);
+   BOOL QuerySecurityLimitInfo(PJOBOBJECT_SECURITY_LIMIT_INFORMATION pjosli);
+
+   // Functions that query job status information
+   BOOL QueryBasicAccountingInfo(
+      PJOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION pjobai);
+   BOOL QueryBasicProcessIdList(DWORD dwMaxProcesses, 
+      PDWORD pdwProcessIdList, PDWORD pdwProcessesReturned = NULL);
+
+   // Functions that set/query job event notifications
+   BOOL AssociateCompletionPort(HANDLE hIOCP, ULONG_PTR CompKey);
+   BOOL QueryAssociatedCompletionPort(
+      PJOBOBJECT_ASSOCIATE_COMPLETION_PORT pjoacp);
+   BOOL SetEndOfJobInfo(
+      DWORD fdwEndOfJobInfo = JOB_OBJECT_TERMINATE_AT_END_OF_JOB);
+   BOOL QueryEndOfJobTimeInfo(PDWORD pfdwEndOfJobTimeInfo);
+
+private:
+   HANDLE m_hJob;
+};
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+inline CJob::CJob(HANDLE hJob) {
+
+   m_hJob = hJob;
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+inline CJob::~CJob() {
+
+   if (m_hJob != NULL) 
+      CloseHandle(m_hJob);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+inline BOOL CJob::Create(PSECURITY_ATTRIBUTES psa, PCTSTR pszName) {
+
+   m_hJob = CreateJobObject(psa, pszName);
+   return(m_hJob != NULL);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+inline BOOL CJob::Open(
+   PCTSTR pszName, DWORD dwDesiredAccess, BOOL fInheritHandle) {
+
+   m_hJob = OpenJobObject(dwDesiredAccess, fInheritHandle, pszName);
+   return(m_hJob != NULL);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+inline BOOL CJob::AssignProcess(HANDLE hProcess) {
+
+   return(AssignProcessToJobObject(m_hJob, hProcess));
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+inline BOOL CJob::AssociateCompletionPort(HANDLE hIOCP, ULONG_PTR CompKey) {
+
+   JOBOBJECT_ASSOCIATE_COMPLETION_PORT joacp = { (PVOID) CompKey, hIOCP };
+   return(SetInformationJobObject(m_hJob, 
+      JobObjectAssociateCompletionPortInformation, &amp;joacp, sizeof(joacp)));
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+inline BOOL CJob::SetExtendedLimitInfo(
+   PJOBOBJECT_EXTENDED_LIMIT_INFORMATION pjoeli, BOOL fPreserveJobTime) {
+
+   if (fPreserveJobTime)
+      pjoeli-&gt;BasicLimitInformation.LimitFlags |= 
+         JOB_OBJECT_LIMIT_PRESERVE_JOB_TIME;
+
+   // If we are to preserve the job's time information, 
+   // the JOB_OBJECT_LIMIT_JOB_TIME flag must not be on
+   const DWORD fdwFlagTest = 
+      (JOB_OBJECT_LIMIT_PRESERVE_JOB_TIME | JOB_OBJECT_LIMIT_JOB_TIME);
+
+   if ((pjoeli-&gt;BasicLimitInformation.LimitFlags &amp; fdwFlagTest) 
+      == fdwFlagTest) {
+      // These flags are mutually exclusive but both are on, error
+      DebugBreak();
+   }
+
+   return(SetInformationJobObject(m_hJob, 
+      JobObjectExtendedLimitInformation, pjoeli, sizeof(*pjoeli)));
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+inline BOOL CJob::SetBasicUIRestrictions(DWORD fdwLimits) {
+
+   JOBOBJECT_BASIC_UI_RESTRICTIONS jobuir = { fdwLimits };
+   return(SetInformationJobObject(m_hJob, 
+      JobObjectBasicUIRestrictions, &amp;jobuir, sizeof(jobuir)));
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+inline BOOL CJob::SetEndOfJobInfo(DWORD fdwEndOfJobInfo) {
+
+   JOBOBJECT_END_OF_JOB_TIME_INFORMATION joeojti = { fdwEndOfJobInfo };
+   joeojti.EndOfJobTimeAction = fdwEndOfJobInfo;
+   return(SetInformationJobObject(m_hJob, 
+      JobObjectEndOfJobTimeInformation, &amp;joeojti, sizeof(joeojti)));
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+inline BOOL CJob::SetSecurityLimitInfo(
+   PJOBOBJECT_SECURITY_LIMIT_INFORMATION pjosli) {
+
+   return(SetInformationJobObject(m_hJob, 
+      JobObjectSecurityLimitInformation, pjosli, sizeof(*pjosli)));
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+inline BOOL CJob::QueryAssociatedCompletionPort(
+   PJOBOBJECT_ASSOCIATE_COMPLETION_PORT pjoacp) {
+
+   return(QueryInformationJobObject(m_hJob, 
+      JobObjectAssociateCompletionPortInformation, pjoacp, sizeof(*pjoacp), 
+      NULL));
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+inline BOOL CJob::QueryBasicAccountingInfo(
+   PJOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION pjobai) {
+
+   return(QueryInformationJobObject(m_hJob, 
+      JobObjectBasicAndIoAccountingInformation, pjobai, sizeof(*pjobai), 
+      NULL));
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+inline BOOL CJob::QueryExtendedLimitInfo(
+   PJOBOBJECT_EXTENDED_LIMIT_INFORMATION pjoeli) {
+
+   return(QueryInformationJobObject(m_hJob, JobObjectExtendedLimitInformation, 
+      pjoeli, sizeof(*pjoeli), NULL));
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+inline BOOL CJob::QueryBasicProcessIdList(DWORD dwMaxProcesses, 
+   PDWORD pdwProcessIdList, PDWORD pdwProcessesReturned) {
+
+   // Calculate the # of bytes necessary
+   DWORD cb = sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) + 
+      (sizeof(DWORD) * (dwMaxProcesses - 1));
+
+   // Allocate those bytes from the stack
+   PJOBOBJECT_BASIC_PROCESS_ID_LIST pjobpil = 
+      (PJOBOBJECT_BASIC_PROCESS_ID_LIST) _alloca(cb);
+
+   // Were those bytes allocated OK? If so, keep going
+   BOOL fOk = (pjobpil != NULL);
+
+   if (fOk) {
+      pjobpil-&gt;NumberOfProcessIdsInList = dwMaxProcesses;
+      fOk = ::QueryInformationJobObject(m_hJob, JobObjectBasicProcessIdList, 
+         pjobpil, cb, NULL);
+
+      if (fOk) {
+         // We got the information, return it to the caller
+         if (pdwProcessesReturned != NULL) 
+            *pdwProcessesReturned = pjobpil-&gt;NumberOfProcessIdsInList;
+
+         CopyMemory(pdwProcessIdList, pjobpil-&gt;ProcessIdList, 
+            sizeof(DWORD) * pjobpil-&gt;NumberOfProcessIdsInList);
+      }
+   }
+   return(fOk);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+inline BOOL CJob::QueryBasicUIRestrictions(PDWORD pfdwRestrictions) {
+
+   JOBOBJECT_BASIC_UI_RESTRICTIONS jobuir;
+   BOOL fOk = QueryInformationJobObject(m_hJob, JobObjectBasicUIRestrictions, 
+      &amp;jobuir, sizeof(jobuir), NULL);
+   if (fOk)
+      *pfdwRestrictions = jobuir.UIRestrictionsClass;
+   return(fOk);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+inline BOOL CJob::QueryEndOfJobTimeInfo(PDWORD pfdwEndOfJobTimeInfo) {
+
+   JOBOBJECT_END_OF_JOB_TIME_INFORMATION joeojti;
+   BOOL fOk = QueryInformationJobObject(m_hJob, JobObjectBasicUIRestrictions, 
+      &amp;joeojti, sizeof(joeojti), NULL);
+   if (fOk)
+      *pfdwEndOfJobTimeInfo = joeojti.EndOfJobTimeAction;
+   return(fOk);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+inline BOOL CJob::QuerySecurityLimitInfo(
+   PJOBOBJECT_SECURITY_LIMIT_INFORMATION pjosli) {
+
+   return(QueryInformationJobObject(m_hJob, JobObjectSecurityLimitInformation, 
+      pjosli, sizeof(*pjosli), NULL));
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+inline BOOL CJob::Terminate(UINT uExitCode) {
+
+   return(TerminateJobObject(m_hJob, uExitCode));
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+inline BOOL CJob::GrantUserHandleAccess(HANDLE hUserObj, BOOL fGrant) {
+
+   return(UserHandleGrantAccess(hUserObj, m_hJob, fGrant));
+}
+
+
+//////////////////////////////// End of File //////////////////////////////////
+</PRE>
+</TD></TR></TABLE>
+</P>
+
+<P><table cellpadding=5 width="95%"><TR><TD>
+<p><b>JobLab.rc</b></p>
+<PRE>
+//Microsoft Developer Studio generated resource script.
+//
+#include &quot;resource.h&quot;
+
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+/////////////////////////////////////////////////////////////////////////////
+// English (U.S.) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+#ifdef _WIN32
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(1252)
+#endif //_WIN32
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+// Icon with lowest ID value placed first to ensure application icon
+// remains consistent on all systems.
+IDI_MEMRESET            ICON    DISCARDABLE     &quot;MemReset.ico&quot;
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// TEXTINCLUDE
+//
+
+1 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;resource.h\0&quot;
+END
+
+2 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;#include &quot;&quot;afxres.h&quot;&quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+3 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+#endif    // APSTUDIO_INVOKED
+
+#endif    // English (U.S.) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 3 resource.
+//
+
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED
+</pre></td></tr></table></p>
+</body>
+</html>
+
+
+
+
+
+
+

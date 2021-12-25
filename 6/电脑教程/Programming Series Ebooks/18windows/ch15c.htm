@@ -1,0 +1,1956 @@
+<HTML>
+<HEAD>
+	<LINK REL=StyleSheet HREF="petzoldi.css" TYPE="text/css">
+<TITLE>Displaying and Printing</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="488"><h1>Displaying and Printing</h1></A><P>Bitmaps are for looking at. In this section, we'll begin by looking at the two functions 
+that Windows supports for displaying a DIB on the video display or a printer page. For 
+better performance, you may eventually prefer a more roundabout method for displaying 
+bitmaps that I'll discuss later in this chapter. But these two functions are a logical first start.
+<P>The two functions are called 
+<I>SetDIBitsToDevice</I> (pronounced &quot;set dee eye bits 
+to device&quot;) and <I>StretchDIBits</I> (&quot;stretch dee eye bits&quot;). Each function uses a DIB stored 
+in memory and can display the entire DIB or a rectangular portion of it. When you 
+use <I>SetDIBitsToDevice</I>, the size of the displayed image in pixels will be the same as the 
+pixel size of the DIB. For example, a 640-by-480 DIB will cover your entire standard VGA 
+screen, but on your 300-dpi laser printer it will be only about 2.1 by 1.6 inches. The 
+<I>StretchDIBits</I> function can stretch or shrink the row and column dimension of a DIB to display it in 
+a particular size on the output device.
+
+<A NAME="489"><h2>Digging into the DIB</h2></A><P>When you call one of the two functions to display a DIB, you need several pieces of 
+information about the image. As I discussed earlier, DIB files contain the following sections:
+<p><IMG SRC="G15zg09.gif" width=174 height=232 ALIGN="BOTTOM" BORDER=0>
+<p>A DIB file can be loaded into memory. If the entire file 
+<I>less the file header</I> is stored in a contiguous block of memory, a pointer to the beginning of the block (which is 
+the beginning of the information header) is said to address a 
+<I>packed DIB</I>. (See below.)
+<P><IMG SRC="G15zg10.gif" width=174 height=206 ALIGN="BOTTOM" BORDER=0>
+<P>This is the format you use when transferring a DIB through the clipboard, and 
+it's also the format you use when creating a brush from a DIB. The packed DIB is a 
+convenient way to store a DIB in memory because the entire DIB is referenced by a single 
+pointer (for example, <I>pPackedDib</I>), which you can define as a pointer to a BYTE. Using the 
+
+structure definitions shown earlier in this chapter, you can get at all the information stored in 
+the DIB, including the color table and the individual pixel bits.
+<P>However, getting at much of this information requires several lines of code. 
+For example, you can't simply access the pixel width of the DIB using the statement
+<p><pre>
+iWidth = ((PBITMAPINFOHEADER) pPackedDib)-&gt;biWidth ;
+</PRE>
+<P>It's possible that the DIB is in the OS/2-compatible format. In that format, the packed 
+DIB begins with a BITMAPCOREHEADER structure and the pixel width and height of the 
+DIB are stored as 16-bit WORDs rather than 32-bit LONGs. So, you first have to check if 
+the DIB is in the old format and then proceed accordingly:
+<p><pre>
+if (((PBITMAPCOREHEADER) pPackedDib)-&gt;bcSize == sizeof (BITMAPCOREHEADER))
+     iWidth = ((PBITMAPCOREHEADER) pPackedDib)-&gt;bcWidth ;
+else
+     iWidth = ((PBITMAPINFOHEADER) pPackedDib)-&gt;biWidth ;
+</PRE>
+<P>This isn't all that bad, of course, but it's certainly not as clean as we'd prefer.
+<P>Now here's a fun exercise: given a pointer to a packed DIB, find the value of the 
+pixel at coordinate (5, 27). Even if you assume that the DIB is not in the OS/2-compatible 
+format, you need to know the width, height, and bit count of the DIB. You need to 
+calculate the byte length of each row of pixels. You need to determine the number of entries in 
+the color table, and whether the color table includes three 32-bit color masks. And you 
+need to check whether the DIB is compressed, in which case the pixel is not directly addressable.
+<P>If you need to directly access <I>all</I> the pixels of the DIB (as you do when 
+performing many image-processing jobs), this can add up to quite a bit of processing time. For 
+this reason, while maintaining a pointer to a packed DIB may be convenient, it certainly 
+doesn't lend itself to efficient code. An excellent solution is defining a C++ class for DIBs 
+that includes enough member data to allow the very speedy random access of DIB 
+pixels. However, since I promised at the outset of this book that you need not know any C++, 
+I'll show you a C solution instead in the next chapter.
+<P>For the <I>SetDIBitsToDevice</I> and 
+<I>StretchDIBits</I> functions, the information you 
+need includes a pointer to the BITMAPINFO structure of the DIB. As you'll recall, the 
+BITMAPINFO structure comprises the BITMAPINFOHEADER structure and the color table. So, 
+this is simply a pointer to the packed DIB with appropriate casting. 
+<P>The functions also require a pointer to the pixel bits. This is derivable from 
+information in the information header, although the code is not pretty. Notice that this pointer 
+can be calculated much more easily when you have access to the 
+<I>bfOffBits</I> field of the BITMAPFILEHEADER structure. The 
+<I>bfOffBits</I> field indicates the offset from the beginning of 
+the DIB file to the pixel bits. You could simply add this offset to the BITMAPINFO pointer 
+and then subtract the size of the BITMAPFILEHEADER structure. However, this doesn't 
+help when you get a pointer to a packed DIB from the clipboard, because you don't have 
+a BITMAPFILEHEADER structure.
+This diagram shows the two pointers you need:
+<p><IMG SRC="G15zg11.gif" width=264 height=219 ALIGN="BOTTOM" BORDER=0>
+<p>The <I>SetDIBitsToDevice</I> and 
+<I>StretchDIBits</I> functions require two pointers to the 
+DIB because the two sections do not have to be in one contiguous block of memory. You 
+could have two blocks of memory like so:
+<P><IMG SRC="G15zg12.gif" width=264 height=244 ALIGN="BOTTOM" BORDER=0>
+<P>Indeed, breaking a DIB into two memory blocks like this is quite useful. It's only 
+because we're preferring for the moment to work with packed DIBs that the entire DIB is 
+stored in a single memory block.
+<P>Besides these two pointers, the 
+<I>SetDIBitsToDevice</I> and <I>StretchDIBits</I> functions 
+also usually require the pixel width and height of the DIB. If you're displaying only part of 
+the DIB, then you don't need these values explicitly, but they'll define an upper limit for 
+a rectangle you define within the array of DIB pixel bits.
+
+<A NAME="490"><h2>Pixel to Pixel</h2></A><P>The <I>SetDIBitsToDevice</I> function displays a DIB without any stretching or shrinking. 
+Each pixel of the DIB is mapped to a pixel of the output device. The image is always 
+displayed correctly oriented&#8212;that is, with the top row of the image on top. Any transforms that 
+might be in effect for the device context determine the starting position where the DIB is 
+displayed but otherwise have no effect on the size or orientation of the image. Here's 
+the function:
+<p><pre>
+iLines = SetDIBitsToDevice (
+               hdc,           // device context handle
+               xDst,          // x destination coordinate
+               yDst,          // y destination coordinate
+               cxSrc,         // source rectangle width
+               cySrc,         // source rectangle height
+               xSrc,          // x source coordinate
+               ySrc,          // y source coordinate
+               yScan,         // first scan line to draw
+               cyScans,       // number of scan lines to draw
+               pBits,         // pointer to DIB pixel bits
+               pInfo,         // pointer to DIB information
+               fClrUse) ;     // color use flag
+</PRE>
+<P>Don't be too put off by the number of arguments. For most purposes, the function is 
+easier to use than it initially appears. For other purposes, well&#8230;it's a mess. But we'll work it out.
+<p>As usual for GDI display functions, the first argument to 
+<I>SetDIBitsToDevice</I> is the handle of the device context indicating the device on which you want to display the 
+DIB. The next two arguments, <I>xDst</I> and 
+<I>yDst</I>, are logical coordinates of the output device 
+and indicate the coordinate where the top left corner of the DIB image is to appear. (By 
+&quot;top&quot; I mean the visual top of the image, not the first row of pixels in the DIB.) Note that 
+these are logical coordinates, so they are subject to any mapping mode that may be in effect 
+or&#8212;in the case of Windows NT&#8212;any transform you may have set. In the default 
+MM_TEXT mapping mode, you would set both these arguments equal to 0 to display the DIB 
+image flush against the left side and top of the display surface.
+<p>You can display the entire DIB image or only part of it. That's the purpose of the 
+next four arguments. But here's where the upside-down orientation of DIB pixel data 
+creates some real perversion that I'll discuss shortly. For now, be aware that to display the 
+entire DIB, you set <I>xSrc</I> and <I>ySrc</I> equal to 0 and 
+<I>cxSrc</I> and <I>cySrc</I> equal to the pixel width 
+and height of the DIB, respectively. Note that because the 
+<I>biHeight</I> field of the BITMAPINFOHEADER structure will be negative for top-down DIBs, 
+<I>cySrc</I> should be set to the absolute value of the 
+<I>biHeight</I> field.
+<p>The documentation of this function (<I>/Platform SDK/Graphics and Multimedia 
+Services/GDI/Bitmaps/Bitmap Reference/Bitmap 
+Functions/SetDIBitsToDevice</I>) says that the 
+<I>xSrc</I>, <I>ySrc</I>, <I>cxSrc</I>, and 
+<I>cySrc</I> arguments are in logical units. This is not true. They are pixel 
+coordinates and dimensions. It makes no sense for the pixels within a DIB to have 
+logical coordinates and units. Moreover, regardless of the mapping mode, a DIB displayed on 
+an output device will always be <I>cxSrc</I> pixels wide and 
+<I>cySrc</I> pixels high.
+<p>Let me also skip a detailed discussion of the next two arguments, 
+<I>yScan</I> and <I>cyScan</I>, for now. These arguments let you reduce memory requirements by displaying a DIB 
+sequentially a bit at a time as you read it from a disk file or a modem connection. 
+Usually, you set <I>yScan</I> to 0 and 
+<I>cyScan</I> to the height of the DIB.
+<p>The <I>pBits</I> argument is a pointer to the DIB pixel bits. The 
+<I>pInfo</I> argument is a pointer to the BITMAPINFO structure of the DIB. Although the address of the BITMAPINFO 
+structure is the same as the address of the BITMAPINFOHEADER structure, the 
+<I>SetDIBitsToDevice</I> function is defined to use the BITMAPINFO structure as a subtle hint: for 1-bit, 4-bit, 
+and 8-bit DIBs, the bitmap information header must be followed by a color table. 
+Although defined as a pointer to a BITMAPINFO structure, this argument can also be a pointer to 
+a BITMAPCOREINFO, BITMAPV4HEADER, or BITMAPV5HEADER structure.
+<p>The last argument is either DIB_RGB_COLORS or DIB_PAL_COLORS, defined 
+in WINGDI.H as 0 and 1, respectively. For now you'll use DIB_RGB_COLORS, which 
+means that the DIB contains a color table. The DIB_PAL_COLORS flag indicates that the color 
+table in the DIB has been replaced with 16-bit indices into a logical color palette selected 
+and realized in a device context. We'll learn about this option in the next chapter. For 
+now, use DIB_RGB_COLORS, or simply 0 if you're lazy.
+<p>The <I>SetDIBitsToDevice</I> function returns the number of scan lines it displays.
+<P>So, to call <I>SetDIBitsToDevice</I> to display an entire DIB image, you'll need the 
+following information:
+<UL>
+<p><li><I>     hdc</I> The device context handle to the destination surface.
+<p><li><I>     xDst</I> and <I>yDst</I> The destination coordinates of the top left corner of the image.
+<p><li><I>     cxDib</I> and <I>cyDib</I> The pixel width and height of the DIB, where 
+<I>cyDib</I> is the absolute value of the 
+<I>biHeight</I> field in the BITMAPINFOHEADER structure.
+<p><li><I>     pInfo</I> and <I>pBits</I> Pointers to the bitmap information section and the pixel bits.
+</UL>
+<P>You then call <I>SetDIBitsToDevice</I> like so:
+<p><pre>
+SetDIBitsToDevice (
+     hdc,      // device context handle
+     xDst,     // x destination coordinate
+     yDst,     // y destination coordinate
+     cxDib,    // source rectangle width
+     cyDib,    // source rectangle height
+     0,        // x source coordinate
+     0,        // y source coordinate
+     0,        // first scan line to draw
+     cyDib,    // number of scan lines to draw
+     pBits,    // pointer to DIB pixel bits
+     pInfo,    // pointer to DIB information
+     0) ;      // color use flag
+</PRE>
+<P>So, out of the 12 arguments to the DIB, four are commonly set to 0 and another is repeated.
+The SHOWDIB1 program in Figure 15-2 displays a DIB by using the 
+<I>SetDIBitsToDevice</I> function.
+
+<p><B>Figure 15-2.</b> <i>The SHOWDIB1 program.</I>
+<TABLE CELLPADDING=5 WIDTH="95%"><TR><TD>
+<P><A NAME="491"><h3>SHOWDIB1.C</h3></A>
+<P><PRE>
+/*----------------------------------------------
+   SHOWDIB1.C -- Shows a DIB in the client area
+                 (c) Charles Petzold, 1998
+  ----------------------------------------------*/
+
+
+#include &lt;windows.h&gt;
+#include &quot;dibfile.h&quot;
+#include &quot;resource.h&quot;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+TCHAR szAppName[] = TEXT (&quot;ShowDib1&quot;) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     HACCEL   hAccel ;
+     HWND     hwnd ;
+     MSG      msg ;
+     WNDCLASS wndclass ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = szAppName ;
+     wndclass.lpszClassName = szAppName ;
+
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;), 
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Show DIB #1&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT, 
+                          NULL, NULL, hInstance, NULL) ;
+
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+     hAccel = LoadAccelerators (hInstance, szAppName) ;
+
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          if (!TranslateAccelerator (hwnd, hAccel, &amp;msg))
+          {
+               TranslateMessage (&amp;msg) ;
+               DispatchMessage (&amp;msg) ;
+          }
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static BITMAPFILEHEADER * pbmfh ;
+     static BITMAPINFO       * pbmi ;
+     static BYTE             * pBits ;
+     static int                cxClient, cyClient, cxDib, cyDib ;
+     static TCHAR              szFileName [MAX_PATH], szTitleName [MAX_PATH] ;
+     BOOL                      bSuccess ;
+     HDC                       hdc ;
+     PAINTSTRUCT               ps ;
+
+     switch (message)
+     {
+     case WM_CREATE:
+          DibFileInitialize (hwnd) ;
+          return 0 ;
+
+     case WM_SIZE:
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+          return 0 ;
+
+     case WM_INITMENUPOPUP:
+          EnableMenuItem ((HMENU) wParam, IDM_FILE_SAVE,   
+                          pbmfh ? MF_ENABLED : MF_GRAYED) ;
+          return 0 ;
+
+     case WM_COMMAND:
+          switch (LOWORD (wParam))
+          {
+          case IDM_FILE_OPEN:
+                    // Show the File Open dialog box
+
+               if (!DibFileOpenDlg (hwnd, szFileName, szTitleName))
+                    return 0 ;
+               
+                    // If there's an existing DIB, free the memory
+
+               if (pbmfh)
+               {
+                    free (pbmfh) ;
+                    pbmfh = NULL ;
+               }
+                    // Load the entire DIB into memory
+
+               SetCursor (LoadCursor (NULL, IDC_WAIT)) ;
+               ShowCursor (TRUE) ;
+
+               pbmfh = DibLoadImage (szFileName) ;
+               ShowCursor (FALSE) ;
+               SetCursor (LoadCursor (NULL, IDC_ARROW)) ;
+
+                    // Invalidate the client area for later update
+
+               InvalidateRect (hwnd, NULL, TRUE) ;
+
+               if (pbmfh == NULL)
+               {
+                    MessageBox (hwnd, TEXT (&quot;Cannot load DIB file&quot;), 
+                                szAppName, 0) ;
+                    return 0 ;
+               }
+                    // Get pointers to the info structure &amp; the bits
+
+               pbmi  = (BITMAPINFO *) (pbmfh + 1) ;
+               pBits = (BYTE *) pbmfh + pbmfh-&gt;bfOffBits ;
+
+                    // Get the DIB width and height
+
+               if (pbmi-&gt;bmiHeader.biSize == sizeof (BITMAPCOREHEADER))
+               {
+                    cxDib = ((BITMAPCOREHEADER *) pbmi)-&gt;bcWidth ;
+                    cyDib = ((BITMAPCOREHEADER *) pbmi)-&gt;bcHeight ;
+               }
+               else
+               {
+                    cxDib =      pbmi-&gt;bmiHeader.biWidth ;
+                    cyDib = abs (pbmi-&gt;bmiHeader.biHeight) ;
+               }
+               return 0 ;
+
+          case IDM_FILE_SAVE:
+                    // Show the File Save dialog box
+
+               if (!DibFileSaveDlg (hwnd, szFileName, szTitleName))
+                    return 0 ;
+               
+                    // Save the DIB to memory
+
+               SetCursor (LoadCursor (NULL, IDC_WAIT)) ;
+               ShowCursor (TRUE) ;
+
+               bSuccess = DibSaveImage (szFileName, pbmfh) ;
+               ShowCursor (FALSE) ;
+               SetCursor (LoadCursor (NULL, IDC_ARROW)) ;
+
+               if (!bSuccess)
+                    MessageBox (hwnd, TEXT (&quot;Cannot save DIB file&quot;), 
+                                szAppName, 0) ;
+               return 0 ;
+          }
+          break ;
+
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+
+          if (pbmfh)
+               SetDIBitsToDevice (hdc, 
+                                  0,         // xDst
+                                  0,         // yDst
+                                  cxDib,     // cxSrc
+                                  cyDib,     // cySrc
+                                  0,         // xSrc
+                                  0,         // ySrc
+                                  0,         // first scan line
+                                  cyDib,     // number of scan lines
+                                  pBits, 
+                                  pbmi, 
+                                  DIB_RGB_COLORS) ;
+
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+          
+     case WM_DESTROY:
+          if (pbmfh)
+               free (pbmfh) ;
+
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</PRE>
+</TD></TR>
+</TABLE>
+
+<P><TABLE CELLPADDING=5 WIDTH="95%"><TR><TD>
+<P><A NAME="492"><H3>DIBFILE.H</H3></A>
+<P><PRE>
+/*----------------------------------------
+   DIBFILE.H -- Header File for DIBFILE.C
+
+  ----------------------------------------*/
+
+void DibFileInitialize (HWND hwnd) ;
+BOOL DibFileOpenDlg (HWND hwnd, PTSTR pstrFileName, PTSTR pstrTitleName) ;
+BOOL DibFileSaveDlg (HWND hwnd, PTSTR pstrFileName, PTSTR pstrTitleName) ;
+<P>BITMAPFILEHEADER * DibLoadImage (PTSTR pstrFileName) ;
+<P>BOOL               DibSaveImage (PTSTR pstrFileName, BITMAPFILEHEADER *) ;
+</PRE>
+</TD></TR>
+</TABLE>
+<P><TABLE CELLPADDING=5 WIDTH="95%"><TR><TD>
+<P><A NAME="493"><H3>DIBFILE.C</H3></A>
+<P><PRE> 
+
+/*---------------------------------
+   DIBFILE.C -- DIB File Functions
+
+  ---------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &lt;commdlg.h&gt;
+#include &quot;dibfile.h&quot;
+
+static OPENFILENAME ofn ;
+
+void DibFileInitialize (HWND hwnd)
+{
+     static TCHAR szFilter[] = TEXT (&quot;Bitmap Files (*.BMP)\0*.bmp\0&quot;)  \
+                               TEXT (&quot;All Files (*.*)\0*.*\0\0&quot;) ;
+     
+     ofn.lStructSize       = sizeof (OPENFILENAME) ;
+     ofn.hwndOwner         = hwnd ;
+     ofn.hInstance         = NULL ;
+     ofn.lpstrFilter       = szFilter ;
+     ofn.lpstrCustomFilter = NULL ;
+     ofn.nMaxCustFilter    = 0 ;
+     ofn.nFilterIndex      = 0 ;
+     ofn.lpstrFile         = NULL ;          // Set in Open and Close functions
+     ofn.nMaxFile          = MAX_PATH ;
+     ofn.lpstrFileTitle    = NULL ;          // Set in Open and Close functions
+     ofn.nMaxFileTitle     = MAX_PATH ;
+     ofn.lpstrInitialDir   = NULL ;
+     ofn.lpstrTitle        = NULL ;
+     ofn.Flags             = 0 ;             // Set in Open and Close functions
+     ofn.nFileOffset       = 0 ;
+     ofn.nFileExtension    = 0 ;
+     ofn.lpstrDefExt       = TEXT (&quot;bmp&quot;) ;
+     ofn.lCustData         = 0 ;
+     ofn.lpfnHook          = NULL ;
+     ofn.lpTemplateName    = NULL ;
+}
+BOOL DibFileOpenDlg (HWND hwnd, PTSTR pstrFileName, PTSTR pstrTitleName)
+{
+     ofn.hwndOwner         = hwnd ;
+     ofn.lpstrFile         = pstrFileName ;
+     ofn.lpstrFileTitle    = pstrTitleName ;
+     ofn.Flags             = 0 ;
+     
+     return GetOpenFileName (&amp;ofn) ;
+}
+
+BOOL DibFileSaveDlg (HWND hwnd, PTSTR pstrFileName, PTSTR pstrTitleName)
+{
+     ofn.hwndOwner         = hwnd ;
+     ofn.lpstrFile         = pstrFileName ;
+     ofn.lpstrFileTitle    = pstrTitleName ;
+     ofn.Flags             = OFN_OVERWRITEPROMPT ;
+     
+     return GetSaveFileName (&amp;ofn) ;
+}
+
+BITMAPFILEHEADER * DibLoadImage (PTSTR pstrFileName)
+{
+     BOOL               bSuccess ;
+     DWORD              dwFileSize, dwHighSize, dwBytesRead ;
+     HANDLE             hFile ;
+     BITMAPFILEHEADER * pbmfh ;
+
+     hFile = CreateFile (pstrFileName, GENERIC_READ, FILE_SHARE_READ, NULL,
+                         OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL) ;
+
+     if (hFile == INVALID_HANDLE_VALUE)
+          return NULL ;
+
+     dwFileSize = GetFileSize (hFile, &amp;dwHighSize) ;
+
+     if (dwHighSize)
+     {
+          CloseHandle (hFile) ;
+          return NULL ;
+     }
+
+     pbmfh = malloc (dwFileSize) ;
+     if (!pbmfh)
+     {
+          CloseHandle (hFile) ;
+          return NULL ;
+     }
+
+     bSuccess = ReadFile (hFile, pbmfh, dwFileSize, &amp;dwBytesRead, NULL) ;
+     CloseHandle (hFile) ;
+     if (!bSuccess || (dwBytesRead != dwFileSize)         
+                   || (pbmfh-&gt;bfType != * (WORD *) &quot;BM&quot;) 
+                   || (pbmfh-&gt;bfSize != dwFileSize))
+     {
+          free (pbmfh) ;
+          return NULL ;
+     }
+     return pbmfh ;
+}
+
+BOOL DibSaveImage (PTSTR pstrFileName, BITMAPFILEHEADER * pbmfh)
+{
+     BOOL   bSuccess ;
+     DWORD  dwBytesWritten ;
+     HANDLE hFile ;
+
+     hFile = CreateFile (pstrFileName, GENERIC_WRITE, 0, NULL,
+                         CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL) ;
+
+     if (hFile == INVALID_HANDLE_VALUE)
+          return FALSE ;
+
+     bSuccess = WriteFile (hFile, pbmfh, pbmfh-&gt;bfSize, &amp;dwBytesWritten, NULL) ;
+     CloseHandle (hFile) ;
+
+     if (!bSuccess || (dwBytesWritten != pbmfh-&gt;bfSize))
+     {
+          DeleteFile (pstrFileName) ;
+          return FALSE ;
+     }
+     return TRUE ;
+}
+</PRE>
+</TD></TR>
+</TABLE>
+
+<P><TABLE CELLPADDING=5 WIDTH="95%"><TR><TD>
+<P><A NAME="494"><H3>SHOWDIB1.RC (excerpts)</H3></A>
+<P><PRE>
+//Microsoft Developer Studio generated resource script.
+
+
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+/////////////////////////////////////////////////////////////////////////////
+// Menu
+
+SHOWDIB1 MENU DISCARDABLE 
+
+BEGIN
+    POPUP &quot;&amp;File&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Open...&quot;,                    IDM_FILE_OPEN
+        MENUITEM &quot;&amp;Save...&quot;,                    IDM_FILE_SAVE
+    END
+END
+</PRE>
+</TD></TR>
+</TABLE>
+<P><TABLE CELLPADDING=5 WIDTH="95%"><TR><TD>
+<P><A NAME="495"><H3>RESOURCE.H (excerpts)</H3></A>
+<P><PRE>
+
+
+// Microsoft Developer Studio generated include file.
+// Used by ShowDib1.rc
+
+#define IDM_FILE_OPEN                   40001
+#define IDM_FILE_SAVE                   40002
+
+</PRE>
+</TD></TR>
+</TABLE>
+
+
+<p>The DIBFILE.C file contains routines to display the File Open and File Save dialog 
+boxes and also to load an entire DIB file (complete with the BITMAPFILEHEADER structure) 
+into a single block of memory. The program can also write out such a memory block to a file.
+<p>After loading in a DIB file while processing the File Open command in 
+SHOWDIB1.C, the program calculates the offsets of the BITMAPINFOHEADER structure and the pixel 
+bits within the memory block. The program also obtains the pixel width and height of the 
+DIB. All of this information is stored in static variables. During the WM_PAINT message, 
+the program displays the DIB by calling 
+<I>SetDIBitsToDevice</I>.
+<P>Of course, SHOWDIB1 is missing a few features. For instance, if the DIB is too 
+big for the client area, there are no scroll bars to move it into view. These are deficiencies 
+that will be fixed before the end of the next chapter.
+
+<A NAME="496"><h2>The Topsy-Turvy World of DIBs</h2></A><P>We are about to learn an important lesson, not only in life but in the design of 
+application program interfaces for operating systems. That lesson is: if you screw something up at 
+the beginning, it only gets more screwed up when you later try to patch it.
+<p>Back when the bottom-up definition of the DIB pixel bits originated in the 
+OS/2 Presentation Manager, it made some degree of sense because everything in PM has a 
+default bottom left origin. For example, within a PM window, the default (0,0) origin is the 
+lower left corner of the window. (If this sounds wacky to you, you're not alone. If it doesn't 
+sound wacky, you're probably a mathematician.) The bitmap-drawing functions also specified 
+a destination in terms of lower left coordinates. 
+<p>So, in OS/2, if you specified a destination coordinate of (0,0) for the 
+bitmap, the image would appear flush against the left and bottom of the window, as 
+in Figure 15-3.
+<p><A HREF="javascript:fullSize('F15zg03x.htm')"><IMG SRC="F15zg03.JPG" width=404 height=284 ALIGN="BOTTOM" BORDER=0 ALT="click here for full size"></A>
+<P>
+
+<!-- caption --><B>Figure 15-3.</b> <i>A bitmap as it would be displayed under OS/2 with a (0,0) destination.</I><!-- /caption -->
+<P>With a slow enough machine, you could actually see the bitmap being drawn from 
+the bottom to the top.
+<P>While the OS/2 coordinate system may seem wacky, it has the virtue of being 
+highly consistent. The (0,0) origin of the bitmap is the first pixel of the first row in the bitmap 
+file, and this pixel is mapped to the destination coordinate indicated in the 
+bitmap-drawing functions. 
+<P>The problem with Windows is that internal consistency was not maintained. 
+When you want to display only a rectangular subset within the entire DIB image, you use 
+the arguments <I>xSrc</I>, <I>ySrc</I>, 
+<I>cxSrc</I>, and <I>cySrc</I>. These source coordinates and sizes are relative 
+to the first row of the DIB data, which is the bottom row of the image. That's just like 
+OS/2. However, unlike OS/2, Windows displays the top row of the image at the 
+destination coordinate. Thus, if you're displaying the entire DIB image, the pixel displayed at 
+(<I>xDst</I>, <I>yDst</I>) is the DIB pixel at coordinate (0, 
+<I>cyDib </I>-<I> </I>1). That's the last row of DIB data but 
+the top row of the image. If you're displaying only part of the image, the pixel displayed 
+at (<I>xDst</I>, <I>yDst</I>) is the DIB pixel at coordinate 
+(<I>xSrc</I>, <I>ySrc</I> + <I>cySrc</I> - 1). 
+<P>Figure 15-4 shows a diagram to help you figure this out. The DIB below is shown 
+as you might imagine it stored in memory&#8212;that is, upside-down. The origin from which 
+the coordinates are measured is coincident with the first bit of pixel data in the DIB. The 
+<I>xSrc</I> argument to <I>SetDIBitsToDevice</I> is measured from the left of the DIB, and 
+<I>cxSrc</I> is the width of the image to the right of 
+<I>xSrc</I>. That's straightforward. The 
+<I>ySrc</I> argument is measured from the first row of the DIB data (that is, the bottom of the image), and 
+<I>cySrc</I> is the height of image from 
+<I>ySrc</I> towards the last row of the data (the top of the image).
+<P><A HREF="javascript:fullSize('F15zg04x.htm')"><IMG SRC="F15zg04.JPG" width=404 height=354 ALIGN="BOTTOM" BORDER=0 ALT="click here for full size"></A>
+<P><!-- caption --><B>Figure 15-4.</b> <i>Specifying DIB coordinates for normal (bottom-up) DIBs.</I><!-- /caption -->
+<P>If the destination device context has default pixel coordinates using the 
+MM_TEXT mapping mode, the relationship between the corner coordinates of the source and 
+destination rectangles will be those shown in the table below:
+<table CELLPADDING=5 WIDTH="95%"><TR>
+<TD VALIGN="TOP"><B><I>Source Rectangle</I></B></TD>
+<TD VALIGN="TOP"><B><I>Destination Rectangle</I></B></TD>
+</TR>
+<TR>
+<TD VALIGN="TOP">(<I>xSrc</I>, <I>ySrc</I>)</TD>
+<TD VALIGN="TOP">(<I>xDst</I>, <I>yDst </I>+ <I>cySrc</I> - 1))</TD>
+</TR>     
+<TR>
+<TD VALIGN="TOP">(<I>xSrc </I>+ <I>cxSrc </I>- 1,<I>ySrc</I>)</TD>
+<TD VALIGN="TOP">(<I>xDst </I>+<I> cxSrc</I> - 1,<I>yDst</I> + <I>cySrc</I> - 1)</TD>
+</TR>
+<TR>
+<TD VALIGN="TOP">(<I>xSrc</I>,<I>ySrc</I> + <I>cySrc</I> - 1)</TD>
+<TD VALIGN="TOP">(<I>xDst</I>, <I>yDst</I>)</TD>
+</TR>
+<TR>
+<TD VALIGN="TOP">(<I>xSrc</I> + <I>cxSrc</I> - 1,<I>ySrc</I> + <I>cySrc</I> - 1)</TD>
+<TD VALIGN="TOP">(<I>xDst</I> + <I>cxSrc</I> - 1, <I>yDst</I>)</TD>
+</TR>
+</TABLE>
+
+
+<P>That (<I>xSrc</I>, <I>ySrc</I>) does not map to 
+(<I>xDst</I>, <I>yDst</I>) is what makes this so chaotic. 
+With any other mapping mode, the point 
+(<I>xSrc</I>, <I>ySrc</I> + <I>cySrc</I> - 1) will still map to the logical 
+point (<I>xDst</I>, <I>yDst</I>) and the image will look the same as it does in MM_TEXT.
+<P>So far, I've been discussing the normal case when the 
+<I>biHeight</I> field of the BITMAPINFOHEADER structure is positive. If the 
+<I>biHeight</I> field is negative, the DIB data is 
+arranged in a rational top-down manner. You may believe that this clears up all the problems. If 
+so, you would be very naive.
+<P>Apparently someone decided that if you take a top-down DIB, flip all the rows 
+around, and then set the <I>biHeight</I> field to a positive value, it should work the same as a normal 
+bottom-up DIB. Any existing code that referenced a rectangle of the DIB shouldn't 
+have to be modified. That's a reasonable objective, I suppose, but it doesn't take into 
+account the fact that programs need to be modified anyway to deal with top-down DIBs so as 
+not to use a negative height.
+<P>Moreover, the result of this decision has strange implications. It means that 
+source coordinates of top-down DIBs have an origin at the last row of the DIB data, which is 
+also the bottom row of the image. This is completely alien to anything we've yet 
+encountered. The DIB pixel at the (0,0) origin is no longer the first pixel referenced by the 
+<I>pBits</I> pointer. Nor is it the last pixel in the DIB file. It's somewhere in between.
+<P>Figure 15-5 shows a diagram indicating how you specify a rectangle within a 
+top-down DIB, again showing the DIB as it is stored in the file or in memory:
+<P><A HREF="javascript:fullSize('F15zg05x.htm')"><IMG SRC="F15zg05.JPG" width=404 height=350 ALIGN="BOTTOM" BORDER=0 ALT="click here for full size"></A>
+<P><!-- caption --><B>Figure 15-5.</b> <i>Specifying DIB coordinates for top-down DIBs.</I><!-- /caption -->
+<P>At any rate, the real advantage of this scheme is that the arguments to the 
+<I>SetDIBitsToDevice</I> function are independent of the orientation of the DIB data. If you have two 
+DIBs (one bottom-up and the other top-down) that show the same image (which means 
+that the order of rows in the two DIB files are opposite each other), you can select the 
+same part of the image to display using identical arguments to 
+<I>SetDIBitsToDevice</I>.
+<P>This is demonstrated in the APOLLO11 program shown in Figure 15-6.
+<p><B>Figure 15-6.</b> <i>The APOLLO11 program.</I>
+
+<P><TABLE CELLPADDING=5 WIDTH="95%"><TR><TD>
+<P><A NAME="497"><P><H3>APOLLO11.C</H3></A>
+<P><PRE>
+/*----------------------------------------------
+   APOLLO11.C -- Program for screen captures
+                 (c) Charles Petzold, 1998
+  ----------------------------------------------*/
+
+
+#include &lt;windows.h&gt;
+#include &quot;dibfile.h&quot;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+
+TCHAR szAppName[] = TEXT (&quot;Apollo11&quot;) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     HWND     hwnd ;
+     MSG      msg ;
+     WNDCLASS wndclass ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;), 
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Apollo 11&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT, 
+                          NULL, NULL, hInstance, NULL) ;
+
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static BITMAPFILEHEADER * pbmfh [2] ;
+     static BITMAPINFO       * pbmi  [2] ;
+     static BYTE             * pBits [2] ;
+     static int                cxClient, cyClient, cxDib [2], cyDib [2] ;
+     HDC                       hdc ;
+     PAINTSTRUCT               ps ;
+
+     switch (message)
+     {
+     case WM_CREATE:
+          pbmfh[0] = DibLoadImage (TEXT (&quot;Apollo11.bmp&quot;)) ;
+          pbmfh[1] = DibLoadImage (TEXT (&quot;ApolloTD.bmp&quot;)) ;
+
+          if (pbmfh[0] == NULL || pbmfh[1] == NULL)
+          {
+               MessageBox (hwnd, TEXT (&quot;Cannot load DIB file&quot;), 
+                                szAppName, 0) ;
+               return 0 ;
+          }
+               // Get pointers to the info structure &amp; the bits
+
+          pbmi  [0] = (BITMAPINFO *) (pbmfh[0] + 1) ;
+          pbmi  [1] = (BITMAPINFO *) (pbmfh[1] + 1) ;
+          pBits [0] = (BYTE *) pbmfh[0] + pbmfh[0]-&gt;bfOffBits ;
+          pBits [1] = (BYTE *) pbmfh[1] + pbmfh[1]-&gt;bfOffBits ;
+
+               // Get the DIB width and height (assume BITMAPINFOHEADER)
+               // Note that cyDib is the absolute value of the header value!!!
+          cxDib [0] =      pbmi[0]-&gt;bmiHeader.biWidth ;
+          cxDib [1] =      pbmi[1]-&gt;bmiHeader.biWidth ;
+
+          cyDib [0] = abs (pbmi[0]-&gt;bmiHeader.biHeight) ;
+          cyDib [1] = abs (pbmi[1]-&gt;bmiHeader.biHeight) ;
+          return 0 ;
+
+     case WM_SIZE:
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+          return 0 ;
+         
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+
+               // Bottom-up DIB full size
+
+          SetDIBitsToDevice (hdc, 
+                             0,                   // xDst
+                             cyClient / 4,        // yDst
+                             cxDib[0],            // cxSrc
+                             cyDib[0],            // cySrc
+                             0,                   // xSrc
+                             0,                   // ySrc
+                             0,                   // first scan line
+                             cyDib[0],            // number of scan lines
+                             pBits[0], 
+                             pbmi[0], 
+                             DIB_RGB_COLORS) ;
+
+               // Bottom-up DIB partial
+
+          SetDIBitsToDevice (hdc, 
+                             240,                 // xDst
+                             cyClient / 4,        // yDst
+                             80,                  // cxSrc
+                             166,                 // cySrc
+                             80,                  // xSrc
+                             60,                  // ySrc
+                             0,                   // first scan line
+                             cyDib[0],            // number of scan lines
+                             pBits[0], 
+                             pbmi[0], 
+                             DIB_RGB_COLORS) ;
+
+               // Top-down DIB full size
+
+          SetDIBitsToDevice (hdc, 
+                             340,                 // xDst
+                             cyClient / 4,        // yDst
+                             cxDib[0],            // cxSrc
+                             cyDib[0],            // cySrc
+                             0,                   // xSrc
+                             0,                   // ySrc
+                             0,                   // first scan line
+                             cyDib[0],            // number of scan lines
+                             pBits[0], 
+                             pbmi[0], 
+                             DIB_RGB_COLORS) ;
+
+               // Top-down DIB partial
+
+          SetDIBitsToDevice (hdc, 
+                             580,                 // xDst
+                             cyClient / 4,        // yDst
+                             80,                  // cxSrc
+                             166,                 // cySrc
+                             80,                  // xSrc
+                             60,                  // ySrc
+                             0,                   // first scan line
+                             cyDib[1],            // number of scan lines
+                             pBits[1], 
+                             pbmi[1], 
+                             DIB_RGB_COLORS) ;
+
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+          
+     case WM_DESTROY:
+          if (pbmfh[0])
+               free (pbmfh[0]) ;
+          if (pbmfh[1])
+               free (pbmfh[1]) ;
+
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</PRE>
+</TD></TR>
+</TABLE>
+
+<p>The program loads two DIBS, named APOLLO11.BMP (the bottom-up version) 
+and APOLLOTD.BMP (the top-down version). Both are 220 pixels wide and 240 pixels 
+high. Note that when the program determines the DIB width and height from the header 
+information structure, it uses the <I>abs</I> function to take the absolute value of the 
+<I>biHeight</I> field. When displaying the DIBs in full size or in the partial views, the 
+<I>xSrc</I>, <I>ySrc</I>, <I>cxSrc</I>, and 
+<I>cySrc</I> coordinates are identical regardless of which bitmap is being displayed. The results 
+are shown in Figure 15-7.
+<p><A HREF="javascript:fullSize('F15zg07x.htm')"><IMG SRC="F15zg07.JPG" width=404 height=289 ALIGN="BOTTOM" BORDER=0 ALT="click here for full size"></A>
+<p><!-- caption --><B>Figure 15-7.</b> <i>The APOLLO11 display.</I><!-- /caption -->
+<p>Notice that the &quot;first scan line&quot; and &quot;number of scan lines&quot; arguments remain 
+unchanged. I'll get to those shortly. The 
+<I>pBits</I> argument is also unchanged. Don't try to 
+alter <I>pBits</I> so that it points only to the area of the DIB you wish to display.
+<p>I'm spending so much time on this issue not because I have a desire to knock 
+the Windows developers for attempting their best to reconcile problematic areas in the 
+definition of the API, but because you shouldn't be nervous if this seems to be confusing. 
+It's confusing because it's confused. 
+<p>I also want you to be alert to certain statements in the Windows documentation 
+such as this one for <I>SetDIBitsToDevice</I>: &quot;The origin of a bottom-up DIB is the lower left 
+corner of the bitmap; the origin of a top-down DIB is the upper left corner.&quot; That's not 
+only ambiguous, it's just plain wrong. We can better state the difference like so: 
+<I>The origin of a bottom-up DIB is the bottom left corner of the bitmap image, which is the first pixel of the 
+first row of bitmap data. The origin of a top-down DIB is also the bottom left corner of the 
+bitmap image, but in this case the bottom left corner is the first pixel of the last row of bitmap 
+data</I>.
+<p>The problem gets worse if you need to write a function that lets your programs 
+access individual bits of a DIB. This should be consistent with the way that you 
+specify coordinates for displaying partial DIB images. My solution (which I'll implement in a 
+DIB library in <a href="ch16a.htm#520">Chapter 16</a>) is to uniformly reference DIB pixels and coordinates as if the (0,0) origin refers to the leftmost pixel of the top row of the DIB image as seen when 
+correctly displayed.
+
+<A NAME="498"><h2>Sequential Display</h2></A><P>Having lots of memory sure makes programming easier. Displaying a DIB that's 
+located in a disk file can be broken into two completely independent jobs: loading the DIB 
+
+into memory and then displaying it.
+<P>Regardless, there might be times when you would like to display a DIB 
+without requiring that the entire file be loaded into memory. Even if enough physical memory 
+is available for the DIB, moving the DIB into memory can force Windows' virtual 
+memory system to move other code and data out to disk. This can be particularly distressing if 
+the DIB is needed only for display and can then be immediately discarded from memory.
+<P>Here's another problem: Suppose the DIB resides on a slow storage medium 
+such as a floppy disk. Or it's coming over a modem. Or it's coming from a conversion 
+routine that's getting pixel data from a scanner or a video frame grabber. Do you want to wait 
+until the entire DIB is loaded into memory before you display it? Or would you rather 
+display the DIB sequentially right as it's coming off the disk or through the telephone line or 
+from the scanner?
+<P>Solving these problems is the purpose of the 
+<I>yScan</I> and <I>cyScans</I> arguments to the 
+<I>SetDIBitsToDevice</I> function. To use this feature, you make multiple calls to 
+<I>SetDIBitsToDevice</I>, mostly with the same arguments. However, for each call, the 
+<I>pBits</I> argument points to different sections of the total array of bitmap pixels. The 
+<I>yScans</I> argument indicates which row of pixel data 
+<I>pBits</I> is pointing to, and the 
+<I>cyScans</I> argument is the number of rows referenced by 
+<I>pBits</I>. This reduces memory requirements considerably. You 
+need allocate only enough memory to hold the information section of the DIB (the 
+BITMAPINFOHEADER structure and the color table) and at least 1 row of pixel data.
+<P>For example, suppose the DIB has 23 rows of pixels. You wish to display this 
+DIB in blocks of 5 rows. You'll probably want to allocate a block of memory, referenced 
+by the variable <I>pInfo</I>, to store the BITMAPINFO section of the DIB. Then read it in from 
+the file. After examining the fields of this structure, you can calculate the byte length of a 
+row. Multiply by 5 and allocate another block 
+(<I>pBits</I>) of that size. Now read in the first 5 
+rows. Call the function as you would normally, but with 
+<I>yScan</I> set equal to 0 and <I>cyScans</I> set equal to 5. Now read the next 5 rows from the file. This time set 
+<I>yScan</I> equal to 5. Continue with 
+<I>yScan</I> set to 10 and then 15. Finally, read the last 3 rows into the block 
+addressed by <I>pBits</I>, and call 
+<I>SetDIBitsToDevice</I> with <I>yScan</I> set to 20 and 
+<I>cyScans</I> set to 3.
+<P>Now here's the bad news. First, using this feature of 
+<I>SetDIBitsToDevice</I> requires a fairly close coupling between the data acquisition and the data presentation elements of 
+your program. This is usually undesirable because you have to alternate between getting 
+the data and showing it. Overall, you'll slow down the entire process. Secondly, 
+<I>SetDIBitsToDevice</I> is the only bitmap-display function that has this feature. As we'll see, the 
+<I>StretchDIBits</I> function does not include this feature, so you can't use it to display the 
+incoming DIB in a different pixel size. You'd have to fake it by calling 
+<I>StretchDIBits</I> multiple times, each time altering information in the BITMAPINFOHEADER structure and displaying 
+the results in a different area of the screen.
+<P>The SEQDISP program in Figure 15-8 demonstrates how to use this feature.
+<p><B>Figure 15-8.</b> <i>The SEQDISP program.</I>
+<P><TABLE CELLPADDING=5 WIDTH="95%"><TR><TD>
+<P><A NAME="499"><P><H3>SEQDISP.C</H3></A>
+<P><PRE>
+/*-----------------------------------------
+   SEQDISP.C -- Sequential Display of DIBs
+                (c) Charles Petzold, 1998
+
+  -----------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &quot;resource.h&quot;
+
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+TCHAR szAppName[] = TEXT (&quot;SeqDisp&quot;) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     HACCEL   hAccel ;
+     HWND     hwnd ;
+     MSG      msg ;
+     WNDCLASS wndclass ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = szAppName ;
+     wndclass.lpszClassName = szAppName ;
+
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;), 
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;DIB Sequential Display&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT, 
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+     hAccel = LoadAccelerators (hInstance, szAppName) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          if (!TranslateAccelerator (hwnd, hAccel, &amp;msg))
+          {
+               TranslateMessage (&amp;msg) ;
+               DispatchMessage (&amp;msg) ;
+          }
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static BITMAPINFO * pbmi ;
+     static BYTE       * pBits ;
+     static int          cxDib, cyDib, cBits ;
+     static OPENFILENAME ofn ;
+     static TCHAR        szFileName [MAX_PATH], szTitleName [MAX_PATH] ;
+     static TCHAR        szFilter[] = TEXT (&quot;Bitmap Files (*.BMP)\0*.bmp\0&quot;)
+                                      TEXT (&quot;All Files (*.*)\0*.*\0\0&quot;) ;
+     BITMAPFILEHEADER    bmfh ;
+     BOOL                bSuccess, bTopDown ;
+     DWORD               dwBytesRead ;
+     HANDLE              hFile ;
+     HDC                 hdc ;
+     HMENU               hMenu ;
+     int                 iInfoSize, iBitsSize, iRowLength, y ;
+     PAINTSTRUCT         ps ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+          ofn.lStructSize       = sizeof (OPENFILENAME) ;
+          ofn.hwndOwner         = hwnd ;
+          ofn.hInstance         = NULL ;
+          ofn.lpstrFilter       = szFilter ;
+          ofn.lpstrCustomFilter = NULL ;
+          ofn.nMaxCustFilter    = 0 ;
+          ofn.nFilterIndex      = 0 ;
+          ofn.lpstrFile         = szFileName ;
+          ofn.nMaxFile          = MAX_PATH ;
+          ofn.lpstrFileTitle    = szTitleName ;
+          ofn.nMaxFileTitle     = MAX_PATH ;
+          ofn.lpstrInitialDir   = NULL ;
+          ofn.lpstrTitle        = NULL ;
+          ofn.Flags             = 0 ;
+          ofn.nFileOffset       = 0 ;
+          ofn.nFileExtension    = 0 ;
+          ofn.lpstrDefExt       = TEXT (&quot;bmp&quot;) ;
+          ofn.lCustData         = 0 ;
+          ofn.lpfnHook          = NULL ;
+          ofn.lpTemplateName    = NULL ;
+          return 0 ;
+
+     case WM_COMMAND:
+          hMenu = GetMenu (hwnd) ; 
+
+          switch (LOWORD (wParam))
+          {
+          case IDM_FILE_OPEN:
+                    // Display File Open dialog
+               if (!GetOpenFileName (&amp;ofn))
+                    return 0 ;
+
+                    // Get rid of old DIB
+
+               if (pbmi)
+               {
+                    free (pbmi) ;
+                    pbmi = NULL ;
+               }
+
+               if (pBits)
+               {
+                    free (pBits) ;
+                    pBits = NULL ;
+               }
+
+                    // Generate WM_PAINT message to erase background
+
+               InvalidateRect (hwnd, NULL, TRUE) ;
+               UpdateWindow (hwnd) ;
+
+                    // Open the file
+
+               hFile = CreateFile (szFileName, GENERIC_READ, 
+                                   FILE_SHARE_READ, NULL, OPEN_EXISTING, 
+                                   FILE_FLAG_SEQUENTIAL_SCAN, NULL) ;
+
+               if (hFile == INVALID_HANDLE_VALUE)
+               {
+                    MessageBox (hwnd, TEXT (&quot;Cannot open file.&quot;), 
+                                szAppName, MB_ICONWARNING | MB_OK) ;
+                    return 0 ;
+               }
+
+                    // Read in the BITMAPFILEHEADER
+
+               bSuccess = ReadFile (hFile, &amp;bmfh, sizeof (BITMAPFILEHEADER),
+                                    &amp;dwBytesRead, NULL) ;
+
+               if (!bSuccess || dwBytesRead != sizeof (BITMAPFILEHEADER))
+               {
+                    MessageBox (hwnd, TEXT (&quot;Cannot read file.&quot;), 
+                                szAppName, MB_ICONWARNING | MB_OK) ;
+                    CloseHandle (hFile) ;
+                    return 0 ;
+               }
+
+                    // Check that it's a bitmap
+               if (bmfh.bfType != * (WORD *) &quot;BM&quot;)
+               {
+                    MessageBox (hwnd, TEXT (&quot;File is not a bitmap.&quot;), 
+                                szAppName, MB_ICONWARNING | MB_OK) ;
+                    CloseHandle (hFile) ;
+                    return 0 ;
+               }
+
+                    // Allocate memory for header and bits
+
+               iInfoSize = bmfh.bfOffBits - sizeof (BITMAPFILEHEADER) ;
+               iBitsSize = bmfh.bfSize - bmfh.bfOffBits ;
+
+               pbmi  = malloc (iInfoSize) ;
+               pBits = malloc (iBitsSize) ;
+
+               if (pbmi == NULL || pBits == NULL)
+               {
+                    MessageBox (hwnd, TEXT (&quot;Cannot allocate memory.&quot;), 
+                                szAppName, MB_ICONWARNING | MB_OK) ;
+                    if (pbmi) 
+                         free (pbmi) ;
+                    if (pBits) 
+                         free (pBits) ;
+                    CloseHandle (hFile) ;
+                    return 0 ;
+               }
+
+                    // Read in the Information Header
+
+               bSuccess = ReadFile (hFile, pbmi, iInfoSize,
+                                    &amp;dwBytesRead, NULL) ;
+
+               if (!bSuccess || (int) dwBytesRead != iInfoSize)
+               {
+                    MessageBox (hwnd, TEXT (&quot;Cannot read file.&quot;), 
+                                szAppName, MB_ICONWARNING | MB_OK) ;
+                    if (pbmi) 
+                         free (pbmi) ;
+                    if (pBits) 
+                         free (pBits) ;
+                    CloseHandle (hFile) ;
+                    return 0 ;
+               }
+
+                    // Get the DIB width and height
+               bTopDown = FALSE ;
+
+               if (pbmi-&gt;bmiHeader.biSize == sizeof (BITMAPCOREHEADER))
+               {
+                    cxDib = ((BITMAPCOREHEADER *) pbmi)-&gt;bcWidth ;
+                    cyDib = ((BITMAPCOREHEADER *) pbmi)-&gt;bcHeight ;
+                    cBits = ((BITMAPCOREHEADER *) pbmi)-&gt;bcBitCount ;
+               }
+               else
+               {
+                    if (pbmi-&gt;bmiHeader.biHeight &lt; 0)
+                         bTopDown = TRUE ;
+
+                    cxDib =      pbmi-&gt;bmiHeader.biWidth ;
+                    cyDib = abs (pbmi-&gt;bmiHeader.biHeight) ;
+                    cBits =      pbmi-&gt;bmiHeader.biBitCount ;
+
+                    if (pbmi-&gt;bmiHeader.biCompression != BI_RGB &amp;&amp;
+                        pbmi-&gt;bmiHeader.biCompression != BI_BITFIELDS)
+                    {
+                         MessageBox (hwnd, TEXT (&quot;File is compressed.&quot;), 
+                                     szAppName, MB_ICONWARNING | MB_OK) ;
+                         if (pbmi) 
+                              free (pbmi) ;
+                         if (pBits) 
+                              free (pBits) ;
+                         CloseHandle (hFile) ;
+                         return 0 ;
+                    }
+               }
+   
+                    // Get the row length
+
+               iRowLength = ((cxDib * cBits + 31) &amp; ~31) &gt;&gt; 3 ;
+
+                    // Read and display
+               SetCursor (LoadCursor (NULL, IDC_WAIT)) ;
+               ShowCursor (TRUE) ;
+
+               hdc = GetDC (hwnd) ;
+
+               for (y = 0 ; y &lt; cyDib ; y++)
+               {
+                    ReadFile (hFile, pBits + y * iRowLength, iRowLength,
+                              &amp;dwBytesRead, NULL) ;
+
+                    SetDIBitsToDevice (hdc, 
+                                       0,         // xDst
+                                       0,         // yDst
+                                       cxDib,     // cxSrc
+                                       cyDib,     // cySrc
+                                       0,         // xSrc
+                                       0,         // ySrc
+                                       bTopDown ? cyDib - y - 1 : y,
+                                                  // first scan line
+                                       1,         // number of scan lines
+                                       pBits + y * iRowLength, 
+                                       pbmi, 
+                                       DIB_RGB_COLORS) ;
+               }
+               ReleaseDC (hwnd, hdc) ;
+               CloseHandle (hFile) ;
+               ShowCursor (FALSE) ;
+               SetCursor (LoadCursor (NULL, IDC_ARROW)) ;
+               return 0 ;
+          }
+          break ;
+
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+
+          if (pbmi &amp;&amp; pBits)
+               SetDIBitsToDevice (hdc, 
+                                  0,         // xDst
+                                  0,         // yDst
+                                  cxDib,     // cxSrc
+                                  cyDib,     // cySrc
+                                  0,         // xSrc
+                                  0,         // ySrc
+                                  0,         // first scan line
+                                  cyDib,     // number of scan lines
+                                  pBits, 
+                                  pbmi, 
+                                  DIB_RGB_COLORS) ;
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+     
+     case WM_DESTROY:
+          if (pbmi)
+               free (pbmi) ;
+          
+          if (pBits)
+               free (pBits) ;
+
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</PRE>
+</TD></TR>
+</TABLE>
+<P><TABLE CELLPADDING=5 WIDTH="95%"><TR><TD>
+<P><A NAME="500"><p><H3>SEQDISP.RC (excerpts)</H3></A>
+<P><PRE>
+
+
+//Microsoft Developer Studio generated resource script.
+
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+
+// Accelerator
+
+SEQDISP ACCELERATORS DISCARDABLE 
+BEGIN
+    &quot;O&quot;,            IDM_FILE_OPEN,          VIRTKEY, CONTROL, NOINVERT
+END
+
+/////////////////////////////////////////////////////////////////////////////
+// Menu
+
+SEQDISP MENU DISCARDABLE 
+BEGIN
+    POPUP &quot;&amp;File&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Open...\tCtrl+O&quot;,            IDM_FILE_OPEN
+    END
+END
+</PRE>
+</TD></TR>
+</TABLE>
+<P><TABLE CELLPADDING=5 WIDTH="95%"><TR><TD>
+<A NAME="501"><p><H3>RESOURCE.H (excerpts)</H3></A>
+<P><PRE>
+// Microsoft Developer Studio generated include file.
+// Used by SeqDisp.rc
+
+#define IDM_FILE_OPEN                   40001
+
+</PRE>
+</TD></TR>
+</TABLE>
+
+<p>All the file I/O in SEQDISP.C occurs while processing the File Open menu 
+command. Toward the end of WM_COMMAND processing, the program enters a loop that reads 
+single lines of pixels and displays them with 
+<I>SetDIBitsToDevice</I>. The entire DIB is retained 
+in memory so that it can be displayed also during WM_PAINT processing.
+
+<A NAME="502"><h2>Stretching to Fit</h2></A><P><I>SetDIBitsToDevice</I> does a pixel-to-pixel display of a DIB to an output device. This is 
+probably not good for printing DIBs. The better the resolution of the printer, the tinier the 
+image you'll get. You could end up with something the size of a postage stamp.
+<P>To display a DIB in a particular size on the output device by shrinking or 
+stretching it, you can use <I>StretchDIBits</I>:
+<p><pre>
+iLines = StretchDIBits (
+               hdc,           // device context handle
+               xDst,          // x destination coordinate
+               yDst,          // y destination coordinate
+               cxDst,         // destination rectangle width
+               cyDst,         // destination rectangle height
+               xSrc,          // x source coordinate
+               ySrc,          // y source coordinate
+               cxSrc,         // source rectangle width
+               cySrc,         // source rectangle height
+               pBits,         // pointer to DIB pixel bits
+               pInfo,         // pointer to DIB information
+               fClrUse,       // color use flag
+               dwRop) ;       // raster operation
+</PRE>
+<P>The function arguments are the same as 
+<I>SetDIBitsToDevice</I> with three exceptions:
+<UL>
+<p><li>The destination coordinates include a logical width 
+(<I>cxDst</I>) and height (<I>cyDst</I>) as well as starting points.
+<p><li>There is no facility to reduce memory requirements by displaying the DIB sequentially.
+<p><li>The last argument is a raster operation, which indicates how the pixels of 
+the DIB are combined with the pixels of the output device. We learned about 
+these in the last chapter. For now, we'll be using SRCCOPY for this argument.
+</UL>
+<P>There's actually another difference that is more subtle. If you look at the 
+declaration of <I>SetDIBitsToDevice</I>, you'll find that 
+<I>cxSrc</I> and <I>cySrc</I> are DWORDs, which are 32-bit 
+unsigned long integers. In <I>StretchDIBits</I>, 
+<I>cxSrc</I> and <I>cySrc</I> (as well as 
+<I>cxDst</I> and <I>cyDst</I>) are defined as signed integers, which implies that they can be negative. Indeed they can, 
+as we'll shortly see. But let me add a bit of clarification if you've started examining 
+whether other arguments can be negative: In both functions, 
+<I>xSrc</I> and <I>ySrc</I> are defined as 
+<I>int</I> values, but that's an error. These values are always nonnegative.
+<p>A source rectangle within the DIB is mapped to a destination rectangle as shown 
+in the following table.
+<p>
+<table CELLPADDING=5 WIDTH="95%"><TR>
+<TD VALIGN="TOP"><B><I>Source Rectangle</I></B></TD>
+<TD VALIGN="TOP"><B><I>Destination Rectangle</I></B></TD>
+</TR>
+<TR>
+<TD VALIGN="TOP">(<I>xSrc</I>, <I>ySrc</I>)</TD>
+<TD VALIGN="TOP">(<I>xDst</I>, <I>yDst</I> + <I>cyDst</I> - 1)</TD>
+</TR>
+<TR>    
+<TD VALIGN="TOP">(<I>xSrc</I> + <I>cxSrc</I> - 1, <I>ySrc</I>)</TD>      
+<TD VALIGN="TOP">(<I>xDst</I> + <I>cxDst</I> - 1, <I>yDst</I> + <I>cyDst</I> - 1)</TD>
+</TR>
+<TR>
+<TD VALIGN="TOP">(<I>xSrc</I>, <I>ySrc</I> + <I>cySrc</I> - 1)</TD>    
+<TD VALIGN="TOP">(<I>xDst</I>, <I>yDst</I>)</TD>
+</TR>
+<TR>
+<TD VALIGN="TOP">(<I>xSrc</I> + <I>cxSrc</I> - 1, <I>ySrc</I> + <I>cySrc</I> - 1)</TD>     
+<TD VALIGN="TOP">(<I>xDst</I> + <I>cxDst</I> - 1, <I>yDst</I>)</TD>
+</TR>
+</TABLE>    
+
+<P>The -1 terms in the right column are not quite accurate because the degree of 
+stretch (as well as the mapping mode and other transforms) can cause the results to be 
+slightly different. 
+<P>As an example, let's think about a 2&#215;2 DIB, where the 
+<I>xSrc</I> and <I>ySrc</I> arguments to 
+<I>StretchDIBits</I> are both 0 and <I>cxSrc</I> and 
+<I>cySrc</I> are both 2. Assume we're displaying to a 
+device context with the MM_TEXT mapping mode and no transforms. If 
+<I>xDst</I> and <I>yDst</I> are both 0 and 
+<I>cxDst</I> and <I>cyDst</I> are both 4, then we're stretching the DIB by a factor of 2. Each 
+source pixel (<I>x</I>, <I>y</I>) will map to four destination pixels as shown here:
+<blockquote>
+<P><I>(0,0) --&gt; (0,2) and (1,2) and (0,3) and (1,3) 
+<P>(1,0) --&gt; (2,2) and (3,2) and (2,3) and (3,3)
+<P>(0,1) --&gt; (0,0) and (1,0) and (0,1) and (1,1)
+<P>(1,1) --&gt; (2,0) and (3,0) and (2,1) and (3,1)</I>
+</blockquote>
+<P>The table shown above correctly indicates the corners of the destination, which are (0, 
+3), (3, 3), (0, 0), and (3, 0). In other cases, the coordinates might be only approximate.
+<P><I>SetDIBitsToDevice</I> is affected by the mapping mode of the destination device 
+context only to the extent that <I>xDst</I> and 
+<I>yDst</I> are logical coordinates. 
+<I>StretchDIBits</I> is fully affected by the mapping mode. For example, if you've set one of the metric mapping 
+modes where values of <I>y</I> increase going up the display, the DIB will be displayed upside-down.
+<P>You can compensate for this by making 
+<I>cyDst</I> negative. Indeed, you can make any of the width and height parameters negative to flip the DIB horizontally or vertically. 
+In the MM_TEXT mapping mode, if <I>cySrc</I> and 
+<I>cyDst</I> are opposite signs, the DIB will be 
+flipped around the horizontal axis and will appear to be upside-down. If 
+<I>cxSrc</I> and <I>cxDst</I> are opposite signs, the DIB is flipped on its vertical axis and will appear to be a mirror image.
+<P>Here are a couple of expressions that summarize this. In these expressions, 
+<I>xMM</I> and <I>yMM</I> indicate the orientation of the mapping mode; 
+<I>xMM</I> is 1 if values of <I>x</I> increase moving to the right and 
+-1 if values of <I>x</I> increase moving to the left. Similarly, 
+<I>yMM</I> is 1 if values of <I>y</I> increase going down and 
+-1 if values of <I>y</I> increase going up. The 
+<I>Sign</I> functions return TRUE for a positive value and FALSE for negative:
+<p><pre>
+if (!Sign (xMM &#215; cxSrc &#215; cxDst))
+     DIB is flipped on its vertical axis (mirror image)
+
+if (!Sign (yMM &#215; cySrc &#215; cyDst))
+     DIB is flipped on its horizontal axis (upside down)
+</PRE>
+<P>When in doubt, consult the table shown above.
+<P>The SHOWDIB2 program shown in Figure 15-9 displays DIBs in actual size 
+and stretched to the size of its client window, prints DIBs, and transfers DIBs to the clipboard.
+<p><B>Figure 15-9.</b> <i>The SHOWDIB2 program.</I>
+<P><TABLE CELLPADDING=5 WIDTH="95%"><TR><TD>
+<A NAME="503"><P><H3>SHOWDIB2.C</H3></A>
+<P><PRE>
+/*----------------------------------------------
+   SHOWDIB2.C -- Shows a DIB in the client area
+                 (c) Charles Petzold, 1998
+  ----------------------------------------------*/
+
+
+#include &lt;windows.h&gt;
+#include &quot;dibfile.h&quot;
+#include &quot;resource.h&quot;
+
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+TCHAR szAppName[] = TEXT (&quot;ShowDib2&quot;) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     HACCEL   hAccel ;
+     HWND     hwnd ;
+     MSG      msg ;
+     WNDCLASS wndclass ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = szAppName ;
+     wndclass.lpszClassName = szAppName ;
+
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;), 
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Show DIB #2&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT, 
+                          NULL, NULL, hInstance, NULL) ;
+
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+     hAccel = LoadAccelerators (hInstance, szAppName) ;
+
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          if (!TranslateAccelerator (hwnd, hAccel, &amp;msg))
+          {
+               TranslateMessage (&amp;msg) ;
+               DispatchMessage (&amp;msg) ;
+          }
+     }
+     return msg.wParam ;
+}
+
+int ShowDib (HDC hdc, BITMAPINFO * pbmi, BYTE * pBits, int cxDib, int cyDib, 
+             int cxClient, int cyClient, WORD wShow)
+{
+     switch (wShow)
+     {
+     case IDM_SHOW_NORMAL:
+          return SetDIBitsToDevice (hdc, 0, 0, cxDib, cyDib, 0, 0, 
+                                    0, cyDib, pBits, pbmi, DIB_RGB_COLORS) ;
+               
+     case IDM_SHOW_CENTER:
+          return SetDIBitsToDevice (hdc, (cxClient - cxDib) / 2,
+                                         (cyClient - cyDib) / 2, 
+                                    cxDib, cyDib, 0, 0, 
+                                    0, cyDib, pBits, pbmi, DIB_RGB_COLORS) ;
+
+     case IDM_SHOW_STRETCH:
+          SetStretchBltMode (hdc, COLORONCOLOR) ;
+
+          return StretchDIBits (hdc, 0, 0, cxClient, cyClient, 
+                                     0, 0, cxDib, cyDib,
+                                pBits, pbmi, DIB_RGB_COLORS, SRCCOPY) ;
+
+     case IDM_SHOW_ISOSTRETCH:
+          SetStretchBltMode (hdc, COLORONCOLOR) ;
+          SetMapMode (hdc, MM_ISOTROPIC) ;
+          SetWindowExtEx (hdc, cxDib, cyDib, NULL) ;
+          SetViewportExtEx (hdc, cxClient, cyClient, NULL) ;
+          SetWindowOrgEx (hdc, cxDib / 2, cyDib / 2, NULL) ;
+          SetViewportOrgEx (hdc, cxClient / 2, cyClient / 2, NULL) ;
+
+          return StretchDIBits (hdc, 0, 0, cxDib, cyDib, 
+                                     0, 0, cxDib, cyDib,
+                                pBits, pbmi, DIB_RGB_COLORS, SRCCOPY) ;
+     }
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static BITMAPFILEHEADER * pbmfh ;
+     static BITMAPINFO       * pbmi ;
+     static BYTE             * pBits ;
+     static DOCINFO            di = { sizeof (DOCINFO), 
+                                      TEXT (&quot;ShowDib2: Printing&quot;) } ;
+     static int                cxClient, cyClient, cxDib, cyDib ;
+     static PRINTDLG           printdlg = { sizeof (PRINTDLG) } ;
+     static TCHAR              szFileName [MAX_PATH], szTitleName [MAX_PATH] ;
+     static WORD               wShow = IDM_SHOW_NORMAL ;
+     BOOL                      bSuccess ;
+     HDC                       hdc, hdcPrn ;
+     HGLOBAL                   hGlobal ;
+     HMENU                     hMenu ;
+     int                       cxPage, cyPage, iEnable ;
+     PAINTSTRUCT               ps ;
+     BYTE                    * pGlobal ;
+
+     switch (message)
+     {
+     case WM_CREATE:
+          DibFileInitialize (hwnd) ;
+          return 0 ;
+
+     case WM_SIZE:
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+          return 0 ;
+
+     case WM_INITMENUPOPUP:
+          hMenu = GetMenu (hwnd) ;
+
+          if (pbmfh)
+               iEnable = MF_ENABLED ;
+          else
+               iEnable = MF_GRAYED ;
+
+          EnableMenuItem (hMenu, IDM_FILE_SAVE,   iEnable) ;
+          EnableMenuItem (hMenu, IDM_FILE_PRINT,  iEnable) ;
+          EnableMenuItem (hMenu, IDM_EDIT_CUT,    iEnable) ;
+          EnableMenuItem (hMenu, IDM_EDIT_COPY,   iEnable) ;
+          EnableMenuItem (hMenu, IDM_EDIT_DELETE, iEnable) ;
+          return 0 ;
+
+     case WM_COMMAND:
+          hMenu = GetMenu (hwnd) ;
+
+          switch (LOWORD (wParam))
+          {
+          case IDM_FILE_OPEN:
+                    // Show the File Open dialog box
+
+               if (!DibFileOpenDlg (hwnd, szFileName, szTitleName))
+                    return 0 ;
+               
+                    // If there's an existing DIB, free the memory
+
+               if (pbmfh)
+               {
+                    free (pbmfh) ;
+                    pbmfh = NULL ;
+               }
+                    // Load the entire DIB into memory
+               SetCursor (LoadCursor (NULL, IDC_WAIT)) ;
+               ShowCursor (TRUE) ;
+
+               pbmfh = DibLoadImage (szFileName) ;
+
+               ShowCursor (FALSE) ;
+               SetCursor (LoadCursor (NULL, IDC_ARROW)) ;
+
+                    // Invalidate the client area for later update
+
+               InvalidateRect (hwnd, NULL, TRUE) ;
+
+               if (pbmfh == NULL)
+               {
+                    MessageBox (hwnd, TEXT (&quot;Cannot load DIB file&quot;), 
+                                szAppName, MB_ICONEXCLAMATION | MB_OK) ;
+                    return 0 ;
+               }
+                    // Get pointers to the info structure &amp; the bits
+
+               pbmi  = (BITMAPINFO *) (pbmfh + 1) ;
+               pBits = (BYTE *) pbmfh + pbmfh-&gt;bfOffBits ;
+
+                    // Get the DIB width and height
+
+               if (pbmi-&gt;bmiHeader.biSize == sizeof (BITMAPCOREHEADER))
+               {
+                    cxDib = ((BITMAPCOREHEADER *) pbmi)-&gt;bcWidth ;
+                    cyDib = ((BITMAPCOREHEADER *) pbmi)-&gt;bcHeight ;
+               }
+               else
+               {
+                    cxDib =      pbmi-&gt;bmiHeader.biWidth ;
+                    cyDib = abs (pbmi-&gt;bmiHeader.biHeight) ;
+               }
+               return 0 ;
+
+          case IDM_FILE_SAVE:
+                    // Show the File Save dialog box
+
+               if (!DibFileSaveDlg (hwnd, szFileName, szTitleName))
+                    return 0 ;
+               
+                    // Save the DIB to a disk file
+
+               SetCursor (LoadCursor (NULL, IDC_WAIT)) ;
+               ShowCursor (TRUE) ;
+
+               bSuccess = DibSaveImage (szFileName, pbmfh) ;
+
+               ShowCursor (FALSE) ;
+               SetCursor (LoadCursor (NULL, IDC_ARROW)) ;
+
+               if (!bSuccess)
+                    MessageBox (hwnd, TEXT (&quot;Cannot save DIB file&quot;), 
+                                szAppName, MB_ICONEXCLAMATION | MB_OK) ;
+               return 0 ;
+
+          case IDM_FILE_PRINT:
+               if (!pbmfh)
+                    return 0 ;
+
+                    // Get printer DC
+
+               printdlg.Flags = PD_RETURNDC | PD_NOPAGENUMS | PD_NOSELECTION ;
+
+               if (!PrintDlg (&amp;printdlg))
+                    return 0 ;
+
+               if (NULL == (hdcPrn = printdlg.hDC))
+               {
+                    MessageBox (hwnd, TEXT (&quot;Cannot obtain Printer DC&quot;),
+                                szAppName, MB_ICONEXCLAMATION | MB_OK) ;
+                    return 0 ;
+               }
+
+                    // Check whether the printer can print bitmaps
+
+               if (!(RC_BITBLT &amp; GetDeviceCaps (hdcPrn, RASTERCAPS)))
+               {
+                    DeleteDC (hdcPrn) ;
+                    MessageBox (hwnd, TEXT (&quot;Printer cannot print bitmaps&quot;),
+                                szAppName, MB_ICONEXCLAMATION | MB_OK) ;
+                    return 0 ;
+               }
+                    // Get size of printable area of page
+
+               cxPage = GetDeviceCaps (hdcPrn, HORZRES) ;
+               cyPage = GetDeviceCaps (hdcPrn, VERTRES) ;
+
+               bSuccess = FALSE ;
+                    // Send the DIB to the printer
+
+               SetCursor (LoadCursor (NULL, IDC_WAIT)) ;
+               ShowCursor (TRUE) ;
+
+               if ((StartDoc (hdcPrn, &amp;di) &gt; 0) &amp;&amp; (StartPage (hdcPrn) &gt; 0))
+               {
+                    ShowDib (hdcPrn, pbmi, pBits, cxDib, cyDib,
+                             cxPage, cyPage, wShow) ;
+                    
+                    if (EndPage (hdcPrn) &gt; 0)
+                    {
+                         bSuccess = TRUE ;
+                         EndDoc (hdcPrn) ;
+                    }
+               }
+               ShowCursor (FALSE) ;
+               SetCursor (LoadCursor (NULL, IDC_ARROW)) ;
+
+               DeleteDC (hdcPrn) ;
+
+               if (!bSuccess)
+                    MessageBox (hwnd, TEXT (&quot;Could not print bitmap&quot;),
+                                szAppName, MB_ICONEXCLAMATION | MB_OK) ;
+               return 0 ;
+
+          case IDM_EDIT_COPY:
+          case IDM_EDIT_CUT:
+               if (!pbmfh)
+                    return 0 ;
+
+                    // Make a copy of the packed DIB
+
+               hGlobal = GlobalAlloc (GHND | GMEM_SHARE, pbmfh-&gt;bfSize -
+                                        sizeof (BITMAPFILEHEADER)) ;
+
+               pGlobal = GlobalLock (hGlobal) ;
+
+               CopyMemory (pGlobal, (BYTE *) pbmfh + sizeof (BITMAPFILEHEADER),
+                           pbmfh-&gt;bfSize - sizeof (BITMAPFILEHEADER)) ;
+
+               GlobalUnlock (hGlobal) ;
+
+                    // Transfer it to the clipboard
+
+               OpenClipboard (hwnd) ;
+               EmptyClipboard () ;
+               SetClipboardData (CF_DIB, hGlobal) ;
+               CloseClipboard () ;
+
+               if (LOWORD (wParam) == IDM_EDIT_COPY)
+                    return 0 ;
+                                        // fall through if IDM_EDIT_CUT 
+          case IDM_EDIT_DELETE:
+               if (pbmfh)
+               {
+                    free (pbmfh) ;
+                    pbmfh = NULL ;
+                    InvalidateRect (hwnd, NULL, TRUE) ;
+               }
+               return 0 ;
+
+          case IDM_SHOW_NORMAL:
+          case IDM_SHOW_CENTER:
+          case IDM_SHOW_STRETCH:
+          case IDM_SHOW_ISOSTRETCH:
+               CheckMenuItem (hMenu, wShow, MF_UNCHECKED) ;
+               wShow = LOWORD (wParam) ;
+               CheckMenuItem (hMenu, wShow, MF_CHECKED) ;
+               InvalidateRect (hwnd, NULL, TRUE) ;
+               return 0 ;
+          }
+          break ;
+         
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+
+          if (pbmfh)
+               ShowDib (hdc, pbmi, pBits, cxDib, cyDib, 
+                        cxClient, cyClient, wShow) ;
+
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+          
+     case WM_DESTROY:
+          if (pbmfh)
+               free (pbmfh) ;
+
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</PRE>
+</TD></TR>
+</TABLE>
+
+<P><TABLE CELLPADDING=5 WIDTH="95%"><TR><TD>
+<A NAME="504"><p><H3>SHOWDIB2.RC (excerpts)</H3></A>
+<P><PRE>
+//Microsoft Developer Studio generated resource script.
+
+
+#include &quot;resource.h&quot;
+
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+
+// Menu
+
+SHOWDIB2 MENU DISCARDABLE 
+BEGIN
+    POPUP &quot;&amp;File&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Open...\tCtrl+O&quot;,            IDM_FILE_OPEN
+        MENUITEM &quot;&amp;Save...\tCtrl+S&quot;,            IDM_FILE_SAVE
+        MENUITEM SEPARATOR
+        MENUITEM &quot;&amp;Print\tCtrl+P&quot;,              IDM_FILE_PRINT
+    END
+    POPUP &quot;&amp;Edit&quot;
+    BEGIN
+        MENUITEM &quot;Cu&amp;t\tCtrl+X&quot;,                IDM_EDIT_CUT
+        MENUITEM &quot;&amp;Copy\tCtrl+C&quot;,               IDM_EDIT_COPY
+        MENUITEM &quot;&amp;Delete\tDelete&quot;,             IDM_EDIT_DELETE
+    END
+    POPUP &quot;&amp;Show&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Actual Size&quot;,                IDM_SHOW_NORMAL, CHECKED
+        MENUITEM &quot;&amp;Center&quot;,                     IDM_SHOW_CENTER
+        MENUITEM &quot;&amp;Stretch to Window&quot;,          IDM_SHOW_STRETCH
+        MENUITEM &quot;Stretch &amp;Isotropically&quot;,      IDM_SHOW_ISOSTRETCH
+    END
+END
+
+/////////////////////////////////////////////////////////////////////////////
+// Accelerator
+
+SHOWDIB2 ACCELERATORS DISCARDABLE 
+BEGIN
+    &quot;C&quot;,            IDM_EDIT_COPY,          VIRTKEY, CONTROL, NOINVERT
+    &quot;O&quot;,            IDM_FILE_OPEN,          VIRTKEY, CONTROL, NOINVERT
+    &quot;P&quot;,            IDM_FILE_PRINT,         VIRTKEY, CONTROL, NOINVERT
+    &quot;S&quot;,            IDM_FILE_SAVE,          VIRTKEY, CONTROL, NOINVERT
+    VK_DELETE,      IDM_EDIT_DELETE,        VIRTKEY, NOINVERT
+    &quot;X&quot;,            IDM_EDIT_CUT,           VIRTKEY, CONTROL, NOINVERT
+END
+</PRE>
+</TD></TR>
+</TABLE>
+
+<P><TABLE CELLPADDING=5 WIDTH="95%"><TR><TD>
+<A NAME="505"><p><H3>RESOURCE.H (excerpts)</H3></A>
+<P><PRE>
+// Microsoft Developer Studio generated include file.
+// Used by ShowDib2.rc
+
+
+#define IDM_FILE_OPEN                   40001
+
+#define IDM_SHOW_NORMAL                 40002
+#define IDM_SHOW_CENTER                 40003
+#define IDM_SHOW_STRETCH                40004
+#define IDM_SHOW_ISOSTRETCH             40005
+#define IDM_FILE_PRINT                  40006
+#define IDM_EDIT_COPY                   40007
+#define IDM_EDIT_CUT                    40008
+#define IDM_EDIT_DELETE                 40009
+#define IDM_FILE_SAVE                   40010
+</PRE>
+</TD></TR>
+</TABLE>
+<p>Of particular interest here is the <I>ShowDib</I> function, which displays a DIB in 
+the program's client area in one of four different ways, depending on a menu selection. 
+The DIB can be displayed using 
+<I>SetDIBitsToDevice</I> either oriented at the upper left corner 
+of the client area or centered within the client area. The program also has two options 
+using <I>StretchDIBits</I>. The DIB can be stretched to fill the client area, in which case it is likely 
+to be distorted, or it can display isotropically&#8212;that is, without distortion.
+<p>Copying a DIB to the clipboard involves making a copy of the packed-DIB 
+memory block in global shared memory. The clipboard data type is CF_DIB. What the 
+program doesn't show is how to copy a DIB 
+<I>from</I> the clipboard. The reason why is that it 
+requires a bit more logic to determine the offset of the pixel bits given only a pointer to a 
+packed-DIB memory block. I'll show how to do this before the end of the next chapter.
+<p>You may also notice some other deficiencies in SHOWDIB2. If you're running 
+Windows with a 256-color video mode, you'll see problems with displaying anything other 
+than monochrome or 4-bit DIBs. You won't see the correct colors. Getting access to those 
+colors will require using the palette, a job that awaits us in the next chapter. You may 
+also notice a speed problem, particularly when running SHOWDIB2 under Windows NT. 
+I'll show you how to handle this when we wrap up DIBs and bitmaps in the next 
+chapter. I'll also tackle adding scroll bars to a DIB display so that a DIB larger than the screen 
+can still be viewed in actual size.
+
+<A NAME="506"><h2>Color Conversion, Palettes, and Performance</h2></A><P>Remember in William Goldman's screenplay for 
+<I>All the President's Men</I> how Deep Throat tells Bob Woodward that the key to cracking the Watergate mystery is to &quot;Follow 
+the money&quot;? Well, the key to achieving top performance in the display of bitmaps is 
+to &quot;Follow the pixel bits&quot; and to understand when and where color conversion takes 
+place. The DIB is in a device-independent format; the video display memory is almost surely 
+in another format. During the 
+<I>SetDIBitsToDevice</I> or <I>StretchDIBits</I> function calls, each pixel 
+(and there could be literally millions of them) must be converted from a 
+device-independent format to a device-dependent format.
+<p>In many cases, this conversion is fairly trivial. For example, if you're displaying 
+a 24-bit DIB on a 24-bit video display, at most the display driver will have to switch 
+around the order of the red, green, and blue bytes. Displaying a 16-bit DIB on a 24-bit device 
+requires some bit-shifting and padding. Displaying a 24-bit DIB on a 16-bit device 
+requires some bit-shifting and truncation. Displaying a 4-bit or 8-bit DIB on a 24-bit device 
+requires a lookup of the DIB pixel bits in the DIB's color table and then perhaps some 
+reordering of the bytes.
+<p>But what happens when you wish to display a 
+16-bit, 24-bit, or 32-bit DIB on a 4-bit or 8-bit video display? An entirely different type of color conversion has to take place. 
+For each pixel in the DIB, the device driver has to perform a 
+<I>nearest-color search</I> between the pixel and all the colors available on the display. This involves a loop and a 
+calculation. (The GDI function 
+<I>GetNearestColor</I> does a nearest-color search.)
+<p>The entire three-dimensional array of RGB colors can be represented as a cube. 
+The distance between any two points within this curve is
+<p><IMG SRC="EQ15zg04.gif" width=276 height=32 ALIGN="BOTTOM" BORDER=0>
+<P>where the two colors are 
+R<SUB>1</SUB>G<SUB>1</SUB>B<SUB>1</SUB> and 
+R<SUB>2</SUB>G<SUB>2</SUB>B<SUB>2</SUB>. Performing a nearest-color search 
+involves finding the shortest distance from one color to a collection of other colors. 
+Fortunately, when <I>comparing</I> distances within the RGB color cube, the square root part of the 
+calculation is not required. But each pixel to be converted must be compared with all the 
+colors of the device to find which device color is closest to it. This is still a considerable 
+amount of work. (Although displaying an 8-bit DIB on an 8-bit device also involves a 
+nearest-color search, it doesn't have to be done for each pixel; it need only be done for each of the 
+colors in the DIB's color table.)
+<P>For that reason, displaying a 16-bit, 24-bit, or 32-bit DIB on an 8-bit video 
+display adapter using <I>SetDIBitsToDevice</I> or 
+<I>StretchDIBits</I> should be avoided. The DIB should 
+be converted into an 8-bit DIB or, for even better performance, an 8-bit DDB. Indeed, 
+the display of virtually all DIBs of any appreciable size can be speeded up by converting to 
+a DDB and using <I>BitBlt</I> and 
+<I>StretchBlt</I> for display purposes.
+<P>If you're running Windows in an 8-bit video display (or if you've just switched 
+into an 8-bit mode to see the performance difference when displaying full-color DIBs), you 
+may notice another problem: The DIBs are not being displayed with all their colors. Any 
+DIB displayed on an 8-bit video display is restricted to just 20 colors. Getting more than 20 
+is a job for the Palette Manager, coming up in the next chapter.
+<P>And finally, if you're running both Windows 98 and Windows NT on the same 
+machine, you may notice that Windows NT takes longer to display large DIBs for 
+comparable video modes. This is a consequence of Windows NT's client/server architecture, 
+which involves a penalty for large amounts of data passed across the API. The solution here, 
+too, is to convert the DIB to a DDB. Also, the 
+<I>CreateDIBSection</I> function, which I'll 
+discuss shortly, was specifically created to help in this situation.
+
+</BODY>
+</HTML>
+
+
+
+
+

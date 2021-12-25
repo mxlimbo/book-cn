@@ -1,0 +1,1204 @@
+<HTML>
+<HEAD>
+<TITLE>Kernel Dispatcher Objects</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch04d.htm">[Previous]</A> <A HREF="ch04f.htm">[Next]</a>
+</p>
+
+<A NAME="119"><H1>Kernel Dispatcher Objects</H1></A>
+
+<p>The Windows NT kernel provides five types of synchronization objects that you can use to
+control the flow of nonarbitrary threads. See Table 4-1 for a summary of these <i>kernel
+dispatcher object</i> types and their uses. At any moment, one of these objects is in one of
+two states: <i>signalled</i> or <i>not-signalled.</i> At times when it's permissible for
+you to block a thread in whose context you're running, you can wait for one or more objects
+to reach the signalled state by calling <b>KeWaitForSingleObject</b> or <b>KeWaitForMultipleObjects</b>. The kernel also provides routines for initializing and
+controlling the state of each of these objects.</p>
+
+<p><b>Table 4-1.</b> <i>Kernel dispatcher objects.</i></p>
+
+<P>
+<table cellpadding=5 width="95%">
+<tr> 
+<th><i>Object</i>  </th>
+<th><i>Data Type</i>  </th>
+<th><i>Description</i>  </th></tr>
+<tr>
+<td valign="top">Event  </td>
+<td valign="top">KEVENT  </td>
+<td valign="top">Blocks a thread until some other thread detects that an event has occurred  </td></tr>
+<tr>
+<td valign="top">Semaphore  </td>
+<td valign="top">KSEMAPHORE  </td>
+<td valign="top">Used instead of an event when an arbitrary number of wait calls can be satisfied  </td></tr>
+<tr>
+<td valign="top">Mutex  </td>
+<td valign="top">KMUTEX  </td>
+<td valign="top">Excludes other threads from executing a particular section of code  </td></tr>
+<tr>
+<td valign="top">Timer  </td>
+<td valign="top">KTIMER  </td>
+<td valign="top">Delays execution of a thread for some period of time  </td></tr>
+<tr>
+<td valign="top">Thread  </td>
+<td valign="top">KTHREAD  </td>
+<td valign="top">Blocks one thread until another thread terminates  </td></tr></table></p>
+
+
+<p>In the next few sections, I'll describe how to use the kernel dispatcher objects.
+I'll start by explaining when you can block a thread by calling one of the wait primitives,
+and then I'll discuss the support routines that you use with each of the object types.
+I'll finish this section by discussing the related concepts of thread alerts and
+asynchronous procedure call delivery.</p>
+
+<A NAME="120"><H2>How and When You Can Block</H2></A>
+
+<p>To understand when and how it's permissible for a WDM driver to block a thread on a
+kernel dispatcher object, you have to know some basic facts about threads. In general, whatever
+thread was executing at the time of a software or hardware interrupt continues to be the
+&quot;current&quot; thread while the kernel processes the interrupt. We speak of executing
+kernel-mode code &quot;in the context&quot; of this current thread. In response to interrupts
+of various kinds, the Windows NT scheduler might decide to switch threads, of course, in which
+case a new thread becomes &quot;current.&quot;</p>
+
+<p>We use the terms <i>arbitrary thread context</i> and <i>nonarbitrary thread context</i> to
+describe the precision with which we can know the thread in whose context we're currently
+operating in a driver subroutine. If we know that we're in the context of the thread which
+initiated an I/O request, the context is not arbitrary. Most of the time, however, a WDM driver
+can't know this fact because chance usually controls which thread is active when the
+interrupt occurs that results in the driver being called. When applications issue I/O requests,
+they cause a transition from user mode to kernel mode. The I/O Manager routines that create an
+IRP and send it to a driver dispatch routine continue to operate in this nonarbitrary thread
+context, as does the first dispatch routine to see the IRP. We use the term <i>highest-level
+driver</i> to describe the driver whose dispatch routine first receives the IRP.</p>
+
+<p>As a general rule, only the highest-level driver for a given device can know for sure that
+it's operating in a nonarbitrary thread context. This is because driver dispatch routines
+often put requests onto queues and return back to their callers. Queued requests are then
+removed from their queues and forwarded to lower-level drivers from within callback routines
+that execute later. Once a dispatch routine pends a request, all subsequent processing of that
+request must occur in arbitrary thread context.</p>
+
+<p>Having explained these facts about thread context, we can state a simple rule about when
+it's okay to block a thread:</p>
+
+<blockquote><b>Block only the thread that originated the request you're working on.</b></blockquote>
+
+<p>To follow this rule, you generally have to be the highest-level driver for the device
+that's getting sent the IRP. One important exception occurs for requests like
+IRP_MN_START_DEVICE&#8212;see <A HREF="ch06a.htm">Chapter 6</A>&#8212;that all drivers process in a synchronous way. That
+is, drivers don't queue or pend certain requests. When you receive one of these requests,
+you can trace the call/return stack directly back to the originator of the request. As
+we'll see in <A HREF="ch06a.htm">Chapter 6</A>, it's not only okay for you to block the thread in which you
+process these requests, but blocking and waiting is the prescribed way to handle them.</p>
+
+<p>One more rule should be obvious from the fact that thread switching doesn't occur at
+elevated IRQL:</p>
+
+<blockquote><b>You can't block a thread if you're executing at or above DISPATCH_LEVEL.</b></blockquote>
+
+<p>As a practical matter, this rule means that you must be in your DriverEntry or AddDevice
+function to block the current thread, or else in a driver dispatch function. All of these
+functions execute at PASSIVE_LEVEL. I'm hard-pressed to think of why you might need to
+block to finish DriverEntry or AddDevice, even, because those functions merely initialize data
+structures for downstream use.</p>
+
+<A NAME="121"><H2>Waiting on a Single Dispatcher Object</H2></A>
+
+<p>You call KeWaitForSingleObject as illustrated in the following example:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql() &lt;= DISPATCH_LEVEL);
+LARGE_INTEGER timeout;
+NTSTATUS status = KeWaitForSingleObject(object, WaitReason,
+  WaitMode, Alertable, &amp;timeout);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>As suggested by the ASSERT, you must be executing at or below DISPATCH_LEVEL to even call
+this service routine.</p>
+
+<p>In this call, <b>object</b> points to the object on which you wish to wait. While this argument
+is typed as a PVOID, it should be a pointer to one of the dispatcher objects listed in Table
+4-1. The object must be in nonpaged memory&#8212;for example, in a device extension structure or
+other data area allocated from the nonpaged pool. For most purposes, the execution stack can be
+considered nonpaged.</p>
+
+<p><b>WaitReason</b> is a purely advisory value chosen from the KWAIT_REASON enumeration. No code
+in the kernel actually cares what value you supply here, so long as you don't specify <b>
+WrQueue</b>. (Internally, scheduler code bases some decisions on whether a thread is currently
+blocked for this &quot;reason.&quot;) The reason a thread is blocked is saved in an opaque data
+structure, though. If you knew more about that data structure and were trying to debug a
+deadlock of some kind, you could perhaps gain clues from the reason code. The bottom line:
+always specify <b>Executive</b> for this parameter; there's no reason to say anything
+else.</p>
+
+<p><b>WaitMode</b> is one of the two values of the MODE enumeration: <b>KernelMode</b> or <b>
+UserMode</b>. <b>Alertable</b> is a simple Boolean value. Unlike WaitReason, these parameters
+<i>do</i> make a difference to the way the system behaves, by controlling whether the wait can
+be terminated early in order to deliver asynchronous procedure calls of various kinds. I'll
+explain these interactions in more detail in &quot;<A HREF="ch04e.htm#134">Thread Alerts and APCs</A>&quot; later in this
+chapter. Waiting in user mode also authorizes the Memory Manager to swap your thread's
+kernel-mode stack out. You'll see examples in this book and elsewhere where drivers create
+event objects, for instance, as automatic variables. A bug check would result if some other
+thread were to call <b>KeSetEvent</b> at elevated IRQL at a time when the event object was
+absent from memory. The bottom line: you should probably always wait in KernelMode and specify
+FALSE for the alertable parameter.</p>
+
+<p>The last parameter to KeWaitForSingleObject is the address of a 64-bit timeout value,
+expressed in 100-nanosecond units. A positive number for the timeout is an absolute timestamp
+relative to the same January 1, 1601, epoch of the system clock. You can determine the current
+time by calling <b>KeQuerySystemTime</b>. A negative number is an interval relative to the
+current time. If you specify an absolute time, a subsequent change to the system clock alters
+the duration of the timeout you might experience. That is, the timeout doesn't expire until
+the system clock equals or exceeds whatever absolute value you specify. In contrast, if you
+specify a relative timeout, the duration of the timeout you experience is unaffected by changes
+in the system clock.</p>
+
+<P><div class="sidebar"><blockquote>
+<p><b>Why January 1, 1601?</b></p>
+
+<p>Years ago when I was first learning the Win32 API, I was bemused by the choice of January 1,
+1601, as the origin for the timestamps in Windows NT. I understood the reason for this choice
+when I had occasion to write a set of conversion routines. Everyone knows that years divisible
+by four are leap years. Many people know that century years (such as 1900) are
+exceptions&#8212;they're not leap years even though they're divisible by 4. A few people
+know that every fourth century year (such as 1600 and 2000) is an exception to the
+exception&#8212;they <i>are</i> leap years. January 1, 1601 was the start of a 400-year cycle
+that ends in a leap year. If you base timestamps on this origin, it's possible to write programs
+that convert a Windows NT timestamp into a conventional representation of the date (and vice
+versa) without doing any jumps.</p></blockquote></div>
+</P>
+
+<p>Specifying a zero timeout causes KeWaitForSingleObject to return immediately with a status
+code indicating whether the object is in the signalled state. <i>If you're executing at
+DISPATCH_LEVEL, you</i> must <i>specify a zero timeout because blocking is not allowed.</i>
+Each kernel dispatcher object offers a <b>KeReadState</b><i>Xxx</i> service function that
+allows you to determine the state of the object. Reading the state is not completely equivalent
+to waiting for zero time, however: when KeWaitForSingleObject discovers that the wait is
+satisfied, it performs the side effects that the particular object requires. In contrast,
+reading the state of the object does not perform the side effects, even if the object is
+already signalled and a wait would be satisfied if it were requested right now.</p>
+
+<p>Specifying a NULL pointer for the timeout parameter is okay and indicates an infinite
+wait.</p>
+
+<p>The return value indicates one of several possible results. STATUS_SUCCESS is the result you
+expect and indicates that the wait was satisfied. That is, either the object was in the
+signalled state when you made the call to KeWaitForSingleObject, or else the object was in the
+not-signalled state and later became signalled. When the wait is satisfied in this way, there
+may be side effects that need to be performed on the object. The nature of these side effects
+depends on the type of the object, and I'll explain them later in this chapter in
+connection with discussing each type of object. (For example, a synchronization type of event
+will be reset after your wait is satisfied.)</p>
+
+<p>A return value of STATUS_TIMEOUT indicates that the specified timeout occurred without the
+object reaching the signalled state. If you specify a zero timeout, KeWaitForSingleObject
+returns immediately with either this code (indicating that the object is not-signalled) or
+STATUS_SUCCESS (indicating that the object is signalled). This return value is not possible if
+you specify a NULL timeout parameter pointer, because you thereby request an infinite wait.</p>
+
+<p>Two other return values are possible. STATUS_ALERTED and STATUS_USER_APC mean that the wait
+has terminated without the object having been signalled because the thread has received an
+alert or a user-mode APC, respectively. I'll discuss these concepts a bit further on in
+&quot;<A HREF="ch04e.htm#134">Thread Alerts and APCs</A>.&quot;</p>
+
+<A NAME="122"><H2>Waiting on Multiple Dispatcher Objects</H2></A>
+
+<p><b>KeWaitForMultipleObjects</b> is a companion function to KeWaitForSingleObject that you
+use when you want to wait for one or all of several dispatcher objects simultaneously. Call
+this function as in the example below.</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql() &lt;= DISPATCH_LEVEL);
+LARGE_INTEGER timeout;
+NTSTATUS status = KeWaitForMultipleObjects(count, objects, 
+  WaitType, WaitReason, WaitMode, Alertable, &amp;timeout,waitblocks);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Here, <b>objects</b> is the address of an array of pointers to dispatcher objects, and <b>
+count</b> is the number of pointers in the array. The count must be less than or equal to the
+value MAXIMUM_WAIT_OBJECTS, which currently equals 64. The array, as well as each of the
+objects to which the elements of the array point, must be in nonpaged memory. <b>WaitType</b> 
+is one of the enumeration values <b>WaitAll</b> or <b>WaitAny</b> and specifies whether you
+want to wait until all of the objects are simultaneously in the signalled state or whether,
+instead, you want to wait until any one of the objects is signalled.</p>
+
+<p>The <b>waitblocks</b> argument points to an array of KWAIT_BLOCK structures that the kernel
+will use to administer the wait operation. You don't need to initialize these structures in
+any way&#8212;the kernel just needs to know where the storage is for the group of wait blocks
+that it will use to record the status of each of the objects during the pendency of the wait.
+If you're waiting for a small number of objects (specifically, a number no bigger than
+THREAD_WAIT_OBJECTS, which currently equals 3), you can supply NULL for this parameter. If you
+supply NULL, KeWaitForMultipleObjects uses a preallocated array of wait blocks that lives in
+the thread object. If you're waiting for more objects than this, you must provide nonpaged
+memory that's at least <b>count * sizeof(KWAIT_BLOCK)</b> bytes in length.</p>
+
+<p>The remaining arguments to KeWaitForMultipleObjects are the same as the corresponding arguments
+to KeWaitForSingleObject, and most return codes have the same meaning.</p>
+
+<p>If you specify <b>WaitAll</b> , the return value STATUS_SUCCESS indicates that all the objects
+managed to reach the signalled state simultaneously. If you specify <b>WaitAny</b> , the return
+value is numerically equal to the <b>objects</b> array index of the single object that
+satisfied the wait. If more than one of the objects happens to be signalled, you'll be told
+about one of them&#8212;maybe the lowest numbered of all the ones that are signalled at that
+moment, but maybe some other one. You can think of this value being STATUS_WAIT_0 plus the
+array index. You can perform the usual NT_SUCCESS test of the returned status before extracting
+the array index from the status code:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>NTSTATUS status = KeWaitForMultipleObjects(...);
+if (NT_SUCCESS(status))
+  {
+  ULONG iSignalled = (ULONG) status - (ULONG) STATUS_WAIT_0;
+  ...
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>When KeWaitForMultipleObjects returns a success code, it also performs the side effects
+required by the object(s) that satisfied the wait. If more than one object is signalled but you
+specified WaitAny, only the one that's deemed to satisfy the wait has its side effects
+performed.</p>
+
+<A NAME="123"><H2>Kernel Events</H2></A>
+
+<p>You use the service functions listed in Table 4-2 to work with kernel event objects. To
+initialize an event object, first reserve nonpaged storage for an object of type KEVENT and
+then call <b>KeInitializeEvent</b>:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql() == PASSIVE_LEVEL;
+KeInitializeEvent(event, EventType, initialstate);</pre>
+</td></tr>
+</table>
+</p>
+
+<p><b>Event</b> is the address of the event object. <b>EventType</b> is one of the enumeration
+values <b>NotificationEvent</b> or <b>SynchronizationEvent.</b> A notification event has the
+characteristic that, when it is set to the signalled state, it stays signalled until it is
+explicitly reset to the not-signalled state. Furthermore, all threads that wait on a
+notification event are released when the event is signalled. This is like a manual-reset event
+in user mode. A synchronization event, on the other hand, gets reset to the not-signalled state
+as soon as a single thread gets released. This is what happens in user mode when someone calls
+<b>SetEvent</b> on an auto-reset event object. The only side effect performed on an event
+object by KeWait<i>Xxx</i> is to reset a synchronization event to not-signalled. Finally, <b>
+initialstate</b> is TRUE to specify that the initial state of the event is to be signalled and
+FALSE to specify that the initial state is to be not-signalled.</p>
+
+<p><b>Table 4-2.</b> <i>Service functions for use with kernel event objects.</i></p>
+
+<P>
+<table cellpadding=5 width="95%">
+<tr> 
+<th><i>Service Function</i>  </th>
+<th><i>Description</i>  </th></tr>
+<tr>
+<td valign="top">KeClearEvent  </td>
+<td valign="top">Sets event to not-signalled, don't report previous state  </td></tr>
+<tr>
+<td valign="top">KeInitializeEvent  </td>
+<td valign="top">Initializes event object  </td></tr>
+<tr>
+<td valign="top">KeReadStateEvent  </td>
+<td valign="top">Determines current state of event  </td></tr>
+<tr>
+<td valign="top">KeResetEvent  </td>
+<td valign="top">Sets event to not-signalled, return previous state  </td></tr>
+<tr>
+<td valign="top">KeSetEvent  </td>
+<td valign="top">Sets event to signalled, return previous state  </td></tr>
+</table></p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+In this series of sections on synchronization primitives, I'm repeating the
+IRQL restrictions that the DDK documentation describes. In the current release of Microsoft
+Windows 2000, the DDK is sometimes more restrictive than the OS actually is. For example,
+KeClearEvent can be called at any IRQL, not just at or below DISPATCH_LEVEL. KeInitializeEvent
+can be called at any IRQL, not just at PASSIVE_LEVEL. However, you should regard the statements
+in the DDK as being tantamount to saying that Microsoft might someday impose the documented
+restriction, which is why I haven't tried to report the true state of affairs.</blockquote></div>
+</p>
+
+<p>You can call <b>KeSetEvent</b> to place an event into the signalled state:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql() &lt;= DISPATCH_LEVEL);
+LONG wassignalled = KeSetEvent(event, boost, wait);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>As implied by the ASSERT, you must be running at or below DISPATCH_LEVEL to call this
+function. The <b>event</b> argument is a pointer to the event object in question, and <b>boost</b> is a value to be added to a waiting thread's priority if setting the event
+results in satisfying someone's wait. See the sidebar (&quot;That Pesky Third Argument to
+KeSetEvent&quot;) for an explanation of the Boolean <b>wait</b> argument, which a WDM driver
+would almost never want to specify as TRUE. The return value is nonzero if the event was
+already in the signalled state before the call and 0 if the event was in the not-signalled
+state.</p>
+
+<p>A multitasking scheduler needs to artificially boost the priority of a thread that waits for
+I/O operations or synchronization objects in order to avoid starving threads that spend lots of
+time waiting. This is because a thread that blocks for some reason generally relinquishes its
+time slice and won't regain the CPU until either it has a relatively higher priority than
+other eligible threads or other threads that have the same priority finish their time slices. A
+thread that never blocks, however, gets to complete its time slices. Unless a boost is applied
+to the thread that repeatedly blocks, therefore, it will spend a lot of time waiting for
+CPU-bound threads to finish their time slices.</p>
+
+<p>You and I won't always have a good idea of what value to use for a priority boost. A
+good rule of thumb to follow is to specify IO_NO_INCREMENT unless you have a good reason not
+to. If setting the event is going to wake up a thread that's dealing with a time-sensitive
+data flow (such as a sound driver), supply the boost that's appropriate to that kind of
+device (such as IO_SOUND_INCREMENT). The important thing is to not boost the waiter for a silly
+reason. For example, if you're trying to handle an IRP_MJ_PNP request
+synchronously&#8212;see <A HREF="ch06a.htm">Chapter 6</A>&#8212;you'll be waiting for lower-level drivers to handle
+the IRP before you proceed and your completion routine will be calling KeSetEvent. Since Plug
+and Play requests have no special claim on the processor and occur only infrequently, specify
+IO_NO_INCREMENT even for a sound card.</p>
+
+<P><div class="sidebar"><blockquote>
+<p><b>That Pesky Third Argument to KeSetEvent</b></p>
+
+<p>The purpose of the <b>wait</b> argument to KeSetEvent is to allow internal code to hand off
+control from one thread to another very quickly. System components other than device drivers
+can, for example, create paired event objects that are used by client and server threads to
+gate their communication. When the server wants to wake up its paired client, it will call
+KeSetEvent with the <b>wait</b> argument set to TRUE and then <i>immediately</i> call
+KeWait<i>Xxx</i> to put itself to sleep. The use of <b>wait</b> allows these two operations to
+be done atomically so that no other thread can be awakened in between and possibly wrest
+control away from the client and the server.</p>
+
+<p>The DDK has always sort of described what happens internally, but I've found
+the explanation confusing. I'll try to explain it in a different way so that you can see
+why you should always say FALSE for this parameter. Internally, the kernel uses a
+&quot;dispatcher database lock&quot; to guard operations related to thread blocking, waking,
+and scheduling. KeSetEvent needs to acquire this lock, and so do the KeWait<i>Xxx</i> routines.
+If you say TRUE for this argument, KeSetEvent sets a flag so that KeWait<i>Xxx</i> will know
+you did so, and it returns to you without releasing this lock. When you turn around and
+(immediately, please&#8212;you're running at a higher IRQL than every hardware device and
+you own a spin lock that's <i>very</i> frequently in contention) call KeWait<i>Xxx</i>, it
+needn't acquire the lock all over again. The net effect is that you'll wake up the
+waiting thread and put yourself to sleep without giving any other thread a chance to start
+running.</p>
+
+<p>You can see, first of all, that a function which calls KeSetEvent with <b>wait</b> set to
+TRUE has to be in nonpaged memory because it will execute briefly at elevated IRQL. But
+it's hard to imagine why an ordinary device driver would even need to use this mechanism
+because it would almost never know better than the kernel which thread ought to be scheduled
+next. The bottom line: always say FALSE for this parameter. In fact, it's not clear why the
+parameter has even been exposed to tempt us.</p>
+</blockquote></div>
+</P>
+
+<p>You can determine the current state of an event (at any IRQL) by calling <b>KeReadStateEvent</b>:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>LONG signalled = KeReadStateEvent(event);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The return value is nonzero if the event is signalled, 0 if it's not-signalled.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+KeReadStateEvent is not supported in Microsoft Windows 98 even though the other
+KeReadState<i>Xxx</i> functions described here are. The absence of support has to do with how
+events and other synchronization primitives are implemented in Windows 98.</blockquote></div>
+</p>
+
+<p>You can determine the current state of an event and, immediately thereafter, place it in the
+not-signalled state by calling the <b>KeResetEvent</b> function (at or below
+DISPATCH_LEVEL):</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql() &lt;= DISPATCH_LEVEL);
+LONG signalled = KeResetEvent(event);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>If you're not interested in the previous state of the event, you can save a little time
+by calling <b>KeClearEvent</b> instead, as shown below.</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql() &lt;= DISPATCH_LEVEL);
+KeClearEvent(event);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>KeClearEvent is faster because it doesn't need to capture the current state of the event
+before setting it to not-signalled.</p>
+
+<A NAME="124"><H2>Kernel Semaphores</H2></A>
+
+<p>A <i>kernel semaphore</i> is an integer counter with associated synchronization semantics.
+The semaphore is considered signalled when the counter is positive and not-signalled when the
+counter is 0. The counter cannot take on a negative value. Releasing a semaphore increases the
+counter, whereas successfully waiting on a semaphore decrements the counter. If the decrement
+makes the count 0, the semaphore is then considered not-signalled, with the consequence that
+other KeWait<i>Xxx</i> callers who insist on finding it signalled will block. Note that if more
+threads are waiting for a semaphore than the value of the counter, not all of the waiting
+threads will be unblocked.</p>
+
+<p>The kernel provides three service functions to control the state of a semaphore object. (See
+Table 4-3.) You initialize a semaphore by making the following function call at
+PASSIVE_LEVEL:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql() == PASSIVE_LEVEL);
+KeInitializeSemaphore(semaphore, count, limit);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>In this call, <b>semaphore</b> points to a KSEMAPHORE object in nonpaged memory. <b>
+Count</b> is the initial value of the counter, and <b>limit</b> is the maximum value that the
+counter will be allowed to take on, which must be as large as the initial count.</p>
+
+<p><b>Table 4-3.</b> <i>Service functions for use with kernel semaphore objects.</i></p>
+
+<P>
+<table cellpadding=5 width="95%">
+<tr> 
+<th><i>Service Function</i>  </th>
+<th><i>Description</i>  </th></tr>
+<tr>
+<td valign="top">KeInitializeSemaphore  </td>
+<td valign="top">Initializes semaphore object  </td></tr>
+<tr>
+<td valign="top">KeReadStateSemaphore  </td>
+<td valign="top">Determines current state of semaphore  </td></tr>
+<tr>
+<td valign="top">KeReleaseSemaphore  </td>
+<td valign="top">Sets semaphore object to the signalled state  </td></tr>
+</table></p>
+
+<p>If you create a semaphore with a limit of 1, the object is somewhat similar to a mutex in
+that only one thread at a time will be able to claim it. A kernel mutex has some features that
+a semaphore lacks, however, to help prevent deadlocks. Accordingly, there's almost no point
+in creating a semaphore with a limit of 1.</p>
+
+<p>If you create a semaphore with a limit bigger than 1, you have an object that allows
+multiple threads to access some resource. A familiar theorem in queuing theory dictates that
+providing a single queue for multiple servers is more fair (that is, results in less variation
+in waiting times) than providing a separate queue for each of several servers. The average
+waiting time is the same in both cases, but the variation in waiting times is smaller. (This is
+why queues in stores are increasingly organized so that customers wait in a single line for the
+next available clerk.) This kind of semaphore allows you to organize a set of software or
+hardware servers to take advantage of that theorem.</p>
+
+<p>The owner (or one of the owners) of a semaphore releases its claim to the semaphore by
+calling <b>KeReleaseSemaphore</b>:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql() &lt;= DISPATCH_LEVEL);
+LONG wassignalled = KeReleaseSemaphore(semaphore, boost, delta, wait);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>This operation adds <b>delta</b> , which must be positive, to the counter associated with <b>semaphore</b> , thereby putting the semaphore into the signalled state and allowing other
+threads to be released. In most cases, you would specify 1 for this parameter to indicate that
+one claimant of the semaphore is releasing its claim. The <b>boost</b> and <b>wait</b> 
+parameters have the same import as the corresponding parameters to KeSetEvent, discussed
+earlier. The return value is 0 if the previous state of the semaphore was not-signalled and
+nonzero if the previous state was signalled.</p>
+
+<p>KeReleaseSemaphore doesn't allow you to increase the counter beyond the limit specified
+when you initialized the semaphore. If you try, it does not adjust the counter at all, and it
+raises an exception with the code STATUS_SEMAPHORE_LIMIT_EXCEEDED. Unless someone has a structured exception handler to trap the exception, a
+bug check will eventuate.</p>
+
+<p>You can also interrogate the current state of a semaphore with this call:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql() &lt;= DISPATCH_LEVEL);
+LONG signalled = KeReadStateSemaphore(semaphore);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The return value is nonzero if the semaphore is signalled and 0 if the semaphore is
+not-signalled. You shouldn't assume that the return value is the current value of the
+counter&#8212;it could be any nonzero value if the counter is positive.</p>
+
+<A NAME="125"><H2>Kernel Mutexes</H2></A>
+
+<p>The word <i>mutex</i> is a contraction of <i>mutual exclusion</i>. A kernel mutex object
+provides one method (and not necessarily the best one) to serialize access by competing threads
+to some shared resource. The mutex is signalled if no thread owns it and not-signalled if some
+thread currently does own it. When a thread gains control of a mutex after calling one of the
+KeWait<i>Xxx</i> routines, the kernel also takes some steps to help avoid possible deadlocks.
+These are the side effects referred to in the earlier discussion of KeWaitForSingleObject (in
+the section &quot;<A HREF="ch04e.htm#121">Waiting on a Single Dispatcher Object</A>&quot;). The kernel ensures that the
+thread can't be paged out, and it forestalls all but the delivery of &quot;special&quot;
+kernel APCs (such as the one that <b>IoCompleteRequest</b> uses to complete I/O requests).</p>
+
+<p>It's generally better to use an executive fast mutex rather than a kernel mutex, as
+I'll explain in more detail later in &quot;<A HREF="ch04f.htm#138">Fast Mutex Objects</A>.&quot; The main difference
+between the two is that a kernel mutex can be acquired recursively, whereas an executive fast
+mutex cannot. That is, the owner of a kernel mutex can make a subsequent call to
+KeWait<i>Xxx</i> specifying the same mutex and have the wait immediately satisfied. A thread
+that does this must release the mutex an equal number of times before the mutex will be
+considered free.</p>
+
+<p>The reason you would use a mutex in the first place (instead of relying on elevated IRQL and
+a spin lock) is that you need to serialize access to an object for a long time or in pagable
+code. By gating access to a resource through a mutex, you allow other threads to run on the
+other CPUs of a multiprocessor system, and you also allow your code to cause page faults while
+still locking out other threads. Table 4-4 lists the service functions you use with mutex
+objects.</p>
+
+<p><b>Table 4-4.</b> <i>Service functions for use with kernel mutex objects.</i></p>
+
+<P>
+<table cellpadding=5 width="95%">
+<tr> 
+<th><i>Service Function</i>  </th>
+<th><i>Description</i>  </th></tr>
+<tr>
+<td valign="top">KeInitializeMutex  </td>
+<td valign="top">Initializes mutex object  </td></tr>
+<tr>
+<td valign="top">KeReadStateMutex  </td>
+<td valign="top">Determines current state of mutex  </td></tr>
+<tr>
+<td valign="top">KeReleaseMutex  </td>
+<td valign="top">Sets mutex object to the signalled state  </td></tr>
+</table></p>
+
+<p>To create a mutex, you reserve nonpaged memory for a KMUTEX object and make the following
+initialization call:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql() == PASSIVE_LEVEL);
+KeInitializeMutex(mutex, level);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>where <b>mutex</b> is the address of the KMUTEX object, and <b>level</b> is a parameter
+originally intended to help avoid deadlocks when your own code uses more than one mutex. Since
+the kernel currently ignores the <b>level</b> parameter, I'm not going to attempt to
+describe what it used to mean.</p>
+
+<p>The mutex begins life in the signalled&#8212;that is, unowned&#8212;state. An immediate call
+to KeWait<i>Xxx</i> would take control of the mutex and put it into the not-signalled
+state.</p>
+
+<p>You can interrogate the current state of a mutex with this function call:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql() &lt;= DISPATCH_LEVEL);
+LONG signalled = KeReadStateMutex(mutex);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The return value is 0 if the mutex is currently owned, nonzero if it's currently
+unowned.</p>
+
+<p>The thread that owns a mutex can release ownership and return the mutex to the signalled
+state with this function call:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql() &lt;= DISPATCH_LEVEL);
+LONG wassignalled = KeReleaseMutex(mutex, wait);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The <b>wait</b> parameter means the same thing as the corresponding argument to KeSetEvent.
+The return value is always 0 to indicate that the mutex was previously owned because, if this
+were not the case, <b>KeReleaseMutex</b> would have bugchecked (it being an error for anyone
+but the owner to release a mutex).</p>
+
+<p>Just for the sake of completeness, I want to mention a macro in the DDK named <b>
+KeWaitForMutexObject</b>. (See WDM.H.) It is defined simply as follows:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>#define KeWaitForMutexObject KeWaitForSingleObject</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Using this special name offers no benefit at all. You don't even get the benefit of
+having the compiler insist that the first argument be a pointer to a KMUTEX instead of any
+random pointer type.</p>
+
+<A NAME="126"><H2>Kernel Timers</H2></A>
+
+<p>The kernel provides a timer object that functions something like an event that automatically
+signals itself at a specified absolute time or after a specified interval. It's also
+possible to create a timer that signals itself repeatedly and to arrange for a DPC callback
+following the expiration of the timer. Table 4-5 lists the service functions you use with timer
+objects. With so many different ways of using timers, it will be easiest to describe the use of
+these functions in several different scenarios.</p>
+
+<p><b>Table 4-5.</b> <i>Service functions for use with kernel timer objects.</i></p>
+
+<P>
+<table cellpadding=5 width="95%">
+<tr> 
+<th><i>Service Function</i>  </th>
+<th><i>Description</i>  </th></tr>
+<tr>
+<td valign="top">KeCancelTimer  </td>
+<td valign="top"> Cancels an active timer  </td></tr>
+<tr>
+<td valign="top">KeInitializeTimer  </td>
+<td valign="top">Initializes a one-time notification timer  </td></tr>
+<tr>
+<td valign="top">KeInitializeTimerEx  </td>
+<td valign="top">Initializes a one-time or repetitive notification or synchronization timer  </td></tr>
+<tr>
+<td valign="top">KeReadStateTimer  </td>
+<td valign="top">Determines current state of a timer  </td></tr>
+<tr>
+<td valign="top">KeSetTimer  </td>
+<td valign="top">(Re)specifies expiration time for a notification timer  </td></tr>
+<tr>
+<td valign="top">KeSetTimerEx  </td>
+<td valign="top">(Re)specifies expiration time and other properties of
+ a timer  </td></tr>
+</table></p>
+
+
+<A NAME="127"><H3>Notification Timers Used like Events</H3></A>
+
+<p>In this scenario, we'll create a notification timer object and wait until it expires.
+First allocate a KTIMER object in nonpaged memory. Then, running at or below DISPATCH_LEVEL,
+initialize the timer object.</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>PKTIMER timer;      // <img src="images/tlarrow.jpg" width=13 height=12 border="0"> someone gives you this
+ASSERT(KeGetCurrentIrql() &lt;= DISPATCH_LEVEL);
+KeInitializeTimer(timer);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>At this point, the timer is in the not-signalled state and isn't counting
+down&#8212;a wait on the timer would never be satisfied. To start the timer counting, call <b>
+KeSetTimer</b> as follows:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql() &lt;= DISPATCH_LEVEL);
+LARGE_INTEGER duetime;
+BOOLEAN wascounting = KeSetTimer(timer, &amp;duetime, NULL);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The <b>duetime</b> value is a 64-bit time value expressed in 100-nanosecond units. If the
+value is positive, it is an absolute time relative to the same January 1, 1601, epoch used for
+the system timer. If the value is negative, it is an interval relative to the current time. If
+you specify an absolute time, a subsequent change to the system clock alters the duration of
+the timeout you experience. That is, the timer doesn't expire until the system clock equals
+or exceeds whatever absolute value you specify. In contrast, if you specify a relative timeout,
+the duration of the timeout you experience is unaffected by changes in the system clock. These
+are the same rules that apply to the timeout parameter to KeWait<i>Xxx</i>.</p>
+
+<p>The return value from KeSetTimer, if TRUE, indicates that the timer was already counting
+down (in which case our call to KeSetTimer would have cancelled it and started the count all
+over again).</p>
+
+<p>At any time, you can determine the current state of a timer:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql() &lt;= DISPATCH_LEVEL);
+BOOLEAN counting = KeReadStateTimer(timer);</pre>
+</td></tr>
+</table>
+</p>
+
+<p><b>KeInitializeTimer</b> and KeSetTimer are actually older service functions that have been
+superseded by newer functions. We could have initialized the timer with this call:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIqrl() &lt;= DISPATCH_LEVEL);
+KeInitializeTimerEx(timer, NotificationTimer);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>We could also have used the extended version of the set timer function, <b>
+KeSetTimerEx</b>:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql() &lt;= DISPATCH_LEVEL);
+LARGE_INTEGER duetime;
+BOOLEAN wascounting = KeSetTimerEx(timer, &amp;duetime, 0, NULL);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>I'll explain a bit further on in this chapter the purpose of extra parameters in these
+extended versions of the service functions.</p>
+
+<p>Once the timer is counting down, it's still considered to be not-signalled until the
+specified due time arrives. At that point, the object becomes signalled, and all waiting
+threads are released. The system guarantees only that the expiration of the timer will be
+noticed no sooner than the due time you specify. If you specify a due time with a precision
+finer than the granularity of the system timer (which you can't control), the timeout will
+be noticed later than the exact instant you specify.</p>
+
+<A NAME="128"><H3>Notification Timers Used with a DPC</H3></A>
+
+<p>In this scenario, we want expiration of the timer to trigger a DPC. You would choose this
+method of operation if you wanted to be sure that you could service the timeout no matter what
+priority level your thread had. (Since you can only wait at PASSIVE_LEVEL, regaining control of
+the CPU after the timer expires is subject to the normal vagaries of thread scheduling. The
+DPC, however, executes at elevated IRQL and thereby effectively preempts <i>all</i>
+threads.)</p>
+
+<p>We initialize the timer object in the same way. We also have to initialize a KDPC object for
+which we allocate nonpaged memory. For example:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>PKDPC dpc;  // <img src="images/tlarrow.jpg" width=13 height=12 border="0"> points to KDPC you've allocated
+ASSERT(KeGetCurrentIrql() == PASSIVE_LEVEL);
+KeInitializeTimer(timer);
+KeInitializeDpc(dpc, DpcRoutine, context);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>You can initialize the timer object by using either KeInitializeTimer or
+KeInitializeTimerEx, as you please. <b>DpcRoutine</b> is the address of a deferred procedure
+call routine, which must be in nonpaged memory. The <b>context</b> parameter is an arbitrary
+32-bit value (typed as a PVOID) that will be passed as an argument to the DPC routine. The <b>
+dpc</b> argument is a pointer to a KDPC object for which you provide nonpaged storage. (It
+might be in your device extension, for example.)</p>
+
+<p>When we want to start the timer counting down, we specify the DPC object as one of the
+arguments to KeSetTimer or KeSetTimerEx:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql() &lt;= DISPATCH_LEVEL);
+LARGE_INTEGER duetime;
+BOOLEAN wascounting = KeSetTimer(timer, &amp;duetime, dpc);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>You could also use the extended form KeSetTimerEx if you wanted to. The only difference
+between this call and the one we examined in the previous section is that we've specified
+the DPC object address as an argument. When the timer expires, the system will queue the DPC
+for execution as soon as conditions permit. This would be at least as soon as you'd be able
+to wake up from a wait at PASSIVE_LEVEL. Your DPC routine would have the following skeletal
+appearance:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>VOID DpcRoutine(PKDPC dpc, PVOID context, PVOID junk1, PVOID junk2)
+  {
+  ...
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>For what it's worth, even when you supply a DPC argument to KeSetTimer or KeSetTimerEx,
+you can still call KeWait<i>Xxx</i> to wait at PASSIVE_LEVEL if you want. On a single-CPU
+system, the DPC would occur before the wait could finish because it executes at higher
+IRQL.</p>
+
+<A NAME="129"><H3>Synchronization Timers</H3></A>
+
+<p>Like event objects, timer objects come in both notification and synchronization flavors. A
+notification timer allows any number of waiting threads to proceed once it expires. A
+synchronization timer, by contrast, allows only a single thread to proceed. Once some
+thread's wait is satisfied, the timer switches to the not-signalled state. To create a
+synchronization timer, you must use the extended form of the initialization service
+function:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql() &lt;= DISPATCH_LEVEL);
+KeInitializeTimerEx(timer, SynchronizationTimer);</pre>
+</td></tr>
+</table>
+</p>
+
+<p><b>SynchronizationTimer</b> is one of the values of the TIMER_TYPE enumeration. The other
+value is <b>NotificationTimer.</b> </p>
+
+<p>If you use a DPC with a synchronization timer, think of queuing the DPC as being an extra
+thing that happens when the timer expires. That is, expiration puts the timer into the
+signalled state <i>and</i> queues a DPC. One thread can be released as a result of the timer
+being signalled.</p>
+
+<A NAME="130"><H3>Periodic Timers</H3></A>
+
+<p>So far, I've discussed only timers that expire exactly once. By using the extended set
+timer function, you can also request a periodic timeout:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql() &lt;= DISPATCH_LEVEL);
+LARGE_INTEGER duetime;
+BOOLEAN wascounting = KeSetTimerEx(timer, &amp;duetime, period, dpc);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Here, <b>period</b> is a periodic timeout, expressed in milliseconds (ms), and <b>dpc</b> is
+an optional pointer to a KDPC object. A timer of this kind expires once at the due time and
+periodically thereafter. To achieve exactly periodic expiration, specify the same relative due
+time as the interval. Specifying a zero due time causes the timer to immediately expire,
+whereupon the periodic behavior takes over. It often makes sense to start a periodic timer in
+conjunction with a DPC object, by the way, because doing so allows you to be notified without
+having to repeatedly wait for the timeout.</p>
+
+<A NAME="131"><H3>An Example</H3></A>
+
+<p>One use for kernel timers is to conduct a polling loop in a system thread dedicated to the
+task of repeatedly checking a device for activity. Not many devices nowadays need to be served
+by a polling loop, but yours may be one of the few exceptions. I'll discuss this subject in
+Chapter 9, &quot;<A HREF="ch09a.htm#299">Specialized Topics</A>,&quot; and the companion disc includes a sample driver
+(POLLING) that illustrates all of the concepts involved. Part of that sample is the following
+loop that polls the device at fixed intervals. The logic of the driver is such that the loop
+can be broken by setting a kill event. Consequently, the driver uses KeWaitForMultipleObjects.
+The code is actually a bit more complicated than the following fragment, which I've edited
+to concentrate on the part related to the timer:</p>
+
+<p>
+<table cellpadding=5 width="95%"><TR>
+<TD valign="top">
+<PRE>
+
+
+
+
+1<img src="images/arorite2.jpg" width=17 height=10 border="0">
+2<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+
+
+
+
+
+
+3<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+
+4<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+
+
+5<img src="images/arorite2.jpg" width=17 height=10 border="0"></PRE>
+</TD>
+
+<td valign="top">
+<pre>VOID PollingThreadRoutine(PDEVICE_EXTENSION pdx)
+  {
+  NTSTATUS status;
+  KTIMER timer;
+  KeInitializeTimerEx(&amp;timer, SynchronizationTimer);
+  PVOID pollevents[] = {
+    (PVOID) &amp;pdx-&gt;evKill,
+    (PVOID) &amp;timer,
+    };
+  ASSERT(arraysize(pollevents) &lt;= THREAD_WAIT_OBJECTS);
+  
+  LARGE_INTEGER duetime = {0};
+  #define POLLING_INTERVAL 500
+  KeSetTimerEx(&amp;timer, duetime, POLLING_INTERVAL, NULL);
+  while (TRUE)
+    {
+    status = KeWaitForMultipleObjects(arraysize(pollevents),
+      pollevents, WaitAny, Executive, KernelMode, FALSE, NULL, NULL);
+    if (status == STATUS_WAIT_0)
+      break;
+    if (<i>&lt;device needs attention&gt;</i>)
+      <i>&lt;do something&gt;</i>;
+    }
+  KeCancelTimer(&amp;timer);
+  PsTerminateSystemThread(STATUS_SUCCESS);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> Here we initialize a kernel timer object to act as a synchronization timer. It
+would have worked just as well to initialize it as a notification timer because only one
+thread&#8212;this one&#8212;will ever wait on the timer.</li></p>
+
+<p><li> We'll need to supply an array of dispatcher object pointers as one of the
+arguments to KeWaitForMultipleObjects, and this is where we set that up. The first element of
+the array is the kill event that some other part of the driver might set when it's time for
+this system thread to exit. The second element is the timer object. The ASSERT statement that
+follows this array verifies that we have few enough objects in our array such that we can
+implicitly use the default array of wait blocks in our thread object.</li></p>
+
+<p><li> The KeSetTimerEx statement starts a periodic timer running. The <b>duetime</b> is
+0, so the timer goes immediately into the signalled state. It will expire every 500 ms
+thereafter.</li></p>
+
+<p><li> Within our polling loop, we wait for the timer to expire or for the kill event to
+be set. If the wait terminates because of the kill event, we leave the loop, clean up, and exit
+this system thread. If the wait terminates because the timer has expired, we go on to the next
+step.</li></p>
+
+<p><li> This is where our device driver would do something related to our hardware.</li></p>
+</ol>
+
+<A NAME="132"><H3>Alternatives to Kernel Timers</H3></A>
+
+<p>Rather than using a kernel timer object, you can use two other timing functions that might
+be more appropriate. First of all, you can call <b>KeDelayExecutionThread</b> to wait at
+PASSIVE_LEVEL for a given interval. This function is obviously less cumbersome than creating,
+initializing, setting, and awaiting a timer by using separate function calls:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql() == PASSIVE_LEVEL);
+LARGE_INTEGER duetime;
+NSTATUS status = KeDelayExecutionThread(WaitMode, Alertable, &amp;duetime);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Here, <b>WaitMode</b>, <b>Alertable</b>, and the returned status code have the
+same meaning as the corresponding parameters to KeWait<i>Xxx</i>, and <b>duetime</b> is the
+same kind of timestamp that I discussed previously in connection with kernel timers.</p>
+
+<p>If your requirement is to delay for a very brief period of time (less than 50 microseconds),
+you can call <b>KeStallExecutionProcessor</b> at any IRQL:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>KeStallExecutionProcessor(nMicroSeconds);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The purpose of this delay is to allow your hardware time to prepare for its next operation
+before your program continues executing. The delay might end up being significantly longer than
+you request because KeStallExecutionProcessor can be preempted by activities that occur at a
+higher IRQL than that which the caller is using.</p>
+
+<A NAME="133"><H2>Using Threads for Synchronization</H2></A>
+
+<p>The Process Structure component of the operating system provides a few routines that WDM
+drivers can use for creating and controlling system threads. I'll be discussing these
+routines later on in <A HREF="ch09a.htm">Chapter 9</A> from the perspective of how you can use these functions to help
+you manage a device that requires periodic polling. For the sake of thoroughness, I want to
+mention here that you can use a pointer to a kernel thread object in a call to KeWait<i>Xxx</i>
+to wait for the thread to complete. The thread terminates itself by calling <b>
+PsTerminateSystemThread</b>.</p>
+
+<p>Before you can wait for a thread to terminate, you need to first obtain a pointer to the
+opaque KTHREAD object that internally represents that thread, which poses a bit of a problem.
+While running in the context of a thread, you can determine your own KTHREAD easily:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql() &lt;= DISPATCH_LEVEL);
+PKTHREAD thread = KeGetCurrentThread();</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Unfortunately, when you call <b>PsCreateSystemThread</b> to create a new thread, you can
+retrieve only an opaque HANDLE for the thread. To get the KTHREAD pointer, you use an Object
+Manager service function:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>HANDLE hthread;
+PKTHREAD thread;
+PsCreateSystemThread(&amp;hthread, ...);
+ObReferenceObjectByHandle(hthread, THREAD_ALL_ACCESS, NULL, KernelMode,
+  (PVOID*) &amp;thread, NULL);
+ZwClose(hthread);</pre>
+</td></tr>
+</table>
+</p>
+
+<p><b>ObReferenceObjectByHandle</b> converts your handle into a pointer to the underlying
+kernel object. Once you have the pointer, you can discard the handle by calling <b>ZwClose</b>.
+At some point, you need to release your reference to the thread object by making a call to <b>
+ObDereferenceObject</b>:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ObDereferenceObject(thread);</pre>
+</td></tr>
+</table>
+</p>
+
+<A NAME="134"><H2>Thread Alerts and APCs</H2></A>
+
+<p>Internally, the Windows NT kernel uses <i>thread</i> <i>alerts</i> as a way of waking
+threads. It uses an asynchronous procedure call as a way of waking a thread to execute some
+particular subroutine in that thread's context. The support routines that generate alerts
+or APCs are not exposed for use by WDM driver writers. But, since the DDK documentation and
+header files contain a great many references to these concepts, I want to finish this
+discussion of kernel dispatcher objects by explaining them.</p>
+
+<p>I'll start by describing the &quot;plumbing&quot;&#8212;how these two mechanisms work.
+When someone blocks a thread by calling one of the KeWait<i>Xxx</i> routines, they specify by
+means of a Boolean argument whether the wait is to be &quot;alertable.&quot; An alertable wait
+might finish early&#8212;that is, without any of the wait conditions or the timeout being
+satisfied&#8212;because of a thread alert. Thread alerts originate in user mode when someone
+calls the native API function <b>NtAlertThread</b>. The kernel returns the special status value
+STATUS_ALERTED when a wait terminates early because of an alert.</p>
+
+<p>An APC is a mechanism whereby the operating system can execute a function in the context of
+a particular thread. The <i>asynchronous</i> part of an APC stems from the fact that the system
+effectively interrupts the target thread to execute an out-of-line subroutine. The action of an
+APC is somewhat similar to what happens when a hardware interrupt causes a processor to
+suddenly and, from the point of view of whatever code happens to be running at the time,
+unpredictably execute an interrupt service routine.</p>
+
+<p>APCs come in three flavors: user-mode, kernel-mode, and special kernel-mode. User-mode code
+requests a user-mode APC by calling the Win32 API <b>QueueUserAPC</b>. Kernel-mode code
+requests an APC by calling an undocumented function for which the DDK headers have no
+prototype. Diligent reverse engineers probably already know the name of this routine and
+something about how to call it, but it's really just for internal use and I'm not going
+to say any more about it. The system queues APCs to a specific thread until appropriate
+execution conditions exist. Appropriate execution conditions depend on the type of APC, as
+follows:</p>
+
+<ul>
+<p><li> Special kernel APCs execute as soon as possible&#8212;that is, as soon as an activity at
+APC_LEVEL can be scheduled. A special kernel APC can even awaken a blocked thread in many
+circumstances.</li></p>
+
+<p><li> Normal kernel APCs execute after all special APCs have been executed but only when the
+target thread is running and no other kernel-mode APC is executing in this thread.</li></p>
+
+<p><li> User-mode APCs execute after both flavors of kernel-mode APC for the target thread have
+been executed but only if the thread has previously been in an alertable wait in user mode.
+Execution actually occurs the next time the thread is dispatched for execution in user
+mode.</li></p>
+</ul>
+
+
+<p>If the system awakens a thread to deliver an APC, the wait primitive on which the thread was
+previously blocked returns with one of the special status values STATUS_KERNEL_APC or
+STATUS_USER_APC.</p>
+
+<A NAME="135"><H3>How APCs Work with I/O Requests</H3></A>
+
+<p>The kernel uses the APC concept for several purposes. We're concerned in this book just
+with writing device drivers, though, so I'm only going to explain how APCs relate to the
+process of performing an I/O operation. In one of many possible scenarios, when a user-mode
+program performs a synchronous <b>ReadFile</b> operation on a handle, the Win32 subsystem calls
+a kernel-mode routine named (as is widely known despite its being undocumented) <b>NtReadFile</b>. NtReadFile creates and submits an IRP to the appropriate device driver, which
+often returns STATUS_PENDING to indicate that it hasn't finished the operation. NtReadFile
+returns this status code to ReadFile, which thereupon calls <b>NtWaitForSingleObject</b> to
+wait on the file object to which the user-mode handle points. NtWaitForSingleObject, in turn,
+calls KeWaitForSingleObject to perform a nonalertable, user-mode wait on an event object within
+the file object.</p>
+
+<p>When the device driver eventually finishes the read operation, it calls IoCompleteRequest,
+which, in turn, queues a special kernel-mode APC. The APC routine calls KeSetEvent to signal
+the file object, thereby releasing the application to continue execution. Some sort of APC is
+required because some of the tasks that need to be performed when an I/O request is completed
+(such as buffer copying) must occur in the address context of the requesting thread. A
+kernel-mode APC is required because the thread in question is not in an alertable wait state. A
+<i>special</i> APC is required because the thread is actually ineligible to run at the time we
+need to deliver the APC. In fact, the APC routine is the mechanism for awakening the
+thread.</p>
+
+<p>Kernel-mode routines can also call NtReadFile. Drivers should call <b>ZwReadFile</b> 
+instead, which uses the same system service interface to reach NtReadFile that user-mode
+programs use. (Note that NtReadFile is not documented for use by device drivers.) If you obey
+the injunctions in the DDK documentation when you call ZwReadFile, your call to NtReadFile will
+look almost like a user-mode call and will be processed in almost the same way, with just two
+differences. The first, which is quite minor, is that any waiting will be done in kernel mode.
+The other difference is that if you specified in your call to <b>ZwCreateFile</b> that you
+wanted to do synchronous operations, the I/O Manager will automatically wait for your read to
+finish. The wait will be alertable or not, depending on the exact option you specify to
+ZwCreateFile.</p>
+
+<A NAME="136"><H3>How to Specify Alertable and WaitMode Parameters</H3></A>
+
+<p>Now you have enough background to understand the ramifications of the <b>Alertable</b> and
+<b>WaitMode</b> parameters in the calls to the various wait primitives. As a general rule,
+you'll never be writing code that responds synchronously to requests from user mode. You
+<i>could</i> do so for, say, certain I/O control requests. Generally speaking, however,
+it's better to <i>pend</i> any operations that take a long time to finish (by returning
+STATUS_PENDING from your dispatch routine) and to finish them asynchronously. So, to continue
+speaking generally, you don't often call a wait primitive in the first place. Thread
+blocking is appropriate in a device driver in only a few scenarios, which I'll describe in
+the following sections.</p>
+
+<p><b>Kernel Threads</b> Sometimes you'll create your own kernel-mode thread&#8212;when your device
+needs to be polled periodically, for example. In this scenario, any waits performed will be in
+kernel mode because the thread runs exclusively in kernel mode.</p>
+
+<p><b>Handling Plug and Play Requests</b> I'll show you in <A HREF="ch06a.htm">Chapter 6</A> how to handle the I/O requests
+that the PnP Manager sends your way. Several such requests require <i>synchronous handling</i>
+on your part. In other words, you pass them down the driver stack to lower levels and wait for
+them to complete. You'll be calling KeWaitForSingleObject to wait in kernel mode because
+the PnP Manager calls you within the context of a kernel-mode thread. In addition, if you
+needed to perform subsidiary requests as part of handling a PnP request&#8212;for example, to
+talk to a universal serial bus (USB) device&#8212;you'd be waiting in kernel mode.</p>
+
+<p><b>Handling Other I/O Requests</b> When you're handling other sorts of I/O requests and you know
+that you're running in the context of a nonarbitrary thread that must get the results of
+your deliberations before proceeding, it might conceivably be appropriate to block that thread
+by calling a wait primitive. In such a case, you want to wait in the same processor mode as the
+entity that called you. Most of the time, you can simply rely on the <b>RequestorMode</b> in
+the IRP you're currently processing. If you somehow gained control by means other than an
+IRP, you could call <b>ExGetPreviousMode</b> to determine the previous processor mode. If you
+wait in user mode, and if the behavior you want to achieve is that user-mode programs should be
+able to terminate the wait early by calling QueueUserAPC, you should perform an alertable
+wait.</p>
+
+<p>The last situation I mentioned&#8212;you're waiting in user mode and need to allow
+user-mode APCs to break in&#8212;is the only one I know of in which you'd want to allow
+alerts when waiting.</p>
+
+<blockquote><b>The bottom line: perform nonalertable waits unless you know you shouldn't.</b></blockquote>
+
+</BODY>
+</HTML>
+
+
+
+
+

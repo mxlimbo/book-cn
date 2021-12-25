@@ -1,0 +1,447 @@
+<HTML>
+<HEAD>
+	<LINK REL=StyleSheet HREF="petzoldi.css" TYPE="text/css">
+<title>Building a Better Scroll</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="88"><H1>Building a Better Scroll</H1></A>
+<p>SYSMETS2 works well, but it's too inefficient a model to be imitated in other programs. Soon I'll present a new version that corrects its deficiencies. Most interesting, perhaps, is that this new version will not use any of the four scroll bar functions discussed so far. Instead, it will use new functions unique to the Win32 API.
+
+<A NAME="89"><h2>The Scroll Bar Information Functions</h2></A>
+<p>The scroll bar documentation (in <I>/Platform SDK/User Interface Services/Controls/Scroll Bars</I>) indicates that the <I>SetScrollRange</I>, <I>SetScrollPos</I>, <I>GetScrollRange</I>, and <I>GetScrollPos</I> functions are &quot;obsolete.&quot; This is not entirely accurate. While these functions have been around since Windows 1.0, they were upgraded to handle 32-bit arguments in the Win32 API. They are still perfectly functional and are likely to remain functional. Moreover, they are simple enough not to overwhelm a newcomer to Windows programming at the outset, which is why I continue to use them in this book.
+
+<p>The two scroll bar functions introduced in the Win32 API are called <I>SetScrollInfo</I> and <I>GetScrollInfo</I>. These functions do everything the earlier functions do and add two new important features.
+
+<p>The first feature involves the size of the scroll bar thumb. As you may have noticed, the size of the thumb was constant in the SYSMETS2 program. However, in some Windows applications you may have used, the size of the thumb is proportional to the amount of the document displayed in the window. This displayed amount is known as the &quot;page size.&quot; In arithmetic terms,
+
+
+<table cellpadding=2 cellspacing=0>
+<tr>
+<td align=center><i>Thumb size</i></td>
+<td align=center> </td>
+<td align=center><i>Page size</i></td>
+<td align=center> </td>
+<td align=center><I>Amount of document displayed</I></td>
+</tr>
+
+<tr>
+<td align=center><hr></td>
+<td align=center>  =  </td>
+<td align=center><hr></td>
+<td align=center>  =  </td>
+<td align=center><hr></td>
+</tr>
+
+<tr>
+<td align=center><I>Scroll length</I></td>
+<td align=center></td>
+<td align=center><I>Range</I></td>
+<td align=center></td>
+<td align=center><I>Total size of document</I></td>
+</tr>
+</table>
+
+
+<p>You can use <I>SetScrollInfo</I> to set the page size (and hence the size of the thumb), as we'll see in the SYSMETS3 program coming up shortly.
+
+<p>The <I>GetScrollInfo</I> function adds a second important feature, or rather it corrects a deficiency in the current API. Suppose you want to use a range that is 65,536 or more units. Back in the days of 16-bit Windows, this was not possible. In Win32, of course, the functions are defined as accepting 32-bit arguments, and indeed they do. (Keep in mind that if you do use a range this large, the number of actual physical positions of the thumb is still limited by the pixel size of the scroll bar.) However, when you get a WM_VSCROLL or WM_HSCROLL message with a notification code of SB_THUMBTRACK or SB_THUMBPOSITION, only 16 bits are provided to indicate the current position of the thumb. The <I>GetScrollInfo</I> function lets you obtain the actual 32-bit value.
+
+<p>The syntax of the <I>SetScrollInfo</I> and <I>GetScrollInfo</I> functions is
+
+<p><pre>
+SetScrollInfo (hwnd, iBar, &amp;si, bRedraw) ;
+GetScrollInfo (hwnd, iBar, &amp;si) ;
+</PRE>
+
+<p>The <I>iBar</I> argument is either SB_VERT or SB_HORZ, as in the other scroll bar functions. As with those functions also, it can be SB_CTL for a scroll bar control. The last argument for <I>SetScrollInfo</I> can be TRUE or FALSE to indicate if you want Windows to redraw the scroll bar taking into account the new information.
+
+<p>The third argument to both functions is a SCROLLINFO structure, which is defined like so:
+
+<p><pre>
+typedef struct tagSCROLLINFO
+{
+     UINT cbSize ;     // set to sizeof (SCROLLINFO)
+     UINT fMask ;      // values to set or get
+     int  nMin ;       // minimum range value
+     int  nMax ;       // maximum range value
+     UINT nPage ;      // page size
+     int  nPos ;       // current position
+     int  nTrackPos ;  // current tracking position
+}
+SCROLLINFO, * PSCROLLINFO ;
+</PRE>
+
+<p>In your program, you can define a structure of type SCROLLINFO like this:
+
+<p><pre>
+SCROLLINFO si ;
+</PRE>
+
+<p>Before calling <I>SetScrollInfo</I> or 
+<I>GetScrollInfo</I>, you must set the 
+<I>cbSize</I> field to the size of the structure:
+
+<p><pre>
+si.cbSize = sizeof (si) ;
+</PRE>
+
+<p>or
+
+<p><pre>
+si.cbSize = sizeof (SCROLLINFO) ;
+</PRE>
+
+<p>As you get acquainted with Windows, you'll find several other structures that have a first field like this one to indicate the size of the structure. This field allows for a future version of Windows to expand the structure and add new features while still being compatible with previously compiled programs.
+
+<p>You set the <I>fMask</I> field to one or more flags beginning with the SIF prefix. You can combine these flags with the C bitwise OR function (|).
+
+<p>When you use the SIF_RANGE flag with the <I>SetScrollInfo</I> function, you must set the <I>nMin</I> and <I>nMax</I> fields to the desired scroll bar range. When you use the SIF_RANGE flag with the <I>GetScrollInfo</I> function, the <I>nMin</I> and <I>nMax</I> fields will be set to the current range on return from the function.
+
+<p>The SIF_POS flag is similar. When used with the <I>SetScrollInfo</I> function, you must set the <I>nPos</I> field of the structure to the desired position. You use the SIF_POS flag with <I>GetScrollInfo</I> to obtain the current position.
+
+<p>The SIF_PAGE flag lets you set and obtain the page size. You set <I>nPage</I> to the desired page size with the <I>SetScrollInfo</I> function. <I>GetScrollInfo</I> with the SIF_PAGE flag lets you obtain the current page size. Don't use this flag if you don't want a proportional scroll bar thumb.
+
+<p>You use the SIF_TRACKPOS flag only with <I>GetScrollInfo</I> while processing a WM_VSCROLL or WM_HSCROLL message with a notification code of SB_THUMBTRACK or SB_THUMBPOSITION. On return from the function, the <I>nTrackPos</I> field of the SCROLLINFO structure will indicate the current 32-bit thumb position.
+
+<p>You use the SIF_DISABLENOSCROLL flag only with the <I>SetScrollInfo</I> function. If this flag is specified and the new scroll bar arguments would normally render the scroll bar invisible, this scroll renders the scroll bar disabled instead. (I'll explain this more shortly.)
+
+<p>The SIF_ALL flag is a combination of SIF_RANGE, SIF_POS, SIF_PAGE, and SIF_TRACKPOS. This is handy when setting the scroll bar arguments during a WM_SIZE message. (The SIF_TRACKPOS flag is ignored when specified in a <I>SetScrollInfo</I> function.) It's also handy when processing a scroll bar message.
+
+<A NAME="90"><h2>How Low Can You Scroll?</h2></A>
+<p>In SYSMETS2, the scrolling range is set to a minimum of 0 and a maximum of NUMLINES - 1. When the scroll bar position is 0, the first line of information is at the top of the client area; when the scroll bar position is NUMLINES - 1, the last line is at the top of the client area and no other lines are visible.
+
+<p>You could say that SYSMETS2 scrolls too far. It really only needs to scroll far enough so that the last line of information appears at the <I>bottom</I> of the client area rather than at the top. We could make some changes to SYSMETS2 to accomplish this. Rather than set the scroll bar range when we process the WM_CREATE message, we could wait until we receive the WM_SIZE message:
+
+<p><pre>
+iVscrollMax = max (0, NUMLINES - cyClient / cyChar) ;
+SetScrollRange (hwnd, SB_VERT, 0, iVscrollMax, TRUE) ;
+</PRE>
+
+<p>Suppose NUMLINES equals 75, and suppose for a particular window size that <I>cyClient</I> divided by <I>cyChar</I> equals 50. In other words, we have 75 lines of information but only 50 can fit in the client area at any time. Using the two lines of code shown above, the range is set to a minimum of 0 and a maximum of 25. When the scroll bar position equals 0, the program displays lines 0 through 49. When the scroll bar position equals 1, the program displays lines 1 through 50; and when the scroll bar position equals 25 (the maximum), the program displays lines 25 through 74. Obviously we'd have to make changes to other parts of the program, but this is entirely doable.
+
+<p>One nice feature of the new scroll bar functions is that when you use a scroll bar page size, much of this logic is done for you. Using the SCROLLINFO structure and <I>SetScrollInfo</I>, you'd have code that looked something like this:
+
+<p><pre>
+si.cbSize = sizeof (SCROLLINFO) ;
+si.cbMask = SIF_RANGE | SIF_PAGE ;
+si.nMin   = 0 ;
+si.nMax   = NUMLINES - 1 ;
+si.nPage  = cyClient / cyChar ;
+SetScrollInfo (hwnd, SB_VERT, &amp;si, TRUE) ;
+</PRE>
+
+<p>When you do this, Windows limits the maximum scroll bar position not to <I>si.nMax</I> but to <I>si.nMax</I> - <I>si.nPage</I> + 1. Let's make the same assumptions as earlier: NUMLINES equals 75 (so <I>si.nMax</I> equals 74), and <I>si.nPage</I> equals 50. This means that the maximum scroll bar position is limited to 74 - 50 + 1, or 25. This is exactly what we want.
+
+<p>What happens when the page size is as large as the scroll bar range? That is, in this example, what if <I>nPage</I> is 75 or above? Windows conveniently hides the scroll bar because it's no longer needed. If you don't want the scroll bar to be hidden, use SIF_DISABLENOSCROLL when calling <I>SetScrollInfo</I> and Windows will merely disable the scroll bar rather than hide it.
+
+
+<A NAME="91"><h2>The New SYSMETS</h2></A>
+<p>SYSMETS3&#8212;our final version of the SYSMETS program in this chapter&#8212;is shown in 
+Figure 4-11. This version uses the <I>SetScrollInfo</I> and <I>GetScrollInfo</I> functions, adds a horizontal scroll bar for left and right scrolling, and repaints the client area more efficiently.
+
+<p><B>Figure 4-11.</B> <I>The SYSMETS3 program.</I>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="92"><H3>SYSMETS3.C</H3></A>
+<p><pre>
+/*----------------------------------------------------
+   SYSMETS3.C -- System Metrics Display Program No. 3
+                 (c) Charles Petzold, 1998
+  ----------------------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &quot;sysmets.h&quot;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName[] = TEXT (&quot;SysMets3&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+     
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass)) 
+     {
+          MessageBox (NULL, TEXT (&quot;Program requires Windows NT!&quot;), 
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Get System Metrics No. 3&quot;),
+                          WS_OVERLAPPEDWINDOW | WS_VSCROLL | WS_HSCROLL,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static int  cxChar, cxCaps, cyChar, cxClient, cyClient, iMaxWidth ;
+     HDC         hdc ;
+     int         i, x, y, iVertPos, iHorzPos, iPaintBeg, iPaintEnd ;
+     PAINTSTRUCT ps ;
+     SCROLLINFO  si ;
+     TCHAR       szBuffer[10] ;
+     TEXTMETRIC  tm ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+          hdc = GetDC (hwnd) ;
+          
+          GetTextMetrics (hdc, &amp;tm) ;
+          cxChar = tm.tmAveCharWidth ;
+          cxCaps = (tm.tmPitchAndFamily &amp; 1 ? 3 : 2) * cxChar / 2 ;
+          cyChar = tm.tmHeight + tm.tmExternalLeading ;
+          
+          ReleaseDC (hwnd, hdc) ;
+
+               // Save the width of the three columns
+          
+          iMaxWidth = 40 * cxChar + 22 * cxCaps ;
+          return 0 ;
+
+     case WM_SIZE:
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+
+               // Set vertical scroll bar range and page size
+
+          si.cbSize = sizeof (si) ;
+          si.fMask  = SIF_RANGE | SIF_PAGE ;
+          si.nMin   = 0 ;
+          si.nMax   = NUMLINES - 1 ;
+          si.nPage  = cyClient / cyChar ;
+          SetScrollInfo (hwnd, SB_VERT, &amp;si, TRUE) ;
+
+               // Set horizontal scroll bar range and page size
+
+          si.cbSize = sizeof (si) ;
+          si.fMask  = SIF_RANGE | SIF_PAGE ;
+          si.nMin   = 0 ;
+          si.nMax   = 2 + iMaxWidth / cxChar ;
+          si.nPage  = cxClient / cxChar ;
+          SetScrollInfo (hwnd, SB_HORZ, &amp;si, TRUE) ;
+          return 0 ;
+          
+     case WM_VSCROLL:
+               // Get all the vertical scroll bar information
+
+          si.cbSize = sizeof (si) ;
+          si.fMask  = SIF_ALL ;
+          GetScrollInfo (hwnd, SB_VERT, &amp;si) ;
+
+               // Save the position for comparison later on
+
+          iVertPos = si.nPos ;
+
+          switch (LOWORD (wParam))
+          {
+          case SB_TOP:
+               si.nPos = si.nMin ;
+               break ;
+               
+          case SB_BOTTOM:
+               si.nPos = si.nMax ;
+               break ;
+               
+          case SB_LINEUP:
+               si.nPos -= 1 ;
+               break ;
+               
+          case SB_LINEDOWN:
+               si.nPos += 1 ;
+               break ;
+               
+          case SB_PAGEUP:
+               si.nPos -= si.nPage ;
+               break ;
+
+          case SB_PAGEDOWN:
+               si.nPos += si.nPage ;
+               break ;
+               
+          case SB_THUMBTRACK:
+               si.nPos = si.nTrackPos ;
+               break ;
+               
+          default:
+               break ;         
+          }
+               // Set the position and then retrieve it.  Due to adjustments
+               //   by Windows it may not be the same as the value set.
+
+          si.fMask = SIF_POS ;
+          SetScrollInfo (hwnd, SB_VERT, &amp;si, TRUE) ;
+          GetScrollInfo (hwnd, SB_VERT, &amp;si) ;
+
+               // If the position has changed, scroll the window and update it
+
+          if (si.nPos != iVertPos)
+          {                    
+               ScrollWindow (hwnd, 0, cyChar * (iVertPos - si.nPos), 
+                                   NULL, NULL) ;
+               UpdateWindow (hwnd) ;
+          }
+          return 0 ;
+          
+     case WM_HSCROLL:
+               // Get all the vertical scroll bar information
+
+          si.cbSize = sizeof (si) ;
+          si.fMask  = SIF_ALL ;
+
+               // Save the position for comparison later on
+
+          GetScrollInfo (hwnd, SB_HORZ, &amp;si) ;
+          iHorzPos = si.nPos ;
+
+          switch (LOWORD (wParam))
+          {
+          case SB_LINELEFT:
+               si.nPos -= 1 ;
+               break ;
+               
+          case SB_LINERIGHT:
+               si.nPos += 1 ;
+               break ;
+               
+          case SB_PAGELEFT:
+               si.nPos -= si.nPage ;
+               break ;
+               
+          case SB_PAGERIGHT:
+               si.nPos += si.nPage ;
+               break ;
+               
+          case SB_THUMBPOSITION:
+               si.nPos = si.nTrackPos ;
+               break ;
+               
+          default :
+               break ;
+          }
+               // Set the position and then retrieve it.  Due to adjustments
+               //   by Windows it may not be the same as the value set.
+
+          si.fMask = SIF_POS ;
+          SetScrollInfo (hwnd, SB_HORZ, &amp;si, TRUE) ;
+          GetScrollInfo (hwnd, SB_HORZ, &amp;si) ;
+          
+               // If the position has changed, scroll the window 
+
+          if (si.nPos != iHorzPos)
+          {
+               ScrollWindow (hwnd, cxChar * (iHorzPos - si.nPos), 0, 
+                             NULL, NULL) ;
+          }
+          return 0 ;
+
+     case WM_PAINT :
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+
+               // Get vertical scroll bar position
+
+          si.cbSize = sizeof (si) ;
+          si.fMask  = SIF_POS ;
+          GetScrollInfo (hwnd, SB_VERT, &amp;si) ;
+          iVertPos = si.nPos ;
+
+               // Get horizontal scroll bar position
+          GetScrollInfo (hwnd, SB_HORZ, &amp;si) ;
+          iHorzPos = si.nPos ;
+
+               // Find painting limits
+
+          iPaintBeg = max (0, iVertPos + ps.rcPaint.top / cyChar) ;
+          iPaintEnd = min (NUMLINES - 1,
+                           iVertPos + ps.rcPaint.bottom / cyChar) ;
+          
+          for (i = iPaintBeg ; i &lt;= iPaintEnd ; i++)
+          {
+               x = cxChar * (1 - iHorzPos) ;
+               y = cyChar * (i - iVertPos) ;
+               
+               TextOut (hdc, x, y,
+                        sysmetrics[i].szLabel,
+                        lstrlen (sysmetrics[i].szLabel)) ;
+               
+               TextOut (hdc, x + 22 * cxCaps, y,
+                        sysmetrics[i].szDesc,
+                        lstrlen (sysmetrics[i].szDesc)) ;
+               
+               SetTextAlign (hdc, TA_RIGHT | TA_TOP) ;
+               
+               TextOut (hdc, x + 22 * cxCaps + 40 * cxChar, y, szBuffer,
+                        wsprintf (szBuffer, TEXT (&quot;%5d&quot;),
+                             GetSystemMetrics (sysmetrics[i].iIndex))) ;
+
+               SetTextAlign (hdc, TA_LEFT | TA_TOP) ;
+          }
+
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+          
+     case WM_DESTROY :
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</pre>
+</TD></TR></TABLE>
+
+<p>This version of the program relies on Windows to maintain the scroll bar information and do a lot of the bounds checking. At the beginning of WM_VSCROLL and WM_HSCROLL processing, it obtains all the scroll bar information, adjusts the position based on the notification code, and then sets the position by calling <I>SetScrollInfo</I>. The program then calls <I>GetScrollInfo</I>. If the position was out of range in the <I>SetScrollInfo</I> call, the position is corrected by Windows and the correct value is returned in the <I>GetScrollInfo</I> call.
+
+<p>SYSMETS3 uses the <I>ScrollWindow</I> function to scroll information in the window's client area rather than repaint it. Although the function is rather complex (and has been superseded in recent versions of Windows by the even more complex <I>ScrollWindowEx</I>), SYSMETS3 uses it in a fairly simple way. The second argument to the function gives an amount to scroll the client area horizontally in pixels, and the third argument is an amount to scroll the client area vertically.
+
+<p>The last two arguments to <I>ScrollWindow</I> are set to NULL. This indicates that the entire client area is to be scrolled. Windows automatically invalidates the rectangle in the client area &quot;uncovered&quot; by the scrolling operation. This generates a WM_PAINT message. <I>InvalidateRect</I> is no longer needed. Note that <I>ScrollWindow</I> is <I>not</I> a GDI function because it does not require a handle to a device context. It is one of the few non-GDI Windows functions that changes the appearance of the client area of a window. Rather peculiarly but conveniently, it is documented along with the scroll bar functions.
+
+<p>The WM_HSCROLL processing traps the SB_THUMBPOSITION notification code and ignores SB_THUMBTRACK. Thus, if the user drags the thumb on the horizontal scroll bar, the program will not scroll the contents of the window horizontally until the user releases the mouse button.
+
+<p>The WM_VSCROLL strategy is different: here, the program traps SB_THUMBTRACK messages and ignores SB_THUMBPOSITION. Thus, the program scrolls its contents vertically in direct response to the user dragging the thumb on the vertical scroll bar. This is considered preferable, but watch out: It is well known that when users find out a program scrolls in direct response to dragging the scroll bar thumb, they will frenetically jerk the thumb back and forth trying to bring the program to its knees. Fortunately, today's fast PCs are much more likely to survive this torture test. But try your code out on a slow machine, and perhaps think about using the SB_SLOWMACHINE argument to <I>GetSystemMetrics</I> for alternative processing for slow machines.
+
+<p>One way to speed up WM_PAINT processing is illustrated by SYSMETS3: The WM_PAINT code determines which lines are within the invalid rectangle and rewrites only those lines. The code is more complex, of course, but it is faster.
+
+<A NAME="93"><h2>But I Don't Like to Use the Mouse</H2></A>
+<p>In the early days of Windows, a significant number of users didn't care for using the mouse, and indeed, Windows itself (and many Windows programs) did not require a mouse. Although mouseless PCs have now generally gone the way of monochrome displays and dot-matrix printers, it is still recommended that you write programs that duplicate mouse operations with the keyboard. This is particularly true for something as fundamental as scroll bars, because our keyboards have a whole array of cursor movement keys that should offer alternatives to the mouse.
+
+<p>In the next chapter, you'll learn how to use the keyboard and how to add a keyboard interface to this program. You'll notice that SYSMETS3 seems to process WM_VSCROLL messages when the notification code equals SB_TOP and SB_BOTTOM. I mentioned earlier that a window procedure doesn't receive these messages for scroll bars, so right now this is superfluous code. When we come back to this program in the next chapter, you'll see the reason for including those operations.
+
+</BODY>
+</HTML>
+
+
+
+
+
+

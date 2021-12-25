@@ -1,0 +1,171 @@
+<HTML>
+<HEAD>
+<TITLE>Advanced Thread Synchronization</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch08c.htm">[Previous]</A> <A HREF="ch08e.htm">[Next]</A><P>
+
+<A NAME="113"><H1>Advanced Thread Synchronization</H1></A>
+
+<p>The interlocked family of functions is great when you need to
+atomically modify a single value. You should definitely try them first.
+But most real-life programming problems deal with data structures that
+are far more complex than a single 32-bit or 64-bit value. To get
+&quot;atomic&quot; access of more sophisticated data structures, you
+must leave the interlocked functions behind and use some other features
+offered by Windows.</p>
+
+<p>In the previous section, I stressed that you should not use
+spinlocks on uniprocessor machines and you should use them cautiously
+even on multiprocessor machines. Again, the reason is that CPU time is
+a terrible thing to waste. So we need a mechanism that allows our
+thread to not waste CPU time while waiting to access a shared
+resource.</p>
+
+<p>When a thread wants to access a shared resource or be notified of
+some &quot;special event,&quot; the thread must call an operating
+system function, passing it parameters that indicate what the thread is
+waiting for. If the operating system detects that the resource is
+available or that the special event has occurred, the function returns
+and the thread remains schedulable. (The thread might not execute right
+away; it is schedulable and will be assigned to a CPU using the rules
+described in the previous chapter.)</p>
+
+<p>If the resource is unavailable or the special event hasn't yet
+occurred, the system places the thread in a wait state, making the
+thread unschedulable. This prevents the thread from wasting any CPU
+time. While your thread is waiting, the system acts as an agent on your
+thread's behalf. The system remembers what your thread wants and
+automatically takes it out of the wait state when the resource becomes
+available&#8212;the thread's execution is synchronized with the
+special event.</p>
+
+<p>As it turns out, most threads are almost always in a wait state.
+And the system's power management kicks in when the system detects
+that all threads are in a wait state for several minutes.</p>
+
+
+<A NAME="114"><H2>A Technique to Avoid</H2></A>
+
+<p>Without synchronization objects and the operating system's
+ability to watch for special events, a thread would be forced to
+synchronize itself with special events by using the technique that I am
+about to demonstrate. However, because the operating system has
+built-in support for thread synchronization, you should never use this
+technique.</p>
+
+<p>In this technique, one thread synchronizes itself with the
+completion of a task in another thread by continuously polling the
+state of a variable that is shared by or accessible to multiple
+threads. The following code fragment illustrates this:</p>
+
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+volatile BOOL g_fFinishedCalculation = FALSE;
+
+int WINAPI WinMain(...) {
+   CreateThread(..., RecalcFunc, ...);
+
+   <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+
+   // Wait for the recalculation to complete.
+   while (!g_fFinishedCalculation)
+        ;
+
+   <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+
+ }
+
+DWORD WINAPI RecalcFunc(PVOID pvParam) {
+   // Perform the recalculation.
+
+   <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+
+   g_fFinishedCalculation = TRUE;
+   return(0);
+}
+</pre></td></tr></table></p>
+
+<p>As you can see, the primary thread (executing <i>WinMain</i>)
+doesn't put itself to sleep when it needs to synchronize itself
+with the completion of the <i>RecalcFunc</i> function. Because the
+primary thread does not sleep, it is continuously scheduled CPU time by
+the operating system. This takes precious time cycles away from other
+threads.</p>
+
+<p>Another problem with the polling method used in the previous code
+fragment is that the BOOL variable <i>g_fFinishedCalculation</i> might
+never be set to TRUE. This can happen if the primary thread has a
+higher priority than the thread executing the <i>RecalcFunc</i>
+function. In this case, the system never assigns any time slices to the
+<i>RecalcFunc</i> thread, which never executes the statement that sets
+<i>g_fFinishedCalculation</i> to TRUE. If the thread executing the <i>
+WinMain</i> function is put to sleep instead of polling, it is not
+scheduled time and the system can schedule time to lower-priority
+threads, such as the <i>RecalcFunc</i> thread, allowing them to
+execute.</p>
+
+<p>I'll admit that sometimes polling comes in handy. After all,
+this is what a spinlock does. But there are proper ways to do this and
+improper ways to do this. As a general rule, you should not use
+spinlocks and you should not poll. Instead, you should call the
+functions that place your thread into a wait state until what your
+thread wants is available. I'll explain a proper way in the next
+section.</p>
+
+<p>First, let me point out one more thing: At the top of the previous
+code fragment, you'll notice the use of <i>volatile</i>. For this
+code fragment to even come close to working, the <i>volatile</i> type
+qualifier must be there. This tells the compiler that the variable can
+be modified by something outside of the application itself, such as the
+operating system, hardware, or a concurrently executing thread.
+Specifically, the <i>volatile</i> qualifier tells the compiler to
+exclude the variable from any optimizations and always reload the value
+from the variable's memory location. Let's say that the
+compiler has generated the following pseudocode for the <i>while</i>
+statement shown in the previous code fragment:</p>
+
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+MOV   Reg0, [g_fFinishedCalculation]  ; Copy the value into a register
+Label: TEST  Reg0, 0                  ; Is the value 0?
+JMP   Reg0 == 0, Label                ; The register is 0, try again
+...                                   ; The register is not 0 (end of loop)
+</pre></td></tr></table></p>
+
+<p>Without making the Boolean variable volatile, it's possible
+that the compiler might optimize your C code as shown here. For this
+optimization, the compiler loads the value of the BOOL variable into a
+CPU register just once. Then it repeatedly performs tests against the
+CPU register. This certainly yields better performance than constantly
+rereading the value in a memory address and retesting it; therefore, an
+optimizing compiler might write code like that shown above. However, if
+the compiler does this, the thread enters an infinite loop and never
+wakes up. By the way, making a structure <i>volatile</i> ensures that
+all of its members are volatile and are always read from memory when
+referenced.</p>
+
+<p>You might wonder whether my spinlock variable, <i>
+g_fResourceInUse</i> (used in the spinlock code shown previously),
+should be declared as <i>volatile</i>. The answer is no because we are
+passing the address of this variable to the various interlocked
+functions and not the variable's value itself. When you pass a
+variable's address to a function, the function must read the value
+from memory. The optimizer cannot affect this.</p>
+
+
+</BODY>
+</HTML>
+
+
+
+
+
+

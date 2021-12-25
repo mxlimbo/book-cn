@@ -1,0 +1,331 @@
+<HTML>
+<HEAD>
+<TITLE>QOS and Winsock</title>
+<link rel="STYLESHEET" type="text/css" href="Library.css">
+
+
+</head>
+<BODY BGCOLOR="#FFFFFF" TEXT="#000000">
+<SCRIPT LANGUAGE="JavaScript">
+<!--
+
+function fullSize(sURL){
+	window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+
+function LibraryHeaderNav(sBackward, sForward, sImgLeftOff, sImgLeftOn, sImgRightOff, sImgRightOn, iH, iW, sImgLeftStyle, sImgRightStyle, sImgRuleStyle, sRuleColor, sRuleSize){
+	var tableStr;
+	//validate questionable args for defs
+	tableStr = "<TABLE BORDER=0 CELLPADDING=0 CELLSPACING=0 border=0 width=100%>";
+	tableStr += "<TR VALIGN=top ALIGN=right>";
+
+	tableStr += "<TD align=right class=" + sImgRuleStyle + ">&nbsp;</TD>";	
+	
+	tableStr += "<TD width=34 align=right class=" + sImgLeftStyle + ">";
+	tableStr += "<A href='" + sBackward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgLeftOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgLeftOff + '\'\"';
+	tableStr += " SRC='" + sImgLeftOff + "' vspace=0 hspace=0></a></TD>";
+	
+	tableStr += "<TD width=34 align=left class=" + sImgRightStyle + ">";
+	tableStr += "<A href='" + sForward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgRightOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgRightOff + '\'\"';
+	tableStr += " SRC='" + sImgRightOff + "' vspace=0 hspace=0></a></TD></TR>";
+
+	tableStr += "<TR VALIGN=top>";
+	tableStr += "<TD height=3 align=center colspan=3 class=" + sImgRuleStyle + ">";
+	tableStr += "<HR color=" + sRuleColor + " size=" + sRuleSize + "></TD></TR></TABLE>";
+	//alert(tableStr);
+	document.write(tableStr);
+}
+
+ 																						     //purple is: #aa22aa   orange is: #ff9900
+LibraryHeaderNav("ch12b.htm" , "ch12d.htm", "images/unit_o_a1.gif", "images/unit_o_a2.gif", "images/unit_o_b1.gif", "images/unit_o_b2.gif", 18, 34, "unit01", "unit02", "headerrule", "#ff9900", "2");
+//--></SCRIPT>
+
+
+
+<A NAME="360"><H1>QOS and Winsock</H1></A>
+
+<p>In the previous section, we discussed the various components required for the success of an end-to-end QOS network. Now we'll turn our attention to Winsock 2, which is the API you use to programmatically access QOS from an application. First we'll take a look at the top-level QOS structures needed by the majority of Winsock calls. Next we'll cover the Winsock functions capable of invoking QOS on a socket, as well as how to terminate QOS once it has been enabled on a socket. The last thing we'll do is cover the provider-specific objects that can be used to affect the behavior of&#8212;or return information from&#8212;the QOS service provider.</p>
+
+<p>It might seem a bit out of order to jump from a discussion of the major QOS structures to QOS functions and then back to provider-specific structures. However, we want to give a thorough, high-level overview of how the major structures interact with the Winsock API calls before delving into the gory details of the provider-specific options.</p>
+
+<A NAME="361"><H2>QOS Structures</H2></A>
+
+<p>The central structure in QOS programming is the <i>QOS</i> structure. This structure consists of</p>
+
+<ul>
+<p><li> A <i>FLOWSPEC</i> structure used to describe the QOS levels that your application will use for sending data</li></p>
+
+<p><li> A <i>FLOWSPEC</i> structure used to describe the QOS levels that your application will use to receive data</li></p>
+
+<p><li> A service provider-specific buffer to allow the specification of provider-specific QOS characteristics (We will discuss these characteristics in the provider-specific section.)</li></p>
+</ul>
+
+
+
+<A NAME="362"><h3><i>QOS</i></h3></A>
+<p>The <i>QOS</i> structure specifies the QOS parameters for both sending and receiving traffic. It is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+typedef struct _QualityOfService
+{
+    FLOWSPEC   SendingFlowspec;
+    FLOWSPEC   ReceivingFlowspec;
+    WSABUF     ProviderSpecific;
+} QOS, FAR * LPQOS;
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>FLOWSPEC</i> structures define the traffic characteristics and requirements for each traffic direction, while the <i>ProviderSpecific</i> field is used to return information and to change the behavior of QOS. These provider-specific options are covered in detail a little later in this chapter.</p>
+
+<A NAME="363"><h3><i>FLOWSPEC</i></h3></A>
+<p><i>FLOWSPEC</i> is the basic structure that describes a single flow. Remember that a flow describes data traveling in a single direction. The structure is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+typedef struct _flowspec
+{
+    ULONG        TokenRate;
+    ULONG        TokenBucketSize;
+    ULONG        PeakBandwidth;
+    ULONG        Latency;
+    ULONG        DelayVariation;
+    SERVICETYPE  ServiceType;
+    ULONG        MaxSduSize;
+    ULONG        MinimumPolicedSize;
+} FLOWSPEC, *PFLOWSPEC, FAR *LPFLOWSPEC;
+</pre>
+</td></tr></table>
+</p>
+
+<p>Let's take a look at the meaning of each of the <i>FLOWSPEC</i> structure fields.</p>
+
+<A NAME="364"><h3><i>TokenRate</i></h3></A>
+<p>The <i>TokenRate</i> field specifies the rate of transmission for data that is given in bytes per second. An application can transmit data at this rate, but if for some reason it transmits data at a lower rate, the application can accrue extra tokens so that more data can be transmitted later. However, the number of tokens that an application can accrue is bound by <i>PeakBandwidth</i>. This accumulation of token credits itself is limited by the <i>TokenBucketSize</i> field. By limiting the total number of tokens, we avoid a situation of inactive flows that have accrued many tokens, which could lead to flooding the available bandwidth. Because flows can accrue transmission credits over time (at their <i>TokenRate</i> value) <i>only</i> up to the maximum of their <i>TokenBucketSize</i>, and because they are limited in &quot;burst transmissions&quot; to their <i>PeakBandwidth</i>, traffic control and network-device resource integrity are maintained. Traffic control is maintained because flows cannot send
+too much data at once, and network-device resource integrity is maintained because such devices are spared high-traffic bursts.</p>
+
+<p>Because of these limitations, an application can transmit only when sufficient credits have accrued. If the required number of credits are not available, the application must either wait until sufficient credits have accrued to send the data or discard the data altogether. The Traffic Control module determines what happens to data queued too long without being sent. Therefore, applications should take care to base their TokenRate requests on reasonable amounts.</p>
+
+<p>If an application does not require scheduling of transmission rates, this field can be set to <i>QOS_NOT_SPECIFIED</i> (-1).</p>
+
+<A NAME="365"><h3><i>TokenBucketSize</i></h3></A>
+<p>As we discussed earlier, the <i>TokenBucketSize</i> field limits the number of credits that can accrue for a given flow. For example, video applications would set this field to the frame size being transmitted since it is desirable to have single video frames being transmitted at a time. Applications requiring a constant data rate should set this field to allow for some variation. Like the <i>TokenRate</i> field, <i>TokenBucketSize</i> is expressed in bytes per second.</p>
+
+<A NAME="366"><h3><i>PeakBandwidth</i></h3></A>
+<p><i>PeakBandwidth</i> specifies the maximum amount of data transmitted in a given period of time. In effect, this value specifies the maximum amount of burst data. This is an important value because it prevents applications that have accrued a significant number of transmission tokens from flooding the network all at once. <i>PeakBandwidth</i> is expressed in bytes per second.</p>
+
+<A NAME="367"><h3><i>Latency</i></h3></A>
+<p>The <i>Latency</i> field specifies the maximum acceptable delay between the transmission of a bit and its receipt by the intended recipient or recipients. How this value is actually interpreted depends on the level of service requested in the <i>ServiceType</i> field. <i>Latency</i> is expressed in microseconds.</p>
+
+<A NAME="368"><h3><i>DelayVariation</i></h3></A>
+<p><i>DelayVariation</i> specifies the difference between the minimum and maximum delay that a packet can experience. Typically an application uses this value to determine the amount of buffer space required to receive the data and still maintain the original data transmission pattern. <i>DelayVariation</i> is expressed in microseconds.</p>
+
+<A NAME="369"><h3><i>ServiceType</i></h3></A>
+<p>The <i>ServiceType</i> field specifies the level of service required by the data flow. The following service types can be specified:</p>
+
+<ul>
+<p><li><b><i>SERVICETYPE_NOTRAFFIC</i></b> indicates that no data is being transmitted in this direction.</li></p>
+
+<p><li><b><i>SERVICETYPE_BESTEFFORT</i></b> indicates that the parameters specified in <i>FLOWSPEC</i> are guidelines and that the system will make a reasonable effort to maintain that service level; however, there are no guarantees of packet delivery.</li></p>
+
+<p><li><b><i>SERVICETYPE_CONTROLLEDLOAD</i></b> indicates that data transmission will closely approximate transmission quality provided by best-effort service on a network with nonloaded traffic conditions. This really breaks down into two conditions. First, packet loss will approximate the normal error rate of the transmission medium; and second, transmission delay will not greatly exceed the minimum delay experienced by delivered packets.</li></p>
+
+<p><li><b><i>SERVICETYPE_GUARANTEED</i></b> guarantees data transmission at the rate specified by the <i>TokenRate</i> field over the lifetime of the connection. However, if the actual data transmission rate exceeds <i>TokenRate</i>, data might be delayed or discarded (depending on how Traffic Control is configured). Additionally, if <i>TokenRate</i> is not exceeded, <i>Latency</i> is also guaranteed.</li></p>
+</ul>
+
+
+
+<p>In addition to these four service types, several other flags provide information that can be returned to an application. These informational flags can be ORed with any valid <i>ServiceType</i> flag. Table 12-1 lists these information flags.</p>
+
+<p><b>Table 12-1.</b> <i>Service type modifier flags</i></p>
+
+<p>
+<table cellpadding=5 width="95%">
+<tr> 
+<th><i>Value</i>  </th>
+<th><i>Meaning</i>  </th></tr>
+<tr>
+<td valign="top"><i>SERVICETYPE_NETWORK_UNAVAILABLE</i>  </td>
+<td valign="top">Indicates a loss of service in either the sending or the receiving direction.  </td></tr>
+<tr>
+<td valign="top"><i>SERVICETYPE_GENERAL_INFORMATION</i>  </td>
+<td valign="top">Indicates that all service types are supported for a flow.  </td></tr>
+<tr>
+<td valign="top"><i>SERVICETYPE_NOCHANGE</i>  </td>
+<td valign="top">Indicates that there is no change in the requested QOS service level. This flag can be returned from a Winsock call or an application can specify this flag when renegotiating QOS to indicate no change in the QOS levels for the given direction.  </td></tr>
+<tr>
+<td valign="top"><i>SERVICE_IMMEDIATE_TRAFFIC_CONTROL</i>  </td>
+<td valign="top">An application can use this flag to indicate to the system to immediately invoke Traffic Control instead of sending best effort until a RESV message arrives.  </td></tr>
+<tr>
+<td valign="top"><i>SERVICE_NO_TRAFFIC_CONTROL</i>  </td>
+<td valign="top">This flag can be ORed with other <i>ServiceType</i> flags to disable traffic control altogether.  </td></tr>
+<tr>
+<td valign="top"><i>SERVICE_NO_QOS_SIGNALING</i>  </td>
+<td valign="top">This flag can be used with the immediate traffic control flag above to prevent any RSVP signaling messages from being sent. Local traffic control will be invoked, but no RSVP Path messages will be sent. This flag can also be used in conjunction with a receiving <i>FLOWSPEC</i> structure to suppress the automatic generation of a RESV message. The application receives notification that a PATH message has arrived and then needs to alter the QOS by issuing <i>WSAIoctl</i>(<i>SIO_SET_QOS</i>) to unset this flag and thereby cause RESV messages to go out.  </td></tr>
+</table></p>
+
+
+
+<A NAME="370"><h3><i>MaxSduSize</i></h3></A>
+<p>The <i>MaxSduSize</i> field indicates the maximum packet size for data transmitted in the given flow. <i>MaxSduSize</i> is expressed in bytes.</p>
+
+<A NAME="371"><h3><i>MinimumPolicedSize</i></h3></A>
+<p>The <i>MinimumPolicedSize</i> field indicates the minimum packet size that can be transmitted in the given flow. <i>MinimumPolicedSize</i> is expressed in bytes.</p>
+
+<A NAME="372"><H2>QOS-Invoking Functions</H2></A>
+
+<p>Let's say you want your application to make a request on the network for certain bandwidth requirements. Four functions initiate the process. Once an RSVP session has begun, an application can register for <i>FD_QOS</i> events. QOS status information and error codes are conveyed to applications as <i>FD_QOS</i> events. Applications can register to receive these events in the usual way: by including the <i>FD_QOS</i> flag in the event field of either the <i>WSAAsyncSelect</i> or the <i>WSAEventSelect</i> function.</p>
+
+<p>The <i>FD_QOS</i> notification is especially relevant if a connection is established with <i>FLOWSPEC</i> structures that specify default values (<i>QOS_NOT_SPECIFIED</i>). Once the application has made the request for QOS, the underlying provider will periodically update the <i>FLOWSPEC</i> structure to indicate current network conditions and will notify the application by posting an <i>FD_QOS</i> event. With this information, applications can request or modify QOS levels to reflect the amount of available bandwidth. Keep in mind that the updated information is an indication of only the locally available bandwidth and does not necessarily indicate the end-to-end bandwidth.</p>
+
+<p>Once a flow is established, available network bandwidth might change or a single party taking part in an established flow might decide to change the requested QOS service level. A renegotiation of allocated resources causes an <i>FD_QOS</i> event to be generated to indicate the change to the application. At this point, the application should call <i>SIO_GET_QOS</i> to obtain the new resource levels. We'll revisit QOS event signaling and status information in the section on programming QOS later in this chapter.</p>
+
+<A NAME="373"><h3><i>WSAConnect</i></h3></A>
+<p>A client uses the <i>WSAConnect</i> function to initiate a unicast QOS connection to a server. The requested QOS values are passed as the <i>lpSQOS</i> parameters. Currently group QOS is not supported or implemented; a null value should be passed for <i>lpGQOS.</i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+int WSAConnect (
+    SOCKET s,
+    const struct sockaddr FAR *name,
+    int namelen,
+    LPWSABUF lpCallerData,
+    LPWSABUF lpCalleeData,
+    LPQOS lpSQOS,
+    LPQOS lpGQOS
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>WSAConnect</i> call can be used with connection-oriented or connectionless sockets. With a connection-oriented socket, this function establishes the connection and also generates the appropriate PATH and/or RESV messages. For connectionless sockets, you must associate an endpoint's address with the socket so that the service provider knows where to send PATH and RESV messages. The caveat with using <i>WSAConnect</i> on a connectionless socket is that only data sent to that destination address will be shaped by the system according to the QOS levels associated with that socket. In other words, if <i>WSAConnect</i> is used to associate an endpoint on a connectionless socket, data can be transferred only between those two endpoints for the lifetime of the socket. If you need to send data with QOS guarantees to multiple endpoints, use <i>WSAIoctl</i> and <i>SIO_SET_QOS</i> to specify each new endpoint.</p>
+
+<A NAME="374"><h3><i>WSAAccept</i></h3></A>
+<p>The <i>WSAAccept</i> function accepts a client connection that can be QOS-enabled. The prototype for the function is as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+SOCKET WSAAccept(
+    SOCKET s,
+    struct sockaddr FAR *addr,
+    LPINT  addrlen,
+    LPCONDITIONPROC lpfnCondition,
+    DWORD  dwCallbackData
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>If you want to supply a conditional function, you must prototype it as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+int CALLBACK ConditionalFunc(
+    LPWSABUF lpCallerId,
+    LPWSABUF lpCallerData,
+    LPQOS lpSQOS,
+    LPQOS lpGQOS,
+    LPWSABUF lpCalleeId,
+    LPWSABUF lpCalleeData,
+    GROUP FAR *g,
+    DWORD dwCallbackData
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The unfortunate drawback is that the QOS service provider does not guarantee to return the actual QOS values that the client is requesting as the <i>lpSQOS</i> parameter, which means that to enable QOS on the client socket, <i>WSAIoctl</i> with <i>SIO_SET_QOS</i> must be called before or after <i>WSAAccept</i>. If QOS is set on the listening socket, those values will be copied over to the client socket by default.</p>
+
+<p>In actuality, the condition function is not useful at all. With TCP, you cannot reject a client connection per se because by the time the conditional function has been called, the connection has already been established on the TCP level. Additionally, the QOS service provider will not pass valid QOS parameters into the conditional function even if a PATH message has already arrived. Basically, don't use the <i>WSAAccept</i> condition function.</p>
+
+<p><div class="note"><blockquote><b>NOTE</b><hr>There is one issue to be aware of when using <i>WSAAccept</i> on Windows 98. If you do use a conditional function with <i>WSAAccept</i> and the <i>lpSQOS</i> parameter is not null, you must set QOS (using <i>SIO_SET_QOS</i>), or <i>WSAAccept</i> will fail.</blockquote></div>
+</p>
+
+<A NAME="375"><h3><i>WSAJoinLeaf</i></h3></A>
+<p><i>WSAJoinLeaf</i> is used for multipoint communications. <A HREF="ch11a.htm">Chapter 11</A> discusses multicasting in great detail. The function is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+SOCKET WSAJoinLeaf(
+    SOCKET s,
+    const struct sockaddr FAR *name,
+    int namelen,
+    LPWSABUF lpCallerData,
+    LPWSABUF lpCalleeData,
+    LPQOS lpSQOS,
+    LPQOS lpGQOS,
+    DWORD dwFlags
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>For an application to join a multicast session, it must create a socket with the appropriate flags (<i>WSA_FLAG_MULTIPOINT_C_ROOT</i>, <i>WSA_FLAG_MULTIPOINT_C_LEAF</i>, <i>WSA_FLAG_MULTIPOINT_D_ROOT</i>, and <i>WSA_FLAG_MULTIPOINT_D_LEAF</i>). When the application sets up multipoint communications, it specifies QOS parameters in the <i>lpSQOS</i> parameter.</p>
+
+<p>When you use <i>WSAJoinLeaf</i> to join IP multicast groups, the operation of joining a multicast group is separate from the QOS RSVP session setup. In fact, joining a multicast group is likely to succeed. The function returns without the reservation request completing. At some later time, you will receive an <i>FD_QOS</i> event that will notify you of either a success or a failure in allocating the requested resources.</p>
+
+<p>Keep in mind the time-to-live (TTL) set on multicast data. If you plan on setting the TTL with either <i>SIO_MULTICAST_SCOPE</i> or <i>IP_MULTICAST_TTL</i>, the TTL must be set prior to calling <i>WSAJoinLeaf</i> or calling the <i>SIO_SET_QOS</i> ioctl command to set QOS on the socket. If the scope is set after the QOS is already set, the TTL will not take effect until QOS is renegotiated through <i>SIO_SET_QOS</i>. The TTL value set will also be carried by the RSVP request.</p>
+
+<p>Setting the TTL before setting QOS on a socket is important because the multicast TTL set on the socket also affects the TTL of the RSVP messages, directly affecting how many networks your resource reservation request is propagated to. For example, if you want to set up several endpoints in an IP multicast group that spans 3 networks, you ideally would set the TTL to 3 so that the network traffic you generate is not propagated to networks beyond those interested in the data. If the TTL isn't set before <i>WSAJoinLeaf</i> is called, RSVP messages are sent out with a default TTL of 63, which results in the host attempting to reserve resources on far too many networks.</p>
+
+<A NAME="376"><h3><i>WSAIoctl</i></h3></A>
+<p>The <i>WSAIoctl</i> function with the ioctl option <i>SIO_SET_QOS</i> can be used either to request QOS for the first time on either a connected or an unconnected socket or to renegotiate QOS requirements after an initial QOS request. The one advantage to using <i>WSAIoctl</i> is that if the QOS request fails, more detailed error information is returned via the provider-specific information. <a href="ch09a.htm">Chapter 9</A> covers the <i>WSAIoctl</i> function and how it is called, along with <i>SIO_SET_QOS</i> and <i>SIO_GET_QOS</i>.</p>
+
+<p>The <i>SIO_SET_QOS</i> option is used to set or modify QOS parameters on a socket. One feature of using <i>WSAIoctl</i> with <i>SIO_SET_QOS</i> is the ability to specify provider-specific objects to further refine the behavior of QOS. The next section is dedicated to covering all the provider-specific objects. In particular, an application using connectionless sockets that does not want to use <i>WSAConnect</i> can call <i>WSAIoctl</i> with <i>SIO_SET_QOS</i> and specify the destination address object in the provider-specific buffer to associate an endpoint so that an RSVP session can be established. When setting QOS parameters, pass the QOS structure as <i>lpvInBuffer</i>, with <i>cbInBuffer</i> indicating the amount of bytes passed in.</p>
+
+<p>The <i>SIO_GET_QOS</i> option is used upon receipt of an <i>FD_QOS</i> event. When an application receives this event notification, a call to <i>WSAIoctl</i> with <i>SIO_GET_QOS</i> should be made to investigate the reason for the event. As we mentioned earlier, the <i>FD_QOS</i> event can be generated because of a change in the available bandwidth on the network or by renegotiation by the peer. To obtain the QOS values for a socket, pass a sufficiently large buffer as <i>lpvOutBuffer</i>, with <i>cbOutBuffer</i> indicating the size. The input parameters can be <i>NULL</i> and 0. The one tricky thing when calling <i>SIO_GET_QOS</i> is passing a buffer large enough to hold the <i>QOS</i> structure, including the provider-specific objects. The <i>ProviderSpecific</i> field&#8212;a <i>WASBUF</i> structure&#8212;is within the <i>QOS</i> structure. If the <i>len</i> field is set to <i>QUERY_PS_SIZE</i> and the <i>buf</i> field is null, <i>len</i> will be updated with the necessary size upon return from <i>
+WSAIoctl</i>. Additionally, if the call fails because the buffer is too small, the <i>len</i> field will be updated with the correct size. Querying for the buffer size is supported only on Windows 2000. For Windows 98, you must always supply a large enough buffer&#8212;simply pick a large buffer size and stick with it.</p>
+
+<p>Another ioctl command can be used with <i>WSAIoctl</i>: <i>SIO_CHK_QOS</i>. This command can be used to query for the six values described in Table 12-2. When you call this command, the <i>lpvInBuffer</i> parameter points to a <i>DWORD</i> that is set to one of the three flags. The <i>lpvOutBuffer</i> parameter should also point to a <i>DWORD</i>, and upon return, the value requested is returned. The most commonly used flag is <i>ALLOWED_TO_SEND_DATA</i>. This flag is used by senders who have initiated a PATH message but have not received any RESV messages indicating successful allocation of the QOS level. When senders use the <i>SIO_CHK_QOS</i> ioctl command with the <i>ALLOWED_TO_SEND_DATA</i> flag, the network is queried to see whether the best-effort traffic currently available is sufficient for sending the kind of data described in the <i>QOS</i> structure passed to a QOS-invoking function. For more details, take a look at the entry for this ioctl command in <a href="ch09a.htm">Chapter 9</A>.</p>
+
+<p><b>Table 12-2.</b> SIO_CHK_QOS <i>flags</i></p>
+
+<p>
+<table cellpadding=5 width="95%">
+<tr> 
+<th>SIO_CHK_QOS <i>Flag</i>   </th>
+<th> <i>Description</i> </th>
+<th><i>Return Value</i>  </th></tr>
+<tr>
+<td valign="top"><i>ALLOW_TO_SEND_DATA</i>  </td>
+<td valign="top">Indicates whether sending  data can begin immediately or whether the application should wait for a RESV message  </td>
+<td valign="top"><i>BOOL</i>  </td></tr>
+<tr>
+<td valign="top"><i>ABLE_TO_RECV_RSVP</i>  </td>
+<td valign="top">Indicates to senders whether its 
+ interface is RSVP-enabled  </td>
+<td valign="top"><i>BOOL</i>  </td></tr>
+<tr>
+<td valign="top"><i>LINE_RATE</i>  </td>
+<td valign="top">Returns the bandwidth capacity  of the interface  </td>
+<td valign="top"><i>DWORD</i>  </td></tr>
+<tr>
+<td valign="top"><i>LOCAL_TRAFFIC_CONTROL</i>  </td>
+<td valign="top">Returns whether Traffic Control  is installed and available for use  </td>
+<td valign="top"> <i>BOOL</i> </td></tr>
+<tr>
+<td valign="top"><i>LOCAL_QOSABILITY</i>  </td>
+<td valign="top">Returns whether QOS is  available  </td>
+<td valign="top"><i>BOOL</i>  </td></tr>
+<tr>
+<td valign="top"><i>END_TO_END_QOSABILITY</i>  </td>
+<td valign="top">Determines whether end-to-end  QOS is available on the network  </td>
+<td valign="top"><i>BOOL</i>  </td></tr>
+</table></p>
+
+
+<p>The options listed in Table 12-2 that return <i>BOOL</i> values actually return 1 or 0 to indicate a yes or a no answer respectively. The last four options in the table can return the constant <i>INFO_NOT_AVAILABLE</i> if the system cannot currently obtain the answer.</p>
+
+</BODY>
+</HTML>
+
+
+
+

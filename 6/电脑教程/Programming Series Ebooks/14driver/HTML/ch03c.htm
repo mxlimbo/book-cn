@@ -1,0 +1,867 @@
+<HTML>
+<HEAD>
+<TITLE>Error Handling</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch03b.htm">[Previous]</A> <A HREF="ch03d.htm">[Next]</a>
+</p>
+
+<A NAME="69"><H1>Error Handling</H1></A>
+
+<p>To err is human, to recover is part of software engineering. Exceptional conditions are
+always arising in programs. Some of them start with program bugs, either in our own code or in
+the user-mode applications that invoke our code. Some of them relate to system load or the
+instantaneous state of hardware. Whatever the cause, unusual circumstances demand a flexible
+response from our code. In this section, I'll describe three aspects of error handling:
+status codes, structured exception handling, and bug checks. In general, kernel-mode support
+routines report unexpected errors by returning a status code, whereas they report expected
+variations in normal flow by returning a Boolean or numeric value other than a formal status
+code. Structured exception handling offers a standardized way to clean up after really
+unexpected events, such as dividing by zero or dereferencing an invalid pointer, or to avoid
+the system crash that normally ensues after such an event. A <i>bug check</i> is the internal
+name for a catastrophic failure for which a system shutdown is the only cure.</p>
+
+<A NAME="70"><H2>Status Codes</H2></A>
+
+<p>Kernel-mode support routines (and your code too, for that matter) indicate success or
+failure by returning a status code to their caller. An NTSTATUS value is a 32-bit integer
+composed of several subfields, as illustrated in Figure 3-2. The high-order two bits denote the
+severity of the condition being reported&#8212;success, information, warning, or error. The
+customer bit is, I believe, a vestige of the 1960s when IBM reserved customer fields for local
+modification of its mainframe operating systems. I can't think of a current use for a
+customer field. The facility code indicates which system component originated the message and
+basically serves to decouple development groups from each other when it comes to assigning
+numbers to codes. The remainder of the status code&#8212;16 bits' worth&#8212;indicates the
+exact condition being reported.</p>
+
+<p>
+<A HREF="javascript:fullSize('F03wi02x.htm')"> <img src="images/F03wi02.JPG" width=404 height=93 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 3-2.</b> <i>Format of an NTSTATUS code.</i><!--/caption-->
+</p>
+
+
+<p>You should always check the status returns from routines that provide them. I'm going to
+break this rule frequently in some of the code fragments I show you because including all the
+necessary error handling code often obscures the expository purpose of the fragment. But
+don't you emulate this sloppy practice!</p>
+
+<p>If the high-order bit of a status code is zero, any number of the remaining bits could be
+set and the code would still indicate success. Consequently, never just compare status codes to
+zero to see if you're dealing with success&#8212;instead, use the NT_SUCCESS macro:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+NTSTATUS status = SomeFunction(...);
+if (!NT_SUCCESS(status))
+  {
+  <i>&lt;handle error&gt;</i>
+  }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Not only do you want to test the status codes you receive from routines you call, but you
+also want to return status codes to the routines that call you. In the <a href="ch02a.htm">preceding chapter</a>, I
+dealt with two driver subroutines&#8212;<b>DriverEntry</b> and <b>AddDevice</b>&#8212;that are
+both defined as returning NTSTATUS codes. As I discussed, you want to return NT_SUCCESS as the
+success indicator from these routines. If something goes wrong, you often want to return an
+appropriate status code, which is sometimes the same value that a routine returned to you.</p>
+
+<p>As an example, here are some initial steps in the AddDevice function, with all the error
+checking left in:</p>
+
+<p>
+<table cellpadding=5 width="95%">
+<tr><td valign=top>
+<pre>
+
+
+
+
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+2 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+
+
+3 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+4 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+</pre>
+</td>
+<td>
+<pre>
+NTSTATUS AddDevice(PDRIVER_OBJECT DriverObject, PDEVICE_OBJECT pdo)
+  {
+  NTSTATUS status;
+  PDEVICE_OBJECT fdo;
+  status = IoCreateDevice(DriverObject, sizeof(DEVICE_EXTENSION),
+    NULL, FILE_DEVICE_UNKNOWN, 0, FALSE, &amp;fdo);
+  if (!NT_SUCCESS(status))
+    {
+    KdPrint((&quot;IoCreateDevice failed - %X\n&quot;, status));
+    return status;
+    }
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+  pdx-&gt;DeviceObject = fdo;
+  pdx-&gt;Pdo = pdo;
+  pdx-&gt;state = STOPPED;
+  IoInitializeRemoveLock(&amp;pdx-&gt;RemoveLock, 0, 0, 255);
+  status = IoRegisterDeviceInterface(pdo, &amp;GUID_SIMPLE, NULL,
+    &amp;pdx-&gt;ifname);
+  if (!NT_SUCCESS(status))
+    {
+    KdPrint((&quot;IoRegisterDeviceInterface failed - %X\n&quot;, status));
+    IoDeleteDevice(fdo);
+    return status;
+    }
+    ...
+  }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> If <b>IoCreateDevice</b> fails, we'll simply return the same status code it
+gave us. Note the use of the NT_SUCCESS macro as described in the text.</li></p>
+
+<p><li> It's sometimes a good idea, especially while debugging a driver, to print any
+error status you discover. I'll discuss the exact usage of <b>KdPrint</b> later in this
+chapter (in the &quot;<A HREF="ch03f.htm#106">Making Debugging Easier</A>&quot; section).</li></p>
+
+<p><li> <b>IoInitializeRemoveLock</b>, discussed in Chapter 6, &quot;<A HREF="ch06a.htm#180">Plug and Play</A>,&quot; is a
+VOID function, meaning that it can't fail. Consequently, there's no need to check a
+status code.</li></p>
+
+<p><li> Should <b>IoRegisterDeviceInterface</b> fail, we have some cleanup to do before
+we return to our caller; namely, we must call <b>IoDeleteDevice</b> to destroy the device
+object we just created.</li></p>
+</ol>
+
+<p>You don't always have to fail calls that lead to errors in the routines you call, of
+course. Sometimes you can ignore an error. For example, in Chapter 8, &quot;<A HREF="ch08a.htm#265">Power Management</A>,&quot; I'll tell you about a power management I/O request with the subtype
+IRP_MN_POWER_SEQUENCE that you can use as an optimization to avoid unnecessary state
+restoration during a power-up operation. Not only is it optional whether you use this request,
+but it's also optional for the bus driver to implement it. Therefore, if that request
+should fail, you should just go about your business. Similarly, you can ignore an error from
+<b>IoAllocateErrorLogEntry</b> because the inability to add an entry to the error log isn't
+at all critical.</p>
+
+<A NAME="71"><H2>Structured Exception Handling</H2></A>
+
+<p>Windows NT provides a method of handling exceptional conditions that helps you avoid
+potential system crashes. Closely integrated with the compiler's code generator, <i>
+structured exception handling</i> lets you easily place a guard on sections of your code and
+invoke exception handlers when something goes wrong in the guarded section. Structured
+exception handling also lets you easily provide cleanup statements that you can be sure will
+always execute no matter how control leaves a guarded section of code.</p>
+
+<p>Very few of my seminar students have been familiar with structured exceptions, so I'm
+going to explain some of the basics here. You can write better, more bulletproof code if you
+use these facilities. In many situations, the parameters that you receive in a WDM driver have
+been thoroughly vetted by other code and won't cause you to generate inadvertent
+exceptions. Good taste may, therefore, be the only impetus for you to use the stuff I'm
+describing in this section. As a general rule, though, you <i>always</i> want to protect direct
+references to user-mode virtual memory with a structured exception frame. Such references occur
+when you call <b>MmProbeAndLockPages</b>, <b>ProbeForRead</b>, and <b>ProbeForWrite</b>, and
+perhaps at other times.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+The structured exception mechanism will let you avoid a system crash when
+kernel-mode code accesses an invalid user-mode address. It will <i>not</i> catch other
+processor exceptions, such as division by zero or attempts to access invalid kernel-mode
+addresses. In this respect, the whole facility is less universal in kernel mode than in user
+mode.</blockquote></div>
+</p>
+
+<p>Kernel-mode programs use structured exceptions by establishing <i>exception frames</i> on
+the same stack that's used for argument passing, subroutine calling, and automatic
+variables. I'm not going to describe the mechanics of this process in detail because it
+differs from one Windows NT platform to another. The mechanism is the same as the one that
+user-mode programs use, though, and there are a couple of places you can look for
+implementation details. See, for example, Matt Pietrek's article &quot;A Crash Course on
+the Depths of Win32 Structured Exception Handling&quot; in <i>Microsoft Systems Journal</i>
+(January 1997). And Jeff Richter discusses the subject in <i>Programming Applications for
+Microsoft Windows, Fourth Edition</i> (Microsoft Press, 1999).</p>
+
+<p>When an exception arises, the operating system scans the stack of exception frames looking
+for a handler. Refer to Figure 3-3 for a flowchart depicting the logic. In effect, each
+exception frame designates a filter function that the system calls to answer the question,
+&quot;Can you handle this exception?&quot; When the system finds a handler, it unwinds the
+exception and execution stacks in parallel to restore the context of the handler. The unwinding
+process involves calling the same set of filter functions with an argument that indicates, in
+effect, &quot;We're unwinding now; if you answered <i>yes</i> the last time, take over
+now!&quot; There's always a default handler in place that crashes the system if no one else
+fields the exception.</p>
+
+<p>
+<A HREF="javascript:fullSize('F03wi03x.htm')"> <img src="images/F03wi03.JPG" width=404 height=862 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 3-3.</b> <i>Logic of structured exception handling.</i><!--/caption-->
+</p>
+
+
+<p>When you use the Microsoft compiler, you can use Microsoft extensions to the C/C++ language
+that hide some of the complexities of working with the raw operating system primitives. In
+particular, you use the <b>_ _try</b> statement to designate a compound statement as the <i>
+guarded body</i> for an exception frame, and you use either the <b>_ _finally</b> statement to
+establish a <i>termination handler</i> or the <b>_ _except</b> statement to establish an <i>
+exception handler.</i> Run-time library routines interact with the operating system's raw
+exception mechanisms to produce the effects that I'll describe in the following
+sections.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+It's better to always spell the words <b>_ _try</b>, <b>_ _finally</b>, and
+<b>_ _except</b> with leading underscores. In C compilation units, the DDK header file WARNING.H
+defines macros spelled <b>try</b>, <b>finally</b>, and <b>except</b> to be the words with
+underscores. DDK sample programs use those macro names rather than the underscored names. The
+problem this can create for you is that in a C++ compilation unit <b>try</b> is a statement
+verb that pairs with <b>catch</b> to invoke a completely different exception mechanism
+that's part of the C++ language. C++ exceptions don't work in a driver unless you
+manage to duplicate some infrastructure from the run-time library. Microsoft would prefer you
+not do that because of the increased size of your driver and the memory pool overhead
+associated with handling the <b>throw</b> verb.</blockquote></div>
+</p>
+
+<A NAME="72"><H3>Try-Finally Blocks</H3></A>
+
+<p>It's easiest to begin explaining structured exception handling by describing the <i>
+try-finally</i> block, which you can use to provide cleanup code:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+_ _try
+  {
+  <i>&lt;guarded body&gt;</i>
+  }
+_ _finally
+  {
+  <i>&lt;termination handler&gt;</i>
+  }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>In this fragment of pseudocode, the guarded body is a series of statements and subroutine
+calls that expresses some main idea in your program. In general, these statements have side
+effects. If there are no side effects, there's no particular point to using a try-finally
+block because there's nothing to clean up. The termination handler contains statements that
+undo some or all of the side effects that the guarded body might leave behind.</p>
+
+<p>Semantically, the try-finally block works as follows. First, the computer executes the
+guarded body. When control leaves the guarded body <i>for any reason,</i> the computer executes
+the termination handler. See Figure 3-4.</p>
+
+<p>
+<A HREF="javascript:fullSize('F03wi04x.htm')"> <img src="images/F03wi04.JPG" width=404 height=155 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 3-4.</b> <i>Flow of control in a try-finally block.</i><!--/caption-->
+</p>
+
+
+<p>Here's one simple illustration:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+LONG counter = 0;
+_ _try
+  {
+  ++counter;
+  }
+_ _finally
+  {
+  --counter;
+  }
+KdPrint((&quot;%d\n&quot;, counter));
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>First, the guarded body executes and increments the <b>counter</b> variable from 0 to 1.
+When control &quot;drops through&quot; the right-brace at the end of the guarded body, the
+termination handler executes and decrements <b>counter</b> back to 0. The value printed will
+therefore be 0.</p>
+
+<p>Here's a slightly more complicated variation:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+VOID RandomFunction(PLONG pcounter)
+  {
+  _ _try
+    {
+    ++*pcounter;
+    return;
+    }
+  _ _finally
+    {
+    --*pcounter;
+    }
+  }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The net result of this function is no change to the integer at the end of the <b>
+pcounter</b> pointer: whenever control leaves the guarded body <i>for any reason,</i> including
+a <b>return</b> statement or a <b>goto,</b> the termination handler executes. Here the guarded
+body increments the counter and performs a return. Next the cleanup code executes and
+decrements the counter. Then the subroutine actually returns.</p>
+
+<p>One final example should cement the idea of a try-finally block:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+static LONG counter = 0;
+_ _try
+  {
+  ++counter;
+  BadActor();
+  }
+_ _finally
+  {
+  --counter;
+  }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Here I'm supposing that we call a function, <b>BadActor</b>, that will raise some sort
+of exception that triggers a stack unwind. As part of the process of unwinding the execution
+and exception stacks, the operating system will invoke our cleanup code to restore the counter
+to its previous value. The system then continues unwinding the stack, so whatever code we have
+after the <b>_ _finally</b> block won't get executed.</p>
+
+<A NAME="73"><H3>Try-Except Blocks</H3></A>
+
+<p>The other way to use structured exception handling involves a <i>try-except</i> block:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+_ _try
+  {
+  <i>&lt;guarded body&gt;</i>
+  }
+_ _except(<i>&lt;filter expression&gt;</i>)
+  {
+  <i>&lt;exception handler&gt;</i>
+  }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The guarded body in a try-except block is code that might fail by generating an exception.
+Perhaps you're going to call a kernel-mode service function like MmProbeAndLockPages that
+uses pointers derived from user mode without explicit validity checking. Perhaps you have other
+reasons. In any case, if you manage to get all the way through the guarded body without an
+error, control continues after the exception handler code. You'll think of this case as
+being the normal one. If an exception arises in your code or in any of the subroutines you
+call, however, the operating system will unwind the execution stack, evaluating the filter
+expressions in _ _except statements. These expressions yield one of the following values:</p>
+
+<ul>
+<p><li> EXCEPTION_EXECUTE_HANDLER is numerically equal to 1 and tells the operating system to
+transfer control to your exception handler. If your handler falls through the ending
+right-brace, control continues within your program at the statement immediately following that
+right-brace. (I've seen Platform SDK documentation to the effect that control returns to
+the point of the exception, but that's not correct.)</li></p>
+
+<p><li> EXCEPTION_CONTINUE_SEARCH is numerically equal to 0 and tells the operating system that
+you can't handle the exception. The system keeps scanning up the stack looking for another
+handler. If no one has provided a handler for the exception, a system crash will occur.</li></p>
+
+<p><li> EXCEPTION_CONTINUE_EXECUTION is numerically equal to -1 and tells the operating system to
+return to the point where the exception was raised. I'll have a bit more to say about this
+expression value a little further on.</li></p>
+</ul>
+
+
+<p>Take a look at Figure 3-5 for the possible control paths within and around a try-except
+block.</p>
+
+<p>
+<A HREF="javascript:fullSize('F03wi05x.htm')"> <img src="images/F03wi05.JPG" width=404 height=144 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 3-5.</b> <i>Flow of control in a try-except block.</i><!--/caption-->
+</p>
+
+
+<p>For example, you could protect yourself from receiving an invalid pointer by using code like
+the following. (See the SEHTEST sample on the companion disc.)</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+PVOID p = (PVOID) 1;
+_ _try
+  {
+  KdPrint((&quot;About to generate exception\n&quot;));
+  ProbeForWrite(p, 4, 4);
+  KdPrint((&quot;You shouldn't see this message\n&quot;));
+  }
+_ _except(EXCEPTION_EXECUTE_HANDLER)
+  {
+  KdPrint((&quot;Exception was caught\n&quot;));
+  }
+KdPrint((&quot;Program kept control after exception\n&quot;));
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p><b>ProbeForWrite</b> tests a data area for validity. In this example, it will raise an
+exception because the pointer argument we supply is not aligned to a 4-byte boundary. The
+exception handler gains control. Control then flows to the next statement after the exception
+handler and continues within your program.</p>
+
+<p>In the preceding example, had you returned the value EXCEPTION_CONTINUE_SEARCH, the operating system would have continued unwinding the stack looking for an exception
+handler. Neither your exception handler code nor the code following it would have been
+executed: either the system would have crashed or some higher-level handler would have taken
+over.</p>
+
+<p>You should not return EXCEPTION_CONTINUE_EXECUTION in kernel mode because you have no way to
+alter the conditions that caused the exception in order to allow a retry to occur.</p>
+
+<p>Note that you cannot trap arithmetic exceptions, page faults, actual references through
+invalid pointers, and the like by using structured exceptions. You just have to write your code
+so as not to generate such exceptions.</p>
+
+<A NAME="74"><H3>Exception Filter Expressions</H3></A>
+
+<p>You might be wondering how to perform any sort of involved error detection or correction
+when all you're allowed to do is evaluate an expression that yields one of three integer
+values. You could use the C/C++ comma operator to string expressions together:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+_ _except(expr-1, ... EXCEPTION_CONTINUE_SEARCH){}
+</pre>
+</td></tr>
+</table>
+</p>
+
+
+<p><div class="sidebar"><blockquote>
+<b>Raw Exception Handling vs. Microsoft Syntax</b>
+
+<p>The statements <b>_ _try</b>, <b>_ _except</b>, and <b>_ _finally</b> are Microsoft extensions
+to the C language that simplify use of the underlying raw exception handling mechanism that the
+operating system provides. In the flowchart in Figure 3-3, I illustrated <i>two</i>
+calls to each filter function&#8212;one for locating the exception handler and the other for
+stack unwinding. The run-time library contains the actual filter function that the operating
+system calls. When you use _ _try, _ _except, and _ _finally, you're talking to other run-time
+library functions that work with that filter function and the operating system to yield the
+simpler model I've been describing. In particular, the <i>filter expression</i> that you
+use in an _ _except clause gets evaluated only once per exception.</p>
+</blockquote></div>
+</p>
+
+
+<p>The comma operator basically discards whatever value is on its left side and evaluates its
+right side. The value that's left over after this computational game of musical chairs
+(with just one chair!) is the value of the expression.</p>
+
+<p>You could use the C/C++ conditional operator to perform some more involved calculation:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+_ _except<i>(&lt;some-expr&gt;</i> 
+    ? EXCEPTION_EXECUTE_HANDLER
+    : EXCEPTION_CONTINUE_SEARCH)
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>If the <i>some_expr</i> expression is TRUE, you execute your own handler. Otherwise, you
+tell the operating system to keep looking for another handler above you in the stack.</p>
+
+<p>Finally, it should be obvious that you could just write a subroutine whose return value is
+one of the EXCEPTION_<i>Xxx</i> values:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+LONG EvaluateException()
+  {
+  if (<i>&lt;some-expr&gt;</i>)
+    return EXCEPTION_EXECUTE_HANDLER;
+  else
+    return EXCEPTION_CONTINUE_SEARCH;
+  }
+
+...
+_ _except(EvaluateException())
+...
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>For any of these expression formats to do you any good, you need access to more information
+about the exception. There are two functions you can call when evaluating an _ _except
+expression that will supply the information you need. Both functions actually have intrinsic
+implementations in the Microsoft compiler and can be used only at the specific times
+indicated:</p>
+
+<ul>
+<p><li> <b>GetExceptionCode()</b> returns the numeric code for the current exception. This value
+is an NTSTATUS value that you can compare with manifest constants in ntstatus.h if you want to.
+This function is available in an _ _except expression and within the exception handler code that
+follows the _ _except clause.</li></p>
+
+<p><li> <b>GetExceptionInformation()</b> returns the address of an EXCEPTION_POINTERS structure 
+that, in turn, allows you to learn all the details about the exception,
+such as where it occurred, what the machine registers contained at the time, and so on. This
+function is available only within an _ _except expression.</li></p>
+</ul>
+
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+The scope rules for names that appear in try-except and try-finally blocks are
+the same as elsewhere in the C/C++ language. In particular, if you declare variables within the
+scope of the compound statement that follows _ _try, those names are not visible in a filter
+expression, exception handler, or termination handler. Documentation to the contrary that you
+might have seen in the Platform SDK or on MSDN is incorrect. For what it's worth, the stack
+frame containing any local variables declared within the scope of the guarded body still exists
+at the time the filter expression is evaluated. So, if you had a pointer (presumably declared
+at some outer scope) to a variable declared within the guarded body, you could safely
+dereference it in a filter expression.</blockquote></div>
+</p>
+
+<p>Because of the restrictions on how you can use these two expressions in your program,
+you'd probably want to use them in a function call to some filter function, like this:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+LONG EvaluateException(NTSTATUS status, PEXCEPTION_POINTERS xp)
+  {
+  ...
+  }
+...
+_ _except(EvaluateException(GetExceptionCode(),
+  GetExceptionInformation()))
+...
+</pre>
+</td></tr>
+</table>
+</p>
+
+<A NAME="75"><H3>Raising Exceptions</H3></A>
+
+<p>Program bugs are one way you can (inadvertently) raise exceptions that invoke the structured
+exception handling mechanism. Application programmers are familiar with the Win32 API function
+<b>RaiseException</b>, which allows you to generate an arbitrary exception on your own. In WDM
+drivers, you can call the routines listed in Table 3-1. I'm not going to give you a
+specific example of calling these functions because of the following rule:</p>
+
+<blockquote><b>Only raise an exception in nonarbitrary thread context when you know there's an
+exception handler above you and you otherwise really know what you're doing.</b></blockquote>
+
+<p><b>Table 3-1.</b> <i>Service functions for raising exceptions.</i></p>
+<p>
+<table valign="top" cellpadding="5" width="95%">
+<tr>
+<th><i>Service Function</i></th>
+<th><i>Description</i></th>
+</tr>
+<tr>
+<td valign="top">ExRaiseStatus</td>
+<td valign="top">Raise exception with specified status code</td>
+</tr>
+<tr>
+<td valign="top">ExRaiseAccessViolation</td>
+<td valign="top">Raise STATUS_ACCESS_VIOLATION</td>
+</tr>
+<tr>
+<td valign="top">ExRaiseDatatypeMisalignment</td>
+<td valign="top">Raise STATUS_DATATYPE_MISALIGNMENT</td>
+</tr>
+</table>
+</p>
+
+
+<p>In particular, raising exceptions is not a good way to tell your callers information that
+you discover in the ordinary course of executing. It's far better to return a status code,
+even though that leads to apparently more unreadable code. You should eschew exceptions because
+the stack-unwinding mechanism is very expensive. Even the cost of establishing exception frames
+is significant and something to avoid when you can.</p>
+
+<A NAME="76"><H3>Some Real-World Examples</H3></A>
+
+<p>Notwithstanding the expense of setting up and tearing down exception frames, you have to use
+structured exception syntax in an ordinary driver in particular situations. And on some other
+occasions when time isn't of the essence, you might as well use this mechanism because
+you'll end up with a better program.</p>
+
+<p>One of the times you must set up an exception handler is when you call <b>
+MmProbeAndLockPages</b> to lock the pages for a memory descriptor list (MDL) you've
+created. This wouldn't be a frequent problem for a WDM driver, because you typically deal
+with MDLs for which someone else has already done the probe-and-lock step. But you're
+allowed to define I/O control (IOCTL) operations that use the METHOD_NEITHER buffering method,
+and you might therefore need to write code like the following:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+PMDL mdl = MmCreateMdl(...);
+_ _try
+  {
+  MmProbeAndLockPages(mdl, ...);
+  }
+_ _except(EXCEPTION_EXECUTE_HANDLER)
+  {
+  NTSTATUS status = GetExceptionCode();
+  ExFreePool((PVOID) mdl);
+  return CompleteRequest(Irp, status, 0);
+  }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>(<b>CompleteRequest</b> is a helper function I use to handle the mechanics of completing I/O
+requests. Chapter 5, &quot;<A HREF="ch05a.htm#147">The I/O Request Packet</A>,&quot; explains all about I/O requests and
+what it means to complete one. <b>ExFreePool</b> is a kernel-mode service routine that releases
+a memory block, such as the one that <b>MmCreateMdl</b> creates. I'll discuss ExFreePool
+later in this chapter in &quot;<A HREF="ch03d.htm#85">Releasing a Memory Block</A>.&quot;)</p>
+
+<p>For another real-world example, consider the code I showed you earlier in this chapter for
+dealing with errors in your AddDevice function. As you progress through the function, you keep
+accumulating side effects that all have to be undone if you discover an error. You could use
+structured exception handling to make the function more maintainable. I'm omitting a bunch
+of stuff in this example to emphasize the error-handling aspects:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+NTSTATUS AddDevice(...)
+  {
+  NTSTATUS status = STATUS_UNSUCCESSFUL;
+  PDEVICE_OBJECT fdo;
+  PDEVICE_EXTENSION pdx;
+  status = IoCreateDevice(..., &amp;fdo);
+  if (!NT_SUCCESS(status))
+    return status;
+  _ _try
+    {
+    pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+    ...
+    IoInitializeRemoveLock(&amp;pdx-&gt;RemoveLock, ...);
+    status = IoRegisterDeviceInterface(..., &amp;pdx-&gt;ifname);
+    if (!NT_SUCCESS(status))
+      return status;
+    ...
+    }
+  _ _finally
+    {
+    if (!NT_SUCCESS(status))
+      {
+      ...
+      if (pdx-&gt;ifname.Buffer)
+        RtlFreeUnicodeString(&amp;pdx-&gt;ifname);
+      IoDeleteDevice(fdo);
+      }
+    }
+  return status;
+  }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The key idea here is that whenever we discover an error status from some service function,
+we just execute a <b>return status</b> statement. (See the next sidebar for a description of a
+more efficient technique.) The return status statement triggers execution of the termination
+handler, which undoes each of the side effects that have accumulated so far. For this technique
+to work properly, you have to do two things. Since the termination handler is always executed,
+even by the normal ending of the guarded body, you have to know when to undo side effects and
+when not to undo them. Here we test the <b>status</b> variable. If it's a success code of
+some kind, we don't do any cleanup. Otherwise, we undo everything. The second thing you
+have to do is provide a way to know which side effects need to be cleaned up. We dealt with
+that concern by initializing all the side-effect variables to NULL. If we never succeed in
+registering a device interface, there won't be a string in <b>pdx-&gt;ifname</b> to
+release. And so on.</p>
+
+<p>The biggest advantage of a try-finally block in a situation like that I just showed you is
+that your code is easier to modify. You can put any statement at all&#8212;even one which
+returns a status code and leaves behind a side effect if it succeeds&#8212;in between, say, the
+call to <b>IoCreateDevice</b> and the call to <b>IoRegisterDeviceInterface</b>. All you need do
+to ensure proper cleanup is add a compensating statement inside the termination handler. The
+alternative&#8212;having explicit cleanup code after every test of the status code&#8212;is prone
+to error because you must remember to add a new cleanup statement in every place where you
+might exit the subroutine.</p>
+
+
+<p><div class="sidebar"><blockquote>
+<b>The _ _Leave Statement</b>
+
+<p>Microsoft added the <b>_ _leave</b> statement to the C/C++ language to deal with an
+efficiency problem that arises in routines like the AddDevice example in the text. If you issue
+a normal return inside a _ _try block, you trigger the expensive unwinding mechanism that the
+operating system uses for exception handling. The _ _leave statement, however, just transfers
+control to the termination handler and, thereafter, to the statement following the termination
+handler. It's much faster than return because it doesn't cause any unwinding. In this
+case, we always want to execute the termination handler and then return a status code. Since
+the code we want to execute in both success and failure cases is the same (namely, <b>return
+status</b>), we should use <b>_ _leave</b> instead of <b>return</b>.</p>
+</blockquote></div>
+</p>
+
+
+<p>So, suppose we needed to allocate a block of memory for some auxiliary purpose. We could
+just insert a few statements in AddDevice like so (with the new parts in boldface):</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+NTSTATUS AddDevice(...)
+  {
+  NTSTATUS status = STATUS_UNSUCCESSFUL;
+  PDEVICE_OBJECT fdo;
+  PDEVICE_EXTENSION pdx;
+  status = IoCreateDevice(..., &amp;fdo);
+  if (!NT_SUCCESS(status))
+    return status;
+  _ _try
+    {
+    pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+    ...
+<b>    pdx-&gt;DeviceDescriptor = (PUSB_DEVICE_DESCRIPTOR)
+      ExAllocatePool(NonPagedPool, sizeof(USB_DEVICE_DESCRIPTOR));
+    if (!pdx-&gt;DeviceDescriptor)
+      return STATUS_INSUFFICIENT_RESOURCES;</b> 
+    IoInitializeRemoveLock(&amp;pdx-&gt;RemoveLock, ...);
+    status = IoRegisterDeviceInterface(..., &amp;pdx-&gt;ifname);
+    if (!NT_SUCCESS(status))
+      return status;
+    ...
+    }
+  _ _finally
+    {
+    if (!NT_SUCCESS(status))
+      {
+      ...
+      if (pdx-&gt;ifname.Buffer)
+        RtlFreeUnicodeString(&amp;pdx-&gt;ifname);
+<b>      if (pdx-&gt;DeviceDescriptor)
+        ExFreePool((PVOID) pdx-&gt;DeviceDescriptor);</b> 
+      IoDeleteDevice(fdo);
+      }
+    }
+  return status;
+  }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Without using structured exceptions, you'd need to go through the rest of the program
+and add a call to ExFreePool to every code sequence that returns an error.</p>
+
+<A NAME="77"><H2>Bug Checks</H2></A>
+
+<p>Unrecoverable errors in kernel mode manifest themselves in the so-called <i>blue screen of
+death</i> (BSOD) that's all too familiar to driver programmers. Figure 3-6 is an example
+(hand-painted because there's no screen capture software running when one of these
+occurs!). Internally, these errors are called bug checks after the service function you use to
+diagnose their occurrence: <b>KeBugCheckEx</b>. The main feature of a bug check is that the
+system shuts itself down in as orderly a way as possible and presents the BSOD. Once the BSOD
+appears, the system is dead and must be rebooted.</p>
+
+<p>
+<A HREF="javascript:fullSize('F03wi06x.htm')"> <img src="images/F03wi06.JPG" width=404 height=253 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 3-6.</b> <i>The &quot;blue screen of death.&quot;</i><!--/caption-->
+</p>
+
+
+<p>You call KeBugCheckEx like this:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+KeBugCheckEx(bugcode, info1, info2, info3, info4);
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>where <b>bugcode</b> is a numeric value identifying the cause of the error, and <b>
+info1</b>, <b>info2</b>, and so on are integer parameters that will appear in the BSOD display
+to help some programmer understand the details of the error. This function does not return
+(!).</p>
+
+<p>I'm not going to describe here how to interpret the information in a BSOD or in a crash
+dump. Section 17.3 in Art Baker's <i>The Windows NT Device Driver Book</i> (Prentice Hall,
+1997) is one place you can go for more information. Microsoft's own bugcheck codes appear
+in bugcodes.h (one of the DDK headers); a fuller explanation of the codes and their various
+parameters can be found in Knowledge Base article Q103059, &quot;Descriptions of Bug Codes for
+Windows NT,&quot; which is available on MSDN, among other places.</p>
+
+<p>You can certainly create your own bugcheck codes if you want. The Microsoft values are
+simple integers beginning with 1 (APC_INDEX_MISMATCH) and (currently) extending through 0xDE
+(POOL_CORRUPTION_IN_FILE_AREA) along with a few others. To create your own bugcheck code,
+define an integer constant as if it were STATUS_SEVERITY_SUCCESS status code, but supply either
+the customer flag or a nonzero facility code. For example:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+#define MY_BUGCHECK_CODE 0x002A0001
+...
+KeBugCheckEx(MY_BUGCHECK_CODE, 0, 0, 0, 0);
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>You use a nonzero facility code (42 in this example) or the customer flag (which I left zero
+in this example) so that you can tell your own codes from the ones Microsoft uses.</p>
+
+<p>Now that I've told you <i>how</i> to generate your own BSOD, let me tell you <i>when</i>
+to do it: never. Or, at most, in the checked build of your driver for use during your own
+internal debugging. You and I are unlikely to write a driver that will discover an error so
+serious that taking down the system is the only solution. It would be far better to log the
+error (using the error-logging facilities I'll describe in Chapter 9, &quot;<A HREF="ch09a.htm#299">SpecializedTopics</A>&quot;) and return a status code.</p>
+
+</BODY>
+</HTML>
+
+
+
+
+

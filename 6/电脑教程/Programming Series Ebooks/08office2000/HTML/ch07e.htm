@@ -1,0 +1,460 @@
+<HTML>
+<HEAD>
+<TITLE>Saving and Reloading Reports</TITLE>
+<link rel="STYLESHEET" type="text/css" href="webcomp.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch07d.htm">[Previous]</A> <A HREF="ch07f.htm">[Next]</A><P>
+
+<A NAME="161"><H1>Saving and Reloading Reports</H1></A>
+
+<P>As I mentioned in <A HREF="ch04a.htm">Chapter 4</A>, the PivotTable component exposes a property on 
+its top-level programming interface that returns an XML stream representing the 
+current <I>view definition.</I> The view definition is essentially the report description, defining 
+the layout of various fields on the report axes; the expanded state of members on 
+those axes; and the current filters, sorts, formatting, and so on. In <A HREF="ch04a.htm">Chapter 4</A>, I hinted 
+that you could use the view definition to save and reload reports. In this chapter, I 
+will show you the code you need to write to accomplish this.</P>
+
+<P>Saving and reloading reports is actually quite easy. The XMLData property 
+is read/write, and you can use it to get the current view definition or restore a 
+view definition. The general approach to saving reports is to get the XMLData property 
+and save the returned string where you can retrieve it later. Reloading a report is 
+essentially the reverse operation&#8212;you fetch the view definition from your storage 
+place and set the XMLData property to the fetched string. When you set the 
+PivotTable control's XMLData property, the control will reorient the view, returning it to the 
+state it was in when you saved the report. Remember that this is only the view 
+definition and not a snapshot of the aggregate values in the report. The control will always 
+query the data source for the current values when you reload a view definition.</P>
+
+<P>A number of options exist for saving the current view definition. For 
+example, you can save it in a text file, a database table, a Microsoft Exchange public folder, 
+or a temporary dictionary object in memory. The Sales Analysis and Reporting 
+solution takes the rather exotic approach of posting the view definition to an ASP page, 
+which in turn writes it to a Microsoft Jet database located on the web server. This 
+approach has a number of advantages: First, the ASP script can quickly be rewritten to 
+save the report definition in another location. Second, users' reports are saved on a 
+server and therefore are available from any physical workstation. Third, reports can 
+easily be shared by modifying the ASP script to include reports marked as public that 
+have been created by several different users.</P>
+
+<P>To keep the user experience smooth and to retain the caching benefit of 
+using a connection to the data source for many different queries, I implemented the 
+report-saving mechanism using a hidden frame. When you run the solution, it appears 
+that only one frame exists, but in reality, a second frame lurks above the main page. 
+I set its size to zero and disabled resizing and scrolling, making it invisible. When 
+I save a report, I push the view definition and report name into form fields in 
+that hidden frame and submit the form. Figure 7-1 illustrates how this architecture works.</P>
+
+<P>
+<A HREF="javascript:fullSize('F07Pi01x.htm')"> <img src="images/F07Pi01.JPG" width=404 height=296 border=0 ALT="Click to view at full size."> </A>
+</P><P>
+<!-- CAPTION --><B>Figure 7-1.</B> <I>The Sales Analysis and Reporting solution's report-saving architecture.</I><!-- /CAPTION -->
+</P>
+
+<P>The following code, taken from PivotView.htm, shows how to start the process:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Sub btnSave_onClick()
+    ' Local variables
+    Dim nRepID                  ' Report ID if one exists
+    Dim sRepName                ' Report name
+    Dim frm                     ' HTML form in hidden frame
+    
+    ' Find the form in the hidden frame    
+    Set frm = window.parent.frames(0).frmSave
+    
+    ' Prompt for a report name if new
+    If Len(cbxReports.value) &gt; 0 Then
+        sRepName = cbxReports.options(cbxReports.selectedIndex).text 
+    End If
+    
+    If Len(sRepName) = 0 Then
+        ' New report
+        sRepName = InputBox(&quot;Enter a name for your report:&quot;, _ 
+            &quot;Foodmart Sales Analysis System&quot;, _
+            ptable.ActiveView.TitleBar.Caption)
+    Else
+        nRepID = Left(cbxReports.value, _
+           InStr(cbxReports.value, &quot;~&quot;) - 1)
+    End If
+        
+    ' If the user supplied a name, save it
+    ' If the user pressed Cancel on the input box, the
+    ' sRepName variable will be an empty string
+    If Len(sRepName) &gt; 0 Then
+        SaveReport frm, nRepID, sRepName, ptable.XMLData, IsEmpty(nRepID)
+    End If
+End Sub 'btnSave_onClick()
+</pre></td></tr></table></p>
+
+
+<P>This code is the Click event handler for the Save Report button. It begins 
+by finding the HTML form in the hidden frame using the parent window's frames 
+collection. It then checks whether you are resaving an existing report or saving a 
+new one. The code determines this by checking the length of the value property of 
+the Reports drop-down list. The option named (Choose A Saved Report) has a value 
+of empty string, so if the value of the drop-down list has length zero, the user has 
+not chosen an existing report; hence, the report must be new.</P>
+
+<P>If the report being saved is a new report, the code prompts for a report 
+name using the InputBox function in Microsoft VBScript. If the user clicks the Cancel 
+button on this input box, the returned value will be an empty string, so the code 
+checks the length of the sRepName variable again and exits if it is zero. If the length is 
+not zero, the code calls the SaveReport method, passing it five arguments: a 
+reference to the HTML form in the hidden frame, an empty report ID, the report name, 
+the PivotTable control's XMLData property, and the value of 
+IsEmpty(nRepID)&#8212;TRUE in this case, indicating that the report ID is empty.</P>
+
+<P>If the report being saved is an existing report, the code extracts the report 
+ID from the current value property of the Reports drop-down list. When this list is 
+loaded (which I will demonstrate later), the value property of each new option is set to 
+a compound value consisting of the report ID and the report definition separated 
+by a tilde (~). This makes it easy to retrieve either part later by using the InStr or 
+Split function. This is not the most elegant solution, but it is a convenient way to pack 
+three pieces of information (the report name, ID, and definition) into two properties 
+(the text and value properties). You should probably consider using a Dictionary 
+object instead and looking up the report definition based on the report ID stored in the 
+value property.</P>
+
+<P>Let's move on to the Save Report method:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Sub SaveReport(frm, nRepID, sRepName, sRepDef, fNew)
+    If fNew Then
+        frm.txtAction.value = &quot;insert&quot;
+    Else
+        frm.txtAction.value = &quot;update&quot;
+        frm.txtReportID.value = nRepID
+    End If
+    frm.txtReportName.value = sRepName
+    frm.txtReportDef.value = sRepDef
+    frm.submit
+End Sub 'SaveReport()
+</pre></td></tr></table></p>
+
+
+<P>The SaveReport method sets the values of the various form elements and 
+submits the form. Submitting the form posts the values to the SaveLoad.asp page, 
+which we will examine shortly. Note that I use a form field called txtAction to indicate 
+what type of action I want the ASP page to take. If the report is new, I set this field 
+to &quot;insert&quot;; if it is not, I set the field to &quot;update&quot;. This will cause the ASP page's script 
+to perform either an insert or an update against the database table. If the report is 
+new, it does not have an ID yet, so I leave that form field blank. When the page 
+finishes and returns, you can reload the report list and get the newly assigned report ID 
+(more on that later).</P>
+
+<P>Let's take a quick look at the HTML form in the hidden frame:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+&lt;form id=frmSave action=&quot;SaveLoad.asp&quot; method=&quot;Post&quot;&gt;
+&lt;input type=&quot;text&quot; id=txtAction name=Action&gt;
+&lt;input type=&quot;text&quot; id=txtReportID name=ReportID&gt;
+&lt;input type=&quot;text&quot; id=txtReportName name=ReportName&gt;
+&lt;input type=&quot;text&quot; id=txtReportDef name=ReportDef&gt;
+&lt;input type=&quot;submit&quot; value=&quot;Submit&quot; id=submit1 name=submit1&gt;
+&lt;/form&gt;
+</pre></td></tr></table></p>
+
+
+<P>The SaveLoad.asp page generates this hidden form after it returns the list 
+of available reports, so the form is always available to the other frame for 
+inserting, updating, or deleting reports. Note that the action attribute refers back to the 
+same ASP page and that the method attribute is set to Post. Using Post as the method 
+instead of Get is important here. A form using the Get method appends the 
+various field values to the URL specified in the action attribute. This can produce very 
+long URLs because one of the form fields holds the XMLData property from the 
+PivotTable control. When using the Post method, Microsoft Internet Explorer sends the 
+form field values in the content of the HTTP request instead, allowing you virtually 
+unlimited length.</P>
+
+<P>Note that while this form does contain a Submit button, it is purely for my 
+own debugging purposes. Since the frame in which this form resides is hidden, and 
+since this form is submitted only by the SaveReport method in the main frame, you 
+don't need a Submit button on the form. However, its presence does make it easier to 
+debug the SaveLoad.asp page. You can load the frame directly in your browser and 
+experiment with manually sending insert, update, and delete requests using the form 
+fields and the Submit button.</P>
+
+<P>The final step in saving a view definition is accomplished by the 
+SaveLoad.asp script. Let's take a look at the relevant parts of that ASP page, starting with the 
+module code that executes when the page is called:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+On Error Resume Next
+m_fSuccess = False
+m_sErrText = &quot;&quot;
+
+' Get the current user name if known
+m_sCurUser = Request.ServerVariables(&quot;LOGON_USER&quot;)
+If Len(m_sCurUser) = 0 Then m_sCurUser = &quot;Anonymous&quot;
+
+' Get a connection to the database
+Set m_cn = GetConnection()
+If Err.Number = 0 Then
+    ' See if there's an action requested
+    m_sAction = Request.Form(&quot;Action&quot;)
+
+    Select Case LCase(m_sAction)
+        Case &quot;insert&quot;
+            m_fSuccess = InsertReport(m_cn, m_sCurUser, _
+                 Request.Form(&quot;ReportName&quot;), _
+                 Request.Form(&quot;ReportDef&quot;))
+            
+            If Not m_fSuccess Then m_sErrText = Err.Description
+            <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+</pre></td></tr></table></p>
+
+
+<P>Typically, you will want to save reports under the current user's name so 
+that different users can save different sets of reports. The SaveLoad.asp script first 
+looks at the LOGON_USER server variable, which returns the Windows NT account that 
+the current user has logged on to. By default, new directories in IIS allow 
+anonymous access, meaning this server variable will return an empty string. However, if 
+you disable anonymous access and require authentication, this variable will return 
+the current user's Windows NT logon name. One advantage of utilizing the 
+LOGON_USER server variable is that users can see their reports from any workstation provided 
+that they have been authenticated on the Windows NT domain. In this chapter's 
+solution, I use Anonymous as a default name if anonymous access is still enabled or if this 
+server variable returns an empty string for any other reason.</P>
+
+<P>Next the script connects to the database and determines what to do based 
+on the Action form field. Although this solution uses a Jet database, you can easily 
+retarget the script to use Microsoft SQL Server or another database management system. 
+When saving a new report, you're interested in the insert Case block that calls 
+the InsertReport method, shown here:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Function InsertReport(cn, sUser, sRepName, sRepDef)
+    Dim cmd
+
+    Set cmd = Server.CreateObject(&quot;ADODB.Command&quot;)
+    Set cmd.ActiveConnection = cn
+    cmd.CommandText = &quot;InsertReport&quot;
+    cmd.CommandType = 4
+    cmd.Parameters.Append cmd.CreateParameter(&quot;RepName&quot;, 202, 1, 255)  
+    cmd.Parameters.Append cmd.CreateParameter(&quot;RepUser&quot;, 202, 1, 255)  
+    cmd.Parameters.Append cmd.CreateParameter(&quot;RepDef&quot;, 8, 1)
+    cmd.Parameters(0) = sRepName
+    cmd.Parameters(1) = sUser
+    cmd.Parameters(2) = sRepDef
+    cmd.Execute 
+
+    InsertReport = True
+End Function 'InsertReport()
+</pre></td></tr></table></p>
+
+
+<P>The InsertReport function is a fairly straightforward use of ADO to call a 
+stored procedure, passing the new report name, user name, and report definition 
+(the XMLData property from the PivotTable control) as parameters. Since this is a 
+Jet database, this code uses a stored append query called InsertReport. If you 
+wanted to use SQL Server, you would typically define a stored procedure for inserting a 
+new report row. This code creates the ADO Command object, sets up the parameter 
+list, fills the parameter values, and executes the command. If no error occurs, the 
+code returns True. </P>
+
+<P>I use a stored append query here for two reasons:</P>
+
+<UL>
+<P><LI>Stored queries and procedures are generally faster and definitely 
+more encapsulated.</LI></P>
+
+<P><LI>Large string values containing embedded single and double quotes 
+are typically hard to embed in an INSERT SQL statement because the 
+SQL parser often treats the embedded single or double quote as the end of 
+a value. Also, many database management systems impose a 
+maximum length on SQL statements that are submitted. Embedding a long 
+XMLData property in an INSERT statement could exceed this limit.</LI></P>
+</UL>
+
+
+ <P>Once this method is finished executing, it means that the new report has 
+been inserted into the database, and execution in the main script continues:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+    <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+    ' Get the list of reports saved by the current user
+    Set m_rs = m_cn.Execute(&quot;select ReportID, Name, ReportDef &quot; &amp; _
+                            &quot;from Reports where User='&quot; &amp; m_sCurUser &amp; _
+                            &quot;'&quot;)
+    
+    If Err.Number = 0 Then
+        ' Write them in the Reports table
+        Response.Write &quot;&lt;table id=tblReports&gt;&quot;
+        While Not m_rs.EOF
+            Response.Write &quot;&lt;tr&gt;&quot;
+            For Each fld In m_rs.Fields
+                Response.Write &quot;&lt;td&gt;&quot; &amp; _
+                    Server.HTMLEncode(fld.Value) &amp; &quot;&lt;/td&gt;&quot;
+            Next
+            Response.Write &quot;&lt;/tr&gt;&quot;
+            m_rs.MoveNext
+        Wend
+        Response.Write &quot;&lt;/table&gt;&quot;
+        m_fSuccess = True
+    Else
+        ' Error getting reports
+        m_sErrText = Err.Description
+    End If 'Got the reports recordset OK    
+Else
+    ' Error connecting
+    m_sErrText = Err.Description
+End If 'Connected OK
+%&gt;
+<img src="images/grayvellip.JPG" width=3 height=13 border="0">
+</pre></td></tr></table></p>
+
+
+<P>The script continues by selecting all the reports saved by the current user. It 
+then writes the results as an HTML table with an ID of tblReports. This ID is used by 
+code in the main PivotView.htm page when loading the Reports drop-down list, as 
+you will see shortly. Using the HTMLEncode function while writing the Recordset 
+values is important. Since the XMLData property returns a string full of XML, you must 
+not send it back to the browser without encoding. If you do, the browser will 
+interpret it as XML. Instead, you want to simply write the XML into the table cell as text 
+so that your code on the main page can hand it to the XMLData property when 
+reloading a view. The HTMLEncode function encodes characters such as less than (&lt;) 
+and greater than (&gt;) into their respective HTML symbols, &amp;lt and &amp;gt. The browser 
+will display them as &lt; and &gt; and will return these characters when you retrieve the 
+table cell value in script but will know not to interpret them as XML.</P>
+ 
+<P>The last part of the SaveLoad.asp page tells the main page that the save 
+is complete and that it should reload the list of reports:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+<img src="images/grayvellip.JPG" width=3 height=13 border="0">
+&lt;% If Len(m_sAction) &gt; 0 Then %&gt;
+&lt;script language=vbscript&gt;
+Sub window_onLoad()
+    window.parent.frames(1).OnSaveComplete &lt;%= m_fSuccess %&gt;, _
+        &quot;&lt;%= m_sErrText %&gt;&quot;
+End Sub
+&lt;/script&gt;
+&lt;% End If %&gt;
+</pre></td></tr></table></p>
+
+
+<P>This is one of the trickiest parts of this solution, and it took me many hours 
+to figure out. Remember that when the script on the main page prepares to save a 
+report, it fills out an HTML form in the hidden frame and submits the form. That 
+submission is executed asynchronously, so the main page has no way of knowing when it is 
+done. Therefore, it is the hidden frame's job to notify the main page when it returns, 
+passing a success or failure state so that the main page knows whether the save 
+action was successful. The SaveLoad.asp writes a small script block into the returned 
+page that executes during the hidden frame's onLoad event. This code finds the main 
+frame and calls the OnSaveComplete method defined in that page's script. The code 
+passes an argument indicating success or failure, as well as some error text in the event 
+of failure. Let's take a look at the OnSaveComplete function:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Sub OnSaveComplete(fSuccess, sErrText)
+    If fSuccess Then
+        ' Reload the reports list
+        LoadReports
+    Else
+        ' Display the error
+        MsgBox &quot;Error saving or deleting report!&quot; &amp; String(2, vbCrLf) &amp; _
+            sErrText, vbCritical 
+    End If
+End Sub 'OnSaveComplete()
+</pre></td></tr></table></p>
+
+
+<P>This fairly simple routine checks the success flag and either reloads the list 
+of reports or displays the error text.</P>
+
+<p><div class="sidebar"><blockquote>
+<B>Don't Try to Call Functions Across Frames Outside an Event </B>
+<P>When I first started working on this solution, I tried using the following 
+script block in the hidden frame's returned page instead of the one just shown:</P>
+
+<p><table cellpadding=5><tr><td>
+<PRE>
+&lt;script language=vbscript&gt;
+window.parent.frames(1).OnSaveComplete &lt;%= m_fSuccess %&gt;, _
+    &quot;&lt;%= m_sErrText %&gt;&quot;
+&lt;/script&gt;
+</pre></td></tr></table></p>
+
+<P>Since the code is at module scope and not in an event handler, 
+Internet Explorer and the Active Scripting Engine attempt to execute the code when 
+the page is parsed. However, this attempt will always fail, stating that the object 
+does not support the OnSaveComplete method. I ran this script under the 
+debugger, looked at the target frame, looked in the Scripts collection, saw my 
+function, and even saw the function text. However, I could not call the function. I 
+finally tried putting it in the Window object's onLoad event handler, and it worked 
+like a charm. Apparently, you cannot call methods in other frames from 
+script executed at parse time.</P>
+</blockquote></div></p>
+
+
+<P>The final step in this process&#8212;and the code that loads the list of stored 
+reports when the solution first runs&#8212;is the LoadReports function:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Sub LoadReports()
+    Dim tblReports
+    Dim tr
+    Dim opt        
+    ' Clear the existing Reports list except for the blank report
+    While cbxReports.options.length &gt; 1
+        cbxReports.options.remove cbxReports.options.length - 1
+    Wend
+
+    If window.parent.frames.length &gt; 0 Then
+        Set tblReports = window.parent.frames(0).tblReports
+        For Each tr In tblReports.rows
+            Set opt = document.createElement(&quot;OPTION&quot;)
+            opt.text = tr.cells(1).innerText
+            opt.value = tr.cells(0).innerText &amp; &quot;~&quot; &amp; tr.cells(2).innerText
+            cbxReports.options.add opt
+        Next 'tr
+    End If
+End Sub 'LoadReports()
+</pre></td></tr></table></p>
+
+
+<P>This function is also fairly simple. It starts by clearing all the items in the 
+drop-down list except for the (Choose A Saved Report) item. Next it checks that the 
+hidden frame is present, and it sets a reference to the tblReports HTML table, which 
+was generated near the end of the SaveLoad.asp script. The code then loops over all 
+rows in the table, loading a new item into the Reports drop-down list for each row in 
+the table. As noted earlier, I encoded a compound value into the new option's 
+value, consisting of the report ID and report definition separated by a tilde (~). </P>
+
+<P>Updating and deleting reports happens in much the same way as saving 
+reports. The code on the main page uses the form in the hidden frame, specifying 
+&quot;update&quot; or &quot;delete&quot; as the Action field and specifying the appropriate values for this 
+action. The main page submits the form in the hidden frame and the returned page calls 
+the OnSaveComplete method in the main page, indicating success or failure. </P>
+
+<P>This use of a hidden frame enables you to provide a consistent and smooth 
+user experience, but it is rather difficult to debug. You might instead consider using a 
+Data Source control (DSC) to connect to the database and execute stored procedures 
+directly. However, using hidden frames and posting to an ASP page is very 
+flexible because you can program the page to do anything you want with the input, 
+including storing it in an Exchange mailbox, mailing it to another location, saving it to 
+a file on the server, and so on. This approach also avoids the cross-domain data 
+access warnings that you get when using a DSC to call your stored procedures directly.</P>
+
+</BODY>
+</HTML>
+
+
+
+
+

@@ -1,0 +1,939 @@
+<HTML>
+<HEAD>
+	<LINK REL=StyleSheet HREF="petzoldi.css" TYPE="text/css">
+<title>Printing Fundamentals</TITLE>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+<A NAME="402"><h1>Printing Fundamentals</h1></A><P>When you use a printer in Windows, you're initiating a complex interaction involving 
+the GDI32 library module, the printer device driver library module (which has a .DRV 
+extension), and the Windows print spooler, as well as some other modules that get into the 
+act. Before we start programming for the printer, let's examine how this process works.
+
+<A NAME="403"><H2>Printing and Spooling</h2></A><P>When an application program wants to begin using a printer, it first obtains a handle to 
+the printer device context using <I>CreateDC</I> or 
+<I>PrintDlg</I>. This causes the printer device 
+driver library module to be loaded into memory (if it's not present already) and to initialize 
+itself. The program then calls the <I>StartDoc</I> function, which signals the beginning of a new 
+document. The <I>StartDoc</I> function is handled by the GDI module. The GDI module calls the 
+<I>Control</I> function in the printer device driver, telling the device driver to prepare for printing.
+
+<P>The call to <I>StartDoc</I> begins the process of printing a document; the process ends 
+when the program calls <I>EndDoc</I>. These two calls act as bookends for the normal GDI 
+functions that display text or graphics to the document pages. Each page is itself delimited by a 
+call to <I>StartPage</I> to begin a page and 
+<I>EndPage</I> to end the page.
+
+<P>For example, if a program wants to draw an ellipse on the page, it first calls 
+<I>StartDoc</I> to begin the print job, then 
+<I>StartPage</I> to signal a new page. It then calls 
+<I>Ellipse</I>, just as it does when drawing an ellipse on the screen. The GDI module generally stores any 
+GDI call the program makes to the printer device context in a disk-based metafile, which 
+has a filename that begins with the characters ~EMF (&quot;enhanced metafile&quot;) and has a 
+.TMP extension. However, as I'll discuss shortly, it's possible for the printer driver to skip this step.
+
+<P>When the application program is finished with the GDI calls that define the first 
+page, the program calls <I>EndPage</I>. Now the real work begins. The printer driver must 
+translate the various drawing commands stored in the metafile into output for the printer. The 
+printer output required to define a page of graphics can be very large, particularly if the printer 
+has no high-level page-composition language. For example, a 600-dots-per-inch laser 
+printer using 8&#189;-by-11-inch paper might require more than 4 megabytes of data to define just 
+one page of graphics.
+
+<P>For this reason, printer drivers often implement a technique called &quot;banding,&quot; 
+which divides the page into rectangular bands. The GDI module obtains the dimensions of 
+each band from the printer driver. It then sets a clipping region equal to this band and calls 
+the printer device driver <I>Output</I> function for each of the drawing functions contained in 
+the metafile. This process is called &quot;playing the metafile into the device driver.&quot; The GDI 
+module must play the entire metafile into the device driver for each band that the device 
+driver defines on the page. After the process is completed, the metafile can be deleted.
+
+<P>For each band, the device driver translates these drawing functions into the 
+output necessary to realize them on the printer. The format of this output will be specific to 
+the printer. For dot-matrix printers, it will be a collection of control sequences, including 
+graphics sequences. (For some assistance with constructing this output, the printer driver 
+can call various &quot;helper&quot; routines also located in the GDI module.) For laser printers with 
+a high-level page-composition language (such as PostScript), the printer output will be 
+in that language.
+
+<P>The printer driver passes the printer output for each band to the GDI module, 
+which then stores this printer output in another temporary file. This file begins with the 
+characters ~SPL and has a .TMP extension. When the entire page is finished, the GDI module 
+makes an interprocess call to the print spooler indicating that a new print job is ready. The 
+application program then goes on to the next page. When the application is finished with all 
+the pages it must print, it calls <I>EndDoc</I> to signal that the print job is completed. Figure 
+13-1 shows the interaction of the program, the GDI module, and 
+the printer driver.
+
+<P><A HREF="javascript:fullSize('F13zg01x.htm')"><IMG SRC="F13zg01.JPG" width=404 height=347 ALIGN="BOTTOM" BORDER=0 ALT="click here to view full size"></A>
+<P><!-- caption --><B>Figure 13-1.</b> <i>The interaction of the application program, the GDI module, the printer driver, and the spooler.</I><!-- /caption -->
+<P>The Windows print spooler is actually a collection of several components:
+
+<P>
+<table CELLPADDING="5" WIDTH="95%">
+<TR>
+<TD valign="top"><B><I>Spooler Component</I></B></td>
+<TD valign="top"><B><I>Description</I></B></td>
+</tr>
+<TR>
+<TD valign="top">Print Request Spooler</td>
+<TD valign="top">Routes a data stream to the print provider</td>
+</tr>
+<TR>
+<TD valign="top">Local Print Provider</td>
+<TD valign="top">Creates spool files destined for a local printer</td>
+</tr>
+<TR>
+<TD valign="top">Network Print Provider</td>
+<TD valign="top">Creates spool files destined for a network printer</td>
+</tr>
+<TR>
+<TD valign="top">Print Processor</td>
+<TD valign="top">Performs despooling, which is the conversion of spooled device-independent data into a form specific to the target printer</td>
+</tr>
+<TR>
+<TD valign="top">Port Monitor</td>
+<TD valign="top">Controls the port to which the printer is connected</td>
+</tr>
+<TR>
+<TD valign="top">Language Monitor</td>
+<TD valign="top">Controls printers capable of two-way communication to 
+set device configuration and to monitor printer status</td>
+</tr>
+</table>
+
+<P>The spooler relieves application programs of some of the work involved with 
+printing. Windows loads the print spooler at startup, so it is already active when a 
+program begins printing. When the program prints a document, the GDI module creates the 
+files that contain printer output. The print spooler's job is to send these files to the printer. It 
+is notified of a new print job by the GDI module. It then begins reading the file and 
+transferring it directly to the printer. To transfer the files, the spooler uses various 
+communications functions for the parallel or serial port to which the printer is connected. When 
+the spooler is done sending a file to a printer, it deletes the temporary file holding the 
+output. This process is shown in Figure 13-2.
+
+<P><A HREF="javascript:fullSize('F13zg02x.htm')"><IMG SRC="F13zg02.JPG" width=404 height=403 ALIGN="BOTTOM" border=0 ALT="Click to view at full size."></a>
+<P><!-- caption --><B>Figure 13-2.</b> <i>The operation of the print spooler.</I><!-- /caption -->
+
+<P>Most of this process is transparent to the application program. From the 
+perspective of the application, &quot;printing&quot; occurs only during the time required for the GDI module 
+to save all the printer output in disk files. After that&#8212;or even before, if printing is 
+handled by a second thread&#8212;the program is freed up to do other things. The actual printing of 
+the document becomes the print spooler's responsibility rather than the program's. The user 
+is responsible for pausing print jobs, changing their priority, or canceling them if 
+necessary. This arrangement allows programs to &quot;print&quot; faster than would be possible if they 
+were printing in real time and had to wait for the printer to finish one page before 
+proceeding to the next.
+
+<P>Although I've described how printing works in general, there are some variations 
+on this theme. One variation is that the print spooler doesn't have to be present for 
+Windows programs to use the printer. The user can usually turn off spooling for a printer from 
+the printer's property sheet.
+
+<P>Why would a user want to bypass the Windows spooler? Well, perhaps the user 
+has a hardware or software print spooler that works faster than the Windows spooler. 
+Or perhaps the printer is on a network that has its own spooler. The general rule is that 
+one spooler is faster than two. Removing the Windows spooler would speed up printing in 
+these cases, because the printer output doesn't have to be stored on disk. It can go right out 
+to the printer and be intercepted by the external hardware or software print spooler.
+
+<P>If the Windows spooler isn't active, the GDI module doesn't store the printer 
+output from the device driver in a file. Instead, GDI itself sends the output directly to the 
+parallel or serial printer port. Unlike the printing done by the spooler, the printing done by 
+GDI has the potential of holding up the operation of application programs (particularly 
+the program doing the printing) until the printing is completed.
+
+<P>Here's another variation: Normally, the GDI module stores all the functions 
+necessary to define a page in a metafile and then plays this metafile into the printer driver 
+once for each band defined by the driver. If the printer driver doesn't require banding, 
+however, the metafile isn't created; GDI simply passes the drawing functions directly to 
+the driver. In a further variation, it is also possible for an application to assume 
+responsibility for dividing printer output into bands. This makes the printing code in the 
+application program more complex, but it relieves the GDI module of creating the metafile. Once 
+again, GDI simply passes the functions for each band to the printer driver.
+
+<P>Now perhaps you're starting to see how printing from a Windows program 
+might involve a bit more overhead than that required for using the video display. Several 
+problems can occur&#8212;particularly if the GDI module runs out of disk space while creating 
+the metafile or the printer output files. Either you can get very involved in reporting 
+these problems to the user and attempting to do something about them or you can remain 
+relatively aloof.
+
+<P>For an application, the first step in printing is obtaining a printer device context.
+
+<A NAME="404"><h2>The Printer Device Context</h2></A><P>Just as you must obtain a handle to a device context before you paint on the video 
+display, you must obtain a printer device context handle before printing. Once you have 
+this handle (and have called <I>StartDoc</I> to announce your intention of creating a new 
+document and <I>StartPage</I> to begin a page), you can use this printer device context handle the 
+same way you use the video display device context handle&#8212;as the first parameter to the 
+various GDI drawing functions.
+
+<P>Many applications use a standard print dialog box invoked by calling the 
+<I>PrintDlg</I> function. (I'll show how to use this function later in this chapter.) 
+<I>PrintDlg </I>gives the user the opportunity to change printers or specify other job characteristics before printing. 
+It then gives the application a printer device context handle. This function can save an 
+application some work. However, some applications (such as Notepad) prefer instead to 
+just obtain a printer device context without displaying a dialog box. This task requires a 
+job to <I>CreateDC</I>.
+
+<P>In <a href="ch05a.htm#94">Chapter 5</a>, we discovered that we can get a handle to a device context for the 
+entire video display by calling
+
+<P><PRE>hdc = CreateDC (TEXT (&quot;DISPLAY&quot;), NULL, NULL, NULL) ;
+</pre>
+
+
+<P>You obtain a printer device context handle using this same function. However, for a printer device context, the general syntax of <I>CreateDC</I> is
+<P><PRE>hdc = CreateDC (NULL, szDeviceName, NULL, pInitializationData) ;
+</pre>
+
+<P>The <I>pInitializationData</I> argument is generally also set to NULL. The 
+<I>szDeviceName</I> argument points to a character string that tells Windows the name of the printer device. 
+Before you can set the device name, you must find out what printers are available.
+<P>A system can have more than one printer attached to it. It may even have other 
+programs, such as fax software, masquerading as printers. Regardless of the number of 
+attached printers, only one can be considered the &quot;current&quot; or &quot;default&quot; printer. This is the most 
+recent printer that the user has chosen. Some small Windows programs use only this 
+printer for printing.
+<P>Methods for obtaining the default printer device context have changed over the 
+years. Currently, the standard method involves using the 
+<I>EnumPrinters</I> function. This function fills an array of structures that contain information about each attached printer. You 
+even have a choice of several structures to use with this function, depending on the level of 
+detail you want. These structures have names of PRINTER_INFO_x, where 
+<I>x</I> is a number.
+<P>Unfortunately, which structure you use also depends on whether your program 
+is running under Windows 98 or Microsoft Windows NT. Figure 13-3 shows a 
+<I>GetPrinterDC</I> function that will work under either operating system.
+
+<P><B>Figure 13-3.</b> <i>The GETPRNDC.C file.</I>
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="405"><P><H3>GETPRNDC.C</H3></A>
+<P><PRE>/*-------------------------------------
+   GETPRNDC.C -- GetPrinterDC function
+  -------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+HDC GetPrinterDC (void)
+
+{
+     DWORD            dwNeeded, dwReturned ;
+     HDC              hdc ;
+     PRINTER_INFO_4 * pinfo4 ;
+     PRINTER_INFO_5 * pinfo5 ; 
+
+     if (GetVersion () &amp; 0x80000000)         // Windows 98
+     {
+          EnumPrinters (PRINTER_ENUM_DEFAULT, NULL, 5, NULL,
+                        0, &amp;dwNeeded, &amp;dwReturned) ;
+
+          pinfo5 = malloc (dwNeeded) ;
+
+          EnumPrinters (PRINTER_ENUM_DEFAULT, NULL, 5, (PBYTE) pinfo5,
+                        dwNeeded, &amp;dwNeeded, &amp;dwReturned) ;
+
+          hdc = CreateDC (NULL, pinfo5-&gt;pPrinterName, NULL, NULL) ;
+
+          free (pinfo5) ;
+     }
+     else                                    // Windows NT
+     {
+          EnumPrinters (PRINTER_ENUM_LOCAL, NULL, 4, NULL,
+                        0, &amp;dwNeeded, &amp;dwReturned) ;
+
+          pinfo4 = malloc (dwNeeded) ;
+
+          EnumPrinters (PRINTER_ENUM_LOCAL, NULL, 4, (PBYTE) pinfo4,
+                        dwNeeded, &amp;dwNeeded, &amp;dwReturned) ;
+
+          hdc = CreateDC (NULL, pinfo4-&gt;pPrinterName, NULL, NULL) ;
+
+          free (pinfo4) ;
+     }
+     return hdc ;   
+}
+</pre>
+</TD></TR></TABLE>
+
+
+<P>This function uses the <I>GetVersion</I> function to determine whether the program 
+is running under Windows 98 or Windows NT. Regardless of which is running, the 
+function calls <I>EnumPrinters</I> twice&#8212;once to obtain the size of a structure it needs, and again 
+to actually fill the structure. Under Windows 98, the function uses the PRINTER_INFO_5 
+structure; under Windows NT, it uses the PRINTER_INFO_4 structure. These structures are 
+specifically indicated in the <I>EnumPrinters</I> documentation 
+(<I>/Platform SDK/Graphics and Multimedia Services/GDI/Printing and Print Spooler/Printing and Print Spooler 
+Reference/Printing and Print Spooler 
+Functions/EnumPrinters</I>, right before the Examples section) 
+as being &quot;easy and extremely fast.&quot;
+
+<A NAME="406"><h2>The Revised DEVCAPS Program</h2></A><P>The original DEVCAPS1 program in <a href="ch05a.htm#94">Chapter 5</a> displayed basic information available 
+from the <I>GetDeviceCaps</I> function for the video display. The new version, shown in Figure 13-4, shows more information for both the video display and all printers attached to the system.
+<P><B>Figure 13-4.</b> <i>The DEVCAPS2 program.</I>
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="407"><P><H3>DEVCAPS2.C</H3></A>
+<P><PRE>
+
+/*------------------------------------------------------------------
+   DEVCAPS2.C -- Displays Device Capability Information (Version 2)
+                 (c) Charles Petzold, 1998
+------------------------------------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &quot;resource.h&quot;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+void DoBasicInfo    (HDC, HDC, int, int) ;
+void DoOtherInfo    (HDC, HDC, int, int) ;
+void DoBitCodedCaps (HDC, HDC, int, int, int) ;
+
+typedef struct
+{
+     int     iMask ;
+     TCHAR * szDesc ;
+}
+BITS ;
+
+#define IDM_DEVMODE      1000
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName[] = TEXT (&quot;DevCaps2&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+     
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = szAppName ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, NULL,
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static TCHAR            szDevice[32], szWindowText[64] ;
+     static int              cxChar, cyChar, nCurrentDevice = IDM_SCREEN,
+                                             nCurrentInfo   = IDM_BASIC ;
+     static DWORD            dwNeeded, dwReturned ;
+     static PRINTER_INFO_4 * pinfo4 ;
+     static PRINTER_INFO_5 * pinfo5 ;
+     DWORD                   i ;
+     HDC                     hdc, hdcInfo ;
+     HMENU                   hMenu ;
+     HANDLE                  hPrint ;
+     PAINTSTRUCT             ps ;
+     TEXTMETRIC              tm ;
+     
+     switch (message)
+     {
+     case WM_CREATE :
+          hdc = GetDC (hwnd) ;
+          SelectObject (hdc, GetStockObject (SYSTEM_FIXED_FONT)) ;
+          GetTextMetrics (hdc, &amp;tm) ;
+          cxChar = tm.tmAveCharWidth ;
+          cyChar = tm.tmHeight + tm.tmExternalLeading ;
+          ReleaseDC (hwnd, hdc) ;
+                                           // fall through
+     case WM_SETTINGCHANGE:
+          hMenu = GetSubMenu (GetMenu (hwnd), 0) ;
+          
+          while (GetMenuItemCount (hMenu) &gt; 1)
+               DeleteMenu (hMenu, 1, MF_BYPOSITION) ;
+
+               // Get a list of all local and remote printers
+               // 
+               // First, find out how large an array we need; this
+               //   call will fail, leaving the required size in dwNeeded
+               //
+               // Next, allocate space for the info array and fill it
+               // 
+               // Put the printer names on the menu
+
+          if (GetVersion () &amp; 0x80000000)         // Windows 98
+          {
+               EnumPrinters (PRINTER_ENUM_LOCAL, NULL, 5, NULL, 
+                             0, &amp;dwNeeded, &amp;dwReturned) ;
+
+               pinfo5 = malloc (dwNeeded) ;
+
+               EnumPrinters (PRINTER_ENUM_LOCAL, NULL, 5, (PBYTE) pinfo5,
+                             dwNeeded, &amp;dwNeeded, &amp;dwReturned) ;
+
+               for (i = 0 ; i &lt; dwReturned ; i++)
+               {
+                    AppendMenu (hMenu, (i+1) % 16 ? 0 : MF_MENUBARBREAK, i + 1, 
+                                pinfo5[i].pPrinterName) ;
+               }
+               free (pinfo5) ;
+          }
+          else                                    // Windows NT
+          {
+               EnumPrinters (PRINTER_ENUM_LOCAL, NULL, 4, NULL, 
+                             0, &amp;dwNeeded, &amp;dwReturned) ;
+
+               pinfo4 = malloc (dwNeeded) ;
+
+			   EnumPrinters (PRINTER_ENUM_LOCAL, NULL, 4, (PBYTE) pinfo4,
+                             dwNeeded, &amp;dwNeeded, &amp;dwReturned) ;
+
+               for (i = 0 ; i &lt; dwReturned ; i++)
+               {
+                    AppendMenu (hMenu, (i+1) % 16 ? 0 : MF_MENUBARBREAK, i + 1, 
+                                pinfo4[i].pPrinterName) ;
+               }
+               free (pinfo4) ;
+          }
+          
+          AppendMenu (hMenu, MF_SEPARATOR, 0, NULL) ;
+          AppendMenu (hMenu, 0, IDM_DEVMODE, TEXT (&quot;Properties&quot;)) ;
+          
+          wParam = IDM_SCREEN ;
+                                             // fall through
+     case WM_COMMAND :
+          hMenu = GetMenu (hwnd) ;
+          
+          if (LOWORD (wParam) == IDM_SCREEN ||         // IDM_SCREEN &amp; Printers
+              LOWORD (wParam) &lt; IDM_DEVMODE)       
+          {
+               CheckMenuItem (hMenu, nCurrentDevice, MF_UNCHECKED) ;
+               nCurrentDevice = LOWORD (wParam) ;
+               CheckMenuItem (hMenu, nCurrentDevice, MF_CHECKED) ;
+          }
+          else if (LOWORD (wParam) == IDM_DEVMODE)     // Properties selection
+          {
+               GetMenuString (hMenu, nCurrentDevice, szDevice,
+                              sizeof (szDevice) / sizeof (TCHAR), MF_BYCOMMAND);
+               
+               if (OpenPrinter (szDevice, &amp;hPrint, NULL))
+               {
+                    PrinterProperties (hwnd, hPrint) ;
+                    ClosePrinter (hPrint) ;
+               }
+          }
+          else                               // info menu items
+          {
+               CheckMenuItem (hMenu, nCurrentInfo, MF_UNCHECKED) ;
+               nCurrentInfo = LOWORD (wParam) ;
+               CheckMenuItem (hMenu, nCurrentInfo, MF_CHECKED) ;
+          }
+          InvalidateRect (hwnd, NULL, TRUE) ;
+          return 0 ;
+          
+     case WM_INITMENUPOPUP :
+          if (lParam == 0)
+               EnableMenuItem (GetMenu (hwnd), IDM_DEVMODE,
+                    nCurrentDevice == IDM_SCREEN ? MF_GRAYED : MF_ENABLED) ;
+          return 0 ;
+          
+     case WM_PAINT :
+          lstrcpy (szWindowText, TEXT (&quot;Device Capabilities: &quot;)) ;
+          
+          if (nCurrentDevice == IDM_SCREEN)
+          {
+               lstrcpy (szDevice, TEXT (&quot;DISPLAY&quot;)) ;
+               hdcInfo = CreateIC (szDevice, NULL, NULL, NULL) ;
+          }
+          else
+          {
+               hMenu = GetMenu (hwnd) ;
+               GetMenuString (hMenu, nCurrentDevice, szDevice,
+                              sizeof (szDevice), MF_BYCOMMAND) ;
+               hdcInfo = CreateIC (NULL, szDevice, NULL, NULL) ;
+          }
+          
+          lstrcat (szWindowText, szDevice) ;
+          SetWindowText (hwnd, szWindowText) ;
+          
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+          SelectObject (hdc, GetStockObject (SYSTEM_FIXED_FONT)) ;
+          
+          if (hdcInfo)
+          {
+               switch (nCurrentInfo)
+               {
+               case IDM_BASIC :
+                    DoBasicInfo (hdc, hdcInfo, cxChar, cyChar) ;
+                    break ;
+                    
+               case IDM_OTHER :
+                    DoOtherInfo (hdc, hdcInfo, cxChar, cyChar) ;
+                    break ;
+                    
+               case IDM_CURVE :
+               case IDM_LINE :
+               case IDM_POLY :
+               case IDM_TEXT :
+                    DoBitCodedCaps (hdc, hdcInfo, cxChar, cyChar,
+                                    nCurrentInfo - IDM_CURVE) ;
+                    break ;
+               }
+               DeleteDC (hdcInfo) ;
+          }
+          
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+          
+     case WM_DESTROY :
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+     
+void DoBasicInfo (HDC hdc, HDC hdcInfo, int cxChar, int cyChar)
+{
+     static struct
+     {
+          int     nIndex ;
+          TCHAR * szDesc ;
+     }
+     info[] =
+     {
+          HORZSIZE,        TEXT (&quot;HORZSIZE        Width in millimeters:&quot;),
+          VERTSIZE,        TEXT (&quot;VERTSIZE        Height in millimeters:&quot;),
+          HORZRES,         TEXT (&quot;HORZRES         Width in pixels:&quot;),
+          VERTRES,         TEXT (&quot;VERTRES         Height in raster lines:&quot;),
+          BITSPIXEL,       TEXT (&quot;BITSPIXEL       Color bits per pixel:&quot;),
+          PLANES,          TEXT (&quot;PLANES          Number of color planes:&quot;),
+          NUMBRUSHES,      TEXT (&quot;NUMBRUSHES      Number of device brushes:&quot;),
+          NUMPENS,         TEXT (&quot;NUMPENS         Number of device pens:&quot;),
+          NUMMARKERS,      TEXT (&quot;NUMMARKERS      Number of device markers:&quot;),
+          NUMFONTS,        TEXT (&quot;NUMFONTS        Number of device fonts:&quot;),
+          NUMCOLORS,       TEXT (&quot;NUMCOLORS       Number of device colors:&quot;),
+          PDEVICESIZE,     TEXT (&quot;PDEVICESIZE     Size of device structure:&quot;),
+          ASPECTX,         TEXT (&quot;ASPECTX         Relative width of pixel:&quot;),
+          ASPECTY,         TEXT (&quot;ASPECTY         Relative height of pixel:&quot;),
+          ASPECTXY,        TEXT (&quot;ASPECTXY        Relative diagonal of pixel:&quot;),
+          LOGPIXELSX,      TEXT (&quot;LOGPIXELSX      Horizontal dots per inch:&quot;),
+          LOGPIXELSY,      TEXT (&quot;LOGPIXELSY      Vertical dots per inch:&quot;),
+          SIZEPALETTE,     TEXT (&quot;SIZEPALETTE     Number of palette entries:&quot;),
+          NUMRESERVED,     TEXT (&quot;NUMRESERVED     Reserved palette entries:&quot;),
+          COLORRES,        TEXT (&quot;COLORRES        Actual color resolution:&quot;),
+          PHYSICALWIDTH,   TEXT (&quot;PHYSICALWIDTH   Printer page pixel width:&quot;),
+          PHYSICALHEIGHT,  TEXT (&quot;PHYSICALHEIGHT  Printer page pixel height:&quot;),
+          PHYSICALOFFSETX, TEXT (&quot;PHYSICALOFFSETX Printer page x offset:&quot;),
+          PHYSICALOFFSETY, TEXT (&quot;PHYSICALOFFSETY Printer page y offset:&quot;) 
+     } ;
+     int   i ;
+     TCHAR szBuffer[80] ;
+          
+     for (i = 0 ; i &lt; sizeof (info) / sizeof (info[0]) ; i++)
+          TextOut (hdc, cxChar, (i + 1) * cyChar, szBuffer,
+               wsprintf (szBuffer, TEXT (&quot;%-45s%8d&quot;), info[i].szDesc,
+                    GetDeviceCaps (hdcInfo, info[i].nIndex))) ;
+}
+    
+void DoOtherInfo (HDC hdc, HDC hdcInfo, int cxChar, int cyChar)
+{
+     static BITS clip[] =
+     {
+          CP_RECTANGLE,    TEXT (&quot;CP_RECTANGLE    Can Clip To Rectangle:&quot;)
+     } ; 
+          
+     static BITS raster[] =
+     {
+          RC_BITBLT,       TEXT (&quot;RC_BITBLT       Capable of simple BitBlt:&quot;),
+          RC_BANDING,      TEXT (&quot;RC_BANDING      Requires banding support:&quot;),
+          RC_SCALING,      TEXT (&quot;RC_SCALING      Requires scaling support:&quot;),
+          RC_BITMAP64,     TEXT (&quot;RC_BITMAP64     Supports bitmaps &gt;64K:&quot;),
+          RC_GDI20_OUTPUT, TEXT (&quot;RC_GDI20_OUTPUT Has 2.0 output calls:&quot;),
+          RC_DI_BITMAP,    TEXT (&quot;RC_DI_BITMAP    Supports DIB to memory:&quot;),
+          RC_PALETTE,      TEXT (&quot;RC_PALETTE      Supports a palette:&quot;),
+          RC_DIBTODEV,     TEXT (&quot;RC_DIBTODEV     Supports bitmap conversion:&quot;),
+          RC_BIGFONT,      TEXT (&quot;RC_BIGFONT      Supports fonts &gt;64K:&quot;),
+          RC_STRETCHBLT,   TEXT (&quot;RC_STRETCHBLT   Supports StretchBlt:&quot;),
+          RC_FLOODFILL,    TEXT (&quot;RC_FLOODFILL    Supports FloodFill:&quot;),
+          RC_STRETCHDIB,   TEXT (&quot;RC_STRETCHDIB   Supports StretchDIBits:&quot;)
+     } ;
+          
+     static TCHAR * szTech[] = { TEXT (&quot;DT_PLOTTER (Vector plotter)&quot;),
+                                 TEXT (&quot;DT_RASDISPLAY (Raster display)&quot;),
+                                 TEXT (&quot;DT_RASPRINTER (Raster printer)&quot;),
+                                 TEXT (&quot;DT_RASCAMERA (Raster camera)&quot;),
+                                 TEXT (&quot;DT_CHARSTREAM (Character stream)&quot;),
+                                 TEXT (&quot;DT_METAFILE (Metafile)&quot;),
+                                 TEXT (&quot;DT_DISPFILE (Display file)&quot;) } ;
+     int            i ;
+     TCHAR          szBuffer[80] ;
+          
+     TextOut (hdc, cxChar, cyChar, szBuffer,
+          wsprintf (szBuffer, TEXT (&quot;%-24s%04XH&quot;), TEXT (&quot;DRIVERVERSION:&quot;),
+               GetDeviceCaps (hdcInfo, DRIVERVERSION))) ;
+          
+     TextOut (hdc, cxChar, 2 * cyChar, szBuffer,
+          wsprintf (szBuffer, TEXT (&quot;%-24s%-40s&quot;), TEXT (&quot;TECHNOLOGY:&quot;), 
+               szTech[GetDeviceCaps (hdcInfo, TECHNOLOGY)])) ;
+          
+     TextOut (hdc, cxChar, 4 * cyChar, szBuffer,
+          wsprintf (szBuffer, TEXT (&quot;CLIPCAPS (Clipping capabilities)&quot;))) ;
+          
+     for (i = 0 ; i &lt; sizeof (clip) / sizeof (clip[0]) ; i++)
+          TextOut (hdc, 9 * cxChar, (i + 6) * cyChar, szBuffer,
+               wsprintf (szBuffer, TEXT (&quot;%-45s %3s&quot;), clip[i].szDesc,
+                    GetDeviceCaps (hdcInfo, CLIPCAPS) &amp; clip[i].iMask ?
+                         TEXT (&quot;Yes&quot;) : TEXT (&quot;No&quot;))) ;
+          
+     TextOut (hdc, cxChar, 8 * cyChar, szBuffer,
+          wsprintf (szBuffer, TEXT (&quot;RASTERCAPS (Raster capabilities)&quot;))) ;
+      
+     for (i = 0 ; i &lt; sizeof (raster) / sizeof (raster[0]) ; i++)
+          TextOut (hdc, 9 * cxChar, (i + 10) * cyChar, szBuffer,
+               wsprintf (szBuffer, TEXT (&quot;%-45s %3s&quot;), raster[i].szDesc,
+                    GetDeviceCaps (hdcInfo, RASTERCAPS) &amp; raster[i].iMask ?
+                         TEXT (&quot;Yes&quot;) : TEXT (&quot;No&quot;))) ;
+}
+
+void DoBitCodedCaps (HDC hdc, HDC hdcInfo, int cxChar, int cyChar, int iType)
+{
+     static BITS curves[] =
+     {
+          CC_CIRCLES,    TEXT (&quot;CC_CIRCLES    Can do circles:&quot;),
+          CC_PIE,        TEXT (&quot;CC_PIE        Can do pie wedges:&quot;),
+          CC_CHORD,      TEXT (&quot;CC_CHORD      Can do chord arcs:&quot;),
+          CC_ELLIPSES,   TEXT (&quot;CC_ELLIPSES   Can do ellipses:&quot;),
+          CC_WIDE,       TEXT (&quot;CC_WIDE       Can do wide borders:&quot;),
+          CC_STYLED,     TEXT (&quot;CC_STYLED     Can do styled borders:&quot;),
+          CC_WIDESTYLED, TEXT (&quot;CC_WIDESTYLED Can do wide and styled borders:&quot;),
+          CC_INTERIORS,  TEXT (&quot;CC_INTERIORS  Can do interiors:&quot;)
+     } ; 
+     
+     static BITS lines[] =
+     {
+          LC_POLYLINE,   TEXT (&quot;LC_POLYLINE   Can do polyline:&quot;),
+          LC_MARKER,     TEXT (&quot;LC_MARKER     Can do markers:&quot;),
+          LC_POLYMARKER, TEXT (&quot;LC_POLYMARKER Can do polymarkers&quot;),
+          LC_WIDE,       TEXT (&quot;LC_WIDE       Can do wide lines:&quot;),
+          LC_STYLED,     TEXT (&quot;LC_STYLED     Can do styled lines:&quot;),
+          LC_WIDESTYLED, TEXT (&quot;LC_WIDESTYLED Can do wide and styled lines:&quot;),
+          LC_INTERIORS,  TEXT (&quot;LC_INTERIORS  Can do interiors:&quot;)
+     } ;
+     
+     static BITS poly[] =
+     {
+          PC_POLYGON,     
+               TEXT (&quot;PC_POLYGON     Can do alternate fill polygon:&quot;),
+          PC_RECTANGLE,   TEXT (&quot;PC_RECTANGLE   Can do rectangle:&quot;),
+          PC_WINDPOLYGON, 
+               TEXT (&quot;PC_WINDPOLYGON Can do winding number fill polygon:&quot;),
+          PC_SCANLINE,    TEXT (&quot;PC_SCANLINE    Can do scanlines:&quot;),
+          PC_WIDE,        TEXT (&quot;PC_WIDE        Can do wide borders:&quot;),
+          PC_STYLED,      TEXT (&quot;PC_STYLED      Can do styled borders:&quot;),
+          PC_WIDESTYLED,  
+               TEXT (&quot;PC_WIDESTYLED  Can do wide and styled borders:&quot;),
+          PC_INTERIORS,   TEXT (&quot;PC_INTERIORS   Can do interiors:&quot;)
+     } ;
+     
+     static BITS text[] =
+     {
+          TC_OP_CHARACTER, 
+               TEXT (&quot;TC_OP_CHARACTER Can do character output precision:&quot;),
+          TC_OP_STROKE,    
+               TEXT (&quot;TC_OP_STROKE    Can do stroke output precision:&quot;),
+          TC_CP_STROKE,    
+               TEXT (&quot;TC_CP_STROKE    Can do stroke clip precision:&quot;),
+          TC_CR_90,        
+               TEXT (&quot;TC_CP_90        Can do 90 degree character rotation:&quot;),
+          TC_CR_ANY,       
+               TEXT (&quot;TC_CR_ANY       Can do any character rotation:&quot;),
+          TC_SF_X_YINDEP,  
+               TEXT (&quot;TC_SF_X_YINDEP  Can do scaling independent of X and Y:&quot;),
+          TC_SA_DOUBLE,    
+               TEXT (&quot;TC_SA_DOUBLE    Can do doubled character for scaling:&quot;),
+          TC_SA_INTEGER,   
+               TEXT (&quot;TC_SA_INTEGER   Can do integer multiples for scaling:&quot;),
+          TC_SA_CONTIN,    
+               TEXT (&quot;TC_SA_CONTIN    Can do any multiples for exact scaling:&quot;),
+          TC_EA_DOUBLE,    
+               TEXT (&quot;TC_EA_DOUBLE    Can do double weight characters:&quot;),
+          TC_IA_ABLE,      TEXT (&quot;TC_IA_ABLE      Can do italicizing:&quot;),
+          TC_UA_ABLE,      TEXT (&quot;TC_UA_ABLE      Can do underlining:&quot;),
+          TC_SO_ABLE,      TEXT (&quot;TC_SO_ABLE      Can do strikeouts:&quot;),
+          TC_RA_ABLE,      TEXT (&quot;TC_RA_ABLE      Can do raster fonts:&quot;),
+          TC_VA_ABLE,      TEXT (&quot;TC_VA_ABLE      Can do vector fonts:&quot;)
+     } ;
+     
+     static struct
+     {
+          int     iIndex ;
+          TCHAR * szTitle ;
+          BITS    (*pbits)[] ;
+          int     iSize ;
+     }
+     bitinfo[] =
+     {
+          CURVECAPS,  TEXT (&quot;CURVCAPS (Curve Capabilities)&quot;),
+               (BITS (*)[]) curves, sizeof (curves) / sizeof (curves[0]),
+          LINECAPS,   TEXT (&quot;LINECAPS (Line Capabilities)&quot;),
+               (BITS (*)[]) lines, sizeof (lines) / sizeof (lines[0]),
+          POLYGONALCAPS, TEXT (&quot;POLYGONALCAPS (Polygonal Capabilities)&quot;),
+               (BITS (*)[]) poly, sizeof (poly) / sizeof (poly[0]),
+          TEXTCAPS,   TEXT (&quot;TEXTCAPS (Text Capabilities)&quot;),
+               (BITS (*)[]) text, sizeof (text) / sizeof (text[0])
+     } ;
+     
+     static TCHAR szBuffer[80] ;
+     BITS         (*pbits)[] = bitinfo[iType].pbits ;
+     int          i, iDevCaps = GetDeviceCaps (hdcInfo, bitinfo[iType].iIndex) ;
+     
+     TextOut (hdc, cxChar, cyChar, bitinfo[iType].szTitle,
+              lstrlen (bitinfo[iType].szTitle)) ;
+     
+     for (i = 0 ; i &lt; bitinfo[iType].iSize ; i++)
+          TextOut (hdc, cxChar, (i + 3) * cyChar, szBuffer,
+               wsprintf (szBuffer, TEXT (&quot;%-55s %3s&quot;), (*pbits)[i].szDesc,
+                    iDevCaps &amp; (*pbits)[i].iMask ? TEXT (&quot;Yes&quot;) : TEXT (&quot;No&quot;)));
+}
+</pre>
+</TD></TR></TABLE>
+<P><TABLE cellpadding=5 width="95%"><TR><TD>
+<P><B>DEVCAPS2.RC (excerpts)</b>
+<P><PRE>
+//Microsoft Developer Studio generated resource script.
+
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+// Menu
+DEVCAPS2 MENU DISCARDABLE 
+BEGIN
+    POPUP &quot;&amp;Device&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Screen&quot;,                     IDM_SCREEN, CHECKED
+    END
+    POPUP &quot;&amp;Capabilities&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Basic Information&quot;,          IDM_BASIC
+        MENUITEM &quot;&amp;Other Information&quot;,          IDM_OTHER
+        MENUITEM &quot;&amp;Curve Capabilities&quot;,         IDM_CURVE
+        MENUITEM &quot;&amp;Line Capabilities&quot;,          IDM_LINE
+        MENUITEM &quot;&amp;Polygonal Capabilities&quot;,     IDM_POLY
+        MENUITEM &quot;&amp;Text Capabilities&quot;,          IDM_TEXT
+    END
+END
+</pre>
+</TD></TR></TABLE>
+<P><TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="408"><P><H3>RESOURCE.H (excerpts)</H3></A>
+<P><PRE>// Microsoft Developer Studio generated include file.
+// Used by DevCaps2.rc
+
+#define IDM_SCREEN                      40001
+#define IDM_BASIC                       40002
+#define IDM_OTHER                       40003
+#define IDM_CURVE                       40004
+#define IDM_LINE                        40005
+#define IDM_POLY                        40006
+#define IDM_TEXT                        40007
+</pre>
+</TD></TR></TABLE>
+
+<P>Because DEVCAPS2 obtains only an information context for the printer, you can 
+select printers from DEVCAPS2's menu, even though they may have an output port of &quot;none.&quot; 
+If you want to compare the capabilities of different printers, you can first use the 
+Printers folder to add various printer drivers.
+
+<A NAME="409"><h2>The <I>PrinterProperties</I> Call</h2></A><P>The Device menu of the DEVCAPS2 program includes an option called Properties. To 
+use it, first select a printer from the Device menu and then select Properties. Up pops a 
+dialog box. Where does the dialog box come from? It is invoked by the printer driver, and&#8212;at 
+the very least&#8212;it requests that you make a choice of paper size. Most printer drivers also 
+give you a choice of &quot;portrait&quot; or &quot;landscape&quot; mode. In portrait mode (often the default), the 
+short side of the paper is the top; in landscape mode, the long side is the top. If you change 
+this mode, the change is reflected in the information the DEVCAPS2 program obtains from 
+the <I>GetDeviceCaps</I> function: the horizontal size and resolution are switched with the 
+vertical size and resolution. Properties dialog boxes for color plotters can be quite extensive, 
+requesting the colors of the pens installed in the plotter and the type of paper (or 
+transparencies) being used.
+
+<P>All printer drivers contain an exported function called 
+<I>ExtDeviceMode</I> that invokes this dialog box and saves the information that the user enters. Some printer drivers store 
+this information in their own section of the Registry, and some don't. Those that store the 
+information have access to it during the next Windows session.
+
+<P>Windows programs that allow the user a choice of printers generally just call 
+<I>PrintDlg</I>, which I'll show you how to use later in this chapter. This useful function takes care of 
+all the work of communicating with the user and handles any changes the user requests 
+in preparation for printing. <I>PrintDlg</I> also invokes the property sheet dialog when the 
+user clicks the Properties button.
+
+<P>A program can also display a printer's properties dialog by directly calling the 
+printer driver's <I>ExtDeviceMode</I> or 
+<I>ExtDeveModePropSheet</I> functions. However, I don't recommend 
+this. It's far better to invoke the dialog indirectly by calling 
+<I>PrinterProperties</I>, as DEVCAPS2 does.
+
+<P><I>PrinterProperties</I> requires a handle to a printer object, which you get by calling 
+the <I>OpenPrinter</I> function. When the user cancels a property sheet dialog, 
+<I>PrinterProperties</I> returns. You can then close the printer handle by calling 
+<I>ClosePrinter</I>. Here's how DEVCAPS2 does it:
+
+<P>The program first obtains the name of the printer currently selected in the 
+Device menu and saves it in a character array named 
+<I>szDevice</I>:
+
+<P><PRE>GetMenuString (hMenu, nCurrentDevice, szDevice,
+               sizeof (szDevice) / sizeof (TCHAR), MF_BYCOMMAND) ;
+</pre>			   
+
+<P>Then it obtains the handle of this device by using 
+<I>OpenPrinter</I>. If the call is successful, the program next calls 
+<I>PrinterProperties</I> to invoke the dialog box and then 
+<I>ClosePrinter</I> to delete the device handle:
+
+<P><PRE>if (OpenPrinter (szDevice, &amp;hPrint, NULL))
+{
+     PrinterProperties (hwnd, hPrint) ;
+     ClosePrinter (hPrint) ;
+}
+</pre>
+
+<A NAME="410"><h2>Checking for <I>BitBlt</I> Capability</h2></A><P>You can use the <I>GetDeviceCaps</I> function to obtain the size and resolution of the 
+printable area of the page. (In most cases, this area won't be the same as the full size of the 
+paper.) You can also obtain the relative pixel width and height, if you want to do your own scaling.
+
+<P>Much of the information regarding various capabilities of the printer is for the 
+purpose of GDI rather than applications. Often when a printer can't do something itself, 
+GDI will simulate it. However, there is one capability that some applications should check.
+
+<P>This is the printer characteristic obtained from the RC_BITBLT bit of the value 
+returned from <I>GetDeviceCaps</I> with a parameter of RASTERCAPS (&quot;raster capabilities&quot;). This bit 
+indicates whether the device is capable of bit-block transfers. Most dot-matrix, laser, and 
+ink-jet printers are capable of bit-block transfers, but plotters are not. Devices that can't 
+handle bit-block transfers do not support the following GDI functions: 
+<I>CreateCompatibleDC</I>, 
+<I>CreateCompatibleBitmap</I>, <I>PatBlt</I>, 
+<I>BitBlt</I>, <I>StretchBlt</I>, 
+<I>GrayString</I>, <I>DrawIcon</I>, 
+<I>SetPixel</I>, <I>GetPixel</I>, <I>FloodFill</I>, 
+<I>ExtFloodFill</I>, <I>FillRgn</I>, 
+<I>FrameRgn</I>, <I>InvertRgn</I>, <I>PaintRgn</I>, 
+<I>FillRect</I>, <I>FrameRect</I>, and 
+<I>InvertRect</I>. This is the single most important distinction between using GDI calls on a 
+video display and using them on a printer.
+
+<A NAME="411"><h2>The Simplest Printing Program</h2></A><P>We're now ready to print, and we're going to start as simply as possible. In fact, our 
+first printing program does nothing but cause a printer form feed to eject the page. The 
+FORMFEED program, shown in Figure 13-5, demonstrates the absolute minimum 
+requirements for printing.
+
+<P><B>Figure 13-5.</b> <i>The FORMFEED program.</I>
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="412"><P><H3>FORMFEED.C</H3></A><P><PRE>
+/*---------------------------------------------
+   FORMFEED.C -- Advances printer to next page
+                 (c) Charles Petzold, 1998
+  ---------------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+HDC GetPrinterDC (void) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    LPSTR lpszCmdLine, int iCmdShow)
+{
+     static DOCINFO di = { sizeof (DOCINFO), TEXT (&quot;FormFeed&quot;) } ;
+     HDC            hdcPrint = GetPrinterDC () ;
+     
+     if (hdcPrint != NULL)
+     {
+          if (StartDoc (hdcPrint, &amp;di) &gt; 0)
+               if (StartPage (hdcPrint) &gt; 0 &amp;&amp; EndPage (hdcPrint) &gt; 0)
+                    EndDoc (hdcPrint) ;
+               
+          DeleteDC (hdcPrint) ;
+     }
+     return 0 ;
+}
+</pre>
+</TD></TR></TABLE>
+
+
+<P>This program also requires the GETPRNDC.C file shown previously in Figure 13-3.
+<P>Other than obtaining the printer device context (and later deleting it), the 
+program calls only the four print functions discussed earlier in this chapter. FORMFEED first 
+calls <I>StartDoc</I> to start a new document. The program tests the return value from the 
+function and proceeds only if the value is positive:
+
+<P><PRE>if (StartDoc (hdcPrint, &amp;di) &gt; 0)
+</pre>
+
+<P>The second argument to <I>StartDoc</I> is a pointer to a DOCINFO structure. This 
+structure contains the size of the structure in the first field and the text string &quot;FormFeed&quot; 
+in the second. As the document prints or while it is waiting to print, this string appears in 
+the Document Name column of the printer's job queue. Generally the identification 
+string includes the name of the application doing the printing and the file being printed.
+
+<P>If <I>StartDoc</I> is successful (indicated by a positive return value), FORMFEED 
+calls <I>StartPage</I>, followed immediately by a call to 
+<I>EndPage</I>. This sequence advances the printer to a new page. Once again, the return values are tested:
+
+<P><PRE>if (StartPage (hdcPrint) &gt; 0 &amp;&amp; EndPage (hdcPrint) &gt; 0)
+</pre>
+
+<P>Finally, if everything has proceeded without error to this point, the document is ended:
+
+<P><PRE>EndDoc (hdcPrint) ;
+</pre>
+
+<P>Note that the <I>EndDoc</I> function is called only if no printing errors have been 
+reported. If one of the other print functions returns an error code, GDI has already aborted the 
+document. If the printer is not currently printing, such an error code often results in the 
+printer being reset. Simply testing the return values from the print functions is the easiest way 
+to check for errors. If you want to report a particular error to the user, you must call 
+<I>GetLastError</I> to determine the error.
+
+<P>If you've ever written a simple form-feed program for MS-DOS, you know that 
+ASCII code 12 (Ctrl-L) activates a form feed for most printers. Why not simply open the 
+printer port using the C library function 
+<I>open</I> and then output an ASCII code 12 using 
+<I>write</I>? Well, nothing prevents you from doing this. You first have to determine the parallel port or 
+the serial port the printer is attached to. You then have to determine whether another 
+program (the print spooler, for instance) is currently using the printer. (You don't want the form 
+feed to be output in the middle of some other program's document, do you?) Finally, you 
+have to determine if ASCII code 12 is a form-feed character for the connected printer. It's 
+not universal, you know. In fact, the form-feed command in PostScript isn't a 12; it's the 
+word <I>showpage</I>.
+
+<P>In short, don't even think about going around Windows; stick with the 
+Windows functions for printing.
+
+</BODY>
+</HTML>
+
+
+
+
+

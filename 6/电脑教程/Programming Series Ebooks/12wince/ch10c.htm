@@ -1,0 +1,1179 @@
+<HTML>
+ <HEAD>
+	<LINK REL=StyleSheet HREF="prowice.css" TYPE="text/css">
+<TITLE>Basic Sockets</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="378"><H1>Basic Sockets</H1></A>
+<P>WinSock is the name for the Windows socket API. WinSock is the API for Windows CE TCP/IP networking stack as well as the IrDA infrared communication stack. Windows CE implements a subset of WinSock version 1.1. What's left out of the Windows CE implementation of WinSock is the ever-so-handy <I>WSAAsyncSelect</I> function that enables (under other Windows systems) an application to be informed when a WinSock event occurred. Actually, most of the <I>WSAxxx</I> calls that provide asynchronous actions are missing from Windows CE. Instead, the Windows CE implementation is more like the original &quot;Berkeley&quot; socket API. Windows CE's developers decided not to support these functions to reduce the size of the WinSock implementation. These functions were handy, but not required because Windows CE is multithreaded.
+
+<P>The lack of asynchronous functions doesn't mean that you're left with calling socket functions that block on every call. You can put a socket in nonblocking mode so that any function that can't accomplish its task without waiting on an event will return with a return code indicating that the task isn't yet completed.
+
+<P>Windows CE has extended WinSock in one area. As I mentioned in <A HREF="ch09a.htm">Chapter 9</a>, WinSock is also the primary interface for IrDA communication. To do this, Windows CE extends the socket addressing scheme, actually providing an entirely different addressing mode designed for the transitory nature of IrDA communication.
+
+<P>In this section, I'm not going to dive into a complete explanation of socket-based communication. Instead, I'll present an introduction that will get you started communicating with sockets. In addition, I'll spend time with the IrSock side because this interface is so significant for Windows CE devices.
+
+<A NAME="379"><H2>Initializing the WinSock DLL</H2></A>
+<P>Like other versions of WinSock, the Windows CE version should be initialized before you use it. You accomplish this by calling <I>WSAStartup</I>, which initializes the WinSock DLL. It's prototyped as
+
+<p><pre>
+int WSAStartup (WORD wVersionRequested, LPWSADATA lpWSAData );
+</PRE>
+
+<P>The first parameter is the version of WinSock you're requesting to open. For all current versions of Windows CE, you must indicate version 1.1. An easy way to do this is to use the MAKEWORD macro as in MAKEWORD (1,1). The second parameter must point to a WSAData structure, shown in the code below.
+
+<p><pre>
+struct WSAData {
+    WORD wVersion;
+    WORD wHighVersion;
+    char szDescription[WSADESCRIPTION_LEN+1];
+    char szSystemStatus[WSASYSSTATUS_LEN+1];
+    unsigned short iMaxSockets;
+    unsigned short iMaxUdpDg;
+    char FAR * lpVendorInfo;
+};
+</PRE>
+
+<P>This structure is filled in by <I>WSAStartup</I>, providing information about the specific implementation of this version of WinSock. Currently, the first two fields return <I>0x0101</I>, indicating support for version 1.1. The <I>szDescription</I> and <I>szSystemStatus</I> fields can be used by WinSock to return information about itself. In the current Windows CE version of WinSock, these fields aren't used. The <I>iMaxSockets</I> parameter suggests a maximum number of sockets that an application should be able to open. This number isn't a hard maximum but more a suggested maximum. Finally, the <I>iMaxUdpDg</I> field indicates the maximum size of a datagram packet. A 0 indicates no maximum size for this version of WinSock.
+
+<P><I>WSAStartup</I> returns 0 if successful; otherwise the return value is the error code for the function. Don't call <I>WSAGetLastError</I> in this situation because the failure of this function indicates that WinSock, which provides <I>WSAGetLastError</I>, wasn't initialized correctly.
+
+<P>Windows CE also supports <I>WSACleanup</I>, which is traditionally called when an application has finished using the WinSock DLL. For Windows CE, this function performs no action but is provided for compatibility. Its prototype is
+
+<p><pre>
+int WSACleanup ();
+</PRE>
+
+<A NAME="380"><H3>ASCII vs. Unicode</H3></A>
+<P>One issue that you'll have to be careful of is that almost all the string fields used in the socket structures are char fields, not Unicode. Because of this, you'll find yourself using the functions
+
+<p><pre>
+int WideCharToMultiByte(UINT CodePage, DWORD dwFlags, 
+                        LPCWSTR lpWideCharStr, int cchWideChar, 
+                        LPSTR lpMultiByteStr, int cchMultiByte, 
+                        LPCSTR lpDefaultChar, LPBOOL lpUsedDefaultChar);
+</PRE>
+
+<P>to convert Unicode strings into multibyte strings and
+
+<p><pre>
+int MultiByteToWideChar (UINT CodePage, DWORD dwFlags, 
+                        LPCSTR lpMultiByteStr, int cchMultiByte, 
+                        LPWSTR lpWideCharStr, int cchWideChar);
+</PRE>
+
+<P>to convert multibyte characters into Unicode. The functions refer to multibyte characters instead of ASCII because on double-byte coded systems, they convert double-byte characters into Unicode.
+
+<A NAME="381"><H2>Stream Sockets</H2></A>
+<P>Like all socket implementations, WinSock under Windows CE supports both stream and datagram connections. In a stream connection, a socket is basically a data pipe. Once two points are connected, data is sent back and forth without the need for additional addressing. In a datagram connection, the socket is more like a mailslot, with discrete packets of data being sent to specific addresses. In describing the WinSock functions, I'm going to cover the process of a creating a <I>stream </I>connection (sometimes called a <I>connection-oriented </I>connection) between a client and server application. I'll leave explanation of the datagram connection to other, more network-specific books.
+
+<P>The life of a stream socket is fairly straightforward: it's created, bound, or connected to an address; read from or written to; and finally closed. A few extra steps along the way, however, complicate the story slightly. Sockets work in a client/server model. A client initiates a conversation with a known server. The server, on the other hand, waits around until a client requests data. When setting up a socket, you have to approach the process from either the client side or the server side. This decision determines which functions you call to configure a socket. Figure 10-3 illustrates the process from both the client and the server side. For each step in the process, the corresponding WinSock function is shown.
+
+<P><!-- caption --><B>Figure 10-3.</B> <I>The process for producing a connection-oriented socket connection.</I><!-- /caption -->
+
+<p><TABLE cellpadding=5 width="95%">
+
+<TR>
+<td valign="top"><B>Server</B></TD>
+
+
+<td valign="top"><B>Function</B></TD>
+<td valign="top"><B>Client</B></TD>
+
+<td valign="top"><B>Function</B></TD>
+</TR>
+
+<TR>
+<td valign="top">Create socket</TD>
+<td valign="top"><I>socket</I></TD>
+<td valign="top">Create socket</TD>
+<td valign="top"><I>socket</I></TD>
+</TR>
+
+<TR>
+<td valign="top">Bind socket to an address</TD>
+<td valign="top"><I>bind</I></TD>
+<td valign="top">Find desired server</TD>
+<td valign="top"> (many functions)</TD>
+</TR>
+
+
+<TR>
+<td valign="top">Listen for client connections</TD>
+<td valign="top"> <I>listen</I></TD>
+<td valign="top"> Connect to server</TD>
+<td valign="top"> <I>connect</I></TD>
+</TR>
+
+<TR>
+<td valign="top">Accept client's connection</TD>
+<td valign="top"><I>accept</I></TD>
+<td valign="top"> </TD>
+<td valign="top"> </TD>
+</TR>
+
+<TR>
+<td valign="top">Receive data from client</TD>
+<td valign="top"><I>recv</I></TD>
+<td valign="top">Send data to server</TD>
+<td valign="top"><I>send</I></TD>
+</TR>
+
+<TR>
+<td valign="top">Send data to client</TD>
+<td valign="top"><I>send</I></TD>
+<td valign="top">Receive data from server</TD>
+<td valign="top"><I>recv</I></TD>
+</TR>
+</TABLE>
+
+<P>Both the client and the server must first create a socket. After that, the process diverges. The server must attach, or to use the function name, <I>bind</I>, the socket to an address so that another computer or even a local process, can connect to the socket. Once an address has been bound, the server configures the socket to listen for a connection from a client. The server then waits to accept a connection from a client. Finally, after all this, the server is ready to converse.
+
+<P>The client's job is simpler: the client creates the socket, connects the socket to a remote address, and then sends and receives data. This procedure, of course, ignores the sometimes not-so-simple process of determining the address to connect to. I'll leave that problem for a few moments while I talk about the functions behind this process.
+
+<A NAME="382"><H3>Creating a socket</H3></A>
+<P>You create a socket with the function
+
+<p><pre>
+SOCKET socket (int af, int type, int protocol);
+</PRE>
+
+<P>The first parameter, <I>af</I>, specifies the addressing family for the socket. Windows CE supports two addressing formats; AF_INET and AF_IRDA. You use the AF_IRDA constant when you're creating a socket for IrDA use, and you use AF_INET for TCP/IP communication. The type parameter specifies the type of socket being created. For a TCP/IP socket, this can be either SOCK_STREAM for a stream socket or SOCK_DGRAM for a datagram socket. For IrDA sockets, the type parameter must be SOCK_STREAM. Windows CE doesn't currently expose a method to create a raw socket, which is a socket that allows you to interact with the IP layer of the TCP/IP protocol. Among other uses, raw sockets are used to send an echo request to other servers, in the process known as pinging. However, Windows CE does provide a method of sending an ICMP echo request. I'll talk about that shortly.
+
+<P>The protocol parameter specifies the protocol used by the address family specified by the <I>af</I> parameter. The function returns a handle to the newly created socket. If an error occurs, the socket returns INVALID_SOCKET. You can call <I>WSAGetLastError</I> to query the extended error code.
+
+
+<A NAME="383"><H3>Server side: binding a socket to an address</H3></A>
+<P>For the server, the next step is to bind the socket to an address. You accomplish this with the function
+
+<p><pre>
+int bind (SOCKET s, const struct sockaddr FAR *addr, int namelen);
+</PRE>
+
+<P>The first parameter is the handle to the newly created socket. The second parameter is dependent on whether you're dealing with a TCP/IP socket or an IrDa socket. For a standard TCP/IP socket, the structure pointed to by <I>addr</I> should be SOCKADDR_IN, which is defined as
+
+<p><pre>
+struct sockaddr_in {
+    short sin_family;
+    unsigned short sin_port;
+    IN_ADDR sin_addr;
+    char sin_zero[8];
+};
+</PRE>
+
+<P>The first field, <I>sin_family</I> must be set to AF_INET. The second field is the IP port while the third field specifies the IP address. The last field is simply padding to fit the standard SOCKADDR structure. The last parameter of bind, <I>namelen</I>, should be set to the size of the SOCKADDR_IN structure.
+
+<P>When you're using IrSock, the address structure pointed to by <I>sockaddr</I> is SOCKADDR_IRDA, which is defined as
+
+<p><pre>
+struct sockaddr_irda {
+    u_short irdaAddressFamily;
+    u_char irdaDeviceID[4];
+    char irdaServiceName[25];
+};
+</PRE>
+
+<P>The first field, <I>irdaAddressFamily</I>, should be set to AF_IRDA to identify the structure. The second field, <I>irdaDeviceID</I>, is a 4-byte array that defines the address for this IR socket. This can be set to 0 for an IrSock server. The last field should be set to a string to identify the server.
+
+<P>You can also use a special, predefined name in the <I>irdaServiceName</I> field to bypass the IrDA address resolution features. If you specify the name LSAP-SEL<I>xxx</I> where <I>xxx</I> is a value from 001 through 127, the socket will be bound directly to the LSAP (Logical Service Assess Point) selector defined by the value. Applications should not, unless absolutely required, bind directly to a specific LSAP selector. Instead, by specifying a generic string, the IrDA Address resolution code determines a free LSAP selector and uses it.
+
+<A NAME="384"><H3>Listening for a connection</H3></A>
+<P>Once a socket has been bound to an address, the server places the socket in listen mode so that it will accept incoming communication attempts. You place the socket in listen mode by using the aptly named function
+
+<p><pre>
+int listen (SOCKET s, int backlog);
+</PRE>
+
+<P>The two parameters are the handle to the socket and the size of the queue that you're creating to hold the pending connection attempts. This value can be set to SOMAXCONN to set the queue to the maximum supported by the socket implementation. For Windows CE, the only supported queue sizes are 1 and 2. Values outside this range are rounded to the closest valid value.
+
+<A NAME="385"><H3>Accepting a connection</H3></A>
+<P>When a server is ready to accept a connection to a socket in listen mode, it calls this function:
+
+<p><pre>
+SOCKET accept (SOCKET s, struct sockaddr FAR *addr,
+               int FAR *addrlen);
+</PRE>
+
+<P>The first parameter is the socket that has already been placed in listen mode. The next parameter should point to a buffer that receives the address of the client socket that has initiated a connection. The format of this address is dependent on the protocol used by the socket. For Windows CE, this is either a SOCKADDR_IN or a SOCKADDR_IRDA structure. The final parameter is a pointer to a variable that contains the size of the buffer. This variable is updated with the size of the structure returned in the address buffer when the function returns.
+
+
+<P>The <I>accept</I> function returns the handle to a new socket that's used to communicate with the client. The socket that was originally created by the call to <I>socket</I> will remain in listen mode, and can potentially accept other connections. If <I>accept</I> detects an error, it returns INVALID_SOCKET. In this case, you can call <I>WSAGetLastError</I> to get the error code.
+
+<P>The <I>accept</I> function is the first function I've talked about so far that blocks. That is, it won't return until a remote client requests a connection. You can set the socket in nonblocking mode so that, if no request for connection is queued, <I>accept</I> will return INVALID_SOCKET with an extended error code of WSAEWOULDBLOCK. I'll talk about blocking vs. nonblocking sockets shortly.
+
+<A NAME="386"><H3>Client side: connecting a socket to a server</H3></A>
+<P>On the client side, things are different. Instead of calling the <I>bind</I> and <I>accept</I> functions, the client simply connects to a known server. I said simply, but as with most things, we must note a few complications. The primary one is addressing&#8212;knowing the address of the server you want to connect to. I'll put that topic aside for a moment and assume the client knows the address of the server.
+
+<P>To connect a newly created socket to a server, the client uses the function
+
+<p><pre>
+int connect (SOCKET s, const struct sockaddr FAR *name,
+             int namelen);
+</PRE>
+
+<P>The first parameter is the socket handle that the client created with a call to <I>socket</I>. The other two parameters are the address and address length values we've seen in the <I>bind</I> and <I>accept</I> functions. Here again, Windows CE supports two addressing formats: SOCKADDR_IN for TCP/IP_based communication and SOCKADDR_IRDA for IrDA communication.
+
+<P>If connect is successful, it returns 0. Otherwise it returns SOCKET_ERROR, and you should call <I>WSAGetLastError</I> to get the reason for the failure.
+
+<A NAME="387"><H3>Sending and receiving data</H3></A>
+<P>At this point, both the server and client have socket handles they can use to communicate with one another. The client uses the socket originally created with the call to <I>socket</I>, while the server uses the socket handle returned by the <I>accept</I> function.
+
+<P>All that remains is data transfer. You write data to a socket this way:
+
+<p><pre>
+int send (SOCKET s, const char FAR *buf, int len, int flags);
+</PRE>
+
+<P>The first parameter is the socket handle to send the data. You specify the data you want to send in the buffer pointed to by the <I>buf</I> parameter while the length of that data is specified in <I>len</I>. The <I>flags</I> parameter must be 0.
+
+<P>You receive data by using the function
+
+<p><pre>
+int recv (SOCKET s, char FAR *buf, int len, int flags);
+</PRE>
+
+<P>The first parameter is the socket handle. The second parameter points to the buffer that receives the data, while the third parameter should be set to the size of the buffer. The flags parameter can be 0, or it can be MSG_PEEK if you want to have the current data copied into the receive buffer but not removed from the input queue or if this is a TCP/IP socket (MSG_OOB) for receiving any out-of-band data that has been sent.
+
+<P>Two other functions can send and receive data; they are the following:
+
+<p><pre>
+int sendto (SOCKET s, const char FAR *buf, int len, int flags,
+            const struct sockaddr FAR *to, int token);
+</PRE>
+
+<P>and
+
+<p><pre>
+int recvfrom (SOCKET s, char FAR *buf, int len, int flags,
+              struct sockaddr FAR *from, int FAR *fromlen);
+</PRE>
+
+<P>These functions enable you to direct individual packets of data using the address parameters provided in the functions. They're used for connectionless sockets, but I mention them now for completeness. When used with connection-oriented sockets such as those I've just described, the addresses in <I>sendto</I> and <I>recvfrom</I> are ignored and the functions act like their simpler counterparts, <I>send</I> and <I>recv</I>.
+
+<A NAME="388"><H3>Closing a socket</H3></A>
+<P>When you have finished using the sockets, call this function:
+
+<p><pre>
+int shutdown (SOCKET s, int how);
+</PRE>
+
+<P>The <I>shutdown</I> function takes the handle to the socket and a flag indicating what part of the connection you wish to shut down. The <I>how </I>parameter can be SD_RECEIVE to prevent any further <I>recv</I> calls from being processed, SD_SEND to prevent any further <I>send </I>calls from being processed, or SD_BOTH to prevent either <I>send</I> or <I>recv </I>calls from being processed. The <I>shutdown</I> function affects the higher level functions <I>send</I> and <I>recv</I> but doesn't prevent data previously queued from being processed. Once you have shut down a socket, it can't be used again. It should be closed and a new socket created to restart a session.
+
+<P>Once a connection has been shut down, you should close the socket with a call to this function:
+
+<p><pre>
+int closesocket (SOCKET s);
+</PRE>
+
+<P>The action of <I>closesocket</I> depends on how the socket is configured. If you've properly shut down the socket with a call to <I>shutdown</I>, no more events will be pending and <I>closesocket</I> should return without blocking. If the socket has been configured into &quot;linger&quot; mode and configured with a timeout value, <I>closesocket </I>will block until any data in the send queue has been sent or the timeout expires.
+
+<A NAME="389"><H2>IrSock</H2></A>
+<P>I've alluded to IrSock a number of times as I've described functions. IrSock is essentially a socketlike API built over the top of the IrDA stack used for infrared communication. IrSock is the only high-level interface to the IrDA stack. Even the IrComm virtual comm port described in <A HREF="ch09a.htm">Chapter 9</a> uses the IrSock API underneath the covers.
+
+<P>The major differences between IrSock and WinSock are that IrSock doesn't support datagrams, it doesn't support security, and the method used for addressing it is completely different from that used for WinSock. What IrSock does provide is a method to query the devices ready to talk across the infrared port, as well as arbitration and collision detection and control.
+
+<P>From a programmer's perspective, the main difference in programming IrSock and WinSock is that the client side needs a method of detecting what infrared capable devices are within range and are ready to accept a socket connection. This is accomplished by calling <I>getsockopt</I> with the level parameter set to SOL_IRLMP and the <I>optname</I> parameter set to IRLMP_ENUMDEVICES, as in the following:
+
+<p><pre>
+dwBuffSize = sizeof (buffer);
+rc = getsockopt (hIrSock, SOL_IRLMP, IRLMP_ENUMDEVICES,
+                 buffer, &amp;dwBuffSize);
+</PRE>
+
+<P>When called with IRLMP_ENUMDEVICES, <I>getsockopt</I> returns a DEVICELIST structure in the buffer. DEVICELIST is defined as
+
+<p><pre>
+typedef struct _DEVICELIST {
+    ULONG numDevice;
+    IRDA_DEVICE_INFO Device[1];
+} DEVICELIST;
+</PRE>
+
+<P>The DEVICELIST structure is simply a count followed by an array of IRDA_DEVICE_INFO structures, one for each device found. The IRDA_DEVICE_INFO structure is defined as
+
+<p><pre>
+typedef struct _IRDA_DEVICE_INFO {
+    u_char irdaDeviceID[4];
+    char irdaDeviceName[22];
+    u_char Reserved[2];
+} IRDA_DEVICE_INFO;
+</PRE>
+
+<P>The two fields in the IRDA_DEVICE_INFO structure are a device ID and a string that can be used to identify the remote device.
+
+<P>Following is a routine that opens an IR socket and uses <I>getsockopt</I> to query the remote devices that are in range. If any devices are found, their names and IDs are printed to the debug port.
+
+<p><pre>
+//
+// Poll for IR devices.
+//
+DWORD WINAPI IrPoll (HWND hWnd) {
+    INT rc, nSize, i, j;
+    char cDevice[256];
+    TCHAR szName[32], szOut[256];
+    DEVICELIST *pDL;
+    SOCKET irsock;
+
+    // Open an infrared socket.
+    irsock = socket (AF_IRDA, SOCK_STREAM, 0);
+    if (irsock == INVALID_SOCKET)
+        return -1;
+
+    // Search for someone to talk to, try 10 times over 5 seconds.
+    for (i = 0; i &lt; 10; i++) {
+
+        // Call getsockopt to query devices.
+        memset (cDevice, 0, sizeof (cDevice));
+        nSize = sizeof (cDevice);
+        rc = getsockopt (irsock, SOL_IRLMP, IRLMP_ENUMDEVICES,
+                         cDevice, &amp;nSize);
+        if (rc)
+            break;
+
+        pDL = (DEVICELIST *) cDevice;
+        if (pDL-&gt;numDevice) {
+            Add2List (hWnd, TEXT (&quot;%d devices found.&quot;), pDL-&gt;numDevice);
+
+            for (j = 0; j &lt; (int)pDL-&gt;numDevice; j++) {
+                // Convert device ID.
+                wsprintf (szOut,
+                          TEXT (&quot;DeviceID \t%02X.%02X.%02X.%02X&quot;),
+                          pDL-&gt;Device[j].irdaDeviceID[0],
+                          pDL-&gt;Device[j].irdaDe<SUP>1</SUP>viceID[1],
+                          pDL-&gt;Device[j].irdaDeviceID[2],
+                          pDL-&gt;Device[j].irdaDeviceID[3]);
+                OutputDebugString (szOut);
+
+                // Convert device name to Unicode.
+                mbstowcs (szName, pDL-&gt;Device[j].irdaDeviceName,
+                          sizeof (pDL-&gt;Device[j].irdaDeviceName));
+
+                wsprintf (szOut, TEXT (&quot;irdaDeviceName \t%s&quot;),
+                          szName);
+                OutputDebugString (szOut);
+            }
+        }
+        Sleep(500);
+    }
+    closesocket (irsock);
+    return 0;
+}
+</PRE>
+
+<P>Just having a device with an IR port in range isn't enough; the remote device must have an application running that has opened an IR socket, bound it, and placed it into listen mode. This requirement is appropriate because these are the steps any server using the socket API would perform to configure a socket to accept communication.
+
+<A NAME="390"><H3>Querying and setting IR socket options</H3></A>
+
+<P>IrSock supports the <I>getsockopt</I> and <I>setsockopt</I> functions for getting and setting the socket options, but the options supported have little overlap with the socket options supported for a standard TCP/IP socket. To query socket options, use this function:
+
+<p><pre>
+int getsockopt (SOCKET s, int level, int optname,
+                char FAR *optval, int FAR *optlen);
+</PRE>
+
+<P>The first parameter is the handle to the socket while the second parameter is the level in the communications stack for the specific option. The level can be at the socket level SO_SOCKET or a level unique to IrSock, SOL_IRLMP. The options supported for IrSock are shown in the lists below.
+
+<P>For the SOL_SOCKET level, your option is
+
+<UL>
+<P><LI><I>SO_LINGER</I> It queries the linger mode.
+</UL>
+
+<P>For the SOL_IRLMP level, your options are
+
+<UL>
+<P><LI><I>IRLMP_ENUMDEVICES</I> which enumerate remote IrDA devices
+<P><LI><I>IRLMP_IAS_QUERY</I> which queries IAS attributes
+<P><LI><I>IRLMP_SEND_PDU_LEN</I> which queries the maximum size of send packet for IrLPT mode.
+</UL>
+
+<P>The corresponding function with which to set the options is
+
+<p><pre>
+int setsockopt (SOCKET s, int level, int optname,
+                const char FAR *optval, int optlen);
+</PRE>
+
+<P>The parameters are similar to <I>getsockopt</I>. The allowable options are shown below.
+
+<P>For the SOL_SOCKET level, your option is
+
+<UL>
+<P><LI><I>SO_LINGER</I> which delays the close of a socket if unsent data remains in the outgoing queue
+</UL>
+
+<P>For the SOL_IRLMP level, your options are
+
+<UL>
+<P><LI><I>IRLMP_IAS_SET</I> which sets IAS attributes
+<P><LI><I>IRLMP_IRLPT_MODE</I> which sets the IrDA protocol to IrLPT
+<P><LI><I>IRLMP_9WIRE_MODE</I> which sets the IrDA protocol to 9-wire serial mode
+<P><LI><I>IRLMP_SHARP_MODE</I> which sets the IrDA protocol to Sharp mode
+</UL>
+
+<A NAME="391"><H3>Blocking vs. nonblocking sockets</H3></A>
+
+<P>One issue I briefly touched on as I was introducing sockets is blocking. Windows programmers are used to the quite handy asynchronous socket calls that are an extension of the standard Berkeley socket API. By default, a socket is in blocking mode so that, for example, if you call <I>recv</I> to read data from a socket and no data is available, the call blocks until some data can be read. This isn't the type of call you want to be making with a thread that's servicing the message loop for your application.
+
+<P>Although Windows CE doesn't support the <I>WSAAsync</I> calls available to desktop versions of Windows, you can switch a socket from its default blocking mode to nonblocking mode. In nonblocking mode, any socket call that might need to wait to successfully perform its function instead returns immediately with an error code of WSAEWOULDBLOCK. You are then responsible for calling the would-have-blocked function again at a later time to complete the task.
+
+<P>To set a socket into blocking mode, use this function:
+
+<p><pre>
+int ioctlsocket (SOCKET s, long cmd, u_long *argp);
+</PRE>
+
+<P>The parameters are the socket handle, a command, and a pointer to a variable that either contains data or receives data depending on the value in <I>cmd</I>. The allowable commands for Windows CE IrSock sockets are the following:
+
+<UL>
+<P><LI><I>FIONBIO</I> Set or clear a socket's blocking mode. If the value pointed to by <I>argp</I> is nonzero, the socket is placed in blocking mode. If the value is zero, the socket is placed in nonblocking mode.
+<P><LI><I>FIONREAD</I> Returns the number of bytes that can be read from the socket with one call to the <I>recv</I> function.
+</UL>
+
+<P>So to set a socket in blocking mode, you should make a call like this one:
+
+<p><pre>
+fBlocking = FALSE;
+rc = ioctlsocket (sock, FIONBIO, &amp;fBlocking);
+</PRE>
+
+<P>Of course, once you have a socket in nonblocking mode, the worst thing you can do is continually poll the socket to see if the nonblocked event occurred. On a battery-powered system, this can dramatically lower battery life. Instead of polling, you can use the <I>select</I> function to inform you when a socket or set of sockets is in a nonblocking state. The prototype for this function is
+
+<p><pre>
+int select (int nfds, fd_set FAR *readfds, fd_set FAR *writefds,
+            fd_set FAR *exceptfds,
+            const struct timeval FAR *timeout);
+</PRE>
+
+<P>The parameters for the <I>select</I> function look somewhat complex, which, in fact, they are. Just to throw a curve, the function ignores the first parameter. The reason it exists at all is for compatibility with the Berkeley version of the <I>select</I> function. The next three parameters are pointers to sets of socket handles. The first set should contain the sockets that you want to be notified when one or more of the sockets is in a nonblocking read state. The second set contains socket handles of sockets that you want informed when a write function can be called without blocking. Finally, the third set, pointed to by <I>exceptfds</I>, contains the handles of sockets that you want notified when an error condition exists in that socket.
+
+<P>The final parameter is a timeout value. In keeping with the rather interesting parameter formats for the <I>select</I> function, the timeout value isn't a simple millisecond count. Rather, it's a pointer to a TIMEVAL structure defined as
+
+<p><pre>
+struct timeval {
+    long    tv_sec;
+    long    tv_usec;
+};
+</PRE>
+
+<P>If the two fields in TIMEVAL are 0, the <I>select</I> call returns immediately even if none of the sockets has had an event occur. If the pointer, <I>timeout</I>, is NULL instead of pointing to a TIMEVAL structure, the select call won't time out and returns only when an event occurs in one of the sockets. Otherwise, the timeout value is specified in seconds and microseconds in the two fields provided.
+
+<P>The function returns the total number of sockets for which the appropriate events occur, 0 if the function times out, or SOCKET_ERROR if an error occurred while processing the call. If an error does occur, you can call <I>WSAGetLastError</I> to get the error code. The function modifies the contents of the sets so that, on returning from the function, the sets contain only the socket handles of sockets for which events occur.
+
+<P>The sets that contain the events should be considered opaque. The format of the sets doesn't match their Berkeley socket counterparts. Each of the sets is 
+
+<P>manipulated by four macros defined in WINSOCK.H. These are the four macros:
+
+<UL>
+<P><LI><I>FD_CLR</I> Removes the specified socket handle from the set
+<P><LI><I>FD_ISSET</I> Returns true if the socket handle is part of the set
+<P><LI><I>FD_SET</I> Adds the specified socket handle to the set
+<P><LI><I>FD_ZERO</I> Initializes the set to 0
+</UL>
+
+<P>To use a set, you have to declare a set of type <I>fd_set</I>. Then initialize the set with a call to FD_ZERO and add the socket handles you want with FD_SET. An example would be
+
+<p><pre>
+fd_set fdReadSocks;
+
+FD_ZERO (&amp;fdReadSocks);
+FD_SET (hSock1, &amp;fdReadSocks);
+FD_SET (hSock2, &amp;fdReadSocks);
+
+rc = select (0, &amp;fdReadSocks, NULL, NULL, NULL);
+if (rc != SOCKET_ERROR) {
+    if (FD_ISSET (hSock1, &amp;fdReadSocks))
+        // A read event occurred in socket 1.
+    if (FD_ISSET (hSock2, &amp;fdReadSocks))
+        // A read event occurred in socket 2.
+}
+</PRE>
+
+<P>In this example, the <I>select </I>call waits on read events from two sockets with handles of <I>hSock1</I> and <I>hSock2</I>. The write and error sets are NULL as is the pointer to the <I>timeout</I> structure, so the call to <I>select</I> won't return until a read event occurs in one of the two sockets. When the function returns, the code checks to see if the socket handles are in the returned set. If so, that socket has a nonblocking read condition.
+
+<P>The last little subtlety concerning the <I>select</I> function is just what qualifies as a read, write, and error condition. A socket in the read set is signaled when one of the following events occur:
+
+<UL>
+<P><LI>There is data in the input queue so that <I>recv</I> can be called without blocking.
+<P><LI>The socket is in listen mode and a connection has been attempted so that a call to <I>accept </I>won't block.
+<P><LI>The connection has been closed, reset, or terminated. If the connection was gracefully closed, <I>recv </I>returns with 0 bytes read; otherwise the <I>recv</I> call returns SOCKET_ERROR. If the socket has been reset, the <I>recv</I> function returns the error WSACONNRESET.
+</UL>
+
+<P>A socket in the write set is signaled under the following conditions:
+
+<UL>
+<P><LI>Data can be written to the socket. A call to send still might block if you attempt to write more data than can be held in the outgoing queue.
+<P><LI>A socket is processing a <I>connect</I> and the connect has been accepted by the server.
+</UL>
+
+<P>A socket in the exception set is signaled under the following condition:
+
+<UL>
+<P><LI>A socket is processing a <I>connect</I> and the connect failed.
+</UL>
+
+<A NAME="392"><H2>The MySqurt Example Program</H2></A>
+
+<P>To demonstrate IrSock, the following program, MySqurt, shows how to transfer files from one Windows CE device to another. It's similar to the IrSquirt program provided with the H/PC and Palm-size PC. The difference is that instead of sending a file across the infrared link and having the receiving side accept whatever file is sent, MySqurt has the receiving side specify the file that's sent from the serving side of the application. In addition, MySqurt has a window that displays a list of status messages as the handshaking takes place between the two Windows CE systems. To use MySqurt, you'll need to have it running on both the Windows CE systems. To transfer a file, enter the name of the file you want from the other system and tap on the Get File button. The system transmits the request to the system and, if the file exists, it will be sent back to the requesting system. The MySqurt window is shown in Figure 10-4. The source code for the example is shown in Figure 10-5.
+
+<P><A HREF="javascript:fullSize('f10rg04x.htm')"> <IMG SRC="F10RG04.JPG" width=404 height=152 ALIGN="BOTTOM" ALT="Click to view at full size."></a>
+
+<P><!-- caption --><B>Figure 10-4.</B> <I>The MySqurt window after a file has been transferred.</I><!-- /caption -->
+
+<P><B>Figure 10-5.</B><I> The MySqurt source.     </I>
+
+<p><TABLE cellpadding=5 width="95%"><TR><td>
+
+
+<A NAME="393"><h3>MySqurt.rc</h3></A>
+<p><pre>
+//======================================================================
+// Resource file
+//
+
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//======================================================================
+#include &quot;windows.h&quot;
+#include &quot;MySqurt.h&quot;                        // Program-specific stuff
+//----------------------------------------------------------------------
+// Icons and bitmaps
+//
+ID_ICON ICON   &quot;MySqurt.ico&quot;                // Program icon
+
+//----------------------------------------------------------------------
+// Main window dialog template
+//
+MySqurt DIALOG discardable 10, 10, 130, 110
+STYLE  WS_OVERLAPPED | WS_VISIBLE | WS_CAPTION | WS_SYSMENU |
+       DS_CENTER | DS_MODALFRAME
+CAPTION &quot;MySqurt&quot;
+CLASS &quot;MySqurt&quot;
+BEGIN
+    LTEXT &quot;&amp;File:&quot;                    -1,   2,  11,  15,  12
+    EDITTEXT                 IDD_OUTTEXT,  17,  10,  71,  12,
+                                             WS_TABSTOP | ES_AUTOHSCROLL
+    PUSHBUTTON &quot;&amp;Get File&quot;   IDD_GETFILE,  92,  10,  34,  12, WS_TABSTOP
+
+    LISTBOX                  IDD_INTEXT,   2,  25, 124,  80,
+                                             WS_TABSTOP | WS_VSCROLL
+END
+</PRE>
+</TD></TR></TABLE>
+
+<p><TABLE cellpadding=5 width="95%"><TR><td>
+<A NAME="394"><h3>MySqurt.h</h3></A>
+<p><pre>
+//======================================================================
+// Header file
+
+//
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//======================================================================
+// Returns number of elements
+#define dim(x) (sizeof(x) / sizeof(x[0]))
+
+//----------------------------------------------------------------------
+// Generic defines and data types
+//
+struct decodeUINT {                            // Structure associates
+    UINT Code;                                 // messages
+                                               // with a function.
+    LRESULT (*Fxn)(HWND, UINT, WPARAM, LPARAM);
+};
+
+struct decodeCMD {                             // Structure associates
+    UINT Code;                                 // menu IDs with a
+    LRESULT (*Fxn)(HWND, WORD, HWND, WORD);    // function.
+};
+
+//----------------------------------------------------------------------
+// Generic defines used by application
+
+#define  ID_ICON             1
+
+#define  IDD_INTEXT          10                // Control IDs
+#define  IDD_GETFILE         11
+#define  IDD_OUTTEXT         12
+
+// Error codes used by transfer protocol
+#define GOOD_XFER        0
+#define BAD_FILEOPEN     -1
+#define BAD_FILEMEM      -2
+#define BAD_FILEREAD     -3
+#define BAD_FILEWRITE    -3
+#define BAD_SOCKET       -4
+#define BAD_SOCKETRECV   -5
+#define BAD_FILESIZE     -6
+#define BAD_MEMORY       -7
+
+#define BLKSIZE          2048                   // Transfer block size
+
+//----------------------------------------------------------------------
+// Function prototypes
+//
+int ServerThread (PVOID pArg);
+int SenderThread (PVOID pArg);
+int GetFile (HWND hWnd, TCHAR *szFileName);
+
+int InitApp (HINSTANCE);
+HWND InitInstance (HINSTANCE, LPWSTR, int);
+int TermInstance (HINSTANCE, int);
+
+// Window procedures
+LRESULT CALLBACK MainWndProc (HWND, UINT, WPARAM, LPARAM);
+
+// Message handlers
+LRESULT DoCommandMain (HWND, UINT, WPARAM, LPARAM);
+LRESULT DoDestroyMain (HWND, UINT, WPARAM, LPARAM);
+
+// Command functions
+LPARAM DoMainCommandGet (HWND, WORD, HWND, WORD);
+LPARAM DoMainCommandExit (HWND, WORD, HWND, WORD);
+
+// Thread functions
+int SenderThread (PVOID pArg);
+int ReaderThread (PVOID pArg);
+</PRE>
+</TD></TR></TABLE>
+
+<p><TABLE cellpadding=5 width="95%"><TR><td>
+<A NAME="395"><h3>MySqurt.c</h3></A>
+<p><pre>
+//======================================================================
+
+// MySqurt - A simple IrSock application for Windows CE
+//
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//======================================================================
+#include &lt;windows.h&gt;                 // For all that Windows stuff
+#include &lt;winsock.h&gt;                 // socket includes
+#include &lt;af_irda.h&gt;                 // IrDA includes
+
+#include &quot;MySqurt.h&quot;                 // Program-specific stuff
+//----------------------------------------------------------------------
+// Global data
+//
+const TCHAR szAppName[] = TEXT (&quot;MySqurt&quot;);
+const char chzAppName[] = &quot;MySqurt&quot;;
+HINSTANCE hInst;                     // Program instance handle
+HWND hMain;                          // Main window handle
+BOOL fContinue = TRUE;               // Server thread cont. flag
+
+// Message dispatch table for MainWindowProc
+const struct decodeUINT MainMessages[] = {
+    WM_COMMAND, DoCommandMain,
+    WM_DESTROY, DoDestroyMain,
+};
+// Command Message dispatch for MainWindowProc
+const struct decodeCMD MainCommandItems[] = {
+    IDOK, DoMainCommandGet,
+    IDCANCEL, DoMainCommandExit,
+    IDD_GETFILE, DoMainCommandGet,
+};
+//======================================================================
+// Program entry point
+//
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    LPWSTR lpCmdLine, int nCmdShow) {
+    MSG msg;
+    int rc = 0;
+
+    // Initialize application.
+    rc = InitApp (hInstance);
+    if (rc) return rc;
+
+    // Initialize this instance.
+    hMain = InitInstance (hInstance, lpCmdLine, nCmdShow);
+    if (hMain == 0)
+        return TermInstance (hInstance, 0x10);
+
+    // Application message loop
+    while (GetMessage (&amp;msg, NULL, 0, 0)) {
+        if ((hMain == 0) || !IsDialogMessage (hMain, &amp;msg)) {
+            TranslateMessage (&amp;msg);
+            DispatchMessage (&amp;msg);
+        }
+    }
+    // Instance cleanup
+    return TermInstance (hInstance, msg.wParam);
+}
+
+//----------------------------------------------------------------------
+// InitApp - Application initialization
+//
+int InitApp (HINSTANCE hInstance) {
+    WNDCLASS wc;
+    HWND hWnd;
+
+    // If previous instance, activate it instead of us.
+    hWnd = FindWindow (szAppName, NULL);
+    if (hWnd) {
+        SetForegroundWindow (hWnd);
+        return -1;
+    }
+    // Register application main window class.
+    wc.style = 0;                             // Window style
+    wc.lpfnWndProc = MainWndProc;             // Callback function
+    wc.cbClsExtra = 0;                        // Extra class data
+    wc.cbWndExtra = DLGWINDOWEXTRA;           // Extra window data
+    wc.hInstance = hInstance;                 // Owner handle
+    wc.hIcon = NULL,                          // Application icon
+    wc.hCursor = NULL;                        // Default cursor
+    wc.hbrBackground = (HBRUSH) GetStockObject (LTGRAY_BRUSH);
+    wc.lpszMenuName =  NULL;                  // Menu name
+    wc.lpszClassName = szAppName;             // Window class name
+
+    if (RegisterClass (&amp;wc) == 0) return 1;
+    return 0;
+}
+//----------------------------------------------------------------------
+// InitInstance - Instance initialization
+//
+HWND InitInstance (HINSTANCE hInstance, LPWSTR lpCmdLine, int nCmdShow){
+    HWND hWnd;
+    HANDLE hThread;
+    INT rc;
+
+    hInst = hInstance;                // Save program instance handle.
+
+    // Create main window.
+    hWnd = CreateDialog (hInst, szAppName, NULL, NULL);
+    // Return fail code if window not created.
+    if (!IsWindow (hWnd)) return 0;
+
+    // Create secondary threads for interprocess comm.
+    hThread = CreateThread (NULL, 0, ServerThread, hWnd, 0, &amp;rc);
+    if (hThread == 0) {
+        DestroyWindow (hWnd);
+
+        return 0;
+    }
+    CloseHandle (hThread);
+
+    ShowWindow (hWnd, nCmdShow);      // Standard show and update calls
+    UpdateWindow (hWnd);
+    SetFocus (GetDlgItem (hWnd, IDD_OUTTEXT));
+    return hWnd;
+}
+//----------------------------------------------------------------------
+// TermInstance - Program cleanup
+//
+int TermInstance (HINSTANCE hInstance, int nDefRC) {
+    return nDefRC;
+}
+//======================================================================
+// Message handling procedures for main window
+//----------------------------------------------------------------------
+// MainWndProc - Callback function for application window
+//
+LRESULT CALLBACK MainWndProc (HWND hWnd, UINT wMsg, WPARAM wParam,
+                              LPARAM lParam) {
+
+    INT i;
+    //
+    // Search message list to see if we need to handle this
+    // message.  If in list, call procedure.
+    //
+    for (i = 0; i &lt; dim(MainMessages); i++) {
+        if (wMsg == MainMessages[i].Code)
+            return (*MainMessages[i].Fxn)(hWnd, wMsg, wParam, lParam);
+    }
+    return DefWindowProc (hWnd, wMsg, wParam, lParam);
+}
+//----------------------------------------------------------------------
+// DoCommandMain - Process WM_COMMAND message for window.
+//
+LRESULT DoCommandMain (HWND hWnd, UINT wMsg, WPARAM wParam,
+                       LPARAM lParam) {
+    WORD idItem, wNotifyCode;
+    HWND hwndCtl;
+    INT i;
+
+    // Parse the parameters.
+    idItem = (WORD) LOWORD (wParam);
+    wNotifyCode = (WORD) HIWORD (wParam);
+
+    hwndCtl = (HWND) lParam;
+
+
+    // Call routine to handle control message.
+    for (i = 0; i &lt; dim(MainCommandItems); i++) {
+        if (idItem == MainCommandItems[i].Code)
+            return (*MainCommandItems[i].Fxn)(hWnd, idItem, hwndCtl,
+                                           wNotifyCode);
+    }
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoDestroyMain - Process WM_DESTROY message for window.
+//
+LRESULT DoDestroyMain (HWND hWnd, UINT wMsg, WPARAM wParam,
+                       LPARAM lParam) {
+    fContinue = FALSE;                       // Shut down server thread.
+    Sleep (0);                               // Pass on timeslice.
+    PostQuitMessage (0);
+    return 0;
+}
+//======================================================================
+// Command handler routines
+//----------------------------------------------------------------------
+// DoMainCommandExit - Process Program Exit command.
+//
+LPARAM DoMainCommandExit (HWND hWnd, WORD idItem, HWND hwndCtl,
+                          WORD wNotifyCode) {
+
+    SendMessage (hWnd, WM_CLOSE, 0, 0);
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoMainCommandGet - Process Program Get File command.
+//
+LPARAM DoMainCommandGet (HWND hWnd, WORD idItem, HWND hwndCtl,
+                          WORD wNotifyCode) {
+    TCHAR szName[MAX_PATH];
+    INT rc;
+
+    GetDlgItemText (hWnd, IDD_OUTTEXT, szName, dim(szName));
+    rc = GetFile (hWnd, szName);            //Receive file
+    return 0;
+}
+//----------------------------------------------------------------------
+// Add2List - Add string to the report list box.
+//
+void Add2List (HWND hWnd, LPTSTR lpszFormat, ...) {
+
+    int i, nBuf;
+    TCHAR szBuffer[512];
+
+    va_list args;
+    va_start(args, lpszFormat);
+
+    nBuf = _vstprintf(szBuffer, lpszFormat, args);
+
+    i = SendDlgItemMessage (hWnd, IDD_INTEXT, LB_ADDSTRING, 0,
+                            (LPARAM)(LPCTSTR)szBuffer);
+    if (i != LB_ERR)
+        SendDlgItemMessage (hWnd, IDD_INTEXT, LB_SETTOPINDEX, i,
+                            (LPARAM)(LPCTSTR)szBuffer);
+    va_end(args);
+}
+//======================================================================
+// ServerThread - Monitors for connections, connnects and notifies
+// window when a connection occurs
+//
+int ServerThread (PVOID pArg) {
+    HWND hWnd = (HWND)pArg;
+    INT rc, nSize, i;
+    SOCKADDR_IRDA iraddr, t_iraddr;
+
+    SOCKET t_sock, s_sock;
+    HANDLE hThread;
+
+    Add2List (hWnd, TEXT (&quot;server thread entered&quot;));
+
+    // Open an infrared socket.
+    s_sock = socket (AF_IRDA, SOCK_STREAM, 0);
+    if (s_sock == INVALID_SOCKET) {
+        Add2List (hWnd, TEXT (&quot;socket failed. rc %d&quot;),
+                  WSAGetLastError());
+        return 0;
+    }
+    // Fill in irda socket address structure.
+    iraddr.irdaAddressFamily = AF_IRDA;
+    for (i = 0; i &lt; dim(iraddr.irdaDeviceID); i++)
+        iraddr.irdaDeviceID[i] = 0;
+    memcpy (iraddr.irdaServiceName, chzAppName, sizeof (chzAppName)+1);
+
+    // Bind address to socket.
+    rc = bind (s_sock, (struct sockaddr *)&amp;iraddr, sizeof (iraddr));
+    if (rc) {
+        Add2List (hWnd, TEXT (&quot; bind failed&quot;));
+        closesocket (s_sock);
+
+        return -2;
+
+    }
+    // Set socket into listen mode.
+    rc = listen (s_sock, SOMAXCONN);
+    if (rc == SOCKET_ERROR) {
+        Add2List (hWnd, TEXT (&quot; listen failed %d&quot;), GetLastError());
+        closesocket (s_sock);
+        return -3;
+    }
+    // Wait for remote requests.
+    while (fContinue) {
+        // Block on accept.
+        nSize = sizeof (t_iraddr);
+        t_sock = accept (s_sock, (struct sockaddr *)&amp;t_iraddr, &amp;nSize);
+        if (t_sock == INVALID_SOCKET) {
+            Add2List (hWnd, TEXT (&quot; accept failed %d&quot;),
+                      GetLastError());
+            break;
+        }
+        Add2List (hWnd, TEXT (&quot;sock accept...&quot;));
+        hThread = CreateThread (NULL, 0, SenderThread,
+                                (PVOID)t_sock, 0, &amp;rc);
+        if (hThread)
+            CloseHandle (hThread);
+    }
+    closesocket (s_sock);
+    return rc;
+}
+//======================================================================
+// SenderThread - Sends the file requested by the remote device
+//
+int SenderThread (PVOID pArg) {
+    SOCKET t_sock = (SOCKET)pArg;
+    int nCnt, nFileSize, rc;
+    TCHAR szFileName[MAX_PATH];
+    PBYTE pBuff, pPtr;
+    HWND hWnd = hMain;
+    HANDLE hFile;
+
+    Add2List (hWnd, TEXT (&quot;sender thread entered&quot;));
+
+    // Read the number of bytes in the filename.
+    rc = recv (t_sock, (PBYTE)&amp;nCnt, sizeof (nCnt), 0);
+    if ((rc == SOCKET_ERROR) || (nCnt &gt; MAX_PATH)) {
+        Add2List (hWnd, TEXT (&quot;failed receiving name size&quot;));
+        closesocket (t_sock);
+        return -1;
+
+    }
+
+    // Read the filename.
+    rc = recv (t_sock, (PBYTE)&amp;szFileName, nCnt, 0);
+    if (rc == SOCKET_ERROR) {
+        Add2List (hWnd, TEXT (&quot;failed receiving name&quot;));
+        closesocket (t_sock);
+        return -2;
+    }
+    Add2List (hWnd, TEXT (&quot;name: %s&quot;), szFileName);
+    hFile = CreateFile (szFileName, GENERIC_READ, FILE_SHARE_READ,
+                        NULL, OPEN_EXISTING, 0, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        Add2List (hWnd, TEXT (&quot;file opened failed. rc %d&quot;),
+                  GetLastError());
+        rc = BAD_FILEOPEN;
+    } else {
+        rc = 0;
+        nFileSize = GetFileSize (hFile, NULL);
+
+        // Allocate buffer and read file.
+        pBuff = LocalAlloc (LPTR, nFileSize);
+
+        if (pBuff) {
+            ReadFile (hFile, pBuff, nFileSize, &amp;nCnt, NULL);
+            if (nCnt != nFileSize)
+                rc = BAD_FILEREAD;
+        } else
+            rc = BAD_MEMORY;
+    }
+    // Start transfer. First send size and get acknowledgment.
+    if (!rc) {
+        // Send file size. Size will always be &lt; 2 GB.
+        rc = send (t_sock, (PBYTE)&amp;nFileSize, sizeof (nFileSize), 0);
+        if (rc == SOCKET_ERROR)
+            rc = BAD_SOCKET;
+        else
+            // Receive acknowledgment of file size.
+            recv (t_sock, (PBYTE)&amp;rc, sizeof (rc), 0);
+    }
+    // Send the file.
+    pPtr = pBuff;
+    while ((!rc) &amp;&amp; nFileSize) {
+        // Send up to the block size.
+        nCnt = min (BLKSIZE, nFileSize);
+        rc = send (t_sock, pPtr, nCnt, 0);
+
+        if (rc == SOCKET_ERROR) {
+
+            Add2List (hWnd, TEXT (&quot;send error %d &quot;), GetLastError());
+            rc = BAD_SOCKET;
+        } else
+            Add2List (hWnd, TEXT (&quot;sent %d bytes&quot;), rc);
+        pPtr += rc;
+        nFileSize -= rc;
+
+        // Receive acknowledgment.
+        recv (t_sock, (PBYTE)&amp;rc, sizeof (rc), 0);
+    }
+    // Send close code.
+    if (rc != BAD_SOCKET)
+        send (t_sock, (PBYTE)&amp;rc, sizeof (rc), 0);
+
+    closesocket (t_sock);
+    // Clean up.
+    if (hFile != INVALID_HANDLE_VALUE)
+        CloseHandle (hFile);
+    LocalFree (pBuff);
+    Add2List (hWnd, TEXT (&quot;sender thread exit&quot;));
+    return 0;
+}
+//----------------------------------------------------------------------
+// GetFile - Reads a file from the remote device
+//
+int GetFile (HWND hWnd, TCHAR *szFileName) {
+    SOCKET c_sock;
+    HANDLE hFile;
+    INT rc, nSize, i, nFileSize, nCnt;
+    char cDevice[256];
+    SOCKADDR_IRDA iraddr;
+    DEVICELIST *pDL;
+    STORE_INFORMATION si;
+    PBYTE pBuff;
+
+    // Open an infrared socket.
+    c_sock = socket (AF_IRDA, SOCK_STREAM, 0);
+    if (c_sock == INVALID_SOCKET) {
+        Add2List (hWnd, TEXT (&quot;sock failed. rc %d&quot;), WSAGetLastError());
+        return 0;
+    }
+    // Search for someone to talk to.
+    for (i = 0; i &lt; 5; i++) {
+        memset (cDevice, 0, sizeof (cDevice));
+        nSize = sizeof (cDevice);
+        rc = getsockopt (c_sock, SOL_IRLMP, IRLMP_ENUMDEVICES,
+
+                         cDevice, &amp;nSize);
+        if (rc)
+            Add2List (hWnd, TEXT (&quot;getsockopt failed. rc %d&quot;),
+                      WSAGetLastError());
+
+        pDL = (DEVICELIST *) cDevice;
+        if (pDL-&gt;numDevice)
+            break;
+        Sleep(500);
+    }
+    // If no device found, exit.
+    if (pDL-&gt;numDevice == 0) {
+        closesocket (c_sock);
+        return -1;
+    }
+
+    // Copy address of found device.
+    memset (&amp;iraddr, 0, sizeof (iraddr));
+    iraddr.irdaAddressFamily = AF_IRDA;
+    memcpy (iraddr.irdaDeviceID, pDL-&gt;Device[0].irdaDeviceID, 4);
+    // Now initialize the specific socket we're interested in.
+    memcpy (iraddr.irdaServiceName, chzAppName, sizeof (chzAppName)+1);
+	
+    Add2List (hWnd, TEXT (&quot;Found: %hs&quot;), pDL-&gt;Device[0].irdaDeviceName);
+    // Connect to remote socket.
+    rc = connect (c_sock, (struct sockaddr *)&amp;iraddr, sizeof (iraddr));
+    if (rc) {
+        Add2List (hWnd, TEXT (&quot;connect failed. rc %d&quot;),
+                  WSAGetLastError());
+        closesocket (c_sock);
+        return -4;
+    }
+    Add2List (hWnd, TEXT (&quot;connected...&quot;));
+
+    // Send name size.
+    nCnt = (lstrlen (szFileName) + 1) * sizeof (TCHAR);
+    rc = send (c_sock, (PBYTE)&amp;nCnt, sizeof (nCnt), 0);
+    if (rc != SOCKET_ERROR) {
+        // Send filename.
+        rc = send (c_sock, (PBYTE)szFileName, nCnt, 0);
+    }
+    pBuff = LocalAlloc (LPTR, BLKSIZE);        // Create buffer for file.
+    // Receive file size.
+    rc = recv (c_sock, (PBYTE)&amp;nFileSize, sizeof (nFileSize), 0);
+    Add2List (hWnd, TEXT (&quot;received file size of %d bytes&quot;), nFileSize);
+    if ((rc != SOCKET_ERROR) &amp;&amp; (nFileSize &gt; 0)) {
+
+
+
+        GetStoreInformation (&amp;si);
+        Add2List (hWnd, TEXT (&quot;free space of %d bytes&quot;), si.dwFreeSize);
+        if ((INT)si.dwFreeSize &lt; nFileSize + 1000)
+            rc = BAD_FILESIZE;
+        else
+            rc = GOOD_XFER;
+
+        if (rc == GOOD_XFER) {
+            // Create the file.  Overwrite if user says so.
+            hFile = CreateFile (szFileName, GENERIC_WRITE, 0, NULL,
+                           CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+            if (hFile == INVALID_HANDLE_VALUE) {
+                if (GetLastError() == ERROR_FILE_EXISTS) {
+                    i = MessageBox (hWnd,
+                           TEXT (&quot;File already exists. Replace?&quot;),
+                           szAppName, MB_YESNO);
+                    if (i == IDYES)
+                        hFile = CreateFile (szFileName,
+                             GENERIC_WRITE, 0, NULL,
+                             CREATE_ALWAYS,
+                             FILE_ATTRIBUTE_NORMAL, NULL);
+                }
+            }
+        }
+        if (hFile == INVALID_HANDLE_VALUE) {
+            Add2List (hWnd, TEXT (&quot;File Open failed. rc %d&quot;),
+                      GetLastError());
+            rc = BAD_FILEWRITE;
+        }
+        // Send acknowledgment code.
+        Add2List (hWnd, TEXT (&quot;Sending size ack.&quot;));
+        send (c_sock, (PBYTE)&amp;rc, sizeof (rc), 0);
+        //
+        // Receive file.
+        //
+        while ((!rc) &amp;&amp; (nFileSize &gt; 0)) {
+
+            nCnt = min (BLKSIZE, nFileSize);
+            for (nSize = 0; nSize &lt; nCnt;) {
+                i = recv (c_sock, pBuff+nSize, nCnt-nSize, 0);
+                if (i == SOCKET_ERROR) {
+                    Add2List (hWnd, TEXT (&quot;recv socket err %d&quot;),
+                              GetLastError());
+                    rc = BAD_SOCKETRECV;
+                    break;
+                }
+
+                nSize += i;
+            }
+            Add2List (hWnd, TEXT (&quot;recv'd %d bytes.&quot;), nSize);
+            if (i) {
+                if (!WriteFile (hFile, pBuff, nSize, &amp;i, 0))
+                    rc = BAD_FILEWRITE;
+                nFileSize -= i;
+            } else
+                Sleep(50);
+            // Send acknowledgment of packet.
+            send (c_sock, (PBYTE)&amp;rc, sizeof (rc), 0);
+        }
+    } else if (rc == BAD_FILEOPEN)
+        Add2List (hWnd, TEXT (&quot;File not found.&quot;));
+    Add2List (hWnd, TEXT (&quot;receive finished&quot;));
+
+    CloseHandle (hFile);
+    closesocket (c_sock);
+    LocalFree (pBuff);
+    return 0;
+}
+</pre>
+</TD></TR></TABLE>
+
+<P>From a Windows standpoint, MySqurt is a simple program. It uses a dialog box as its main window. When the program is first launched, it creates the server thread that creates an infrared socket, binds it to a service name, puts the socket into listen mode, and blocks on a call to <I>accept</I>. When a remote device connects, the server thread creates another thread to handle the actual sending of the file while it loops back and waits for another connection.
+
+<P>The sender thread reads the filename from the client, opens the file, and attempts to send the file to the client device. Once the file is sent, the sender thread closes its socket and terminates. To support the transfer, a minimal amount of handshaking takes place. The sender thread sends the size of the file or an error code if the file can't be opened. The client then responds with an acknowledgment that the file size is acceptable and that the send can take place. The actual sending of the data is broken down into blocks arbitrarily set at 2048 bytes. After each block is sent, the sender thread waits for an acknowledgment from the client before it sends the next block.
+
+<P>On the client side, a transmission is initiated when the user taps the Get File button. If text exists in the edit box, it is read and the <I>GetFile</I> routine is called. In this routine, a socket is created and any remote devices are enumerated using repeated calls to <I>getsockopt</I>. If a device is found, a connection is attempted with a call to <I>connect</I>. <I>Connect </I>succeeds only if the remote device has bound an IR socket using the same service name, which happens to be defined as the string contained in <I>chzAppName</I>, an ASCII representation of the program name. This addressing scheme ensures that if a connection is made, the remote device is running MySqurt. Once a connection is made, the client sends over the filename it wants. This is actually done in two steps: first the byte length of the filename is sent, followed by the name itself. This process allows the server to know how many characters to receive before continuing. If the file sent by the server device fits in the object store, the routine creates the file on the client side, notifying the user if the file already exists. If all has gone well to this point, the data is received and written to the file. The socket is closed, and the buffer created to read the data into is freed.
+
+<P>While I've spent most of the explanation of sockets focused on IrSock, one area of the TCP/IP WinSock is unique to Windows CE&#8212;the ICMP functions. These functions allow a &quot;back door&quot; that allows raw socketlike functions on a stack that doesn't support raw sockets. Let's look now at why that's useful.
+
+</BODY>
+</HTML>
+
+
+
+

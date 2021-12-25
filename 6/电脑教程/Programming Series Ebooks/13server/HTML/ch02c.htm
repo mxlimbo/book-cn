@@ -1,0 +1,283 @@
+<HTML>
+<HEAD>
+<TITLE>Working with File Devices</TITLE>
+<link rel="STYLESHEET" type="text/css" href="prosrvwin.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR = "#ffffff">
+<A HREF="ch02b.htm">[Previous]</A> <A HREF="ch02d.htm">[Next]</A><P>
+
+<A NAME="16"><H1>Working with File Devices</H1></A>
+
+<p>Because working with files is so common, I want to spend some time 
+addressing issues that apply specifically to file devices. This section shows how to 
+position a file's pointer and change a file's size.</p>
+
+<p>The first issue you must be aware of is that Windows was designed to 
+work with extremely large files. Instead of representing a file's size using 32-bit 
+values, the original Microsoft designers chose to use 64-bit values. This means 
+that theoretically a file can reach a size of 16 EB (exabytes).</p>
+
+<p>Dealing with 64-bit values in a 32-bit operating system makes working 
+with files a little unpleasant because a lot of Windows functions require you to 
+pass a 64-bit value as two separate 32-bit values. But as you'll see, working with 
+the values is not too difficult and, in normal day-to-day operations, you 
+probably won't need to work with a file greater than 4 GB. This means that the high 
+32 bits of the file's 64-bit size will frequently be 0 anyway.</p>
+
+<A NAME="17"><H2>Getting a File's Size</H2></A>
+
+<p>When working with files, quite often you will need to acquire the file's size. 
+The easiest way to do this is by calling 
+<I>GetFileSizeEx</I>:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>BOOL GetFileSizeEx(
+   HANDLE         hfile,
+   PLARGE_INTEGER pliFileSize);
+</pre></td></tr></table>
+</p>
+
+<p>The first parameter, <I>hfile</I>, is the handle of an opened file, and the 
+<I>pliFileSize </I>parameter is the address of a LARGE_INTEGER union. This union allows 
+a 64-bit signed value to be referenced as two 32-bit values or as a single 
+64-bit value, and it can be quite convenient when working with file sizes and 
+offsets. Here is (basically) what the union looks like:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>typedef union _LARGE_INTEGER {
+   struct {
+      DWORD LowPart;    // Low  32-bit unsigned value
+      LONG HighPart;    // High 32-bit signed value
+   };
+   LONGLONG QuadPart;   // Full 64-bit signed value
+} LARGE_INTEGER, *PLARGE_INTEGER; 
+</pre></td></tr></table>
+</p>
+
+<p>In addition to LARGE_INTEGER, there is a ULARGE_INTEGER 
+structure representing an unsigned 64-bit value:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>typedef union _ULARGE_INTEGER {
+   struct {
+      DWORD LowPart;     // Low  32-bit unsigned value
+      DWORD HighPart;    // High 32-bit unsigned value
+   };
+   ULONGLONG QuadPart;   // Full 64-bit unsigned value
+} ULARGE_INTEGER, *PULARGE_INTEGER; 
+</pre></td></tr></table>
+</p>
+
+<p>Another very useful function for getting a file's size is 
+<I>GetCompressedFileSize</I>:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>DWORD GetCompressedFileSize(
+   PCTSTR pszFileName,
+   PDWORD pdwFileSizeHigh);
+</pre></td></tr></table>
+</p>
+
+<p>This function returns the file's physical size, whereas 
+<I>GetFileSizeEx </I>returns the file's logical size. For example, consider a 100-KB file that has been 
+compressed to occupy 85 KB. Calling <I>GetFileSizeEx 
+</I>returns the logical size of the file&#8212;100 KB&#8212;whereas 
+<I>GetCompressedFileSize </I>returns the actual number 
+of bytes on disk occupied by the file&#8212;85 KB.</p>
+
+<p>Unlike <I>GetFileSizeEx</I>, <I>GetCompressedFileSize 
+</I>takes a filename passed as a string instead of taking a handle for the first parameter. The 
+<I>GetCompressedFileSize </I>function returns the 64-bit size of the file in an unusual way: the low 32 bits 
+of the file's size are the function's return value. The high 
+32 bits of the file's size are placed in the DWORD pointed to by the 
+<I>pdwFileSizeHigh </I>parameter. Here the use of the ULARGE_INTEGER structure comes in handy:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>ULARGE_INTEGER ulFileSize;
+ulFileSize.LowPart = GetCompressedFileSize(&quot;SomeFile.dat&quot;,
+   &amp;ulFileSize.HighPart);
+
+// 64-bit file size is now in ulFileSize.QuadPart
+</pre></td></tr></table>
+</p>
+
+<A NAME="18"><H2>Positioning a File Pointer</H2></A>
+
+<p>Calling <I>CreateFile </I>causes the system to create a file kernel object that 
+manages operations on the file. Inside this kernel object is a file pointer. This file 
+pointer indicates the 64-bit offset within the file where the next synchronous read 
+or write should be performed. Initially, this file pointer is set to 0, so if you 
+call <I>ReadFile</I> immediately after a call to 
+<I>CreateFile</I>, you will start reading the file 
+from offset 0. If you read 10 bytes of the file into memory, the system updates 
+the pointer associated with the file handle so that the next call to 
+<I>ReadFile</I> starts reading at the tenth byte in the file. For example, look at this code, in 
+which the first 10 bytes from the file are read into the buffer, and then the next 10 
+bytes are read into the buffer:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>BYTE pb[10];
+DWORD dwNumBytes;
+HANDLE hfile = CreateFile(&quot;MyFile.dat&quot;, ...); // Pointer set to 0
+ReadFile(hfile, pb, 10, &amp;dwNumBytes, NULL);   // Reads bytes  0 - 9
+ReadFile(hfile, pb, 10, &amp;dwNumBytes, NULL);   // Reads bytes 10 - 19
+
+</pre></td></tr></table>
+</p>
+
+<p>Because each file kernel object has its own file pointer, opening the 
+same file twice gives slightly different results:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>BYTE pb[10];
+DWORD dwNumBytes;
+HANDLE hfile1 = CreateFile(&quot;MyFile.dat&quot;, ...); // Pointer set to 0
+HANDLE hfile2 = CreateFile(&quot;MyFile.dat&quot;, ...); // Pointer set to 0
+ReadFile(hfile1, pb, 10, &amp;dwNumBytes, NULL);   // Reads bytes 0 - 9
+ReadFile(hfile2, pb, 10, &amp;dwNumBytes, NULL);   // Reads bytes 0 - 9
+</pre></td></tr></table>
+</p>
+
+<p>In this example, two different kernel objects manage the same file. 
+Since each kernel object has its own file pointer, manipulating the file with one 
+file object has no effect on the file pointer maintained by the other object, and 
+the first 10 bytes of the file are read twice.</p>
+
+<p>I think one more example will help make all this clear:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>BYTE pb[10];
+DWORD dwNumBytes;
+HANDLE hfile1 = CreateFile(&quot;MyFile.dat&quot;, ...); // Pointer set to 0
+HANDLE hfile2;
+DuplicateHandle(
+   GetCurrentProcess(), hfile1, 
+   GetCurrentProcess(), &amp;hfile2,
+   0, FALSE, DUPLICATE_SAME_ACCESS);
+ReadFile(hfile1, pb, 10, &amp;dwNumBytes, NULL);   // Reads bytes  0 - 9
+ReadFile(hfile2, pb, 10, &amp;dwNumBytes, NULL);   // Reads bytes 10 - 19
+</pre></td></tr></table>
+</p>
+
+<p>In this example, one file kernel object is referenced by two file 
+handles. Regardless of which handle is used to manipulate the file, the one file 
+pointer is updated. As in the first example, different bytes are read each time.</p>
+
+<p>If you need to access a file randomly, you will need to alter the file 
+pointer associated with the file's kernel object. You do this by calling 
+<I>SetFilePointerEx</I>:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>BOOL SetFilePointerEx(
+   HANDLE         hfile,
+   LARGE_INTEGER  liDistanceToMove,
+   PLARGE_INTEGER pliNewFilePointer,
+   DWORD          dwMoveMethod); 
+</pre></td></tr></table>
+</p>
+
+<p>The <I>hfile</I> parameter identifies the file kernel object whose file pointer 
+you wish to change. The <I>liDistanceToMove</I> parameter tells the system by how 
+many bytes you want to move the pointer. The number you specify is added to 
+the current value of the file's pointer, so a negative number has the effect of 
+stepping backward in the file. The last parameter of 
+<I>SetFilePointerEx</I>, <I>dwMoveMethod</I>, tells 
+<I>SetFilePointerEx</I> how to interpret the <I>liDistanceToMove 
+</I>parameter. Table 2-8 describes the three possible values you can pass via 
+<I>dwMoveMethod</I> to specify the starting point for the move.</p>
+
+<p><b>Table 2-8.</b> <i>Values that can be passed for</i> SetFilePointerEx'<i>s</i> dwMoveMethod <i>parameter</i></p>
+
+<p>
+<table cellpadding=5 width="95%">
+<tr> 
+<th>Value  </th>
+<th>Meaning  </th></tr>
+<tr>
+<td valign="top">FILE_BEGIN  </td>
+<td valign="top">The file object's file pointer is set to the value specified 
+by the <I>liDistanceToMove </I>parameter. Note 
+that <I>liDistanceToMove </I>is interpreted as an unsigned 64-bit value.  </td></tr>
+<tr>
+<td valign="top">FILE_CURRENT   </td>
+<td valign="top">The file object's file pointer has the value 
+of <I>liDistanceToMove </I>added to it. Note that 
+<I>liDistanceToMove </I>is interpreted as a signed 64-bit value, allowing you to 
+seek backward in the file.  </td></tr>
+<tr>
+<td valign="top">FILE_END  </td>
+<td valign="top">The file object's file pointer is set to the logical file size 
+plus <I>liDistanceToMove </I>parameter. Note that 
+<I>liDistanceToMove </I>is interpreted as a signed 64-bit value, allowing you to 
+seek backward in the file.  </td></tr>
+</table></p>
+     
+
+<p>After <I>SetFilePointerEx </I>has updated the file object's file pointer, the 
+new value of the file pointer is returned in the LARGE_INTEGER pointed to 
+by the <I>pliNewFilePointer </I>parameter. You can pass NULL for 
+<I>pliNewFilePointer </I>if you're not interested in the new pointer value.</p>
+
+<p>Here are a few facts to note about 
+<I>SetFilePointerEx</I>:</p>
+<UL>
+
+<p><li>Setting a file's pointer beyond the end of the file's current size is 
+legal. Doing so does not actually increase the size of the file on 
+disk unless you write to the file at this position or call 
+<I>SetEndOfFile</I>.</li></p>
+
+<p><li>When using 
+<I>SetFilePointerEx </I>with a file opened with FILE_FLAG_NO_BUFFERING, the file pointer can be positioned only on sector-aligned boundaries. The FileCopy sample application later 
+in this chapter demonstrates how to do this properly.</li></p>
+
+<p><li>Windows does not offer a 
+<I>GetFilePointerEx </I>function, but you can use 
+<I>SetFilePointerEx </I>to get the desired effect:
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>   LARGE_INTEGER liCurrentPosition = { 0 };
+   SetFilePointerEx(hfile, liCurrentPosition, &amp;liCurrentPosition, 
+      FILE_CURRENT);</pre>
+</td></tr></table>
+</p></li></p>
+</UL>
+ 
+<A NAME="19"><H2>Setting the End of a File</H2></A>
+
+<p>Usually, the system takes care of setting the end of a file when the file is 
+closed. However, you might sometimes want to force a file to be smaller or larger. 
+On those occasions, call</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>BOOL SetEndOfFile(HANDLE hfile);
+</pre></td></tr></table>
+</p>
+
+<p>This <I>SetEndOfFile</I> function truncates or extends a file's size to the 
+size indicated by the file object's file pointer. For example, if you wanted to force 
+a file to be 1024 bytes long, you'd use 
+<I>SetEndOfFile</I> this way:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>HANDLE hfile = CreateFile(...);
+LARGE_INTEGER liDistanceToMove;
+liDistanceToMove.QuadPart = 1024;
+SetFilePointerEx(hfile, liDistanceToMove, NULL, FILE_BEGIN);
+SetEndOfFile(hfile);
+CloseHandle(hfile);
+</pre></td></tr></table>
+</p>
+
+<p>Using Windows Explorer to examine the properties of this file reveals 
+that the file is exactly 1024 bytes long.</p>
+
+</BODY>
+</HTML>
+
+
+
+

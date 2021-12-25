@@ -1,0 +1,255 @@
+<html>
+<head>
+<TITLE>Resync Command Dynamic Property</title>
+<link rel="STYLESHEET" type="text/css" href="progado.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor = "#ffffff" text="#000000">
+<A HREF="ch10e.htm">[Previous]</A> <A HREF="ch10g.htm">[Next]</A><P>
+
+<A NAME="312"><H1>Resync Command Dynamic Property</H1></A>
+
+<p>In ADO 2.1, the Cursor Engine introduced a new dynamic property
+called Resync Command to help make updating Recordsets based on joins
+simpler. In order to use this property, you must also set the Unique
+Table dynamic property on the Recordset. In the case of the query
+we've been using, the unique table is the Orders table. To update a
+join, set the Unique Table property to the unique table in your join.
+Then set the Resync Command property to the query you want to use to
+resynchronize the data in your join-based Recordset. Use parameter
+markers (?) in the WHERE clause to denote the key columns in the unique
+table.</p>
+
+<p>A couple of examples will help to clarify how useful this feature
+can be. Let's revisit our customers and orders query and look at
+how you can use Resync Command to simplify modifying or inserting
+records in Recordsets based on joins.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+SELECT Customers.CustomerID AS [Customers.CustomerID],    
+       Customers.CompanyName, Customers.ContactName, Orders.*
+FROM Customers, Orders WHERE Customers.CustomerID = Orders.CustomerID
+</pre>
+</td></tr></table>
+</p>
+
+<p><div class="note"><blockquote><b>NOTE</b><hr>In this code, I aliased the CustomerID field from the
+Customers table, which makes the query string more complex but
+simplifies the ADO code. See the &quot;<a href="ch10g.htm#316">Questions That Should Be Asked
+More Frequently</a>&quot; section at the end of this chapter for a brief
+explanation.</blockquote></div>
+</p>
+
+<p>So, the query string we would use for the Resync Command property
+is</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+SELECT Customers.CustomerID AS [Customers.CustomerID], 
+       Customers.CompanyName, Customers.ContactName, Orders.*
+FROM Customers, Orders WHERE Customers.CustomerID = Orders.CustomerID
+                             AND Orders.OrderID = ?
+</pre>
+</td></tr></table>
+</p>
+
+<p>This is simply the original query with the key column for the unique
+table in a WHERE clause.</p>
+
+<p>We're going to cover two scenarios with our example. The first
+scenario involves changing the customer referenced by the order and
+getting the appropriate customer data into our Recordset. The second
+scenario entails adding a new order and getting the appropriate
+customer data into our Recordset.</p>
+
+<A NAME="313"><H2>Changing the Customer Referenced by an Order</H2></A>
+
+<p>The problem with changing the customer referenced by an order is
+that we want to modify only the data in the Orders table. To do that,
+we can simply modify the value of the CustomerID field (that refers to
+the Orders table) in our Recordset. Submitting that change to the
+database will have the desired effect&#8212;in our database. The fields
+in the Recordset object that correspond to the Customers table will not
+automatically reflect this change.</p>
+
+<p>This is where programmers start to run into problems. They want to
+see the appropriate customer data in the join. If you requery the
+Recordset, you will see the appropriate customer data, but that
+involves reexecuting the entire query, and most programmers don't
+want to incur that expense.</p>
+
+<p>Calling <i>Resync</i> won't help in this case (yet) because the
+ADO Cursor Engine will resynchronize each half of the join separately
+and will resynchronize the fields corresponding to the Customers table
+based on the old ID field it has for that record. So, calling <i>
+Resync</i> at this point would simply refetch the old customer
+information.</p>
+
+<p>The other avenue that programmers pursue is programmatically
+changing the data in the customer side of the join. ADO interprets this
+as a change to the actual customer data, and will build an action query
+to locate that customer and modify that record of the Customers table
+to reflect the changes you make to the Recordset. Generally, this is
+not what you want to do.</p>
+
+<p>Here's where the Resync Command property comes in handy. We can
+use the following code to retrieve the results of a join on the
+Customers and Orders tables and modify the customer that the order
+references. Then we can call the <i>Resync</i> method to resynchronize
+the record in the Recordset based on the query string in the Resync
+Command property. Once we do that, the appropriate customer data
+appears in our Recordset.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+'Create the initial query.
+strSQL = &quot;SELECT Customers.CustomerID AS [Customers.CustomerID], &quot; &amp; _
+         &quot;Customers.CompanyName, Customers.ContactName, Orders.* &quot; &amp; _
+         &quot;FROM Customers, Orders &quot; &amp; _
+         &quot;WHERE Customers.CustomerID = Orders.CustomerID&quot;
+Set rsCustomersAndOrders = New ADODB.Recordset
+rsCustomersAndOrders.CursorLocation = adUseClient
+rsCustomersAndOrders.Open strSQL, cnDatabase, adOpenStatic, _
+                          adLockOptimistic, adCmdText
+
+'Specify values for the Unique Table and Resync Command properties.
+rsCustomersAndOrders.Properties(&quot;Unique Table&quot;) = &quot;Orders&quot;
+strSQL = &quot;SELECT Customers.CustomerID AS [Customers.CustomerID], &quot; &amp; _
+         &quot;Customers.CompanyName, Customers.ContactName, Orders.* &quot; &amp; _
+         &quot;FROM Customers, Orders &quot; &amp; _
+         &quot;WHERE Customers.CustomerID = Orders.CustomerID &quot; &amp; _
+         &quot;AND Orders.OrderID = ?&quot;
+rsCustomersAndOrders.Properties(&quot;Resync Command&quot;) = strSQL
+
+'Update the CustomerID field that corresponds to the Orders table.
+rsCustomersAndOrders!CustomerID = &quot;ANTON&quot;
+rsCustomersAndOrders.Update
+'Resynchronize the record to retrieve the proper data from the 
+' Customers table.
+rsCustomersAndOrders.Resync adResyncCurrent
+</pre>
+</td></tr></table>
+</p>
+
+<A NAME="314"><H2>Generating a New Order and Displaying the Correct Customer Data</H2></A>
+
+<p>Similar to updating records in a Recordset that is based on a join,
+adding new records to a Recordset based on a join can pose a problem.
+In this scenario, we want to create a new order, supply a value for the
+CustomerID field, and ultimately see the appropriate customer data in
+our Recordset.</p>
+
+<p><div class="note"><blockquote><b>NOTE</b><hr>Using the Northwind database for SQL Server or Access
+adds a complexity. The OrderID field is an auto-incrementing field
+generated by the database system. We'll talk more about working
+with this type of field in <A HREF="ch11a.htm">Chapter 11</A>. For now, we're going to
+supply that OrderID value programmatically as if the Orders table did
+not use an auto-incrementing field.</blockquote></div>
+</p>
+
+<p>If we simply supply the order information and leave the fields that
+correspond to the Customers table blank, we successfully create the new
+order but we don't get the customer data we're looking for.
+Calling <i>Requery</i> might not be desirable, since it reexecutes the
+entire query. Without setting the Resync Command property, the <i>
+Resync</i> method will actually generate an error since the field that
+corresponds to the CustomerID field and references the Customers table
+is still empty.</p>
+
+<p>Once again, the Resync Command property comes to our rescue. We can
+successfully retrieve the desired customer data by setting the Unique
+Table and Resync Command properties as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+'Create the initial query.
+strSQL = &quot;SELECT Customers.CustomerID AS [Customers.CustomerID], &quot; &amp; _
+         &quot;Customers.CompanyName, Customers.ContactName, Orders.* &quot; &amp; _
+         &quot;FROM Customers, Orders &quot; &amp; _
+         &quot;WHERE Customers.CustomerID = Orders.CustomerID&quot;
+Set rsCustomersAndOrders = New ADODB.Recordset
+rsCustomersAndOrders.CursorLocation = adUseClient
+rsCustomersAndOrders.Open strSQL, cnDatabase, adOpenStatic, _
+                          adLockOptimistic, adCmdText
+
+'Specify values for the Unique Table and Resync Command properties.
+rsCustomersAndOrders.Properties(&quot;Unique Table&quot;) = &quot;Orders&quot;
+strSQL = &quot;SELECT Customers.CustomerID AS [Customers.CustomerID], &quot; &amp; _
+         &quot;Customers.CompanyName, Customers.ContactName, Orders.* &quot; &amp; _
+         &quot;FROM Customers, Orders &quot; &amp; _
+         &quot;WHERE Customers.CustomerID = Orders.CustomerID &quot; &amp; _
+         &quot;AND Orders.OrderID = ?&quot;
+rsCustomersAndOrders.Properties(&quot;Resync Command&quot;) = strSQL
+
+'Add a new row to the Recordset and populate the fields 
+' that correspond to the Orders table.
+rsCustomersAndOrders.AddNew
+rsCustomersAndOrders!OrderID = 12345
+rsCustomersAndOrders!EmployeeID = 1
+rsCustomersAndOrders!OrderDate = Date
+rsCustomersAndOrders!ShipVia = 1
+rsCustomersAndOrders!CustomerID = &quot;ANTON&quot;
+rsCustomersAndOrders.Update
+'Resynchronize the record to retrieve the proper data from the
+' Customers table.
+rsCustomersAndOrders.Resync adResyncCurrent
+</pre>
+</td></tr></table>
+</p>
+
+<A NAME="315"><H2>Compound Keys</H2></A>
+
+<p>In the previous examples, the unique table contains a primary key
+based on a single field. What if your table uses a compound primary key
+and you want to use the Resync Command property?</p>
+<p>
+Let's say that the Orders table has a compound primary key that
+consists of two fields: ID1 and ID2. In that case, our Resync Command
+property looks like this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+SELECT Customers.CustomerID AS [Customers.CustomerID], 
+       Customers.CompanyName, Customers.ContactName, Orders.*
+FROM Customers, Orders WHERE Customers.CustomerID = Orders.CustomerID
+                       AND Orders.ID1 = ? AND Orders.ID2 = ?
+</pre>
+</td></tr></table>
+</p>
+
+<p>Notice that there's no difference in the parameter markers. You
+might need to play with the order of the key fields in your initial
+query string and your Resync Command query. My advice is to make sure
+the key fields appear in the same order in the Recordset as in the
+WHERE clause of the query in the Resync Command property.</p>
+<p>
+I'm extremely impressed with how the ADO development team
+implemented the Resync Command and Unique Table properties to make
+updating Recordsets based on joins simpler. However, these properties
+are best used in live (nondisconnected) Recordsets that use simple
+optimistic locking. These properties aren't very helpful for
+disconnected Recordsets or for Recordsets that utilize the ADO Cursor
+Engine's batch updating features.</p>
+<p>
+Comparatively speaking, the ADO Cursor Engine does a great job of
+handling joins. If you use the same join query against a SQL Server
+database and use a server-side cursor, you'll receive an error if
+you try to update any field that corresponds to a field in the
+Customers table. SQL Server marks those fields as read-only. The Resync
+Command property can make updating Recordsets based on join queries
+possible in some cases, but I prefer opening such Recordsets as
+read-only.</p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

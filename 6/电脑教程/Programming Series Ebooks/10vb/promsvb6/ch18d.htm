@@ -1,0 +1,514 @@
+<HTML>
+<HEAD>
+<TITLE>OLE DB Simple Providers</TITLE>
+<LINK REL=STYLESHEET HREF="Library.css" TYPE="text/css">
+
+
+</HEAD>
+<BODY BGCOLOR="#FFFFFF" TEXT="#000000">
+<SCRIPT LANGUAGE="JavaScript">
+<!--
+
+function fullSize(sURL){
+	window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+
+function LibraryHeaderNav(sBackward, sForward, sImgLeftOff, sImgLeftOn, sImgRightOff, sImgRightOn, iH, iW, sImgLeftStyle, sImgRightStyle, sImgRuleStyle, sRuleColor, sRuleSize){
+	var tableStr;
+	//validate questionable args for defs
+	tableStr = "<TABLE BORDER=0 CELLPADDING=0 CELLSPACING=0 border=0 width=100%>";
+	tableStr += "<TR VALIGN=top ALIGN=right>";
+
+	tableStr += "<TD align=right class=" + sImgRuleStyle + ">&nbsp;</TD>";	
+	
+	tableStr += "<TD width=34 align=right class=" + sImgLeftStyle + ">";
+	tableStr += "<A href='" + sBackward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgLeftOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgLeftOff + '\'\"';
+	tableStr += " SRC='" + sImgLeftOff + "' vspace=0 hspace=0></a></TD>";
+	
+	tableStr += "<TD width=34 align=left class=" + sImgRightStyle + ">";
+	tableStr += "<A href='" + sForward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgRightOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgRightOff + '\'\"';
+	tableStr += " SRC='" + sImgRightOff + "' vspace=0 hspace=0></a></TD></TR>";
+
+	tableStr += "<TR VALIGN=top>";
+	tableStr += "<TD height=3 align=center colspan=3 class=" + sImgRuleStyle + ">";
+	tableStr += "<HR color=" + sRuleColor + " size=" + sRuleSize + "></TD></TR></TABLE>";
+	//alert(tableStr);
+	document.write(tableStr);
+}
+
+ 																						     //purple is: #aa22aa   orange is: #ff9900
+LibraryHeaderNav("ch18c.htm", "ch18e.htm", "images/unit_o_a1.gif", "images/unit_o_a2.gif", "images/unit_o_b1.gif", "images/unit_o_b2.gif", 18, 34, "unit01", "unit02", "headerrule", "#ff9900", "2");
+//--></SCRIPT>
+
+
+<A NAME="897"><h1>OLE DB Simple Providers</h1></A>
+<p>
+<img src="images/new.jpg" width=102 height=87 border=0>
+</p>
+
+<p>Visual Basic 6 provides you with the capability of building OLE DB Simple Providers&#8212;that is, components that can be registered in the system and that can be used by standard data sources to connect to data in a proprietary format. This capability can be useful in countless situations. For example, during the porting of a legacy application from MS-DOS to Microsoft Windows, you often need to continue to read data in the old format. Thanks to a custom OLE DB Simple Provider, you can access the old data from the new program using standard syntax and you can switch to a standard (and more efficient) OLE DB provider when the porting of the code is complete and you're ready to convert the database data to SQL Server or another major database engine for which a standard OLE DB provider exists.</p>
+
+<p>Before you get too enthusiastic, keep in mind that Visual Basic doesn't allow you to write full-fledged OLE DB providers such as those that Microsoft has created for the Microsoft Jet Database engine, SQL Server, or Oracle. An OLE DB Simple Provider doesn't support transactions, Command objects, and batch updates, just to mention a few of its limitations. Another problem with these providers is that they don't expose information about the structure of the data: They can return the name of a column, but they don't expose a column's data type or maximum length. OLE DB Simple Providers are especially good at exposing table data that can be stored in an array in memory. These restrictions don't keep you from doing interesting things with OLE DB Simple Providers, however. For example, you can create a provider that accesses data encrypted with a proprietary algorithm or a provider that loads data from Microsoft Excel or Microsoft Outlook programs, or from any other program that you can control through Automation.</p>
+
+<p><div class="note"><blockquote><b>NOTE</b><hr>
+From the perspective of an OLE DB provider, <I>data consumers </I>are the components that we've called <I>data sources </I>in the earlier parts of this chapter. In other words, the clients of an OLE DB provider are the objects that a Visual Basic program perceives as data sources, such as the ADO Data control or the DataEnvironment object.
+</blockquote></div></p>
+
+<p>To illustrate the concepts underlying the construction of an OLE DB Simple Provider, I built a sample provider that connects to a semicolon-delimited text file. It expects that the first line of the file contains all the field names. When the provider is invoked, it opens the data file and loads it into an array in memory. This example is similar to the one found in the Visual Basic documentation, but my solution is more concise and more efficient because it uses an array of arrays to store individual records. (See <a href="ch04a.htm">Chapter 4</a> for a complete description of arrays of arrays.) The code is highly generic, and you can recycle most of the routines in other types of providers. You can find the full code on the companion CD.</p>
+
+<A NAME="898"><h2>The Structure of an OLE DB Simple Provider</h2></A>
+<p>The three pieces that make up an OLE DB Simple Provider are the Msdaosp.dll library, which is provided with Visual Basic 6 (more precisely, it belongs to the OLE DB SDK), and two classes that you write in Visual Basic: the OLE DB Simple Provider class and the data source class.</p>
+
+<p>Msdaosp.dll is what data consumers actually see. Its primary job is to add all the functionality of a full-fledged OLE DB provider that's missing in the OLE DB Simple Provider class that you write in Visual Basic. When the DLL is invoked by a data consumer, it instantiates the data source class exposed by your project and calls one of its methods. The data source class returns the DLL an instance of the OLE DB Simple Provider class; from then on, the DLL communicates with the OLE DB Simple Provider through the OLEDBSimpleProvider interface.</p>
+
+<p>To implement the sample OLE DB Simple Provider, you start by creating an ActiveX DLL project and assigning it the name TextOLEDBProvider. Add two type libraries to the References dialog box: the Microsoft Data Source Interface library (Msdatsrc.tlb) and the Microsoft OLE DB Simple Provider 1.5 Library (Simpdata.tbl). You can optionally add a reference to the OLE DB Errors Type Library (Msdaer.dll), which includes all the symbolic constants for error codes.</p>
+
+<p>When all the references are in place, you can add two Public classes to the project. The first class module&#8212;named TextOSP&#8212;will implement the OLE DB Simple Provider; the second class module&#8212;named TextDataSource&#8212;will implement the Data Source object. Let's see how to build these two classes.</p>
+
+<A NAME="899"><h2>The OLE DB Simple Provider Class</h2></A>
+<p>The most complicated piece of code in the sample OLE DB Simple Provider project is TextOSP, a PublicNotCreatable class module that implements all the functions that the Msdaosp.dll calls when the consumer reads or writes data. Because the communication between the class and the DLL occurs through the OLEDBSimpleProvider interface, the class must contain an <I>Implement </I>keyword in its declaration section:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>Implements OLEDBSimpleProvider
+
+Const DELIMITER = &quot;;&quot;        ' Change this at will.
+Const E_FAIL = &amp;H80004005    ' A typical error code for OLE DB providers
+
+Dim DataArray() As Variant   ' An array of arrays
+Dim RowCount As Long         ' Number of rows (records)
+Dim ColCount As Long         ' Number of columns (fields)
+Dim IsDirty As Boolean       ' True if data has changed
+Dim m_FileName As String     ' The path of the data file
+
+Dim Listeners As New Collection
+Dim Listener As OLEDBSimpleProviderListener
+</pre>
+</td></tr></table></p>
+
+<p><I>DataArray </I>is an array of Variants that will store the data. Each element corresponds to a record and contains a string array that holds the values of all the fields. The element <I>DataArray(0) </I>holds the array with the field names. The <I>RowCount </I>and <I>ColCount </I>module-level variables hold the number of records and the number of fields, respectively. Whenever a field is written to, the <I>IsDirty</I> flag is set to True, so the class knows that it has to update the data file before terminating. The <I>LoadData </I>routine loads the data file in memory, and the contents of the file are assigned to the <I>DataArray </I>variable:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>Sub LoadData(FileName As String)
+    Dim fnum As Integer, FileText As String
+    Dim records() As String, fields() As String
+    Dim row As Long, col As Long
+
+    ' Read the file in memory.
+    m_FileName = FileName       ' Remember the file name for later.
+    fnum = FreeFile
+    On Error GoTo ErrorHandler
+    Open m_FileName For Input Lock Read Write As #fnum
+    FileText = Input(LOF(fnum), #fnum)
+    Close #fnum
+    
+    ' Split the file into records and fields.
+    records = Split(FileText, vbCrLf)
+    RowCount = UBound(records)
+    ColCount = -1
+    ReDim DataArray(0 To RowCount) As Variant
+    
+    For row = 0 To RowCount
+        fields = Split(records(row), DELIMITER)
+        DataArray(row) = fields
+    Next
+    ' The first record sets ColCount.
+    ColCount = UBound(DataArray(0)) + 1
+    Exit Sub
+    
+ErrorHandler:
+    Err.Raise E_FAIL
+End Sub
+</pre>
+</td></tr></table></p>
+
+<p>The <I>SaveData </I>routine writes data back to the text file. This routine is automatically invoked from within the <I>Class_Terminate </I>event procedure if the <I>IsDirty </I>variable is True:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>Sub SaveData()
+    Dim fnum As Integer, FileText As String
+    Dim records() As String, fields() As String
+    Dim row As Long, col As Long
+    
+    For row = 0 To UBound(DataArray)
+        FileText = FileText &amp; Join(DataArray(row), DELIMITER) &amp; vbCrLf
+    Next
+    ' Drop the last CR-LF character pair.
+    FileText = Left$(FileText, Len(FileText) - 2)
+    ' Write the file.
+    fnum = FreeFile
+    On Error GoTo ErrorHandler
+    Open m_FileName For Output Lock Read Write As #fnum
+    Print #fnum, FileText;
+    Close #fnum
+    IsDirty = False
+    Exit Sub
+ErrorHandler:
+    Err.Raise E_FAIL
+End Sub
+</pre>
+</td></tr></table></p>
+
+<p>The rest of the class module implements the OLEDBSimpleProvider interface, which includes 14 functions. Keep in mind that after the <I>LoadData </I>routine has loaded the data into <I>DataArray</I>, you manipulate data exclusively through this array. Therefore, you can prepare a number of providers by simply modifying the code in the <I>LoadData </I>and <I>SaveData </I>procedures. The first two methods of the OLEDBSimpleProvider interface return the number of rows and columns in the data source:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>' Return the exact number of rows.
+Private Function OLEDBSimpleProvider_getRowCount() As Long
+    OLEDBSimpleProvider_getRowCount = RowCount
+End Function
+
+' Return the number of columns.
+Private Function OLEDBSimpleProvider_getColumnCount() As Long
+    OLEDBSimpleProvider_getColumnCount = ColCount
+End Function
+</pre>
+</td></tr></table></p>
+
+<p>The <I>getLocale </I>method returns information about the locale; if the provider doesn't support international settings, you can return an empty string:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>' Return a string that determines the system's international settings
+' or an empty string if the provider doesn't support different locales.
+' (This one doesn't.)
+Private Function OLEDBSimpleProvider_getLocale() As String
+    OLEDBSimpleProvider_getLocale = &quot;&quot;
+End Function
+</pre>
+</td></tr></table></p>
+
+<p>Three methods of the OLEDBSimpleProvider interface are useful when your provider supports asynchronous data transfers. In this example, we return False in the <I>isAsync </I>method, so we don't need to worry about the other two methods, <I>getEstimatedRows</I> and <I>stopTransfer</I>, because they're never called. (But you must provide them anyway because of the <I>Implements </I>keyword.)</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>' Return a nonzero value if the rowset is populated asynchronously.
+Private Function OLEDBSimpleProvider_isAsync() As Long
+    OLEDBSimpleProvider_isAsync = False
+End Function
+
+' Return the estimated number of rows or -1 if unknown.
+' This method is used in asynchronous data transfers.
+Private Function OLEDBSimpleProvider_getEstimatedRows() As Long
+    ' The following statement is for demonstration purposes only because
+    ' this method will never be called in this provider.
+    OLEDBSimpleProvider_getEstimatedRows = RowCount
+End Function
+
+' Stop asynchronous transfer.
+Private Sub OLEDBSimpleProvider_stopTransfer()
+    ' Do nothing in this provider.
+End Sub
+</pre>
+</td></tr></table></p>
+
+<p>The following two methods, <I>addOLEDBSimpleProviderListener</I> and <I>removeOLEDBSimpleProviderListener</I>, are very important. They're called whenever a new consumer binds to this instance of the Provider class. The provider must keep track of all the consumers that are listening to this instance because whenever data is added, removed, or changed the provider must send a notification to all of these consumers. The TextOSP sample class records all the consumers using the Listeners module-level collection variable:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>' Add a Listener object to the Listeners collection.
+Private Sub OLEDBSimpleProvider_addOLEDBSimpleProviderListener( _
+    ByVal pospIListener As MSDAOSP.OLEDBSimpleProviderListener)
+    If Not (pospIListener Is Nothing) Then Listeners.Add pospIListener
+End Sub
+
+' Remove a Listener from the Listeners collection.
+Private Sub OLEDBSimpleProvider_removeOLEDBSimpleProviderListener( _
+    ByVal pospIListener As MSDAOSP.OLEDBSimpleProviderListener)
+    Dim i As Long
+    For i = 1 To Listeners.Count
+        If Listeners(i) Is pospIListener Then
+            Listeners.Remove i
+            Exit For
+        End If
+    Next
+End Sub
+</pre>
+</td></tr></table></p>
+
+<p>The <I>getRWStatus </I>method is invoked when the consumer requests information about the read/write status of the data source. When this method is called with <I>iRow</I> = -1, you must return the status of the column whose number is passed in <I>iColumn</I>; when the <I>iColumn </I>argument is -1, you must return the status of the record whose number is passed in <I>iRow</I>. When both arguments are positive, you must return the status of a field in a given row. In all cases, you can return one of the following values: OSPRW_READWRITE (data can be read and modified), OSPRW_READONLY (data can only be read), or OSPRW_MIXED (undetermined status). In this simple example, all fields are writable, so you don't have to test <I>iRow </I>and <I>iCol</I>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>' Return the read/write status of a value.
+Private Function OLEDBSimpleProvider_getRWStatus(ByVal iRow As Long, _
+    ByVal iColumn As Long) As MSDAOSP.OSPRW
+    ' Make all fields read/write.
+    OLEDBSimpleProvider_getRWStatus = OSPRW_READWRITE
+End Function
+</pre>
+</td></tr></table></p>
+
+<p>The <I>getVariant </I>method returns an existing value. This method receives a <I>format </I>parameter, which indicates the format in which the value should be returned to the consumer. Possible values are OSPFORMAT_RAW (the default; data isn't formatted), OSPFORMAT_FORMATTED (data is a string contained in a Variant), or OSPFORMAT_HTML (data is an HTML string). In this sample provider, the <I>format </I>parameter is ignored and data is returned as it's stored in the <I>DataArray </I>array:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>' Read a value at given row and column coordinates.
+Private Function OLEDBSimpleProvider_getVariant(ByVal iRow As Long, _
+    ByVal iColumn As Long, ByVal format As MSDAOSP.OSPFORMAT) As Variant
+    ' Use (iColumn _ 1) because the iColumn parameter is 1-based
+    ' whereas values are stored in 0-based string arrays.
+    OLEDBSimpleProvider_getVariant = DataArray(iRow)(iColumn - 1)
+End Function
+</pre>
+</td></tr></table></p>
+
+<p>In the <I>setVariant </I>method, you're expected to write the value in the <I>Var</I> parameter to the private array. Before assigning the value, you must notify all listeners that data is about to change (prenotification). Similarly, after you make the assignment, you must inform all listeners that data has actually changed (postnotification). You do both the notifications through methods of the OLEDBSimpleProvider object stored in the Listeners collection:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>' Write a value at given row/column coordinates.
+Private Sub OLEDBSimpleProvider_setVariant(ByVal iRow As Long, _
+    ByVal iColumn As Long, ByVal format As MSDAOSP.OSPFORMAT, _
+    ByVal Var As Variant)
+    ' Prenotification
+    For Each Listener In Listeners
+        Listener.aboutToChangeCell iRow, iColumn
+    Next
+    DataArray(iRow)(iColumn - 1) = Var
+    ' Postnotification
+    For Each Listener In Listeners
+        Listener.cellChanged iRow, iColumn
+    Next
+    IsDirty = True
+End Sub
+</pre>
+</td></tr></table></p>
+
+<p>The <I>insertRows </I>and <I>deleteRows </I>methods are called when a consumer adds a new record or deletes an existing record, respectively. Thanks to the array of arrays structure, performing these operations is straightforward. In both cases, you must send a prenotification and a postnotification to all the consumers that are listening to this provider:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>' Insert one or more rows.
+Private Function OLEDBSimpleProvider_insertRows(ByVal iRow As Long, _
+    ByVal cRows As Long) As Long
+    Dim row As Long
+    ' Validate iRow - (RowCount + 1), and account for AddNew commands.
+    If iRow &lt; 1 Or iRow &gt; (RowCount + 1) Then Err.Raise E_FAIL
+    ReDim emptyArray(0 To ColCount) As String
+    ReDim Preserve DataArray(RowCount + cRows) As Variant
+
+    ' Prenotification
+    For Each Listener In Listeners
+        Listener.aboutToInsertRows iRow, cRows
+    Next
+    ' Make room in the array.
+    If iRow &lt;= RowCount Then
+        For row = RowCount To iRow Step -1
+            DataArray(row + cRows) = DataArray(row)
+            DataArray(row) = emptyArray
+        Next
+    Else
+        For row = RowCount + 1 To RowCount + cRows
+            DataArray(row) = emptyArray
+        Next
+    End If
+    RowCount = RowCount + cRows
+
+    ' Postnotification
+    For Each Listener In Listeners
+        Listener.insertedRows iRow, cRows
+    Next
+    ' Return the number of inserted rows.
+    OLEDBSimpleProvider_insertRows = cRows
+    IsDirty = True
+End Function
+
+' Delete one or more rows.
+Private Function OLEDBSimpleProvider_deleteRows(ByVal iRow As Long, _
+    ByVal cRows As Long) As Long
+    Dim row As Long
+    ' Validate iRow.
+    If iRow &lt; 1 Or iRow &gt; RowCount Then Err.Raise E_FAIL
+    ' Set cRows to the actual number, which can be deleted.
+    If iRow + cRows &gt; RowCount + 1 Then cRows = RowCount - iRow + 1
+
+    ' Prenotification
+    For Each Listener In Listeners
+        Listener.aboutToDeleteRows iRow, cRows
+    Next
+    ' Shrink the array.
+    For row = iRow To RowCount - cRows
+        DataArray(row) = DataArray(row + cRows)
+    Next
+    RowCount = RowCount - cRows
+    ReDim Preserve DataArray(RowCount) As Variant
+
+    ' Postnotification
+    For Each Listener In Listeners
+        Listener.deletedRows iRow, cRows
+    Next
+    ' Return the number of deleted rows.
+    OLEDBSimpleProvider_deleteRows = cRows
+    IsDirty = True 
+End Function
+</pre>
+</td></tr></table></p>
+
+<p>The last method, <I>Find</I>, is invoked when the consumer searches for a value. It receives the searched value in the <I>val </I>parameter, the starting row number in the <I>iStartRow </I>parameter, and the number of the column in which the value must be searched in <I>iColumn</I>. <I>Find</I> is the most complex method of the OLEDBSimpleProvider interface because it has to account for several flags and search options. The <I>findFlags </I>parameter is bit-coded: 1-OSPFIND_UP means that the search goes from the end to the beginning of the data file, and 2-OSPFIND_CASESENSITIVE means that the search is case sensitive. The <I>compType </I>parameter indicates which condition must be met: 1-OSPCOMP_EQ (equal), 2-OSPCOMP_LT (less than), 3OSPCOMP_LE (less than or equal to), 4-OSPCOMP_GE (greater than or equal to), 5-OSPCOMP_GT (greater than), and 6-OSPCOMP_NE (not equal). The <I>Find </I>method must return the row number in which the match has been found, or -1 if the search failed. The following routine accounts for all these different settings:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>Private Function OLEDBSimpleProvider_Find(ByVal iRowStart As Long, _
+    ByVal iColumn As Long, ByVal val As Variant, ByVal findFlags As _
+    MSDAOSP.OSPFIND, ByVal compType As MSDAOSP.OSPCOMP) As Long
+    Dim RowStop As Long, RowStep As Long
+    Dim CaseSens As Long, StringComp As Boolean
+    Dim result As Long, compResult As Integer, row As Long
+    
+    ' Determine the end row and the step value for the loop.
+    If findFlags And OSPFIND_UP Then
+        RowStop = 1: RowStep = -1
+    Else
+        RowStop = RowCount: RowStep = 1
+    End If
+    ' Determine the case-sensitive flag.
+    If findFlags And OSPFIND_CASESENSITIVE Then
+        CaseSens = vbBinaryCompare
+    Else
+        CaseSens = vbTextCompare
+    End If
+    ' True if we're dealing with strings
+    StringComp = (VarType(val) = vbString)
+    ' -1 means not found.
+    result = -1
+    ' iColumn is 1-based, but internal data is 0-based.
+    iColumn = iColumn - 1
+    
+    For row = iRowStart To RowStop Step RowStep
+        If StringComp Then
+            ' We're comparing strings.
+            compResult = StrComp(DataArray(row)(iColumn), val, CaseSens)
+        Else
+            ' We're comparing numbers or dates.
+            compResult = Sgn(DataArray(row)(iColumn) - val)
+        End If
+        Select Case compType
+            Case OSPCOMP_DEFAULT, OSPCOMP_EQ
+                If compResult = 0 Then result = row
+            Case OSPCOMP_GE
+                If compResult &gt;= 0 Then result = row
+            Case OSPCOMP_GT
+                If compResult &gt; 0 Then result = row
+            Case OSPCOMP_LE
+                If compResult &lt;= 0 Then result = row
+            Case OSPCOMP_LT
+                If compResult &lt; 0 Then result = row
+            Case OSPCOMP_NE
+                If compResult &lt;&gt; 0 Then result = row
+        End Select
+        If result &lt;&gt; -1 Then Exit For
+    Next
+    ' Return the row found or -1.
+    OLEDBSimpleProvider_find = result
+End Function
+</pre>
+</td></tr></table></p>
+
+<A NAME="900"><h2>The Data Source Class</h2></A>
+<p>The OLE DB Simple Provider project contains a Public MultiUse class named TextDataSource. This class is the component that Msdaosp.dll instantiates when a consumer uses your provider. TextDataSource must expose two Public methods: <I>msDataSourceObject </I>and <I>addDataSourceListener</I>. The <I>msDataSourceObject</I> method creates a new instance of the Provider class, asks it to load a data file, and returns the instance to the caller. From that point on, Msdaosp.dll will communicate directly with the TextOSP Provider class. In this simple implementation, you can simply return zero in the <I>addDataSourceListener</I> method:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>Const E_FAIL = &amp;H80004005
+
+' The DataMember passed to this function is the path of the text file.
+Function msDataSourceObject(DataMember As String) As OLEDBSimpleProvider
+    ' Raise an error if the member is invalid.
+    If DataMember = &quot;&quot; Then Err.Raise E_FAIL
+    ' Create an instance of the OLE DB Simple Provider component,
+    ' load a data file, and return the instance to the caller.    
+    Dim TextOSP As New TextOSP
+    TextOSP.LoadData DataMember
+    Set msDataSourceObject = TextOSP
+End Function
+
+Function addDataSourceListener(ByVal pospIListener As DataSourceListener) _
+    As Long
+    addDataSourceListener = 0
+End Function
+</pre>
+</td></tr></table></p>
+
+<p>Now that you've seen all the relevant properties and methods, you're finally ready to compile the DLL. Your job isn't finished, however, because now you must register your DLL as an OLE DB Simple Provider.</p>
+
+<A NAME="901"><h2>The Registration Step</h2></A>
+<p>To register your OLE DB Simple Provider, you must add a few entries to the Registry. Usually, you create a REG file and include it in the installation procedure of your provider so that you can easily register the provider on any machine by double-clicking it or by running the Regedit utility. Here's the contents of the TextOSP.Reg file that registers the sample provider that comes on the companion CD:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>REGEDIT4
+[HKEY_CLASSES_ROOT\TextOSP_VB]
+@=&quot;Semicolon-delimited text files&quot;
+[HKEY_CLASSES_ROOT\TextOSP_VB\CLSID]
+@=&quot;{CDC6BD0B-98FC-11D2-BAC5-0080C8F21830}&quot;
+[HKEY_CLASSES_ROOT\CLSID\{CDC6BD0B-98FC-11D2-BAC5-0080C8F21830}]
+@=&quot;TextOSP_VB&quot;
+[HKEY_CLASSES_ROOT\CLSID\{CDC6BD0B-98FC-11D2-BAC5-0080C8F21830}\InprocServer32]
+@=&quot;c:\\Program Files\\Common Files\\System\\OLE DB\\MSDAOSP.DLL&quot;
+&quot;ThreadingModel&quot;=&quot;Both&quot;
+[HKEY_CLASSES_ROOT\CLSID\{CDC6BD0B-98FC-11D2-BAC5-0080C8F21830}\ProgID]
+@=&quot;TextOSP_VB.1&quot;
+[HKEY_CLASSES_ROOT\CLSID\{CDC6BD0B-98FC-11D2-BAC5-
+0080C8F21830}\VersionIndependentProgID]
+@=&quot;TextOSP_VB&quot;
+[HKEY_CLASSES_ROOT\CLSID\{CDC6BD0B-98FC-11D2-BAC5-
+0080C8F21830}\OLE DB Provider]
+@=&quot;Semicolon-delimited text files&quot;
+[HKEY_CLASSES_ROOT\CLSID\{CDC6BD0B-98FC-11D2-BAC5-
+0080C8F21830}\OSP Data Object]
+@=&quot;TextOLEDBProvider.TextDataSource&quot;
+</pre>
+</td></tr></table></p>
+
+<p>Each OLE DB Simple Provider has two entries in the Registry. The entry  HKEY_CLASSES_ROOT\<I>&lt;YourProviderName&gt;</I> contains the description of the provider (the string that appears when a programmer asks for all the OLE DB providers registered on the system) and the provider's CLSID. Don't confuse this CLSID with the CLSID of the DLL that we just created&#8212;this CLSID serves solely to uniquely identify the provider. You have to create this CLSID yourself&#8212;for example, by using the Guidgen.exe utility provided with Microsoft Visual Studio, as shown in Figure 18-5.</p>
+
+<p>
+<img src="images/F18ph05.GIF" width=375 height=339 border=0>
+<p>
+<!--caption--><B>Figure 18-5.</B> <I>The Guidgen.exe utility provides new GUIDs in different formats.</i><!--/caption-->
+
+
+<p>The HKEY_CLASSES_ROOT\CLSID\&lt;<I>YourProviderClsid</I>&gt; entry gathers all the other information about the provider, including the path of the Msdaosp.dll file and the complete name of the data source class that must be instantiated when a consumer connects to the provider. The latter value is the <I>projectname.classname </I>name of the data source class that you've included in your Visual Basic project.</p>
+
+<p>To help you in creating your customized Registry files, I prepared a template REG file, named Model_osp.reg. You can reuse this template for all the OLE DB Simple Providers you create by following this procedure:</p>
+
+<ol>
+<p><li>Run the Guidgen.exe utility, select the Registry Format option, click on the Copy button, and then close the utility.</li></p>
+
+<p><li>Load the Model_osp.reg file into a word processor or an editor. (If you're running Windows 95 or Windows 98, Notepad isn't a good choice because it lacks search-and-replace capabilities.) Then replace all the occurrences of &quot;$ClsId$&quot; with the CLSID (which you stored in the Clipboard at the end of step 1).</li></p>
+
+<p><li>Search for the two occurrences of the &quot;$Description$&quot; string, and replace them with a textual description of your provider&#8212;for example, &quot;Semicolon-delimiter Text Files&quot;; this is the string that identifies your provider in the list of all the OLE DB providers installed on the machine.</li></p>
+
+<p><li>Find and replace all the occurrences of the &quot;$ProviderName$&quot; string with the name of your provider; this name is a string that identifies your provider in the Registry and is used as the <I>Provider</I> attribute in the <I>ConnectionString </I>property of an ADO Connection object. For example, the name of the sample provider that you'll find on the companion CD is &quot;TextOSP_VB&quot;.</li></p>
+
+<p><li>Search for the only occurrence of the &quot;$DataSource$&quot; string, and replace it with the complete name of the data source class in the OLE DB provider project; in the sample project, this string is &quot;TextOLEDBProvider.TextDataSource&quot;.</li></p>
+
+<p><li>Ensure that the Msdaosp.dll is located in the C:\Program Files\Common Files\System\OLE DB; if it's not, modify the value of the InprocServer32 key in the REG file to point to the correct location of that file.</li></p>
+
+<p><li>Save the file with a different name so that you don't modify the template REG file.</li></p>
+
+<p><li>Double-click on the REG file to add all the necessary keys to the Registry.</li></p>
+</ol>
+
+<A NAME="902"><h2>Testing the OLE DB Simple Provider</h2></A>
+<p>You can use the OLE DB Simple Provider that you just built as you would use any other OLE DB provider. For example, you can open a Recordset and loop through its records using the following code:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>Dim cn As New ADODB.Connection, rs As New ADODB.Recordset
+
+cn.Open &quot;Provider=TextOSP_VB;Data Source=TextOLEDBProvider.TextDataSource&quot;
+rs.Open &quot;C:\Employees.Txt&quot;, cn, adOpenStatic, adLockOptimistic
+rs.MoveFirst
+Do Until rs.EOF
+    Print rs(&quot;FirstName&quot;) &amp; &quot; &quot; &amp; rs(&quot;LastName&quot;)
+    rs.MoveNext
+Loop
+rs.Close
+cn.Close
+</pre>
+</td></tr></table></p>
+
+<p>You can't test the provider inside the Visual Basic IDE, and you have to compile it to a stand-alone ActiveX component. This means that you have to forgo all the debug tools that work only in the environment and can rely only on <I>MsgBox </I>and <I>App.LogEvent </I>statements.</p>
+
+</BODY>
+</HTML>
+
+
+
+
+

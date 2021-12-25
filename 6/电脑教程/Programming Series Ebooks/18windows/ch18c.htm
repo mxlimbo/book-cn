@@ -1,0 +1,2872 @@
+<HTML>
+<HEAD>
+	<LINK REL=StyleSheet HREF="petzoldi.css" TYPE="text/css">
+<title>Enhanced Metafiles</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="665"><h1>Enhanced Metafiles</h1></A><P>The &quot;enhanced metafile&quot; format was introduced in the 32-bit versions of Windows. It 
+involves a bunch of new function calls, a couple of new data structures, a new 
+clipboard format, and a new filename extension of .EMF.<P>
+The most important enhancement is that the new metafile format includes 
+more extensive header information accessible through a function call. This information aids 
+in helping an application display the metafile image.
+<P>Some of the enhanced metafile functions allow you to translate back and forth 
+between the enhanced metafile (EMF) format and the old metafile format, which is also 
+called the Windows metafile (WMF) format. Of course, this conversion may not proceed 
+without hitches because the old metafile format does not support some of the new 32-bit 
+graphics features, such as paths.
+
+<A NAME="666"><h2>The Basic Procedure</h2></A><P>Figure 18-3 shows the EMF1 program, which creates and displays an enhanced 
+metafile with a fairly minimal amount of distraction.
+<p><b>Figure 18-3.</b> <i>The EMF1 Program.</i>
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="667"><P><H3>EMF1.C</h3></A><P><pre>/*-------------------------------------
+   EMF1.C -- Enhanced Metafile Demo #1
+             (c) Charles Petzold, 1998
+  -------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    LPSTR lpszCmdLine, int nCmdShow)
+{
+     static TCHAR szAppName[] = TEXT (&quot;EMF1&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+     
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;<P>
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Enhanced Metafile Demo #1&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, nCmdShow) ;
+     UpdateWindow (hwnd) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static HENHMETAFILE hemf ;
+     HDC                 hdc, hdcEMF ;
+     PAINTSTRUCT         ps ;
+     RECT                rect ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+          hdcEMF = CreateEnhMetaFile (NULL, NULL, NULL, NULL) ;
+
+          Rectangle (hdcEMF, 100, 100, 200, 200) ;
+          
+          MoveToEx  (hdcEMF, 100, 100, NULL) ;
+          LineTo    (hdcEMF, 200, 200) ;
+          
+          MoveToEx  (hdcEMF, 200, 100, NULL) ;
+          LineTo    (hdcEMF, 100, 200) ;
+
+          hemf = CloseEnhMetaFile (hdcEMF) ;
+          return 0 ;
+          
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+          
+          GetClientRect (hwnd, &amp;rect) ;
+          
+          rect.left   =     rect.right  / 4 ;
+          rect.right  = 3 * rect.right  / 4 ;
+          rect.top    =     rect.bottom / 4 ;
+          rect.bottom = 3 * rect.bottom / 4 ;
+          
+          PlayEnhMetaFile (hdc, hemf, &amp;rect) ;
+          
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+          
+     case WM_DESTROY:
+          DeleteEnhMetaFile (hemf) ;
+          
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}</pre>
+</TD></TR></TABLE>
+
+<P>
+During WM_CREATE message processing in EMF1's window procedure, the 
+program creates the enhanced metafile, beginning with a call to 
+<I>CreateEnhMetaFile</I>. This function requires four arguments, but you can set all of them to NULL. I'll discuss how to use 
+these arguments with non-NULL values shortly.<P>
+Like <I>CreateMetaFile</I>, the 
+<I>CreateEnhMetaFile</I> function returns a special device 
+context handle. The program uses this handle to draw a rectangle and two lines connecting 
+the opposite corners of the rectangle. These function calls and their arguments are 
+converted to a binary form and stored in the metafile.<P>
+Finally, a call to <I>CloseEnhMetaFile</I> wraps up the creation of the enhanced 
+metafile and returns a handle to it. This is stored in a static variable of type HENHMETAFILE.<P>
+During the WM_PAINT message, EMF1 obtains the dimensions of the program's 
+client window in a RECT structure. The four fields of the structure are adjusted so that 
+the rectangle is half the width and height of the client window and centered within it. 
+EMF1 then calls <I>PlayEnhMetaFile</I>. The first argument is a handle to the window's device 
+context, the second argument is the handle to the enhanced metafile, and the third 
+argument is a pointer to the RECT structure.
+<P>What happens here is that during creation of the metafile, GDI figures out the 
+entire dimensions of the metafile image. In this case, the image is 100 units high and wide. 
+When displaying the metafile, GDI stretches the image to fit the rectangle specified in 
+the <I>PlayEnhMetaFile</I> function. Three instances of EMF1 running under Windows are 
+shown in Figure 18-4.
+<P><A HREF="javascript:fullSize('F18zg04x.htm')"><IMG SRC="F18zg04.JPG" width=404 height=284 ALIGN="BOTTOM" BORDER=0 ALT="Click to view full size"></A>
+<P><!-- caption --><B>Figure 18-4.</B> <I>The EMF1 Display.</I><!-- /caption -->
+<P>Finally, during the WM_DESTROY message, EMF1 deletes the metafile by 
+calling <I>DeleteEnhMetaFile</I>.
+<P>Let's take note of a few things we can learn from the EMF1 program.
+<P>First, in this particular program, the coordinates used in the rectangle and 
+line-drawing functions when creating the enhanced metafile don't really mean all that much. You 
+can double them all or subtract a constant from them all, and the results will be the same. 
+All that matters is that the coordinates have a relationship among themselves in defining an image.
+<P>Second, the image is stretched to fit the rectangle passed to the 
+<I>PlayEnhMetaFile</I> function. Thus, as Figure 18-4 clearly shows, the image can be distorted. The 
+metafile coordinates imply that the image is square, but that's not what we get in the general 
+case. And sometimes, that's exactly what you want. For embedding images in a word 
+processing text, you may want the user to specify a rectangle for the image and be assured 
+that the entire image fits exactly within the rectangle without any wasted space. Let the 
+user worry about the correct aspect ratio by adjusting the rectangle appropriately.
+<P>However, there are times when something else is appropriate. You may want 
+to maintain the aspect ratio of the original image because it may be vitally important to 
+rendering the visual information. For example, a police sketch of a crime suspect 
+shouldn't be fatter or squatter than it was originally drawn. Or, you may want to preserve the 
+metrical size of the original image. It may be important that the image is two inches high 
+and shouldn't normally be reproduced otherwise.
+<P>Notice also that the lines drawn in the metafile don't seem to exactly meet the 
+corners of the rectangle. This is the result of a problem in the way that Windows stores 
+rectangle coordinates in the metafile. We'll work on a fix to this problem later in this chapter.
+
+<A NAME="668"><h2>Looking Inside</h2></A><P>You can get a good feel for how metafiles work by looking at the contents of the 
+metafile. This is easiest if you have a disk-based metafile to look at, so the EMF2 program 
+shown in Figure 18-5 creates one for you.
+<P>
+<B>Figure 18-5.</B><I> The EMF2 Program.</I>
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="669"><P><H3>EMF2.C</h3></A><P><pre>
+/*-------------------------------------
+   EMF2.C -- Enhanced Metafile Demo #2
+             (c) Charles Petzold, 1998
+  -------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    LPSTR lpszCmdLine, int nCmdShow)
+{
+     static TCHAR szAppName[] = TEXT (&quot;EMF2&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Enhanced Metafile Demo #2&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, nCmdShow) ;
+     UpdateWindow (hwnd) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     HDC          hdc, hdcEMF ;
+     HENHMETAFILE hemf ;
+     PAINTSTRUCT  ps ;
+     RECT         rect ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+          hdcEMF = CreateEnhMetaFile (NULL, TEXT (&quot;emf2.emf&quot;), NULL,
+                                      TEXT (&quot;EMF2\0EMF Demo #2\0&quot;)) ;
+
+          if (!hdcEMF)
+               return 0 ;
+
+          if  (GetVersion () &amp; 0x80000000)               //Windows 98
+                Rectangle (hdcEMF, 100, 100, 201, 201) ;
+          else                                              //Windows NT                               
+               Rectangle (hdcEMF, 101, 101, 202, 202) ;
+
+          MoveToEx  (hdcEMF, 100, 100, NULL) ;
+          LineTo    (hdcEMF, 200, 200) ;
+          
+          MoveToEx  (hdcEMF, 200, 100, NULL) ;
+          LineTo    (hdcEMF, 100, 200) ;
+          
+          hemf = CloseEnhMetaFile (hdcEMF) ;
+          
+          DeleteEnhMetaFile (hemf) ;
+          return 0 ;
+          
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+          
+          GetClientRect (hwnd, &amp;rect) ;
+          
+          rect.left   =     rect.right  / 4 ;
+          rect.right  = 3 * rect.right  / 4 ;
+          rect.top    =     rect.bottom / 4 ;
+          rect.bottom = 3 * rect.bottom / 4 ;
+          
+          if (hemf = GetEnhMetaFile (TEXT (&quot;emf2.emf&quot;)))
+          {
+               PlayEnhMetaFile (hdc, hemf, &amp;rect) ;
+               DeleteEnhMetaFile (hemf) ;
+          }
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+          
+     case WM_DESTROY:
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}</pre>
+</TD></TR></TABLE>
+
+<P>
+In EMF1, all the arguments to the 
+<I>CreateEnhMetaFile</I> function were set to NULL. 
+In EMF2, the first argument is also set to NULL. This argument can be a device context 
+handle. GDI uses this argument to insert metrical information in the metafile header, as we'll 
+see shortly. If the argument is set to NULL, GDI assumes that this metrical information is 
+based on the video device context.<P>
+The second argument to <I>CreateEnhMetaFile</I> is a filename. If you set this argument to NULL (as EMF1 does but EMF2 does not), then the function creates a memory metafile. EMF2 creates a disk-based metafile with the name EMF2.EMF.<P>
+The third argument to the function is an address of a RECT structure that 
+indicates the total dimensions of the metafile in 0.01 mm units. This piece of vital information (one of the deficiencies of the earlier Windows metafile format) goes into the metafile header, as we'll soon see. If you set this argument to NULL, GDI will figure out the dimensions for you. I like the idea of operating systems doing things for me, so I've set the 
+argument to NULL. If performance is critical in your application, you might want to use this argument to avoid some extraneous work on GDI's part.<P>
+Finally, the last argument is a text string describing the metafile. This text string is specified in two pieces: the first piece is the name of the application (not necessarily the program filename) followed by a NULL character, and the second piece describes the visual image and is followed by two NULL characters. For example, using the C notation of `\0' for a NULL character, the description string could be &quot;LoonyCad V6.4\0Flying Frogs\0\0&quot;. Because C normally puts a NULL character at the end of quoted strings, you need only one `\0' at the end, as EMF2 demonstrates.
+
+<P>After creating the metafile, EMF2 proceeds like EMF1 and makes a few GDI 
+function calls by using the device context handle returned from the 
+<I>CreateEnhMetaFile</I> function. The program then calls 
+<I>CloseEnhMetaFile</I> to destroy the device context handle and 
+obtain a handle to the completed metafile.
+
+<P>Then, still during WM_CREATE processing, EMF2 does something EMF1 does not: right after obtaining the metafile handle, the program calls 
+<I>DeleteEnhMetaFile</I>. That gets rid of all memory resources required to maintain the metafile. However, the disk-based 
+metafile stays behind. (If you ever want to get rid of that file, use a normal file-deletion 
+function such as <I>DeleteFile</I>.) Notice that the metafile handle is not stored as a static variable as 
+in EMF1, which implies that it is not required to be saved between messages.
+
+<P>Now, to use that metafile, EMF2 needs to access the disk file. It does this during the WM_PAINT message by calling 
+<I>GetEnhMetaFile</I>. The single argument to the 
+function is the metafile filename, and the function returns a handle to the metafile. EMF2 passes this handle to the <I>PlayEnhMetaFile</I> function, just as in EMF1. The metafile image is 
+displayed in the rectangle described by the last argument to the function. But unlike EMF1, EMF2 deletes the metafile before concluding WM_PAINT processing. During any following WM_PAINT messages, EMF2 gets the metafile again, plays it, and deletes it.
+
+<P>Keep in mind that deleting the metafile involves deleting only the memory resources required for maintaining the metafile. The disk-based metafile stays behind, even after the program has concluded execution.
+
+<P>Because EMF2 leaves behind a disk-based metafile, you can take a look at it. Figure 18-6 shows a simple hexadecimal dump of the EMF2.EMF file that the program 
+creates.
+
+<P><TABLE cellpadding=5 width="95%"><TR><TD>
+<P><PRE>
+0000  01 00 00 00 88 00 00 00 64 00 00 00 64 00 00 00  ........d...d...
+0010  C8 00 00 00 C8 00 00 00 35 0C 00 00 35 0C 00 00  ........5...5...
+0020  6A 18 00 00 6A 18 00 00 20 45 4D 46 00 00 01 00  j...j... EMF....
+0030  F4 00 00 00 07 00 00 00 01 00 00 00 12 00 00 00  ................
+0040  64 00 00 00 00 00 00 00 00 04 00 00 00 03 00 00  d...............
+0050  40 01 00 00 F0 00 00 00 00 00 00 00 00 00 00 00  @...............
+0060  00 00 00 00 45 00 4D 00 46 00 32 00 00 00 45 00  ....E.M.F.2...E.
+0070  4D 00 46 00 20 00 44 00 65 00 6D 00 6F 00 20 00  M.F. .D.e.m.o. .
+0080  23 00 32 00 00 00 00 00 2B 00 00 00 18 00 00 00  #.2.....+.......
+0090  63 00 00 00 63 00 00 00 C6 00 00 00 C6 00 00 00  c...c...........
+00A0  1B 00 00 00 10 00 00 00 64 00 00 00 64 00 00 00  ........d...d...
+00B0  36 00 00 00 10 00 00 00 C8 00 00 00 C8 00 00 00  6...............
+00C0  1B 00 00 00 10 00 00 00 C8 00 00 00 64 00 00 00  ............d...
+00D0  36 00 00 00 10 00 00 00 64 00 00 00 C8 00 00 00  6.......d.......
+00E0  0E 00 00 00 14 00 00 00 00 00 00 00 10 00 00 00  ................
+00F0  14 00 00 00                                      ....</pre>
+</td>
+</tr>
+</table>
+<p><B>Figure 18-6.</B><I> A hexadecimal dump of EMF2.EMF.</I><P>
+<p>
+I should note that Figure 18-6 shows the metafile created by EMF2 under 
+Microsoft Windows NT 4 running with a video display resolution of 1024 by 768. The 
+metafile created by the same program running under Windows 98 will be 12 bytes shorter, as 
+I'll discuss shortly. Also, the video display resolution will affect some of the information 
+in the metafile header.<P>
+Looking at the enhanced metafile format allows us to more deeply understand 
+the workings of metafiles. The enhanced metafile consists of variable-length records. 
+The general format of these records is described by the ENHMETARECORD structure, 
+defined in the WINGDI.H header file like so:
+<p><pre>typedef struct tagENHMETARECORD
+{
+     DWORD iType ;         // record type
+     DWORD nSize ;         // record size
+     DWORD dParm [1] ;     // parameters
+}
+ENHMETARECORD ;</PRE>
+<P>Of course, that array of one element really indicates a variable number of array 
+elements. The number of parameters depends on the record type. The 
+<I>iType</I> field can be one of nearly 100 constants beginning with the prefix EMR_ defined in the WINGDI.H file. The 
+<I>nSize</I> field is the size of the total record, including the 
+<I>iType</I> and <I>nSize</I> fields, and one or 
+more <I>dParm</I> fields.<P>
+With this knowledge, let's look at Figure 18-6. The first field has a type of 
+0x00000001 and a size of 0x00000088, so it occupies the first 136 bytes of the file. A record type of 
+1 is the constant EMR_HEADER. I want to leave the discussion of the header for later, so 
+for now let's just skip to offset 0x0088, at the end of this first record.<P>
+The next five records correspond to the five GDI calls that EMF2 makes after 
+creating the metafile. The record at offset 0x0088 has a type code of 0x0000002B, which 
+is EMR_RECTANGLE, obviously the metafile record for the 
+<I>Rectangle</I> call. It has a length of 0x00000018 (24 in decimal) bytes to accommodate four 32-bit arguments. The 
+<I>Rectangle</I> function actually has five arguments, of course, but the first&#8212;the handle to the 
+device context&#8212;is not stored in the metafile because it would have no real meaning. There 
+are two arguments of 0x00000063 (or 99) and two arguments of 0x000000C6 (or 198), 
+even though the function call in EMF2 specifies that the 
+<I>Rectangle</I> corners are (100, 100) and (200, 200). The metafile created by the EMF2 program under Windows 98 will show 
+the first two arguments as 0x00000064 (or 100) and the next two as 0x000000C7 (or 
+199). Obviously, Windows is making an adjustment to the 
+<I>Rectangle</I> arguments before they are stored in the metafile but not doing it consistently. This is why the lines do not match 
+the corners of the rectangle.<P>
+Next, we have four 16-byte records corresponding to the two 
+<I>MoveToEx</I> (0x0000001B or EMR_MOVETOEX) and 
+<I>LineTo</I> (0x00000036 or EMR_LINETO) calls. The arguments 
+in the metafile are the same as those passed to the functions.
+<P>The metafile ends with a type code of 0x0000000E or EMR_EOF (&quot;end of file&quot;), 
+a 20-byte record.
+<P>The enhanced metafile always begins with a header record. This corresponds to 
+a structure of type ENHMETAHEADER, which is defined like so:
+<p><pre>typedef struct tagENHMETAHEADER
+{
+     DWORD iType ;          // EMR_HEADER = 1
+     DWORD nSize ;          // structure size 
+     RECTL rclBounds ;      // bounding rectangle in pixels
+     RECTL rclFrame ;       // size of image in 0.01 millimeters
+     DWORD dSignature ;     // ENHMETA_SIGNATURE = &quot; EMF&quot;
+     DWORD nVersion ;       // 0x00010000
+     DWORD nBytes ;         // file size in bytes
+     DWORD nRecords ;       // total number of records
+     WORD  nHandles ;       // number of handles in handle table
+     WORD  sReserved ;
+     DWORD nDescription ;   // character length of description string
+     DWORD offDescription ; // offset of description string in file
+     DWORD nPalEntries ;    // number of entries in palette
+     SIZEL szlDevice ;      // device resolution in pixels
+     SIZEL szlMillimeters ; // device resolution in millimeters
+     DWORD cbPixelFormat ;  // size of pixel format
+     DWORD offPixelFormat ; // offset of pixel format
+     DWORD bOpenGL ;        // FALSE if no OpenGL records
+}
+ENHMETAHEADER ;</PRE>
+<P>The existence of this header record is probably the single greatest improvement 
+of the enhanced metafile format over the old Windows metafile. You do not need to use 
+the file I/O function on the disk-based metafile to obtain this header information. If you 
+have a handle to the metafile, you can use the 
+<I>GetEnhMetaFileHeader</I> function:
+<p><pre>GetEnhMetaFileHeader (hemf, cbSize, &amp;emh) ;</PRE>
+<P>The first argument is the metafile handle, the last is a pointer to an 
+ENHMETAHEADER structure, and the second is the size of this structure. You can use the similar 
+<I>GetEnhMetaFileDescription</I> function to obtain the description string.<P>
+As defined above, the ENHMETAHEADER structure is 100 bytes in length, but in 
+the EMF2.EMF metafile the size of the record includes the description string, so the size is 
+0x88 or 136 bytes. The header stored in a Windows 98 metafile does not include the last 
+three fields of the ENHMETAHEADER structure, which accounts for the 12-byte difference in size.
+<P>The <I>rclBounds</I> field is a RECT structure that indicates the size of the image in 
+pixels. Translating from hexadecimal, we see that the image is bounded by the points (100, 
+100) on the upper left and (200, 200) on the lower right, exactly what we expect.
+<P>The <I>rclFrame</I> field is another rectangle structure that provides the same 
+information but in units of 0.01 millimeters. In this case, the file shows a bounding rectangle of 
+(0x0C35, 0x0C35) by (0x186A, 0x186A) or, in decimal, (3125, 3125) by (6250, 6250). Where does 
+this information come from? We'll see shortly.
+<P>The <I>dSignature</I> field is always the value ENHMETA_SIGNATURE, or 0x464D4520. 
+That seems like a strange number, but if you reverse the byte ordering (in accordance with 
+how multibyte values are stored in memory with Intel processors) and convert to ASCII, 
+it's simply the string &quot; EMF&quot;. The 
+<I>dVersion</I> field is always 0x00010000.
+<P>This is followed by the <I>nBytes</I> field, which in this case is 0x000000F4, the total 
+byte size of the metafile. The <I>nRecords</I> field (in this case, 0x00000007) indicates the number 
+or records&#8212;the header record, the five GDI function calls, and the end-of-file record.
+<P>Next we have two 16-bit fields. The 
+<I>nHandles</I> field is 0x0001. Normally this 
+field would indicate the number of nondefault handles to graphics objects (such as pens, 
+brushes, and fonts) used in the metafile. We haven't done that, so you might expect the field to 
+be zero, but GDI reserves the first one for itself. We'll see how handles are stored in 
+metafiles shortly.
+<P>The next two fields indicate the length of the description string in characters and 
+its offset within the file, in this case 0x00000012 (18 in decimal) and 0x00000064. If the 
+metafile did not have a description string, both these fields would be zero.
+<P>The <I>nPalEntries</I> field indicates the number of entries in the metafile's palette 
+table, in this case none.
+<P>The header record continues with two SIZEL structures, which contain two 
+32-bit fields, <I>cx</I> and <I>cy</I>. The 
+<I>szlDevice</I> field (at offset 0x0040 in the metafile) indicates the size 
+of the output device in pixels, and the 
+<I>szlMillimeters</I> field (at offset 0x0050) is the size of 
+the output device in millimeters. In the documentation of the enhanced metafile, this 
+output device is called the &quot;reference device.&quot; It is based on the device context indicated by 
+the handle passed as the first argument to the 
+<I>CreateEnhMetaFile</I> call. If the argument is 
+set to NULL, GDI uses the video display. When EMF2 created the metafile shown above, 
+I happened to be running Windows NT in a 1024 by 768 video mode, so that's what 
+GDI used as the reference device.
+<P>GDI obtains this information from 
+<I>GetDeviceCaps</I>. The <I>szlDevice</I> field in 
+EMF2.EMF is 0x0400 by 0x0300 (that is, 1024 by 768), which is obtained from 
+<I>GetDeviceCaps</I> using the HORZRES and VERTRES arguments. The 
+<I>szlMillimeters</I> field is 0x140 by 0xF0 or 
+320 by 240, obtained from <I>GetDeviceCaps</I> using the HORZSIZE and VERTSIZE arguments.
+<P>A simple division reveals that the pixels are 0.3125 millimeters high and wide, 
+which is how GDI figures out the dimensions of the 
+<I>rclFrame</I> rectangle described above.
+<P>The ENHMETAHEADER structure is followed in the metafile by the 
+description string, which was the last argument to 
+<I>CreateEnhMetaFile</I>. In this example, this is 
+the string &quot;EMF2&quot; followed by a NULL character and &quot;EMF Demo #2&quot; followed by two 
+NULL characters. That's a total of 18 characters, or 36 bytes because it's stored in Unicode. 
+The string is always stored in Unicode regardless of whether the program creating the 
+metafile is running under Windows NT or Windows 98.
+
+<A NAME="670"><h2>Metafiles and GDI Objects</h2></A><P>We've now seen how GDI drawing commands are stored in metafiles. Now let's 
+examine how GDI objects are stored. The EMF3 program shown in Figure 18-7 is similar to the EMF2 program shown earlier, except that it creates a nondefault pen and 
+brush for drawing the rectangle and lines. I've also provided a little fix for the problem 
+with the coordinates to <I>Rectangle</I>. EMF3 uses 
+<I>GetVersion</I> to determine if it's running 
+under Windows 98 or Windows NT, and to adjust the arguments appropriately.
+
+<P><B>Figure 18-7.</B> <I>The EMF3 program.</I>
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="671"><P><H3>EMF3.C</h3></A><P><pre>/*-------------------------------------
+   EMF3.C -- Enhanced Metafile Demo #3
+             (c) Charles Petzold, 1998
+  -------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName[] = TEXT (&quot;EMF3&quot;) ;
+     HWND         hwnd ;
+
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+     
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Enhanced Metafile Demo #3&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     LOGBRUSH     lb ;
+     HDC          hdc, hdcEMF ;
+     HENHMETAFILE hemf ;
+     PAINTSTRUCT  ps ;
+     RECT         rect ;
+
+     switch (message)
+     {
+     case WM_CREATE:
+          hdcEMF = CreateEnhMetaFile (NULL, TEXT (&quot;emf3.emf&quot;), NULL,
+                                      TEXT (&quot;EMF3\0EMF Demo #3\0&quot;)) ;
+          
+          SelectObject (hdcEMF, CreateSolidBrush (RGB (0, 0, 255))) ;
+          
+          lb.lbStyle = BS_SOLID ;
+          lb.lbColor = RGB (255, 0, 0) ;
+          lb.lbHatch = 0 ;
+
+          SelectObject (hdcEMF, 
+               ExtCreatePen (PS_SOLID | PS_GEOMETRIC, 5, &amp;lb, 0, NULL)) ;
+          
+          Rectangle (hdcEMF, 100, 100, 200, 200) ;
+          
+          MoveToEx  (hdcEMF, 100, 100, NULL) ;
+          LineTo    (hdcEMF, 200, 200) ;
+          
+          MoveToEx  (hdcEMF, 200, 100, NULL) ;
+          LineTo    (hdcEMF, 100, 200) ;
+          
+          DeleteObject (SelectObject (hdcEMF, GetStockObject (BLACK_PEN))) ;
+          DeleteObject (SelectObject (hdcEMF, GetStockObject (WHITE_BRUSH))) ;
+          
+          hemf = CloseEnhMetaFile (hdcEMF) ;
+          
+          DeleteEnhMetaFile (hemf) ;
+          return 0 ;
+          
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+          
+          GetClientRect (hwnd, &amp;rect) ;
+          
+          rect.left   =     rect.right  / 4 ;
+          rect.right  = 3 * rect.right  / 4 ;
+          rect.top    =     rect.bottom / 4 ;
+          rect.bottom = 3 * rect.bottom / 4 ;
+          
+          hemf = GetEnhMetaFile (TEXT (&quot;emf3.emf&quot;)) ;
+          
+          PlayEnhMetaFile (hdc, hemf, &amp;rect) ;
+          DeleteEnhMetaFile (hemf) ;
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+          
+     case WM_DESTROY:
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</pre>
+</TD></TR></TABLE>
+
+<P>As we've seen, when you call GDI functions using the device context handle returned from <I>CreateEnhMetaFile</I>, the function calls are stored in the metafile rather than being rendered on the screen or printer. However, some GDI functions do not refer to a particular device context at all. One important category of these GDI functions are those that create graphics objects, including pens and brushes. Although the definitions of logical pens and brushes are stored in memory maintained by GDI, these abstract definitions are not associated with any particular device context when they're created.
+
+<p>EMF3 calls both the <I>CreateSolidBrush</I> and 
+<I>ExtCreatePen</I> functions. Because these functions do not require a device context handle, this implies that GDI will not store these 
+calls in the metafile. This implication is true. When called by themselves, GDI functions simply create the graphics drawing object without affecting the metafile at all.
+<P>
+However, when a program calls <I>SelectObject</I> to select a GDI object into the metafile device context, GDI encodes both an object-creation function (essentially derived from the internal GDI data used to stored the object) and a <I>SelectObject</I> call in the metafile. To see how this works, let's take a look at the hexadecimal dump of EMF3.EMF, 
+shown in Figure 18-8.
+
+
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<P><PRE>
+0000  01 00 00 00 88 00 00 00 60 00 00 00 60 00 00 00  ........`...`...
+0010  CC 00 00 00 CC 00 00 00 B8 0B 00 00 B8 0B 00 00  ................
+0020  E7 18 00 00 E7 18 00 00 20 45 4D 46 00 00 01 00  ........ EMF....
+0030  88 01 00 00 0F 00 00 00 03 00 00 00 12 00 00 00  ................
+0040  64 00 00 00 00 00 00 00 00 04 00 00 00 03 00 00  d...............
+0050  40 01 00 00 F0 00 00 00 00 00 00 00 00 00 00 00  @...............
+0060  00 00 00 00 45 00 4D 00 46 00 33 00 00 00 45 00  ....E.M.F.3...E.
+0070  4D 00 46 00 20 00 44 00 65 00 6D 00 6F 00 20 00  M.F. .D.e.m.o. .
+0080  23 00 33 00 00 00 00 00 27 00 00 00 18 00 00 00  #.3.....'.......
+0090  01 00 00 00 00 00 00 00 00 00 FF 00 00 00 00 00  ................
+00A0  25 00 00 00 0C 00 00 00 01 00 00 00 5F 00 00 00  %..........._...
+00B0  34 00 00 00 02 00 00 00 34 00 00 00 00 00 00 00  4.......4.......
+00C0  34 00 00 00 00 00 00 00 00 00 01 00 05 00 00 00  4...............
+00D0  00 00 00 00 FF 00 00 00 00 00 00 00 00 00 00 00  ................
+00E0  25 00 00 00 0C 00 00 00 02 00 00 00 2B 00 00 00  %...........+...
+00F0  18 00 00 00 63 00 00 00 63 00 00 00 C6 00 00 00  ....c...c.......
+0100  C6 00 00 00 1B 00 00 00 10 00 00 00 64 00 00 00  ............d...
+0110  64 00 00 00 36 00 00 00 10 00 00 00 C8 00 00 00  d...6...........
+0120  C8 00 00 00 1B 00 00 00 10 00 00 00 C8 00 00 00  ................
+0130  64 00 00 00 36 00 00 00 10 00 00 00 64 00 00 00  d...6.......d...
+0140  C8 00 00 00 25 00 00 00 0C 00 00 00 07 00 00 80  ....%...........
+0150  28 00 00 00 0C 00 00 00 02 00 00 00 25 00 00 00  (...........%...
+0160  0C 00 00 00 00 00 00 80 28 00 00 00 0C 00 00 00  ........(.......
+0170  01 00 00 00 0E 00 00 00 14 00 00 00 00 00 00 00  ................
+0180  10 00 00 00 14 00 00 00                          ........
+</pre>
+</td>
+</tr></table>
+
+<p>
+<B>Figure 18-8.</B> <I>A hexadecimal dump of EMF3.EMF.</I>
+<p>You may want to compare this metafile with EMF2.EMF shown earlier. The first difference you'll see in the header section of EMF3.EMF is the 
+<I>rclBounds</I> field. EMF2.EMF indicated that the image was bound between coordinates (0x64,0x64) and (0xC8, 0xC8). In EMF3.EMF it's (0x60,0x60) and (0xCC,0xCC). This reflects using a wider pen. The 
+<I>rclFrame</I> field (indicating the size of the image in units of 0.01 millimeters) is also affected.<P>
+While the <I>nBytes</I> field (located at offset 0x0030) of EMF2.EMF indicated that 
+the metafile was 0xFA bytes, EMF3.EMF is 0x0188 bytes. The EMF2.EMF metafile contained 
+7 records (the header, 5 GDI function calls, and the end-of-file record), but EMF3.EMF 
+has 15. As we'll see, the extra 8 records are for 2 object-creation functions, 4 calls to 
+<I>SelectObject</I>, and 2 <I>DeleteObject</I> calls.<P>
+The <I>nHandles</I> field (at offset 0x0038 in the file) indicates the number of handles 
+to GDI objects. This is always one more than the number of nondefault objects used by 
+the metafile. (The way that the Platform SDK documentation indicates this is &quot;Index zero 
+in this table is reserved.&quot;) The field is 1 in EMF2.EMF and 3 in EMF3.EMF, indicating the 
+pen and the brush.<P>
+Let's skip to offset 0x0088 in the file, which is the second record (the first 
+after the header). The record type is 0x27, which corresponds to the constant EMR_CREATEBRUSHINDIRECT. This is the metafile record for the 
+<I>CreateBrushIndirect</I> function, which requires a pointer to a LOGBRUSH structure. The size of the record is 
+0x18 (or 24) bytes.
+<P>Each nonstock GDI object that is selected into the metafile device context is 
+assigned a number beginning with 1. This is indicated by the next 4-byte word in this record, at 
+offset 0x0090 in the metafile. The next three 4-byte fields in this record correspond to the 
+three fields of the LOGBRUSH structure, 0x00000000 (the 
+<I>lbStyle</I> field of BS_SOLID), 0x00FF0000 (the 
+<I>lbColor</I> field), and 0x00000000 (the 
+<I>lbHatch</I> field).
+<P>At offset 0x00A0 in EMF3.EMF is the next record, which has a record type of 
+0x25, or EMR_SELECTOBJECT, the metafile record for the 
+<I>SelectObject</I> call. The record is 0x0C (or 12) bytes long, and the next field is the number 0x01, indicating that it's selecting 
+the first GDI object, which is the logical brush.
+<P>At offset 0x00AC in EMF3.EMF is the next record, which has a record type of 
+0x5F, or EMR_EXTCREATEPEN. The record is 0x34 (or 52) bytes. The next 4-byte field is 
+0x02, which means this is the second nonstock GDI object used in the metafile.<P>
+I won't pretend that I know why the next four fields of the 
+EMR_EXTCREATEPEN record repeat the record size twice, interspersed with 0 fields, but there they are: 0x34, 
+0x00, 0x34, and 0x00. The next field is 0x00010000, which is the pen style of 
+PS_SOLID (0x00000000) combined with PS_GEOMETRIC (0x00010000). The width of five units is 
+next, followed by the three fields of the logical brush structure used in the 
+<I>ExtCreatePen</I> function, followed by a field of 0.
+<P>If you create a custom extended pen style, the EMR_EXTCREATEPEN record will 
+be longer than 52 bytes, and this will be reflected not only in the second field of the 
+record, but in the two repeated size fields. Following the three fields that describe the 
+LOGBRUSH structure, the next field will not be 0 (as it is in EMF3.EMF) but will indicate the 
+number of dashes and spaces. This is followed by that many fields for the dash and space lengths.
+<P>The next 12-byte field in EMF3.EMF is another 
+<I>SelectObject</I> call indicating the second object&#8212;the pen. The next five records are the same as EMF2.EMF&#8212;a record type 
+of 0x2B (EMR_RECTANGLE), and two sets of records of 0x1B (EMR_MOVETOEX) and 
+0x36 (EMR_LINETO).
+<P>These drawing functions are followed by two sets of 12-byte records of 0x25 (EMR_SELECTOBJECT) and 0x28 (EMR_DELETEOBJECT). The select-object records have 
+arguments of 0x80000007 and 0x80000000. When the high bit is set, it indicates a stock 
+object, in this case 0x07 (corresponding to BLACK_PEN) and 0x00 (WHITE_BRUSH).
+<P>The <I>DeleteObject</I> calls have arguments of 2 and 1, for the two nondefault objects 
+used in the metafile. Although the 
+<I>DeleteObject</I> function does not require a device context 
+handle as the first argument, GDI apparently keeps track of objects used in the metafile that 
+are deleted by the program.
+<P>Finally, the metafile concludes with a 0x0E record, which is EMF_EOF (&quot;end of file&quot;).
+<P>To sum up, whenever a nondefault GDI object is first selected into a metafile 
+device context, GDI encodes both a record indicating the object-creation function (in this 
+case, EMR_CREATEBRUSHINDIRECT and EMR_EXTCREATEPEN). Each object will have a 
+unique number beginning with 1, indicated by the third field of the record. This record will 
+be followed by an EMR_SELECTOBJECT record referencing that number. On subsequent 
+times an object is selected into the metafile device context (without being deleted in the 
+interim), only an EMR_SELECTOBJECT record is required.
+
+<A NAME="672"><h2>Metafiles and Bitmaps</h2></A><P>Let's try something a little more complex now, in particular drawing a bitmap in a 
+metafile device context. This is shown in EMF4, in Figure 18-9.
+
+<p><B>Figure 18-9.</B> <I>The EMF4 program.</I>
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="673"><H3>EMF4.C</H3></A><P><pre>/*-------------------------------------
+   EMF4.C -- Enhanced Metafile Demo #4
+             (c) Charles Petzold, 1998
+  -------------------------------------*/
+
+#define OEMRESOURCE
+#include &lt;windows.h&gt;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName[] = TEXT (&quot;EMF4&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+     
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Enhanced Metafile Demo #4&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     BITMAP       bm ;
+     HBITMAP      hbm ;
+     HDC          hdc, hdcEMF, hdcMem ;
+     HENHMETAFILE hemf ;
+     PAINTSTRUCT  ps ;
+     RECT         rect ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+          hdcEMF = CreateEnhMetaFile (NULL, TEXT (&quot;emf4.emf&quot;), NULL,
+                                      TEXT (&quot;EMF4\0EMF Demo #4\0&quot;)) ;
+          
+          hbm = LoadBitmap (NULL, MAKEINTRESOURCE (OBM_CLOSE)) ;
+          
+          GetObject (hbm, sizeof (BITMAP), &amp;bm) ;
+          
+          hdcMem = CreateCompatibleDC (hdcEMF) ;
+          
+          SelectObject (hdcMem, hbm) ;
+          
+          StretchBlt (hdcEMF, 100, 100, 100, 100,
+                      hdcMem,   0,   0, bm.bmWidth, bm.bmHeight, SRCCOPY) ;
+          
+          DeleteDC (hdcMem) ;
+          DeleteObject (hbm) ;
+          
+          hemf = CloseEnhMetaFile (hdcEMF) ;
+          
+          DeleteEnhMetaFile (hemf) ;
+          return 0 ;
+          
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+          
+          GetClientRect (hwnd, &amp;rect) ;
+	         rect.left   =     rect.right  / 4 ;
+          rect.right  = 3 * rect.right  / 4 ;
+          rect.top    =     rect.bottom / 4 ;
+          rect.bottom = 3 * rect.bottom / 4 ;
+          
+          hemf = GetEnhMetaFile (TEXT (&quot;emf4.emf&quot;)) ;
+          
+          PlayEnhMetaFile (hdc, hemf, &amp;rect) ;
+          DeleteEnhMetaFile (hemf) ;
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+          
+     case WM_DESTROY:
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}</pre>
+</TD></TR></TABLE>
+
+<P>For convenience, EMF4 loads a system bitmap indicated by the constant 
+OEM_CLOSE. The customary way of displaying a bitmap in a device context is to create a memory 
+device context compatible with the destination device context (in this case, that's the 
+metafile device context) by calling 
+<I>CreateCompatibleDC</I>. Then you select the bitmap into 
+that memory device context by using 
+<I>SelectObject</I> and call <I>BitBlt</I> or 
+<I>StretchBlt</I> from the memory source device context to the destination device context. When you're finished, you 
+delete both the memory device context and the bitmap.<P>
+You'll note that EMF4 also calls <I>GetObject</I> to determine the size of the bitmap. 
+This is necessary for the <I>SelectObject</I> call.<P>
+At first, the storage of this code in a metafile seems like a real challenge for GDI. 
+No function leading up the <I>StretchBlt</I> call involves the metafile device context at all. So 
+let's see how it's done by taking a look at EMF4.EMF, which is partially shown in Figure 18-10.<P>
+
+
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<PRE>0000  01 00 00 00 88 00 00 00 64 00 00 00 64 00 00 00  ........d...d...
+0010  C7 00 00 00 C7 00 00 00 35 0C 00 00 35 0C 00 00  ........5...5...
+0020  4B 18 00 00 4B 18 00 00 20 45 4D 46 00 00 01 00  K...K... EMF....
+0030  F0 0E 00 00 03 00 00 00 01 00 00 00 12 00 00 00  ................
+0040  64 00 00 00 00 00 00 00 00 04 00 00 00 03 00 00  d...............
+0050  40 01 00 00 F0 00 00 00 00 00 00 00 00 00 00 00  @...............
+0060  00 00 00 00 45 00 4D 00 46 00 34 00 00 00 45 00  ....E.M.F.4...E.
+0070  4D 00 46 00 20 00 44 00 65 00 6D 00 6F 00 20 00  M.F. .D.e.m.o. .
+0080  23 00 34 00 00 00 00 00 4D 00 00 00 54 0E 00 00  #.4.....M...T...
+0090  64 00 00 00 64 00 00 00 C7 00 00 00 C7 00 00 00  d...d...........
+00A0  64 00 00 00 64 00 00 00 64 00 00 00 64 00 00 00  d...d...d...d...
+00B0  20 00 CC 00 00 00 00 00 00 00 00 00 00 00 80 3F  ..............?
+00C0  00 00 00 00 00 00 00 00 00 00 80 3F 00 00 00 00  ...........?....
+00D0  00 00 00 00 FF FF FF 00 00 00 00 00 6C 00 00 00  ............l...
+00E0  28 00 00 00 94 00 00 00 C0 0D 00 00 28 00 00 00  (...........(...
+00F0  16 00 00 00 28 00 00 00 28 00 00 00 16 00 00 00  ....(...(.......
+0100  01 00 20 00 00 00 00 00 C0 0D 00 00 00 00 00 00  .. .............
+0110  00 00 00 00 00 00 00 00 00 00 00 00 C0 C0 C0 00  ................
+0120  C0 C0 C0 00 C0 C0 C0 00 C0 C0 C0 00 C0 C0 C0 00  ................
+. . . .
+0ED0  C0 C0 C0 00 C0 C0 C0 00 C0 C0 C0 00 0E 00 00 00  ................
+0EE0  14 00 00 00 00 00 00 00 10 00 00 00 14 00 00 00  ................
+</PRE>
+</td></tr>
+</table>
+<P><B>Figure 18-10.</B> <I>A partial hexadecimal dump of EMF4.EMF.</I>
+
+<p>This metafile contains just three records&#8212;a header, a 0x4D (or 
+EMR_STRETCHBLT) record that is 0x0E54 bytes long, and an end-of-file record.<P>
+I won't pretend to have deciphered what each and every field of this record 
+means. But I will point out the crucial key to understanding how GDI can translate the series 
+of function calls in EMF4.C to a single metafile record.<P>
+GDI has converted the original device-dependent bitmap to a 
+device-independent bitmap (DIB). The entire DIB is stored in this record, which accounts for its size. I 
+suspect that when it comes time to play the metafile and display the bitmap, GDI actually 
+uses the <I>StretchDIBits</I> function rather than 
+<I>StretchBlt</I>. Or, GDI could convert the DIB back to 
+a device-dependent bitmap by using 
+<I>CreateDIBitmap</I> and then use a memory device 
+context and <I>StretchBlt</I> for the display.<P>
+The EMR_STRETCHBLT record begins at offset 0x0088 in the metafile. The DIB 
+is stored beginning at offset 0x00F4 in the metafile and continues to the end of the record 
+at 0x0EDC. The DIB begins with a 40-byte structure of type BITMAPINFOHEADER. This 
+is followed at offset 0x011C by 22 rows of 40 pixels each. This is a 32 bit-per-pixel DIB, 
+so each pixel requires 4 bytes.
+
+<A NAME="674"><h2>Enumerating the Metafile</h2></A><P>When you wish to get access to the individual records of a metafile you use a process 
+called metafile enumeration. This is demonstrated by the EMF5 program shown in 
+Figure 18-11. This program uses a metafile to display the same image as EMF3 but works by using 
+metafile enumeration.
+
+<P><B>Figure 18-11.</B> <I>The EMF5 program.</I>
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="675"><H3>EMF5.C</H3></A><pre>/*-------------------------------------
+   EMF5.C -- Enhanced Metafile Demo #5
+             (c) Charles Petzold, 1998
+  -------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName[] = TEXT (&quot;EMF5&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+     
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Enhanced Metafile Demo #5&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+int CALLBACK EnhMetaFileProc (HDC hdc, HANDLETABLE * pHandleTable,
+                              CONST ENHMETARECORD * pEmfRecord, 
+                              int iHandles, LPARAM pData)
+{
+     PlayEnhMetaFileRecord (hdc, pHandleTable, pEmfRecord, iHandles) ;
+     
+     return TRUE ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     HDC          hdc ;
+     HENHMETAFILE hemf ;
+     PAINTSTRUCT  ps ;
+     RECT         rect ;
+     
+     switch (message)
+     {
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+          
+          GetClientRect (hwnd, &amp;rect) ;
+          
+          rect.left   =     rect.right  / 4 ;
+          rect.right  = 3 * rect.right  / 4 ;
+          rect.top    =     rect.bottom / 4 ;
+          rect.bottom = 3 * rect.bottom / 4 ;
+          
+          hemf = GetEnhMetaFile (TEXT (&quot;..\\emf3\\emf3.emf&quot;)) ;
+          
+          EnumEnhMetaFile (hdc, hemf, EnhMetaFileProc, NULL, &amp;rect) ;
+          DeleteEnhMetaFile (hemf) ;
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+          
+     case WM_DESTROY:
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}</pre>
+</TD></TR></TABLE>
+
+<P>
+This program uses the EMF3.EMF file created by the EMF3 program, so make 
+sure you run that one before this one. Also, you need to run both programs from within the Visual C++ environment so that the directory paths are correct. In WM_PAINT processing, the major difference 
+between the two programs is that EMF3 called 
+<I>PlayEnhMetaFile</I>, but EMF5 calls 
+<I>EnumEnhMetaFile</I>. You'll recall that the 
+<I>PlayEnhMetaFile</I> function has the following syntax:
+<p><pre>PlayEnhMetaFile (hdc, hemf, &amp;rect) ;</PRE>
+<P>The first argument is the handle to the device context on which the metafile is to be 
+rendered. The second argument is a handle to the enhanced metafile. The third argument 
+is a pointer to a RECT structure that describes a rectangle on the device context surface. 
+The metafile image is stretched to fit, but not exceed, this rectangle.
+
+<P>The <I>EnumEnhMetaFile</I> has five arguments, three of which are the same as those 
+to <I>PlayEnhMetaFile</I> (although the pointer to the RECT structure has been moved to the 
+end of the argument list).
+
+<P>The third argument to <I>EnumEnhMetaFile</I> is the name of an enumeration function, 
+which I've chosen to call <I>EnhMetaFileProc</I>. The fourth argument is a pointer to arbitrary data 
+you may wish to pass to the enumeration function. I've simply set this argument to NULL.
+
+<P>Now let's take a look at the enumeration function. When you call 
+<I>EnumEnhMetaFile</I>, GDI will call 
+<I>EnhMetaFileProc</I> once for each record in the metafile, including the 
+header record and the end-of-file record. Normally the enumeration function returns TRUE, 
+but it could return FALSE to abort the enumeration process.
+
+<P>The enumeration function has five parameters, which I'll describe shortly. In 
+this program, I just pass the first four to 
+<I>PlayEnhMetaFileRecord</I>, which causes GDI to 
+execute the function call represented by that record just as if you had called it explicitly.
+
+<P>EMF5 uses <I>EnumEnhMetaFile</I> and 
+<I>PlayEnhMetaFileRecord</I> to get the same results 
+as EMF3 got by calling <I>PlayEnhMetaFile</I>. The difference is that EMF5 now has a hook into 
+the process of metafile rendering and gets access to every metafile record. This can be useful.
+
+<P>The first parameter to the enumeration function is a handle to a device context. 
+GDI simply obtains this handle from the first parameter to 
+<I>EnumEnhMetaFile</I>. My enumeration function passes it on to 
+<I>PlayEnhMetaFileRecord</I> to identify the device context on 
+which the image is to be rendered.
+
+<P>Let me skip to the third parameter of the enumeration function. This is a pointer 
+to a structure of type ENHMETARECORD, which I described earlier. This structure 
+describes the actual metafile record, exactly as it's encoded in the metafile itself.
+
+<P>You can write code to examine these records if you wish. Perhaps you might 
+elect not to pass some records to the 
+<I>PlayEnhMetaFileRecord</I> function. For example, 
+in EMF5.C, try inserting the following line right before the 
+<I>PlayEnhMetaFileRecord</I> call:
+<p><pre>if (pEmfRecord-&gt;iType != EMR_LINETO)</PRE>
+<P>Recompile the program, run it, and you'll see only the rectangle, not the two 
+lines. Or try the following:
+<p><pre>if (pEmfRecord-&gt;iType != EMR_SELECTOBJECT)</PRE>
+<P>That little change will cause the image to be rendered with default objects&#8212;not 
+the pen and brush we've created.
+<P>One thing you <I>should not</I> do is modify the metafile record. But before you get 
+upset about this restriction, let's take a look at the EMF6 program in Figure 18-12.
+
+<P><B>Figure 18-12.</B> <I>The EMF6 program.</I>
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="676"><H3>EMF6.C</H3></A><pre>
+/*-------------------------------------
+   EMF6.C -- Enhanced Metafile Demo #6
+             (c) Charles Petzold, 1998
+  -------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR lpszCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName[] = TEXT (&quot;EMF6&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+     
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Enhanced Metafile Demo #6&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+int CALLBACK EnhMetaFileProc (HDC hdc, HANDLETABLE * pHandleTable,
+                              CONST ENHMETARECORD * pEmfRecord, 
+                              int iHandles, LPARAM pData)
+{
+     ENHMETARECORD * pEmfr ;
+     
+     pEmfr = (ENHMETARECORD *) malloc (pEmfRecord-&gt;nSize) ;
+     
+     CopyMemory (pEmfr, pEmfRecord, pEmfRecord-&gt;nSize) ;
+     
+     if (pEmfr-&gt;iType == EMR_RECTANGLE)   
+          pEmfr-&gt;iType = EMR_ELLIPSE ;
+
+     
+     PlayEnhMetaFileRecord (hdc, pHandleTable, pEmfr, iHandles) ;
+     
+     free (pEmfr) ;
+
+     return TRUE ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     HDC          hdc ;
+     HENHMETAFILE hemf ;
+     PAINTSTRUCT  ps ;
+     RECT         rect ;
+     
+     switch (message)
+     {
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+          
+          GetClientRect (hwnd, &amp;rect) ;
+          
+          rect.left   =     rect.right  / 4 ;
+          rect.right  = 3 * rect.right  / 4 ;
+          rect.top    =     rect.bottom / 4 ;
+          rect.bottom = 3 * rect.bottom / 4 ;
+
+          hemf = GetEnhMetaFile (TEXT (&quot;..\\emf3\\emf3.emf&quot;)) ;
+          
+          EnumEnhMetaFile (hdc, hemf, EnhMetaFileProc, NULL, &amp;rect) ;
+          DeleteEnhMetaFile (hemf) ;
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+          
+     case WM_DESTROY:
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}</pre>
+</TD></TR></TABLE>
+
+
+<P>Like EMF5, EMF6 uses the EMF3.EMF metafile created by the EMF3 program, so 
+be sure to run that program before this one and run all programs within Visual C++.
+<P>EMF6 demonstrates that if you want to modify metafile records before 
+rendering them, the solution is fairly simple: you make a copy and modify that. As you can see, 
+the enumeration procedure begins by using 
+<I>malloc</I> to allocate a block of memory the size 
+of the metafile record, indicated by the 
+<I>nSize</I> field of the <I>pEmfRecord</I> structure passed to 
+the function. A pointer to this block is saved in the variable 
+<I>pEmfr</I>, which is a pointer to an ENHMETARECORD structure.
+
+<P>Using <I>CopyMemory</I>, the program copies the contents of the structure pointed to 
+by <I>pEmfRecord</I> to the structure pointed to by 
+<I>pEmfr</I>. Now we have something that we can alter. The program checks whether the record is of type EMR_RECTANGLE and, if so, 
+replaces the <I>iType</I> field with EMR_ELLIPSE. The 
+<I>pEmfr</I> pointer is passed to 
+<I>PlayEnhMetaFileRecord</I> and then freed. The result is that the program draws an ellipse rather than a 
+rectangle. Everything else is the same.<P>
+Of course, our little alteration worked quite easily because the 
+<I>Rectangle</I> and <I>Ellipse</I> functions have the same arguments that define the same thing&#8212;a bounding box for 
+the figure. Making more extensive alterations will require some knowledge about the 
+formats of the various metafile records.
+<P>Another possibility is to slip in an extra record or two. For example, replace the 
+<I>if</I> statement in EMF6.C with the following:
+<p><pre>if (pEmfr-&gt;iType == EMR_RECTANGLE)
+{
+     PlayEnhMetaFileRecord (hdc, pHandleTable, pEmfr, nObjects) ;
+
+     pEmfr-&gt;iType = EMR_ELLIPSE ;
+}</PRE>
+<P>Whenever a <I>Rectangle</I> record comes through, the program renders it and then changes it 
+to an <I>Ellipse</I>, which is also rendered. Now the program draws both a rectangle and an ellipse.<P>
+Let's examine now how GDI objects are dealt with when you enumerate a metafile.<P>
+In the metafile header, the <I>nHandles</I> field of the ENHMETAHEADER structure is 
+a value of one more than the number of GDI objects created in the metafile. Thus, for 
+the metafiles in EMF5 and EMF6, this field is 3, accounting for the pen, the brush, 
+and something else. What this &quot;something else&quot; really is I'll reveal shortly.<P>
+You'll notice that the penultimate parameter to the enumeration functions in 
+EMF5 and EMF6 is also called <I>nHandles</I>. It'll be the same number, which is 3.<P>
+The second parameter to the enumeration function is a pointer to a structure 
+called HANDLETABLE, defined in WINGDI.H like so:
+<p><pre>typedef struct tagHANDLETABLE
+{
+     HGDIOBJ objectHandle [1] ;
+}
+HANDLETABLE ;</PRE>
+<P>The HGDIOBJ data type is a generalized handle to a GDI object and is defined as 
+a 32-bit pointer, as are all the other GDI objects. As you'll note, this is one of those 
+structures that has an array field with just one element. This means the field is actually of 
+variable length. The number of elements in the objectHandle array is equal to 
+<I>nHandles</I>, which in the case of our programs is 3.<P>
+Within the enumeration function, you can obtain these handles using the expression
+<p><pre>
+pHandleTable-&gt;objectHandle[i]
+</PRE>
+<P>where <I>i</I> is either 0, 1, or 2 for the three handles.<P>
+Whenever the enumeration function is called, the first element of the array will 
+contain the handle to the metafile being enumerated. That's the &quot;something else&quot; I 
+referred to above.
+<P>When the enumeration function is <I>first</I> called, the second and third elements of 
+the table will be 0. These are placeholders for the handles of the brush and the pen.
+<P>Here's how it works: The first object-creation function in the metafile has a 
+record type of EMR_CREATEBRUSHINDIRECT. This record indicates an object number of 1. 
+When the record is passed to 
+<I>PlayEnhMetaFileRecord</I>, GDI creates the brush and obtains a 
+handle to it. This handle is stored as element 1 (the second element) of the 
+<I>objectHandle</I> array. When the first EMR_SELECTOBJECT record is passed to 
+<I>PlayEnhMetaFileRecord</I>, GDI notes that the handle number is 1 and is able to retrieve the actual handle from the table 
+and use it in a <I>SelectObject</I> call. When the metafile eventually deletes the brush, GDI sets 
+element 1 of the <I>objectHandle</I> array back to 0.
+<P>By accessing the <I>objectHandle</I> array, you can use calls such as 
+<I>GetObjectType</I> and <I>GetObject</I> to obtain information about the objects used in the metafile.
+
+<A NAME="677"><h2>Embedding Images</h2></A><P>Perhaps the most important use of metafile enumeration is to embed other images (or 
+even entire metafiles) in an existing metafile. Actually, the existing metafile remains 
+unchanged; what you really do is create a new metafile that combines the existing metafile and 
+the new embedded images. The basic trick is to pass a metafile device context handle as 
+the first argument to <I>EnumEnhMetaFile</I>. That allows you to render both metafile records 
+and GDI function calls on the metafile device context.
+<P>It's easiest to embed new images at the beginning or end of the metafile 
+command sequence&#8212;that is, right after the EMR_HEADER record or right before the 
+EMF_EOF record. However, if you are familiar with the existing metafile, you can embed 
+new drawing commands anywhere you want. That's what's done in the EMF7 program 
+shown in Figure 18-13.
+<P><B>Figure 18-13.</B> <I>The EMF7 program.</I>
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="678"><H3>EMF7.C</H3></A><P><pre>/*-------------------------------------
+   EMF7.C -- Enhanced Metafile Demo #7
+             (c) Charles Petzold, 1998
+  -------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR lpszCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName[] = TEXT (&quot;EMF7&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+     
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+
+
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Enhanced Metafile Demo #7&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+int CALLBACK EnhMetaFileProc (HDC hdc, HANDLETABLE * pHandleTable,
+                              CONST ENHMETARECORD * pEmfRecord, 
+                              int iHandles, LPARAM pData)
+{
+     HBRUSH   hBrush ;
+     HPEN     hPen ;
+     LOGBRUSH lb ;
+     
+     if (pEmfRecord-&gt;iType != EMR_HEADER &amp;&amp; pEmfRecord-&gt;iType != EMR_EOF)
+          
+          PlayEnhMetaFileRecord (hdc, pHandleTable, pEmfRecord, iHandles) ;
+     
+     if (pEmfRecord-&gt;iType == EMR_RECTANGLE)
+     {
+          hBrush = SelectObject (hdc, GetStockObject (NULL_BRUSH)) ;
+          
+          lb.lbStyle = BS_SOLID ;
+          lb.lbColor = RGB (0, 255, 0) ;
+          lb.lbHatch = 0 ;
+          
+          hPen = SelectObject (hdc,
+               ExtCreatePen (PS_SOLID | PS_GEOMETRIC, 5, &amp;lb, 0, NULL)) ;
+          
+          Ellipse (hdc, 100, 100, 200, 200) ;
+          
+          DeleteObject (SelectObject (hdc, hPen)) ;
+          SelectObject (hdc, hBrush) ;
+     }
+     return TRUE ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     ENHMETAHEADER emh ;
+     HDC           hdc, hdcEMF ;
+     HENHMETAFILE  hemfOld, hemf ;
+     PAINTSTRUCT   ps ;
+     RECT          rect ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+          
+               // Retrieve existing metafile and header
+          
+          hemfOld = GetEnhMetaFile (TEXT (&quot;..\\emf3\\emf3.emf&quot;)) ;
+          
+          GetEnhMetaFileHeader (hemfOld, sizeof (ENHMETAHEADER), &amp;emh) ;
+          
+               // Create a new metafile DC
+          
+          hdcEMF = CreateEnhMetaFile (NULL, TEXT (&quot;emf7.emf&quot;), NULL,
+                                      TEXT (&quot;EMF7\0EMF Demo #7\0&quot;)) ;
+          
+               // Enumerate the existing metafile
+          
+          EnumEnhMetaFile (hdcEMF, hemfOld, EnhMetaFileProc, NULL,
+                           (RECT *) &amp; emh.rclBounds) ;
+          
+               // Clean up
+          
+          hemf = CloseEnhMetaFile (hdcEMF) ;
+          
+          DeleteEnhMetaFile (hemfOld) ;
+          DeleteEnhMetaFile (hemf) ;
+          return 0 ;
+          
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+          
+          GetClientRect (hwnd, &amp;rect) ;
+          rect.left   =     rect.right  / 4 ;
+          rect.right  = 3 * rect.right  / 4 ;
+          rect.top    =     rect.bottom / 4 ;
+          rect.bottom = 3 * rect.bottom / 4 ;
+          
+          hemf = GetEnhMetaFile (TEXT (&quot;emf7.emf&quot;)) ;
+          
+          PlayEnhMetaFile (hdc, hemf, &amp;rect) ;
+          DeleteEnhMetaFile (hemf) ;
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+          
+     case WM_DESTROY:
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}</pre>
+</TD></TR></TABLE>
+
+<P>EMF7 uses the EMF3.EMF metafile created by the EMF3 program, so make sure 
+you run that program to create the metafile before you run EMF7.<P>
+Although WM_PAINT processing in EMF7 has reverted to using 
+<I>PlayEnhMetaFile</I> rather than 
+<I>EnumEnhMetaFile</I>, WM_CREATE processing is quite different.<P>
+First, the program obtains a metafile handle for the EMF3.EMF file by calling 
+<I>GetEnhMetaFile</I>. It also gets the enhanced metafile header by calling 
+<I>GetEnhMetaFileHeader</I>. The sole purpose of getting the header is to use the 
+<I>rclBounds</I> field in the forthcoming 
+<I>EnumEnhMetaFile</I> call.<P>
+Next, the program creates a new disk-based metafile to be stored with the 
+name EMF7.EMF. The <I>CreateEnhMetaFile</I> function returns a device context handle for the 
+metafile. Then <I>EnumEnhMetaFile</I> is called using the metafile device context handle for 
+EMF7.EMF and the metafile handle from EMF3.EMF.<P>
+Now let's take a look at <I>EnhMetaFileProc</I>. If the record being enumerated is not 
+the header or the end-of-file, the function calls 
+<I>PlayEnhMetaFileRecord</I> to transfer the 
+record into the new metafile device context. (It's not strictly necessary to exclude the header 
+or end-of-file record, but they make the metafile somewhat larger.)
+<P>If the record just transferred is the 
+<I>Rectangle</I> call, the function creates a pen 
+to draw an ellipse with a green outline and a transparent interior. Notice how the code 
+restores the state of the device context by saving the previous pen and brush handles. 
+During this time, all these functions are inserted into the metafile. (Keep in mind that you 
+can also use <I>PlayEnhMetaFile</I> to insert an entire metafile in the existing one.)
+<P>Back in WM_CREATE processing, the program calls 
+<I>CloseEnhMetaFile</I> to obtain a handle to the new metafile. Then it deletes both metafile handles, leaving behind both 
+the EMF3.EMF and EMF7.EMF files on disk.
+<P>It's obvious from the program's display output that the ellipse is drawn after 
+the rectangle but before the two crisscrossing lines.
+
+<A NAME="679"><h2>An Enhanced Metafile Viewer and Printer</h2></A><P>Using the clipboard for transferring enhanced metafiles is quite simple. The clipboard 
+type is CF_ENHMETAFILE. The 
+<I>GetClipboardData</I> function returns a handle to the 
+enhanced metafile; the <I>SetClipboardData</I> also uses the metafile handle. Need a copy of the 
+metafile? Use the <I>CopyEnhMetaFile </I>function. If you put an enhanced metafile in the 
+clipboard, Windows will make available a metafile in the old format for those programs that need 
+it. If you put an old-format metafile in the clipboard, Windows will make available an 
+enhanced metafile.
+<P>The EMFVIEW program shown in Figure 18-14 shows code to transfer metafiles 
+to and from the clipboard, and it also allows loading metafiles, saving metafiles, and 
+printing them.
+
+<P><B>Figure 18-14.</B> <I>The EMFVIEW program.</i>
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="680"><H3>EMFVIEW.C</H3></A><P><pre>/*----------------------------------------
+   EMFVIEW.C -- View Enhanced Metafiles
+                (c) Charles Petzold, 1998
+  ----------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &lt;commdlg.h&gt;
+#include &quot;resource.h&quot;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+TCHAR szAppName[] = TEXT (&quot;EmfView&quot;) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     HACCEL   hAccel ;
+     HWND     hwnd ;
+     MSG      msg ;
+     WNDCLASS wndclass ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = szAppName ;
+     wndclass.lpszClassName = szAppName ;
+
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;), 
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Enhanced Metafile Viewer&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT, 
+                          NULL, NULL, hInstance, NULL) ;
+
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+     hAccel = LoadAccelerators (hInstance, szAppName) ;
+
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          if (!TranslateAccelerator (hwnd, hAccel, &amp;msg))
+          {
+               TranslateMessage (&amp;msg) ;
+               DispatchMessage (&amp;msg) ;
+          }
+     }
+     return msg.wParam ;
+}
+
+HPALETTE CreatePaletteFromMetaFile (HENHMETAFILE hemf)
+{
+     HPALETTE     hPalette ;
+     int          iNum ;
+     LOGPALETTE * plp ;
+
+     if (!hemf)
+          return NULL ;
+
+     if (0 == (iNum = GetEnhMetaFilePaletteEntries (hemf, 0, NULL)))
+          return NULL ;
+
+     plp = malloc (sizeof (LOGPALETTE) + (iNum - 1) * sizeof (PALETTEENTRY)) ;
+
+     plp-&gt;palVersion    = 0x0300 ;
+     plp-&gt;palNumEntries = iNum ;
+     GetEnhMetaFilePaletteEntries (hemf, iNum, plp-&gt;palPalEntry) ;
+     
+     hPalette = CreatePalette (plp) ;
+
+     free (plp) ;
+
+     return hPalette ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static DOCINFO      di = { sizeof (DOCINFO), TEXT (&quot;EmfView: Printing&quot;) } ;
+     static HENHMETAFILE hemf ;
+     static OPENFILENAME ofn ;
+     static PRINTDLG     printdlg = { sizeof (PRINTDLG) } ;
+     static TCHAR        szFileName [MAX_PATH], szTitleName [MAX_PATH] ;
+     static TCHAR        szFilter[] = 
+                               TEXT (&quot;Enhanced Metafiles (*.EMF)\0*.emf\0&quot;)
+                               TEXT (&quot;All Files (*.*)\0*.*\0\0&quot;) ;
+     BOOL                bSuccess ;
+     ENHMETAHEADER       header ;
+     HDC                 hdc, hdcPrn ;
+     HENHMETAFILE        hemfCopy ;
+     HMENU               hMenu ;
+     HPALETTE            hPalette ;
+     int                 i, iLength, iEnable ;
+     PAINTSTRUCT         ps ;
+     RECT                rect ;
+     PTSTR               pBuffer ;
+
+     switch (message)
+     {
+     case WM_CREATE:
+               // Initialize OPENFILENAME structure
+     
+          ofn.lStructSize       = sizeof (OPENFILENAME) ;
+          ofn.hwndOwner         = hwnd ;
+          ofn.hInstance         = NULL ;
+          ofn.lpstrFilter       = szFilter ;
+          ofn.lpstrCustomFilter = NULL ;
+          ofn.nMaxCustFilter    = 0 ;
+          ofn.nFilterIndex      = 0 ;
+          ofn.lpstrFile         = szFileName ;
+          ofn.nMaxFile          = MAX_PATH ;
+          ofn.lpstrFileTitle    = szTitleName ;
+          ofn.nMaxFileTitle     = MAX_PATH ;
+          ofn.lpstrInitialDir   = NULL ;
+          ofn.lpstrTitle        = NULL ;
+          ofn.Flags             = 0 ;   
+          ofn.nFileOffset       = 0 ;
+          ofn.nFileExtension    = 0 ;
+          ofn.lpstrDefExt       = TEXT (&quot;emf&quot;) ;
+          ofn.lCustData         = 0 ;
+          ofn.lpfnHook          = NULL ;
+          ofn.lpTemplateName    = NULL ;
+          return 0 ;
+
+     case WM_INITMENUPOPUP:
+          hMenu = GetMenu (hwnd) ;
+
+          iEnable = hemf ? MF_ENABLED : MF_GRAYED ;
+
+          EnableMenuItem (hMenu, IDM_FILE_SAVE_AS,    iEnable) ;
+          EnableMenuItem (hMenu, IDM_FILE_PRINT,      iEnable) ;
+          EnableMenuItem (hMenu, IDM_FILE_PROPERTIES, iEnable) ;
+          EnableMenuItem (hMenu, IDM_EDIT_CUT,        iEnable) ;
+          EnableMenuItem (hMenu, IDM_EDIT_COPY,       iEnable) ;
+          EnableMenuItem (hMenu, IDM_EDIT_DELETE,     iEnable) ;
+
+          EnableMenuItem (hMenu, IDM_EDIT_PASTE,
+               IsClipboardFormatAvailable (CF_ENHMETAFILE) ?
+                    MF_ENABLED : MF_GRAYED) ;
+          return 0 ;
+
+     case WM_COMMAND:
+          switch (LOWORD (wParam))
+          {
+          case IDM_FILE_OPEN:
+                    // Show the File Open dialog box
+
+               ofn.Flags = 0 ;
+     
+               if (!GetOpenFileName (&amp;ofn))
+                    return 0 ;
+               
+                    // If there's an existing EMF, get rid of it.
+
+               if (hemf)
+               {
+                    DeleteEnhMetaFile (hemf) ;
+                    hemf = NULL ;
+               }
+                    // Load the EMF into memory
+
+               SetCursor (LoadCursor (NULL, IDC_WAIT)) ;
+               ShowCursor (TRUE) ;
+
+               hemf = GetEnhMetaFile (szFileName) ;
+
+               ShowCursor (FALSE) ;
+               SetCursor (LoadCursor (NULL, IDC_ARROW)) ;
+
+                    // Invalidate the client area for later update
+
+               InvalidateRect (hwnd, NULL, TRUE) ;
+
+               if (hemf == NULL)
+               {
+                    MessageBox (hwnd, TEXT (&quot;Cannot load metafile&quot;), 
+                                szAppName, MB_ICONEXCLAMATION | MB_OK) ;
+               }
+               return 0 ;
+
+          case IDM_FILE_SAVE_AS:
+               if (!hemf)
+                    return 0 ;
+
+                    // Show the File Save dialog box
+
+               ofn.Flags = OFN_OVERWRITEPROMPT ;
+     
+               if (!GetSaveFileName (&amp;ofn))
+                    return 0 ;
+               
+                    // Save the EMF to disk file
+
+               SetCursor (LoadCursor (NULL, IDC_WAIT)) ;
+               ShowCursor (TRUE) ;
+
+               hemfCopy = CopyEnhMetaFile (hemf, szFileName) ;
+
+               ShowCursor (FALSE) ;
+               SetCursor (LoadCursor (NULL, IDC_ARROW)) ;
+
+               if (hemfCopy)
+               {
+                    DeleteEnhMetaFile (hemf) ;
+                    hemf = hemfCopy ;
+               }
+               else
+                    MessageBox (hwnd, TEXT (&quot;Cannot save metafile&quot;), 
+                                szAppName, MB_ICONEXCLAMATION | MB_OK) ;
+               return 0 ;
+
+          case IDM_FILE_PRINT:
+                    // Show the Print dialog box and get printer DC
+
+               printdlg.Flags = PD_RETURNDC | PD_NOPAGENUMS | PD_NOSELECTION ;
+
+               if (!PrintDlg (&amp;printdlg))
+                    return 0 ;
+               
+               if (NULL == (hdcPrn = printdlg.hDC)) 
+               {
+                    MessageBox (hwnd, TEXT (&quot;Cannot obtain printer DC&quot;),
+                                szAppName, MB_ICONEXCLAMATION | MB_OK) ;
+                    return 0 ;
+               }
+                    // Get size of printable area of page
+
+               rect.left   = 0 ;
+               rect.right  = GetDeviceCaps (hdcPrn, HORZRES) ;
+               rect.top    = 0 ;
+               rect.bottom = GetDeviceCaps (hdcPrn, VERTRES) ;
+
+               bSuccess = FALSE ;
+
+                    // Play the EMF to the printer
+
+               SetCursor (LoadCursor (NULL, IDC_WAIT)) ;
+               ShowCursor (TRUE) ;
+
+               if ((StartDoc (hdcPrn, &amp;di) &gt; 0) &amp;&amp; (StartPage (hdcPrn) &gt; 0))
+               {
+                    PlayEnhMetaFile (hdcPrn, hemf, &amp;rect) ;
+                    
+                    if (EndPage (hdcPrn) &gt; 0)
+                    {
+                         bSuccess = TRUE ;
+                         EndDoc (hdcPrn) ;
+                    }
+               }
+               ShowCursor (FALSE) ;
+               SetCursor (LoadCursor (NULL, IDC_ARROW)) ;
+               DeleteDC (hdcPrn) ;
+
+               if (!bSuccess)
+                    MessageBox (hwnd, TEXT (&quot;Could not print metafile&quot;),
+                                szAppName, MB_ICONEXCLAMATION | MB_OK) ;
+               return 0 ;
+
+          case IDM_FILE_PROPERTIES:
+               if (!hemf)
+                    return 0 ;
+
+               iLength = GetEnhMetaFileDescription (hemf, 0, NULL) ;
+               pBuffer = malloc ((iLength + 256) * sizeof (TCHAR)) ;
+
+               GetEnhMetaFileHeader (hemf, sizeof (ENHMETAHEADER), &amp;header) ;
+
+                    // Format header file information 
+
+               i  = wsprintf (pBuffer, 
+                              TEXT (&quot;Bounds = (%i, %i) to (%i, %i) pixels\n&quot;),
+                              header.rclBounds.left, header.rclBounds.top,
+                              header.rclBounds.right, header.rclBounds.bottom) ;
+
+               i += wsprintf (pBuffer + i, 
+                              TEXT (&quot;Frame = (%i, %i) to (%i, %i) mms\n&quot;),
+                              header.rclFrame.left, header.rclFrame.top,
+                              header.rclFrame.right, header.rclFrame.bottom) ;
+
+               i += wsprintf (pBuffer + i,
+                              TEXT (&quot;Resolution = (%i, %i) pixels&quot;)
+                              TEXT (&quot; = (%i, %i) mms\n&quot;),
+                              header.szlDevice.cx, header.szlDevice.cy,
+                              header.szlMillimeters.cx, 
+                              header.szlMillimeters.cy) ;
+
+               i += wsprintf (pBuffer + i,
+                              TEXT (&quot;Size = %i, Records = %i, &quot;)
+                              TEXT (&quot;Handles = %i, Palette entries = %i\n&quot;),
+                              header.nBytes, header.nRecords,
+                              header.nHandles, header.nPalEntries) ;
+
+                    // Include the metafile description, if present
+               if (iLength)
+               {
+                    i += wsprintf (pBuffer + i, TEXT (&quot;Description = &quot;)) ;
+                    GetEnhMetaFileDescription (hemf, iLength, pBuffer + i) ;
+                    pBuffer [lstrlen (pBuffer)] = `\t' ;
+               }
+
+               MessageBox (hwnd, pBuffer, TEXT (&quot;Metafile Properties&quot;), MB_OK) ;
+               free (pBuffer) ;                              
+               return 0 ;
+
+          case IDM_EDIT_COPY:
+          case IDM_EDIT_CUT:
+               if (!hemf)
+                    return 0 ;
+
+                    // Transfer metafile copy to the clipboard
+
+               hemfCopy = CopyEnhMetaFile (hemf, NULL) ;
+
+               OpenClipboard (hwnd) ;
+               EmptyClipboard () ;
+               SetClipboardData (CF_ENHMETAFILE, hemfCopy) ;
+               CloseClipboard () ;
+
+               if (LOWORD (wParam) == IDM_EDIT_COPY)
+                    return 0 ;
+                                        // fall through if IDM_EDIT_CUT 
+          case IDM_EDIT_DELETE:
+               if (hemf)
+               {
+                    DeleteEnhMetaFile (hemf) ;
+                    hemf = NULL ;
+                    InvalidateRect (hwnd, NULL, TRUE) ;
+               }
+               return 0 ;
+
+          case IDM_EDIT_PASTE:
+               OpenClipboard (hwnd) ;
+               hemfCopy = GetClipboardData (CF_ENHMETAFILE) ;
+               CloseClipboard () ;
+
+               if (hemfCopy &amp;&amp; hemf)
+               {
+                    DeleteEnhMetaFile (hemf) ;
+                    hemf = NULL ;
+               }
+
+               hemf = CopyEnhMetaFile (hemfCopy, NULL) ;
+               InvalidateRect (hwnd, NULL, TRUE) ;
+               return 0 ;
+
+          case IDM_APP_ABOUT:
+               MessageBox (hwnd, TEXT (&quot;Enhanced Metafile Viewer\n&quot;)
+                                 TEXT (&quot;(c) Charles Petzold, 1998&quot;),
+                           szAppName, MB_OK) ;
+               return 0 ;
+
+          case IDM_APP_EXIT:
+               SendMessage (hwnd, WM_CLOSE, 0, 0L) ;
+               return 0 ;
+          }
+          break ;
+         
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+
+          if (hemf)
+          {
+               if (hPalette = CreatePaletteFromMetaFile (hemf))
+               {
+                    SelectPalette (hdc, hPalette, FALSE) ;
+                    RealizePalette (hdc) ;
+               }
+               GetClientRect (hwnd, &amp;rect) ;
+               PlayEnhMetaFile (hdc, hemf, &amp;rect) ;
+
+               if (hPalette)
+                    DeleteObject (hPalette) ;
+          }
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+
+     case WM_QUERYNEWPALETTE:
+          if (!hemf || !(hPalette = CreatePaletteFromMetaFile (hemf)))
+               return FALSE ;
+
+          hdc = GetDC (hwnd) ;
+          SelectPalette (hdc, hPalette, FALSE) ;
+          RealizePalette (hdc) ;
+          InvalidateRect (hwnd, NULL, FALSE) ;
+          
+          DeleteObject (hPalette) ;
+          ReleaseDC (hwnd, hdc) ;
+          return TRUE ;
+
+     case WM_PALETTECHANGED:
+          if ((HWND) wParam == hwnd)
+               break ;
+
+          if (!hemf || !(hPalette = CreatePaletteFromMetaFile (hemf)))
+               break ;
+
+          hdc = GetDC (hwnd) ;
+          SelectPalette (hdc, hPalette, FALSE) ;
+          RealizePalette (hdc) ;
+          UpdateColors (hdc) ;
+          
+          DeleteObject (hPalette) ;
+          ReleaseDC (hwnd, hdc) ;
+          break ;
+          
+     case WM_DESTROY:
+          if (hemf)
+               DeleteEnhMetaFile (hemf) ;
+
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</pre>
+</TD></TR></TABLE>
+<P><TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="681"><h3>EMFVIEW.RC (excerpts)</h3></A><pre>
+//Microsoft Developer Studio generated resource script.
+
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+// Menu
+
+EMFVIEW MENU DISCARDABLE 
+BEGIN
+    POPUP &quot;&amp;File&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Open\tCtrl+O&quot;,               IDM_FILE_OPEN
+        MENUITEM &quot;Save &amp;As...&quot;,                 IDM_FILE_SAVE_AS
+        MENUITEM SEPARATOR
+        MENUITEM &quot;&amp;Print...\tCtrl+P&quot;,           IDM_FILE_PRINT
+        MENUITEM SEPARATOR
+        MENUITEM &quot;&amp;Properties&quot;,                 IDM_FILE_PROPERTIES
+        MENUITEM SEPARATOR
+        MENUITEM &quot;E&amp;xit&quot;,                       IDM_APP_EXIT
+    END
+    POPUP &quot;&amp;Edit&quot;
+    BEGIN
+        MENUITEM &quot;Cu&amp;t\tCtrl+X&quot;,                IDM_EDIT_CUT
+        MENUITEM &quot;&amp;Copy\tCtrl+C&quot;,               IDM_EDIT_COPY
+        MENUITEM &quot;&amp;Paste\tCtrl+V&quot;,              IDM_EDIT_PASTE
+        MENUITEM &quot;&amp;Delete\tDel&quot;,                IDM_EDIT_DELETE
+    END
+    POPUP &quot;Help&quot;
+    BEGIN
+        MENUITEM &quot;&amp;About EmfView...&quot;,           IDM_APP_ABOUT
+    END
+END
+
+/////////////////////////////////////////////////////////////////////////////
+// Accelerator
+
+EMFVIEW ACCELERATORS DISCARDABLE 
+BEGIN
+    &quot;C&quot;,            IDM_EDIT_COPY,          VIRTKEY, CONTROL, NOINVERT
+    &quot;O&quot;,            IDM_FILE_OPEN,          VIRTKEY, CONTROL, NOINVERT
+    &quot;P&quot;,            IDM_FILE_PRINT,         VIRTKEY, CONTROL, NOINVERT
+    &quot;V&quot;,            IDM_EDIT_PASTE,         VIRTKEY, CONTROL, NOINVERT
+    VK_DELETE,      IDM_EDIT_DELETE,        VIRTKEY, NOINVERT
+    &quot;X&quot;,            IDM_EDIT_CUT,           VIRTKEY, CONTROL, NOINVERT
+END
+</pre>
+</TD></TR></TABLE>
+
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="682"><h3>RESOURCE.H (excerpts)</h3><P></A><pre>
+// Microsoft Developer Studio generated include file.
+// Used by EmfView.rc
+
+#define IDM_FILE_OPEN                   40001
+#define IDM_FILE_SAVE_AS                40002
+#define IDM_FILE_PRINT                  40003
+#define IDM_FILE_PROPERTIES             40004
+#define IDM_APP_EXIT                    40005
+#define IDM_EDIT_CUT                    40006
+#define IDM_EDIT_COPY                   40007
+#define IDM_EDIT_PASTE                  40008
+#define IDM_EDIT_DELETE                 40009
+#define IDM_APP_ABOUT                   40010
+</pre>
+</TD></TR></TABLE>
+
+<p>EMFVIEW also has complete palette logic, just in case a palette has been 
+encoded in the metafile. (The way it gets in there is by a call to 
+<I>SelectPalette</I>.) The program extracts the palette in its 
+<I>CreatePaletteFromMetaFile</I> function, which is called when it displays 
+a metafile during WM_PAINT and also while processing the WM_QUERYNEWPALETTE 
+and WM_PALETTECHANGED messages.<P>
+In response to a Print command from the menu, EMFVIEW displays the common 
+printer dialog box and then obtains the dimensions of the printable area of the page. The 
+metafile is stretched to fill that whole area. EMFVIEW displays a metafile in its window similarly.<P>
+The Properties item from the File menu causes EMFVIEW to display a message 
+box containing information from the metafile header.<P>
+If you print the EMF2.EMF metafile image created earlier in this chapter, you may 
+find that the lines are very thin on high-resolution printers, perhaps nearly invisible. Vector 
+images should really have wider pens (for example, 1-point wide) for printing. The ruler 
+image shown later in this chapter does that.
+
+<A NAME="683"><h2>Displaying Accurate Metafile Images</h2></A><P>The great thing about metafile images is that they can be stretched to any size and 
+still maintain reasonable fidelity. This is because a metafile normally consists of a series of 
+vector graphics primitives, such as lines, filled areas, and outline fonts. Enlarging or 
+compressing the image simply involves scaling all the coordinate points that define these 
+primitives. Bitmaps, on the other hand, can lose vital information when compression results in 
+dropping entire rows and columns of pixels.
+<P>Of course, metafile compression in real life is not entirely flawless either. We 
+live with graphical output devices that have a finite pixel size. A metafile image 
+consisting of lots of lines could start to look like an indecipherable blob when compressed in 
+size. Also, area-filling patterns and color dithering start to look odd at small sizes. And, if 
+the metafile contains embedded bitmaps or old-fashioned raster fonts, these too can 
+pose familiar problems.
+<P>For the most part, though, metafiles are freely scaleable. This is most useful 
+when dropping a metafile into a word processing or desktop publishing document. 
+Generally, when you select a metafile image in such an application, you'll be presented with a 
+bounding rectangle that you can grab with the mouse and scale to any size. The image will 
+also have the same relative size when rendered on a printer.
+<P>Sometimes, however, arbitrarily scaling a metafile is not such a hot idea. An 
+example: Suppose you have a banking system that stores facsimiles of account-holders' 
+signatures as a series of polylines stored in a metafile. Widening or heightening this metafile 
+would make the signature look different. At the very least, you should keep the image's 
+aspect ratio constant.
+<P>In the sample programs shown previously, we've based the bounding rectangle 
+in the <I>PlayEnhMetaFile</I> call on the size of the client area. Thus, as you resize the 
+program's window, you effectively resize the image. This is conceptually similar to resizing a 
+metafile image within a word-processing document.
+<P>Accurately displaying a metafile image&#8212;either in specific metrical sizes or with 
+a proper aspect ratio&#8212;requires using size information in the metafile header and setting 
+the rectangle structure accordingly.
+<P>The sample programs in the remainder of this chapter will use a shell program 
+called EMF.C that includes printing logic, a resource script named EMF.RC, and a 
+RESOURCE.H header file. Figure 18-15 shows these files along with EMF8.C, a program that uses 
+these files to display a 6-inch ruler.
+<P><B>Figure 18-15.</B> <I>The EMF8 program.</I>
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="684"><H3>EMF8.C</H3></A><P><pre>/*-------------------------------------
+   EMF8.C -- Enhanced Metafile Demo #8
+             (c) Charles Petzold, 1998
+  -------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+TCHAR szClass [] = TEXT (&quot;EMF8&quot;) ;
+TCHAR szTitle [] = TEXT (&quot;EMF8: Enhanced Metafile Demo #8&quot;) ;
+
+void DrawRuler (HDC hdc, int cx, int cy)
+{
+     int     iAdj, i, iHeight ;
+     LOGFONT lf ;
+     TCHAR   ch ;
+
+     iAdj = GetVersion () &amp; 0x80000000 ? 0 : 1 ;
+	 
+          // Black pen with 1-point width
+     SelectObject (hdc, CreatePen (PS_SOLID, cx / 72 / 6, 0)) ;
+
+          // Rectangle surrounding entire pen (with adjustment)
+
+     Rectangle (hdc, iAdj, iAdj, cx + iAdj + 1, cy + iAdj + 1) ;
+
+          // Tick marks
+          
+     for (i = 1 ; i &lt; 96 ; i++)
+     {
+               if (i % 16 == 0) iHeight = cy /  2 ;    // inches
+          else if (i %  8 == 0) iHeight = cy /  3 ;    // half inches
+          else if (i %  4 == 0) iHeight = cy /  5 ;    // quarter inches
+          else if (i %  2 == 0) iHeight = cy /  8 ;    // eighths
+          else                  iHeight = cy / 12 ;    // sixteenths
+
+          MoveToEx (hdc, i * cx / 96, cy, NULL) ;
+          LineTo   (hdc, i * cx / 96, cy - iHeight) ;
+     }
+          // Create logical font 
+
+     FillMemory (&amp;lf, sizeof (lf), 0) ;
+     lf.lfHeight = cy / 2 ;
+     lstrcpy (lf.lfFaceName, TEXT (&quot;Times New Roman&quot;)) ;
+
+     SelectObject (hdc, CreateFontIndirect (&amp;lf)) ;
+     SetTextAlign (hdc, TA_BOTTOM | TA_CENTER) ;
+     SetBkMode    (hdc, TRANSPARENT) ;
+
+          // Display numbers
+
+     for (i = 1 ; i &lt;= 5 ; i++)
+     {
+          ch = (TCHAR) (i + `0') ;
+          TextOut (hdc, i * cx / 6, cy / 2, &amp;ch, 1) ;
+     }
+          // Clean up
+
+     DeleteObject (SelectObject (hdc, GetStockObject (SYSTEM_FONT))) ;
+     DeleteObject (SelectObject (hdc, GetStockObject (BLACK_PEN))) ;
+}
+
+void CreateRoutine (HWND hwnd)
+{
+     HDC          hdcEMF ;
+     HENHMETAFILE hemf ;
+     int          cxMms, cyMms, cxPix, cyPix, xDpi, yDpi ;
+
+     hdcEMF = CreateEnhMetaFile (NULL, TEXT (&quot;emf8.emf&quot;), NULL,
+                                 TEXT (&quot;EMF8\0EMF Demo #8\0&quot;)) ;
+     if (hdcEMF == NULL)
+          return ;
+
+     cxMms = GetDeviceCaps (hdcEMF, HORZSIZE) ;
+     cyMms = GetDeviceCaps (hdcEMF, VERTSIZE) ;
+     cxPix = GetDeviceCaps (hdcEMF, HORZRES) ;
+     cyPix = GetDeviceCaps (hdcEMF, VERTRES) ;
+
+     xDpi = cxPix * 254 / cxMms / 10 ;
+     yDpi = cyPix * 254 / cyMms / 10 ;
+
+     DrawRuler (hdcEMF, 6 * xDpi, yDpi) ;
+
+     hemf = CloseEnhMetaFile (hdcEMF) ;
+
+     DeleteEnhMetaFile (hemf) ;
+}
+
+void PaintRoutine (HWND hwnd, HDC hdc, int cxArea, int cyArea)
+{
+     ENHMETAHEADER emh ;
+     HENHMETAFILE  hemf ;
+     int           cxImage, cyImage ;
+     RECT          rect ;
+
+     hemf = GetEnhMetaFile (TEXT (&quot;emf8.emf&quot;)) ;
+
+     GetEnhMetaFileHeader (hemf, sizeof (emh), &amp;emh) ;
+
+     cxImage = emh.rclBounds.right - emh.rclBounds.left ;
+     cyImage = emh.rclBounds.bottom - emh.rclBounds.top ;
+
+     rect.left   = (cxArea - cxImage) / 2 ;
+     rect.right  = (cxArea + cxImage) / 2 ;
+     rect.top    = (cyArea - cyImage) / 2 ;
+     rect.bottom = (cyArea + cyImage) / 2 ;
+
+     PlayEnhMetaFile (hdc, hemf, &amp;rect) ;
+
+     DeleteEnhMetaFile (hemf) ;
+}
+</pre>
+</TD></TR></TABLE>
+<P><TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="685"><h3>EMF.C</h3></A><pre>/*--------------------------------------------------------
+   EMF.C -- Enhanced Metafile Demonstration Shell Program
+            (c) Charles Petzold, 1998
+  --------------------------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &lt;commdlg.h&gt;
+#include &quot;..\\emf8\\resource.h&quot;
+
+extern void CreateRoutine (HWND) ;
+extern void PaintRoutine  (HWND, HDC, int, int) ;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+HANDLE hInst ;
+
+extern TCHAR szClass [] ;
+extern TCHAR szTitle [] ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     TCHAR    szResource [] = TEXT (&quot;EMF&quot;) ;
+     HWND     hwnd ;
+     MSG      msg ;
+     WNDCLASS wndclass ;
+
+     hInst = hInstance ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = szResource ;
+     wndclass.lpszClassName = szClass ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szClass, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szClass, szTitle,
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+BOOL PrintRoutine (HWND hwnd)
+{
+     static DOCINFO  di ;
+     static PRINTDLG printdlg = { sizeof (PRINTDLG) } ;
+     static TCHAR    szMessage [32] ;
+     BOOL            bSuccess = FALSE ;
+     HDC             hdcPrn ;
+     int             cxPage, cyPage ;
+
+     printdlg.Flags = PD_RETURNDC | PD_NOPAGENUMS | PD_NOSELECTION ;
+
+     if (!PrintDlg (&amp;printdlg))
+          return TRUE ;
+
+     if (NULL == (hdcPrn = printdlg.hDC))
+          return FALSE ;
+
+     cxPage = GetDeviceCaps (hdcPrn, HORZRES) ;
+     cyPage = GetDeviceCaps (hdcPrn, VERTRES) ;
+
+     lstrcpy (szMessage, szClass) ;
+     lstrcat (szMessage, TEXT (&quot;: Printing&quot;)) ;
+
+     di.cbSize      = sizeof (DOCINFO) ;
+     di.lpszDocName = szMessage ;
+
+     if (StartDoc (hdcPrn, &amp;di) &gt; 0)
+     {
+          if (StartPage (hdcPrn) &gt; 0)
+          {
+               PaintRoutine (hwnd, hdcPrn, cxPage, cyPage) ;
+               if (EndPage (hdcPrn) &gt; 0)
+               {
+                    EndDoc (hdcPrn) ;
+                    bSuccess = TRUE ;
+               }
+          }
+     }
+     DeleteDC (hdcPrn) ;
+
+     return bSuccess ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     BOOL        bSuccess ;
+     static int  cxClient, cyClient ;
+     HDC         hdc ;
+     PAINTSTRUCT ps ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+          CreateRoutine (hwnd) ;
+          return 0 ;
+          
+     case WM_COMMAND:
+          switch (wParam)
+          {
+          case IDM_PRINT:
+               SetCursor (LoadCursor (NULL, IDC_WAIT)) ;
+               ShowCursor (TRUE) ;
+               
+               bSuccess = PrintRoutine (hwnd) ;
+               
+               ShowCursor (FALSE) ;
+               SetCursor (LoadCursor (NULL, IDC_ARROW)) ;
+               
+               if (!bSuccess)
+                    MessageBox (hwnd,
+                                TEXT (&quot;Error encountered during printing&quot;),
+                                szClass, MB_ICONASTERISK | MB_OK) ;
+               return 0 ;
+               
+          case IDM_EXIT:
+               SendMessage (hwnd, WM_CLOSE, 0, 0) ;
+               return 0 ;
+               
+          case IDM_ABOUT:
+               MessageBox (hwnd, TEXT (&quot;Enhanced Metafile Demo Program\n&quot;)
+                                 TEXT (&quot;Copyright (c) Charles Petzold, 1998&quot;),
+                           szClass, MB_ICONINFORMATION | MB_OK) ;
+               return 0 ;
+          }
+          break ;
+          
+     case WM_SIZE:
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+          return 0 ;
+          
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+          
+          PaintRoutine (hwnd, hdc, cxClient, cyClient) ;
+          
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+          
+     case WM_DESTROY :
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</PRE>
+</TD></TR></TABLE>
+<P><TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="686"><h3>EMF.RC (excerpts)</h3></A><pre>
+//Microsoft Developer Studio generated resource script.
+
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+// Menu
+
+EMF MENU DISCARDABLE 
+BEGIN
+    POPUP &quot;&amp;File&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Print...&quot;,                   IDM_PRINT
+        MENUITEM SEPARATOR
+        MENUITEM &quot;E&amp;xit&quot;,                       IDM_EXIT
+    END
+    POPUP &quot;&amp;Help&quot;
+    BEGIN
+        MENUITEM &quot;&amp;About...&quot;,                   IDM_ABOUT
+    END
+END</PRE>
+<P>
+<H3>RESOURCE.H (excerpts)</H3><pre>
+// Microsoft Developer Studio generated include file.
+// Used by Emf.rc
+//
+#define IDM_PRINT                       40001
+#define IDM_EXIT                        40002
+#define IDM_ABOUT                       40003</pre>
+</TD></TR></TABLE>
+
+<P>During the WM_CREATE message, EMF.C calls an external function called 
+<I>CreateRoutine</I>. This function will create a metafile. EMF.C calls a function named 
+<I>PaintRoutine</I> in two places: once during the WM_PAINT message and again in the function 
+<I>PrintRoutine</I> in response to a menu command to print the image.<P>
+Because modern printers often have a much higher resolution than video 
+displays, the ability to print a metafile is an important tool for testing our ability to render an 
+image in a specific size. The EMF8 program creates a metafile image that makes most sense 
+when displayed in a specific size. The image is that of a ruler 6 inches wide by 1 inch 
+high, complete with tick marks every 
+16<SUP>th</SUP> inch and the numbers 1 through 5 in a TrueType font.<P>
+To draw a 6-inch ruler, we need to know something about device resolution. 
+The <I>CreateRoutine</I> function in EMF8.C begins by creating a metafile and calling 
+<I>GetDeviceCaps</I> four times using the device context handle returned from 
+<I>CreateEnhMetaFile</I>. These calls obtain the width and height of the display surface in both millimeters and pixels.<P>
+This may sound a bit odd. The metafile device context is usually seen as a 
+storage medium for GDI drawing commands. It's not a real device like a video display or a 
+printer, so how can it have a width and height?<P>
+Well, as you may recall, the first argument to 
+<I>CreateEnhMetaFile</I> is known as the &quot;reference device context.&quot; GDI uses this to establish device characteristics for the 
+metafile. If the argument is set to NULL (as in EMF8), GDI uses the video display as the 
+reference device context. Thus, when EMF8 calls 
+<I>GetDeviceCaps</I> using the metafile device 
+context, it actually obtains information about the video display.
+<P>EMF8.C calculates a resolution in dots per inch by dividing the pixel dimension 
+by the millimeter dimension and multiplying by 25.4, the number of millimeters in an inch.
+<P>Even though we've taken great care to draw this metafile ruler in its correct size, 
+the work is not yet done. When it comes time to render the image, the 
+<I>PlayEnhMetaFile</I> function will display it stretched to the rectangle passed as its last argument. This rectangle 
+must be set to the size of the ruler.
+<P>For this reason, the <I>PaintRoutine</I> function in EMF8 calls the 
+<I>GetEnhMetaFileHeader</I> function to obtain the header information in the metafile. The 
+<I>rclBounds</I> field of the ENHMETAHEADER structure indicates the bounding rectangle of the metafile image 
+in pixels. The program uses this information to center the ruler in the client area, as 
+shown in Figure 18-16.
+<P><A HREF="javascript:fullSize('F18zg16x.htm')"><IMG SRC="F18zg16.JPG" width=404 height=283 ALIGN="BOTTOM" BORDER=0 ALT="Click to view full size"></A>
+<P><!-- caption --><B>Figure 18-16.</B> <I>The EMF8 display.</I><!-- /caption -->
+<P>Keep in mind that if you hold a ruler up to the screen, you probably won't 
+match exactly. The video display only approximates actual metrics, as I discussed in <a href="ch05a.htm#94">Chapter 5</a>.
+<P>This technique appears to have worked, but now try printing the image. Oops! If you have a 300-dpi laser printer, the ruler will be about 
+1<SUP>1</SUP>/<SUB>3</SUB> inches wide. That's because 
+we've used a pixel dimension based on the video display. Although you may think the little printed ruler looks kind of cute, it's not what we want. Let's try again.
+
+<P>The ENHMETAHEADER structure contains two rectangle structures that describe 
+the size of the image. The first, which EMF8 uses, is the 
+<I>rclBounds</I> field. This gives the size of the image in pixels. The second is the 
+<I>rclFrame</I> field, which gives the size of the image 
+in units of 0.01 millimeters. The relationship between these two fields is governed by 
+the reference device context originally used when creating the metafile, in this case the 
+video display. (The metafile header also contains two fields named 
+<I>szlDevice</I> and <I>szlMillimeters</I>, which are SIZEL structures that indicate the size of the reference device in pixels 
+and millimeters, the same information available from 
+<I>GetDeviceCaps</I>.)
+<P>The information about the millimeter dimensions of the image is put to use by 
+EMF9, shown in Figure 18-17.
+<P><B>Figure 18-17.</B> <I>The EMF9 program.</I>
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="687"><H3>EMF9.C</H3></A><P><pre>/*--------------------------------------
+   EMF9.C -- Enhanced Metafile Demo #9
+             (c) Charles Petzold, 1998
+  --------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &lt;string.h&gt;
+
+TCHAR szClass [] = TEXT (&quot;EMF9&quot;) ;
+TCHAR szTitle [] = TEXT (&quot;EMF9: Enhanced Metafile Demo #9&quot;) ;
+
+void CreateRoutine (HWND hwnd)
+{
+}
+
+void PaintRoutine (HWND hwnd, HDC hdc, int cxArea, int cyArea)
+{
+     ENHMETAHEADER emh ;
+     HENHMETAFILE  hemf ;
+     int           cxMms, cyMms, cxPix, cyPix, cxImage, cyImage ;
+     RECT          rect ;
+
+     cxMms = GetDeviceCaps (hdc, HORZSIZE) ;
+     cyMms = GetDeviceCaps (hdc, VERTSIZE) ;
+     cxPix = GetDeviceCaps (hdc, HORZRES) ;
+     cyPix = GetDeviceCaps (hdc, VERTRES) ;
+
+     hemf = GetEnhMetaFile (TEXT (&quot;..\\emf8\\emf8.emf&quot;)) ;
+
+     GetEnhMetaFileHeader (hemf, sizeof (emh), &amp;emh) ;
+
+     cxImage = emh.rclFrame.right - emh.rclFrame.left ;
+     cyImage = emh.rclFrame.bottom - emh.rclFrame.top ;
+
+     cxImage = cxImage * cxPix / cxMms / 100 ;
+     cyImage = cyImage * cyPix / cyMms / 100 ;
+
+     rect.left   = (cxArea - cxImage) / 2 ;
+     rect.right  = (cxArea + cxImage) / 2 ;
+     rect.top    = (cyArea - cyImage) / 2 ;
+     rect.bottom = (cyArea + cyImage) / 2 ;
+
+     PlayEnhMetaFile (hdc, hemf, &amp;rect) ;
+
+     DeleteEnhMetaFile (hemf) ;
+}</pre>
+</TD></TR></TABLE>
+
+<P>EMF9 uses the metafile created by EMF8, so be sure to run EMF8 before running 
+this program.<P>
+The <I>PaintRoutine</I> function in EMF9 begins by calling 
+<I>GetDeviceCaps</I> four times using the destination device context. As in the 
+<I>CreateRoutine</I> function in EMF8, these calls provide information about the resolution of the device. After getting the metafile 
+handle, it obtains the header structure and uses the 
+<I>rclFrame</I> field to calculate the size of the 
+metafile image in units of 0.01 millimeters. That's the first step.<P>
+The function then converts this dimension to pixels by multiplying by the pixel 
+dimension of the output device, dividing by the millimeter dimension, and then dividing 
+by 100 to account for the metrical dimension in 0.01 millimeters. The 
+<I>PaintRoutine</I> function now has the dimensions of the ruler in pixels&#8212;but not specific to the video display. 
+This is a pixel dimension appropriate for the destination device. From there on, it's easy to 
+center the image.<P>
+As far as the screen goes, the EMF9 display looks the same as the EMF8 display. But 
+if you print the ruler from EMF9, you'll see something that looks much more normal&#8212;a 
+ruler 6 inches wide by 1 inch high.
+
+<A NAME="688"><h2>Scaling and Aspect Ratios</h2></A><P>There may be times when you want to use the ruler metafile created by EMF8 but 
+without necessarily displaying the 6-inch image. Still, it might be nice to maintain the correct 
+6-to-1 aspect ratio of the image. As I mentioned before, using a bounding box to size a 
+metafile in a word-processing program (or whatever) may be convenient, but it could result in 
+certain undesirable distortions. In such applications, users should be given an option to keep 
+the original aspect ratio regardless of how the bounding box is sized. That is, the 
+bounding box selected by the user would not be used directly to define the rectangle structure 
+passed to the <I>PlayEnhMetaFile</I>. The rectangle structure passed to that function would be only 
+part of the bounding box.
+<P>Let's examine how to do this in the EMF10 program shown in Figure 18-18.
+<P><B>Figure 18-18.</B> <I>The EMF10 program.</I>
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="689"><H3>EMF10.C</H3></A><P><pre>/*---------------------------------------
+   EMF10.C -- Enhanced Metafile Demo #10
+              (c) Charles Petzold, 1998
+  ---------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+TCHAR szClass [] = TEXT (&quot;EMF10&quot;) ;
+TCHAR szTitle [] = TEXT (&quot;EMF10: Enhanced Metafile Demo #10&quot;) ;
+
+void CreateRoutine (HWND hwnd)
+{
+}
+
+void PaintRoutine (HWND hwnd, HDC hdc, int cxArea, int cyArea)
+{
+     ENHMETAHEADER emh ;
+     float         fScale ;
+     HENHMETAFILE  hemf ;
+     int           cxMms, cyMms, cxPix, cyPix, cxImage, cyImage ;
+     RECT          rect ;
+
+     cxMms = GetDeviceCaps (hdc, HORZSIZE) ;
+     cyMms = GetDeviceCaps (hdc, VERTSIZE) ;
+     cxPix = GetDeviceCaps (hdc, HORZRES) ;
+     cyPix = GetDeviceCaps (hdc, VERTRES) ;
+
+     hemf = GetEnhMetaFile (TEXT (&quot;..\\emf8\\emf8.emf&quot;)) ;
+
+     GetEnhMetaFileHeader (hemf, sizeof (emh), &amp;emh) ;
+
+     cxImage = emh.rclFrame.right - emh.rclFrame.left ;
+     cyImage = emh.rclFrame.bottom - emh.rclFrame.top ;
+
+     cxImage = cxImage * cxPix / cxMms / 100 ;
+     cyImage = cyImage * cyPix / cyMms / 100 ;
+
+     fScale = min ((float) cxArea / cxImage, (float) cyArea / cyImage) ;
+
+     cxImage = (int) (fScale * cxImage) ;
+     cyImage = (int) (fScale * cyImage) ;
+
+     rect.left   = (cxArea - cxImage) / 2 ;
+     rect.right  = (cxArea + cxImage) / 2 ;
+     rect.top    = (cyArea - cyImage) / 2 ;
+     rect.bottom = (cyArea + cyImage) / 2 ;
+
+     PlayEnhMetaFile (hdc, hemf, &amp;rect) ;
+
+     DeleteEnhMetaFile (hemf) ;
+}</pre>
+</TD></TR></TABLE>
+
+<P>
+EMF10 stretches the ruler image to fit the client area (or the printable area of the 
+printer page) but without otherwise distorting it. Usually you'll see the ruler stretching the full 
+width of the client area but centered between the top and bottom. If you make the 
+window somewhat stout, the ruler will be as tall as the client area but centered horizontally.<P>
+There are probably numerous ways of calculating the proper display rectangle, 
+but I decided to build upon the code in EMF9. The 
+<I>PaintRoutine</I> function in EMF10.C begins like EMF9.C, by calculating the pixel size of the 6-inch-wide image appropriate for 
+the destination device context.<P>
+The program then calculates a floating point value, named 
+<I>fScale</I>, that is the minimum of the ratio of the width of the client area to the width of the image, and the ratio 
+of the height of the client area to the height of the image. This factor is then used to 
+increase the pixel dimensions of the image before the bounding rectangle is calculated.
+
+<A NAME="690"><h2>Mapping Modes in Metafiles</h2></A><P>We've been drawing a ruler that displays inches, and we've also been dealing with 
+dimensions in units of millimeters. Such jobs might seem like good candidates for using the 
+various mapping modes provided under GDI. Yet I've insisted on using pixels and doing all 
+the necessary calculations &quot;manually.&quot; Why is that?
+<P>The simple answer is that the use of mapping modes in connection with 
+metafiles can be quite confusing. But let's try it out to see.
+<P>When you call <I>SetMapMode</I> using a metafile device context, the function is 
+encoded in the metafile just like any other GDI function. This is demonstrated in the EMF11 
+program shown in Figure 18-19.
+<P><B>Figure 18-19.</B> <I>The EMF11 program.</I>
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="691"><h3>EMF11.C</h3></A><P><pre>/*---------------------------------------
+   EMF11.C -- Enhanced Metafile Demo #11
+              (c) Charles Petzold, 1998
+  ---------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+TCHAR szClass [] = TEXT (&quot;EMF11&quot;) ;
+TCHAR szTitle [] = TEXT (&quot;EMF11: Enhanced Metafile Demo #11&quot;) ;
+
+void DrawRuler (HDC hdc, int cx, int cy)
+{
+     int     i, iHeight ;
+     LOGFONT lf ;
+     TCHAR   ch ;
+
+          // Black pen with 1-point width
+
+     SelectObject (hdc, CreatePen (PS_SOLID, cx / 72 / 6, 0)) ;
+
+          // Rectangle surrounding entire pen (with adjustment)
+     if (GetVersion () &amp; 0x80000000)              // Windows 98
+          Rectangle (hdc, 0, -2, cx + 2, cy) ;
+     else                                         // Windows NT
+          Rectangle (hdc, 0, -1, cx + 1, cy) ;
+
+          // Tick marks
+          
+     for (i = 1 ; i &lt; 96 ; i++)
+     {
+               if (i % 16 == 0) iHeight = cy /  2 ;    // inches
+          else if (i %  8 == 0) iHeight = cy /  3 ;    // half inches
+          else if (i %  4 == 0) iHeight = cy /  5 ;    // quarter inches
+          else if (i %  2 == 0) iHeight = cy /  8 ;    // eighths
+          else                  iHeight = cy / 12 ;    // sixteenths
+
+          MoveToEx (hdc, i * cx / 96, 0, NULL) ;
+          LineTo   (hdc, i * cx / 96, iHeight) ;
+     }
+          // Create logical font 
+
+     FillMemory (&amp;lf, sizeof (lf), 0) ;
+     lf.lfHeight = cy / 2 ;
+     lstrcpy (lf.lfFaceName, TEXT (&quot;Times New Roman&quot;)) ;
+
+     SelectObject (hdc, CreateFontIndirect (&amp;lf)) ;
+     SetTextAlign (hdc, TA_BOTTOM | TA_CENTER) ;
+     SetBkMode    (hdc, TRANSPARENT) ;
+
+          // Display numbers
+
+     for (i = 1 ; i &lt;= 5 ; i++)
+     {
+          ch = (TCHAR) (i + `0') ;
+          TextOut (hdc, i * cx / 6, cy / 2, &amp;ch, 1) ;
+     }
+          // Clean up
+
+     DeleteObject (SelectObject (hdc, GetStockObject (SYSTEM_FONT))) ;
+     DeleteObject (SelectObject (hdc, GetStockObject (BLACK_PEN))) ;
+}
+
+void CreateRoutine (HWND hwnd)
+{
+     HDC          hdcEMF ;
+     HENHMETAFILE hemf ;
+     
+     hdcEMF = CreateEnhMetaFile (NULL, TEXT (&quot;emf11.emf&quot;), NULL,
+                                 TEXT (&quot;EMF11\0EMF Demo #11\0&quot;)) ;
+     
+     SetMapMode (hdcEMF, MM_LOENGLISH) ;
+     
+     DrawRuler (hdcEMF, 600, 100) ;
+     
+     hemf = CloseEnhMetaFile (hdcEMF) ;
+     
+     DeleteEnhMetaFile (hemf) ;
+}
+
+void PaintRoutine (HWND hwnd, HDC hdc, int cxArea, int cyArea)
+{
+     ENHMETAHEADER emh ;
+     HENHMETAFILE  hemf ;
+     int           cxMms, cyMms, cxPix, cyPix, cxImage, cyImage ;
+     RECT          rect ;
+     
+     cxMms = GetDeviceCaps (hdc, HORZSIZE) ;
+     cyMms = GetDeviceCaps (hdc, VERTSIZE) ;
+     cxPix = GetDeviceCaps (hdc, HORZRES) ;
+     cyPix = GetDeviceCaps (hdc, VERTRES) ;
+     
+     hemf = GetEnhMetaFile (TEXT (&quot;emf11.emf&quot;)) ;
+     
+     GetEnhMetaFileHeader (hemf, sizeof (emh), &amp;emh) ;
+     
+     cxImage = emh.rclFrame.right - emh.rclFrame.left ;
+     cyImage = emh.rclFrame.bottom - emh.rclFrame.top ;
+     
+     cxImage = cxImage * cxPix / cxMms / 100 ;
+     cyImage = cyImage * cyPix / cyMms / 100 ;
+     
+     rect.left   = (cxArea - cxImage) / 2 ;
+     rect.top    = (cyArea - cyImage) / 2 ;
+     rect.right  = (cxArea + cxImage) / 2 ;
+     rect.bottom = (cyArea + cyImage) / 2 ;
+     
+     PlayEnhMetaFile (hdc, hemf, &amp;rect) ;
+   
+     DeleteEnhMetaFile (hemf) ;
+}</pre>
+</TD></TR></TABLE>
+
+<P>
+The <I>CreateRoutine</I> function in EMF11 is simpler than the one in EMF8 (our 
+original ruler-metafile program) because it does not need to call 
+<I>GetDeviceCaps</I> to determine the resolution of the video display in dots per inch. Instead, EMF11 calls 
+<I>SetMapMode</I> to set the mapping mode to MM_LOENGLISH, where logical units are equal to 0.01 inches. 
+Thus, the dimensions of the ruler are 600 units by 100 units, and these numbers are passed 
+to <I>DrawRuler</I>.<P>
+The <I>DrawRuler</I> function in EMF11 is the same as the one in EMF9, except for 
+the <I>MoveToEx</I> and <I>LineTo</I> calls that draw the tick marks of the ruler. When drawing in 
+units of pixels (the default MM_TEXT mapping mode), units on the vertical axis increase 
+going down the screen. For the MM_LOENGLISH mapping mode (and the other metrical 
+mapping modes), they increase going up. That required a change to this code. The 
+adjustment factors in the <I>Rectangle</I> function were also changed.<P>
+The <I>PaintRoutine</I> function in EMF11 is basically the same as the one in EMF9, 
+which was the version of the program that successfully displayed the ruler in its correct 
+dimensions on both the video display and the printer. The only difference is that EMF11 
+uses the EMF11.EMF file, whereas EMF9 used the EMF8.EMF file created by EMF8.<P>
+The image displayed by EMF11 is basically the same as EMF9. So, we see here 
+how embedding a <I>SetMapMode</I> call into a metafile can simplify the metafile creation and 
+doesn't affect at all the mechanics of playing the metafile in its correct size.
+
+<A NAME="692"><h2>Mapping and Playing</h2></A><P>Calculating the destination rectangle in EMF11 involves some calls to 
+<I>GetDeviceCaps</I>. Our second goal is to eliminate those and use a mapping mode instead. GDI treats the 
+coordinates of the destination rectangle as logical coordinates. Using the MM_HIMETRIC 
+mode seems like a good candidate for these coordinates, because that makes logical units 
+0.01 millimeters, the same units used for the bounding rectangle in the enhanced metafile header.
+<P>The EMF12 program shown in Figure 18-20 restores the <I>DrawRuler</I> logic as originally presented in EMF8 but uses the MM_HIMETRIC mapping mode to 
+display the metafile.
+<P><B>Figure 18-20.</B> <I>The EMF12 program.</I>
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="693"><H3>EMF12.C</H3></A><P><pre>/*---------------------------------------
+   EMF12.C -- Enhanced Metafile Demo #12
+              (c) Charles Petzold, 1998
+  ---------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+TCHAR szClass [] = TEXT (&quot;EMF12&quot;) ;
+TCHAR szTitle [] = TEXT (&quot;EMF12: Enhanced Metafile Demo #12&quot;) ;
+
+
+void DrawRuler (HDC hdc, int cx, int cy)
+{
+     int     iAdj, i, iHeight ;
+     LOGFONT lf ;
+     TCHAR   ch ;
+
+     iAdj = GetVersion () &amp; 0x80000000 ? 0 : 1 ;
+
+          // Black pen with 1-point width
+
+     SelectObject (hdc, CreatePen (PS_SOLID, cx / 72 / 6, 0)) ;
+
+          // Rectangle surrounding entire pen (with adjustment)
+
+     Rectangle (hdc, iAdj, iAdj, cx + iAdj + 1, cy + iAdj + 1) ;
+
+          // Tick marks
+          
+     for (i = 1 ; i &lt; 96 ; i++)
+     {
+               if (i % 16 == 0) iHeight = cy /  2 ;    // inches
+          else if (i %  8 == 0) iHeight = cy /  3 ;    // half inches
+          else if (i %  4 == 0) iHeight = cy /  5 ;    // quarter inches
+          else if (i %  2 == 0) iHeight = cy /  8 ;    // eighths
+          else                  iHeight = cy / 12 ;    // sixteenths
+
+          MoveToEx (hdc, i * cx / 96, cy, NULL) ;
+          LineTo   (hdc, i * cx / 96, cy - iHeight) ;
+     }
+          // Create logical font 
+
+     FillMemory (&amp;lf, sizeof (lf), 0) ;
+     lf.lfHeight = cy / 2 ;
+     lstrcpy (lf.lfFaceName, TEXT (&quot;Times New Roman&quot;)) ;
+
+     SelectObject (hdc, CreateFontIndirect (&amp;lf)) ;
+     SetTextAlign (hdc, TA_BOTTOM | TA_CENTER) ;
+     SetBkMode    (hdc, TRANSPARENT) ;
+
+          // Display numbers
+
+     for (i = 1 ; i &lt;= 5 ; i++)
+     {
+          ch = (TCHAR) (i + `0') ;
+          TextOut (hdc, i * cx / 6, cy / 2, &amp;ch, 1) ;
+     }
+          /
+/ Clean up
+
+     DeleteObject (SelectObject (hdc, GetStockObject (SYSTEM_FONT))) ;
+     DeleteObject (SelectObject (hdc, GetStockObject (BLACK_PEN))) ;
+}
+
+void CreateRoutine (HWND hwnd)
+{
+     HDC          hdcEMF ;
+     HENHMETAFILE hemf ;
+     int          cxMms, cyMms, cxPix, cyPix, xDpi, yDpi ;
+     
+     hdcEMF = CreateEnhMetaFile (NULL, TEXT (&quot;emf12.emf&quot;), NULL,
+                                 TEXT (&quot;EMF13\0EMF Demo #12\0&quot;)) ;
+     
+     cxMms = GetDeviceCaps (hdcEMF, HORZSIZE) ;
+     cyMms = GetDeviceCaps (hdcEMF, VERTSIZE) ;
+     cxPix = GetDeviceCaps (hdcEMF, HORZRES) ;
+     cyPix = GetDeviceCaps (hdcEMF, VERTRES) ;
+     
+     xDpi = cxPix * 254 / cxMms / 10 ;
+     yDpi = cyPix * 254 / cyMms / 10 ;
+     
+     DrawRuler (hdcEMF, 6 * xDpi, yDpi) ;
+     
+     hemf = CloseEnhMetaFile (hdcEMF) ;
+     
+     DeleteEnhMetaFile (hemf) ;
+}
+
+void PaintRoutine (HWND hwnd, HDC hdc, int cxArea, int cyArea)
+{
+     ENHMETAHEADER emh ;
+     HENHMETAFILE  hemf ;
+     POINT         pt ;
+     int           cxImage, cyImage ;
+     RECT          rect ;
+     
+     SetMapMode (hdc, MM_HIMETRIC) ;
+     
+     SetViewportOrgEx (hdc, 0, cyArea, NULL) ;
+     
+     pt.x = cxArea ;
+     pt.y = 0 ;
+     
+     DPtoLP (hdc, &amp;pt, 1) ;
+     
+     hemf = GetEnhMetaFile (TEXT (&quot;emf12.emf&quot;)) ;
+
+     GetEnhMetaFileHeader (hemf, sizeof (emh), &amp;emh) ;
+     
+     cxImage = emh.rclFrame.right - emh.rclFrame.left ;
+     cyImage = emh.rclFrame.bottom - emh.rclFrame.top ;
+     
+     rect.left   = (pt.x - cxImage) / 2 ;
+     rect.top    = (pt.y + cyImage) / 2 ;
+     rect.right  = (pt.x + cxImage) / 2 ;
+     rect.bottom = (pt.y - cyImage) / 2 ;
+     
+     PlayEnhMetaFile (hdc, hemf, &amp;rect) ;
+     
+     DeleteEnhMetaFile (hemf) ;
+}</pre>
+</TD></TR></TABLE>
+
+<P>
+The <I>PaintRoutine</I> function in EMF12 first sets the mapping mode to 
+MM_HIMETRIC. As with the other metric modes, values of 
+<I>y</I> increase going up the screen. However, 
+the origin is still at the upper left corner, which means that 
+<I>y</I>-coordinates within the client area are negative. To correct this oddity, the program calls 
+<I>SetViewportOrgEx</I> to set the origin to the lower left corner.<P>
+The device point (<I>cxArea</I>, 0) is at the upper right corner of the screen. Passing 
+that point to the <I>DPtoLP</I> (&quot;device point to logical point&quot;) function gives us the size of the 
+client area in 0.01 millimeters.<P>
+The program then loads the metafile, gets the header, and finds the dimensions 
+of the metafile in 0.01 millimeters. The destination rectangle centered in the middle of 
+the client area is then easy to calculate.<P>
+Now we've seen how we can use a mapping mode when creating the metafile 
+and also for displaying it. Can we do both?<P>
+It turns out that it works, as EMF13 (shown in Figure 18-21) demonstrates.
+<P><B>Figure 18-21.</B> <I>The EMF13 program.</I>
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="694"><h3>EMF13.C</h3></A><P><pre>/*---------------------------------------
+   EMF13.C -- Enhanced Metafile Demo #13
+              (c) Charles Petzold, 1998
+  ---------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+TCHAR szClass [] = TEXT (&quot;EMF13&quot;) ;
+TCHAR szTitle [] = TEXT (&quot;EMF13: Enhanced Metafile Demo #13&quot;) ;
+
+void CreateRoutine (HWND hwnd)
+{
+}
+void PaintRoutine (HWND hwnd, HDC hdc, int cxArea, int cyArea)
+{
+     ENHMETAHEADER emh ;
+     HENHMETAFILE  hemf ;
+     POINT         pt ;
+     int           cxImage, cyImage ;
+     RECT          rect ;
+     
+     SetMapMode (hdc, MM_HIMETRIC) ;
+     
+     SetViewportOrgEx (hdc, 0, cyArea, NULL) ;
+     
+     pt.x = cxArea ;
+     pt.y = 0 ;
+     
+     DPtoLP (hdc, &amp;pt, 1) ;
+     
+     hemf = GetEnhMetaFile (TEXT (&quot;..\\emf11\\emf11.emf&quot;)) ;
+     
+     GetEnhMetaFileHeader (hemf, sizeof (emh), &amp;emh) ;
+     
+     cxImage = emh.rclFrame.right - emh.rclFrame.left ;
+     cyImage = emh.rclFrame.bottom - emh.rclFrame.top ;
+     
+     rect.left   = (pt.x - cxImage) / 2 ;
+     rect.top    = (pt.y + cyImage) / 2 ;
+     rect.right  = (pt.x + cxImage) / 2 ;
+     rect.bottom = (pt.y - cyImage) / 2 ;
+     
+     PlayEnhMetaFile (hdc, hemf, &amp;rect) ;
+     
+     DeleteEnhMetaFile (hemf) ;
+}</pre>
+</TD></TR></TABLE>
+
+<P>
+In the EMF13 program, it's not necessary to create the ruler metafile by using 
+a mapping mode because it's already been created by EMF11. EMF13 simply loads that 
+one and uses a mapping mode to calculate the destination rectangle, just as EMF11 does.<P>
+Now we can establish a couple principles. When the metafile is created, GDI 
+uses any embedded changes to the mapping mode to calculate the size of the metafile 
+image in pixels and millimeters. The size of the image is stored in the metafile header. When 
+the metafile is played, GDI establishes the physical location of the destination rectangle 
+based on the mapping mode in effect at the time of the 
+<I>PlayEnhMetaFile</I> call. Nothing in the metafile can change that location.
+</BODY>
+</HTML>
+
+
+
+
+

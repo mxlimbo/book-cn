@@ -1,0 +1,995 @@
+<HTML>
+<HEAD>
+<TITLE>Transport Service Providers</title>
+<link rel="STYLESHEET" type="text/css" href="Library.css">
+
+
+</head>
+<BODY BGCOLOR="#FFFFFF" TEXT="#000000">
+<SCRIPT LANGUAGE="JavaScript">
+<!--
+
+function fullSize(sURL){
+	window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+
+function LibraryHeaderNav(sBackward, sForward, sImgLeftOff, sImgLeftOn, sImgRightOff, sImgRightOn, iH, iW, sImgLeftStyle, sImgRightStyle, sImgRuleStyle, sRuleColor, sRuleSize){
+	var tableStr;
+	//validate questionable args for defs
+	tableStr = "<TABLE BORDER=0 CELLPADDING=0 CELLSPACING=0 border=0 width=100%>";
+	tableStr += "<TR VALIGN=top ALIGN=right>";
+
+	tableStr += "<TD align=right class=" + sImgRuleStyle + ">&nbsp;</TD>";	
+	
+	tableStr += "<TD width=34 align=right class=" + sImgLeftStyle + ">";
+	tableStr += "<A href='" + sBackward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgLeftOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgLeftOff + '\'\"';
+	tableStr += " SRC='" + sImgLeftOff + "' vspace=0 hspace=0></a></TD>";
+	
+	tableStr += "<TD width=34 align=left class=" + sImgRightStyle + ">";
+	tableStr += "<A href='" + sForward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgRightOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgRightOff + '\'\"';
+	tableStr += " SRC='" + sImgRightOff + "' vspace=0 hspace=0></a></TD></TR>";
+
+	tableStr += "<TR VALIGN=top>";
+	tableStr += "<TD height=3 align=center colspan=3 class=" + sImgRuleStyle + ">";
+	tableStr += "<HR color=" + sRuleColor + " size=" + sRuleSize + "></TD></TR></TABLE>";
+	//alert(tableStr);
+	document.write(tableStr);
+}
+
+ 																						     //purple is: #aa22aa   orange is: #ff9900
+LibraryHeaderNav("ch14b.htm" , "ch14d.htm", "images/unit_o_a1.gif", "images/unit_o_a2.gif", "images/unit_o_b1.gif", "images/unit_o_b2.gif", 18, 34, "unit01", "unit02", "headerrule", "#ff9900", "2");
+//--></SCRIPT>
+
+
+
+<A NAME="416"><H1>Transport Service Providers</H1></A>
+
+<p>Two types of transport service providers are used in Winsock 2: base service providers and layered service providers. <i>Base</i> service providers implement the actual details of a network transport protocol&#8212;such as TCP/IP&#8212;including core network protocol functions such as sending and receiving data on a network. <i>Layered</i> service providers implement only higher-level custom communication functions and rely on an underlying base service provider for the actual exchange of data on a network. For example, you can implement a data security manager or a bandwidth manager on top of an existing base TCP/IP provider. Figure 14-2 shows how one or more layered providers can be installed between Ws2_32.dll and a base provider.</p>
+
+<p>
+<A HREF="javascript:fullSize('F14JI02x.htm')"> <img src="images/F14JI02.JPG" width=404 height=320 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!-- caption --><b>Figure 14-2.</b> <i> Layered provider architecture</i><!-- /caption -->
+</p>
+
+<p>This section focuses on the development aspects of a layered transport service provider. If you're developing a base service provider, the principles described here apply. However, we don't detail what is involved in implementing a particular SPI function from the ground up. For example, we don't supply the details of how the <i>WSPSend</i> SPI function writes data to a network adapter. Instead we show how the <i>WSPSend</i> function of a layered provider invokes the <i>WSPSend</i> function of a lower provider, which is a requirement of most layered service providers. Essentially, most of the work involved in developing a layered provider is relaying the SPI calls of your provider to the next provider below you. The tricky part is handling I/O calls from the Winsock I/O models described in <a href="ch08a.htm">Chapter 8</A>, which we will discuss later in this chapter. On the companion CD-ROM, we provide an example named LSP that demonstrates how to implement a layered service provider that simply counts how many bytes are transmitted over a socket using the IP transport protocol. The Microsoft Platform SDK also features a more advanced layered service provider example named &quot;layered&quot; that can be found in the MSDN Platform SDK examples downloaded from <i>ftp://ftp.microsoft.com/bussys/WinSock/winsock2/layered.zip.</i></p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+Throughout this section on transport service providers, we often use the terms &quot;SPI client&quot; and &quot;lower provider.&quot; An <i>SPI client</i> can be either Winsock 2's Ws2_32.dll or another layered service provider placed above your service provider. An SPI client is never a Winsock application itself because Winsock applications must use the Winsock 2 API exported from Ws2_32.dll. The term &quot;lower provider&quot; is used only when we describe development aspects of a layered service provider. A lower provider can be either another layered service provider or a base server provider. As you will see, you can have multiple layered service providers installed on a machine; thus there is a chance that a layered provider might be installed below your provider.
+</blockquote></div>
+</p>
+
+<A NAME="417"><H2>WSPStartup</H2></A>
+
+<p>Winsock 2 transport service providers are implemented as standard Windows dynamic-link library modules in which you must export a <i>DllMain</i> function. Additionally, you must export a single function entry named <i>WSPStartup</i>. When a caller (the SPI client) invokes <i>WSPStartup</i>, it exposes 30 additional SPI functions that make up a transport service provider via a function dispatch table passed as a parameter. (See Table 14-1.) Your service provider must provide an implementation of <i>WSPStartup</i> plus all 30 functions.</p>
+
+<p><b>Table 14-1.</b> <i>Transport provider support functions</i></p>
+
+<table cellpadding="5" border="0" width="95%">
+<tr><th><i>API Function</i></th><th><i>Maps to SPI Function</i></th></tr>
+<tr><td valign="top"><i>WSAAccept (accept also indirectly maps to WSPAccept)</i></td><td valign="top"><i>WSPAccept</i></td></tr>
+<tr><td valign="top"><i>WSAAddressToString</i></td><td valign="top"><i>WSPAddressToString</i></td></tr>
+<tr><td valign="top"><i>WSAAsyncSelect</i></td><td valign="top"><i>WSPAsyncSelect</i></td></tr>
+<tr><td valign="top"><i>bind</i></td><td valign="top"><i>WSPBind</i></td></tr>
+<tr><td valign="top"><i>WSACancelBlockingCall</i></td><td valign="top"><i>WSPCancelBlockingCall</i></td></tr>
+<tr><td valign="top"><i>WSACleanup</i></td><td valign="top"><i>WSPCleanup</i></td></tr>
+<tr><td valign="top"><i>closesocket</i></td><td valign="top"><i>WSPCloseSocket</i></td></tr>
+<tr><td valign="top"><i>WSAConnect (connect also indirectly maps to WSPConnect)</i></td><td valign="top"><i>WSPConnect</i></td></tr>
+<tr><td valign="top"><i>WSADuplicateSocket</i></td><td valign="top"><i>WSPDuplicateSocket</i></td></tr>
+<tr><td valign="top"><i>WSAEnumNetworkEvents</i></td><td valign="top"><i>WSPEnumNetworkEvents</i></td></tr>
+<tr><td valign="top"><i>WSAEventSelect</i></td><td valign="top"><i>WSPEventSelect</i></td></tr>
+<tr><td valign="top"><i>WSAGetOverlappedResult</i></td><td valign="top"><i>WSPGetOverlappedResult</i></td></tr>
+<tr><td valign="top"><i>getpeername</i></td><td valign="top"><i>WSPGetPeerName</i></td></tr>
+<tr><td valign="top"><i>getsockname</i></td><td valign="top"><i>WSPGetSockName</i></td></tr>
+<tr><td valign="top"><i>getsockopt</i></td><td valign="top"><i>WSPGetSockOpt</i></td></tr>
+<tr><td valign="top"><i>WSAGetQOSByName</i></td><td valign="top"><i>WSPGetQOSByName</i></td></tr>
+<tr><td valign="top"><i>WSAIoctl</i></td><td valign="top"><i>WSPIoctl</i></td></tr>
+<tr><td valign="top"><i>WSAJoinLeaf</i></td><td valign="top"><i>WSPJoinLeaf</i></td></tr>
+<tr><td valign="top"><i>listen</i></td><td valign="top"><i>WSPListen</i></td></tr>
+<tr><td valign="top"><i>WSARecv (recv also indirectly maps to WSPRecv)</i></td><td valign="top"><i>WSPRecv</i></td></tr>
+<tr><td valign="top"><i>WSARecvDisconnect</i></td><td valign="top"><i>WSPRecvDisconnect</i></td></tr>
+<tr><td valign="top"><i>WSARecvFrom (recvfrom also indirectly maps to WSPRecvFrom)</i></td><td valign="top"><i>WSPRecvFrom</i></td></tr>
+<tr><td valign="top"><i>select</i></td><td valign="top"><i>WSPSelect</i></td></tr>
+<tr><td valign="top"><i>WSASend (send also indirectly maps to WSPSend)</i></td><td valign="top"><i>WSPSend</i></td></tr>
+<tr><td valign="top"><i>WSASendDisconnect</i></td><td valign="top"><i>WSPSendDisconnect</i></td></tr>
+<tr><td valign="top"><i>WSASendTo (sendto also indirectly maps to WSPSendTo)</i></td><td valign="top"><i>WSPSendTo</i></td></tr>
+<tr><td valign="top"><i>setsockopt</i></td><td valign="top"><i>WSPSetSockOpt</i></td></tr>
+<tr><td valign="top"><i>shutdown</i></td><td valign="top"><i>WSPShutdown</i></td></tr>
+<tr><td valign="top"><i>WSASocket (socket also indirectly maps to WSPSocket)</i></td><td valign="top"><i>WSPSocket</i></td></tr>
+<tr><td valign="top"><i>WSAStringToAddress</i></td><td valign="top"><i>WSPStringToAddress</i></td></tr>
+</table>
+
+
+<p>It is important to understand how and when <i>WSPStartup</i> is called. You might be compelled to think it is called when an application calls the <i>WSAStartup</i> API. This is not the case. Winsock does not know the type of service provider it needs to use during <i>WSAStartup</i>. Winsock determines which service provider it needs to load based on the address family, socket type, and protocol parameters of a <i>WSASocket</i> call. Therefore, Winsock invokes a service provider only when an application creates a socket through the <i>socket</i> or <i>WSASocket</i> API call. For example, if an application creates a socket using the address family <i>AF_INET</i> and the socket type <i>SOCK_STREAM</i>, Winsock searches and loads an appropriate transport provider that provides TCP/IP functionality. We will describe this loading process in more detail in this chapter's section on installing transport service providers.</p>
+
+<A NAME="418"><H3>Parameters</H3></A>
+
+<p><i>WSPStartup</i> is the key function used to initialize the functionality of a transport service provider and is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+int WSPStartup(
+    WORD wVersionRequested,
+    LPWSPDATAW lpWSPData,
+    LPWSAPROTOCOL_INFOW lpProtocolInfo,
+    WSPUPCALLTABLE UpcallTable,
+    LPWSPPROC_TABLE lpProcTable
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>wVersionRequested</i> parameter receives the latest version of Windows Sockets SPI support that the caller can use. Your service provider should check this value to see whether it can support the requested version. Your provider uses the <i>lpWSPData</i> parameter to return version information about itself through a <i>WSPDATA</i> structure, which is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+typedef struct WSPData 
+{
+    WORD         wVersion;
+    WORD         wHighVersion;
+    WCHAR        szDescription[WSPDESCRIPTION_LEN + 1];
+} WSPDATA, FAR * LPWSPDATA;
+</pre>
+</td></tr></table>
+</p>
+
+<p>In the <i>wVersion</i> field, your provider must return which version of Winsock the caller is expected to use. The <i>wHighVersion</i> parameter must return the highest Winsock version supported by your provider. This is usually the same value as <i>wVersion</i>. (Winsock versioning information is described in detail in <a href="ch07a.htm">Chapter 7</A>.) The <i>szDescription</i> field returns a null-terminated UNICODE string identifying your provider to an SPI client. This field can contain up to 256 characters.</p>
+
+<p>The <i>lpProtocolInfo</i> parameter of <i>WSPStartup</i> is a pointer to a <i>WSAPROTOCOL_
+INFOW</i> structure that contains characteristic information about your provider. (Protocol characteristics and the details of this structure are described in &quot;<A HREF="ch05d.htm#89">Winsock 2 Protocol Information</A>&quot; in <a href="ch05a.htm">Chapter 5</A>.) The information in <i>WSAPROTOCOL_INFOW</i> is retrieved by Ws2_32.dll from the Winsock 2 service provider catalog that contains property information about service providers. We will further describe Winsock 2 catalog entries in the section on installing transport service providers.</p>
+
+<p>When you develop a layered service provider, you need to treat the <i>lpProtocolInfo</i> parameter in a unique way because it contains information on how your provider is layered between Ws2_32.dll and a base service provider. This parameter is used to determine the next service provider below your provider. (It could be another layered provider or possibly a base provider.) At some point, your provider must load the next service provider by loading the next provider's DLL module and calling the provider's <i>WSPStartup</i> function. The <i>WSAPROTOCOL_INFOW</i> structure pointed to by <i>lpProtocolInfo</i> contains a field, <i>ProtocolChain</i>, that identifies how your service provider is ordered with others on a machine.</p>
+
+<p>The <i>ProtocolChain</i> field is actually a <i>WSAPROTOCOLCHAIN</i> structure that is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+typedef struct _WSAPROTOCOLCHAIN
+{
+    int ChainLen;
+    DWORD ChainEntries[MAX_PROTOCOL_CHAIN];
+} WSAPROTOCOLCHAIN, FAR * LPWSAPROTOCOLCHAIN;
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>ChainLen</i> field identifies how many layers are sandwiched between Ws2_32.dll and a base service provider. (This number also includes the base provider.) If you have a computer that has only one layered service provider above a protocol, such as TCP/IP, this value will be 2. The <i>ChainEntries</i> field is an array of service-provider catalog identification numbers that uniquely identify the layered service providers that are linked together for a particular protocol. We will describe the <i>WSAPROTOCOLCHAIN</i> structure in the section on installing transport service providers later in this chapter. One requirement of a layered service provider is to search the <i>ProtocolChain</i> field of the structure to determine its own location in the array of service providers (by searching for your layer's own catalog entry) and also to determine the next provider in the array. If the next provider is another layer, you must pass the <i>lpProtocolInfo</i> structure unmodified to the next layer's <i>WSPStartup</i> function. If the next layer is the last element in the array (indicating a base provider), your provider must use the base provider's <i>WSAPROTOCOL_INFOW</i> structure to perform a substitution on the <i>lpProtocolInfo</i> structure when calling the base provider's <i>WSPStartup</i> function. Figure 14-3 demonstrates how a layered provider should programmatically manage the <i>lpProtocolInfo</i> structure.</p>
+
+<p><b>Figure 14-3.</b> <i>Finding the appropriate WSAPROTOCOL_INFOW structure for WSPStartup</i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+LPWSAPROTOCOL_INFOW ProtocolInfo;
+LPWSAPROTOCOL_INFOW ProtoInfo = lpProtocolInfo;
+DWORD ProtocolInfoSize = 0;
+
+// Find out how many entries we need to enumerate
+if (WSCEnumProtocols(NULL, ProtocolInfo, &amp;ProtocolInfoSize,
+    &amp;ErrorCode) == SOCKET_ERROR)
+{
+    if (ErrorCode != WSAENOBUFS)
+    {
+        return  WSAEPROVIDERFAILEDINIT;
+    }
+}
+
+if ((ProtocolInfo = (LPWSAPROTOCOL_INFOW) GlobalAlloc(GPTR,
+    ProtocolInfoSize)) == NULL)
+{
+    return  WSAEPROVIDERFAILEDINIT;
+}
+
+if ((TotalProtocols = WSCEnumProtocols(NULL, ProtocolInfo,
+    &amp;ProtocolInfoSize, &amp;ErrorCode)) == SOCKET_ERROR)
+{
+    return  WSAEPROVIDERFAILEDINIT;
+}
+
+// Find our layered provider's catalog ID entry
+for (i = 0; i &lt; TotalProtocols; i++)
+    if (memcmp (&amp;ProtocolInfo[i].ProviderId, &amp;ProviderGuid,
+        sizeof (GUID))==0)
+    {
+        gLayerCatId = ProtocolInfo[i].dwCatalogEntryId;
+        break;
+    }
+
+// Save our provider's catalog ID entry
+gChainId = lpProtocolInfo-&gt;dwCatalogEntryId;
+
+// Find our catalog ID entry in the protocol chain
+for(j = 0; j &lt; lpProtocolInfo-&gt;ProtocolChain.ChainLen; j++)
+{
+    if (lpProtocolInfo-&gt;ProtocolChain.ChainEntries[j] ==
+        gLayerCatId)
+    {
+        NextProviderCatId = 
+        lpProtocolInfo-&gt;ProtocolChain.ChainEntries[j+1];
+
+        // Check whether next provider is the base provider
+        if (lpProtocolInfo-&gt;ProtocolChain.ChainLen ==
+            (j + 2))
+        {
+            for (i = 0; i &lt; TotalProtocols; i++)
+                if (NextProviderCatId == 
+                    ProtocolInfo[i].dwCatalogEntryId)
+                {
+                    ProtoInfo = &amp;ProtocolInfo[i];
+                    break;
+                }
+        }
+        break;
+    }
+}
+
+// At this point, ProtoInfo will contain the appropriate
+// WSAPROTOCOL_INFOW structure
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>UpcallTable</i> parameter of <i>WSPStartup</i> receives Ws2_32.dll's SPI upcall dispatch table, which contains pointers to support functions that your provider can use to manage I/O operations between itself and Winsock 2. We will define most of these functions and describe how to use them in this chapter's section on Winsock I/O model support.</p>
+
+<p>The final parameter of <i>WSPStartup&#8212;lpProcTable&#8212;</i>represents a table of 30 SPI function pointers that your service provider must implement. These functions are listed in Table 14-1. Each SPI function conforms to the parameter specification of its API counterpart with the following two adjustments:</p>
+
+<ul>
+<p><li> Each function supplies a final parameter, <i>lpErrno</i>, which your provider must use to report specific Winsock error code information when your implementation fails. For example, if you're implementing <i>WSPSend</i> and you cannot allocate memory, you might want to return the Winsock error <i>WSAENOBUFS</i>.</li></p>
+
+<p><li> The SPI functions <i>WSPSend</i>, <i>WSPSendTo</i>, <i>WSPRecv</i>, <i>WSPRecvFrom</i>, and <i>WSPIoctl</i> feature an additional parameter, <i>lpThreadId</i>, which identifies the application thread that invoked the SPI function. As we will see later in this chapter, this feature is useful for supporting completion routines.</li></p>
+</ul>
+
+<p>A final item worth noting is that several Winsock 1.1 functions, such as <i>send</i> and <i>recv</i>, map directly to their corresponding Winsock 2 functions. We claim that these Winsock 1.1 functions indirectly map to the corresponding SPI function because they actually call a Winsock 2 function featuring similar functionality. For example, the <i>send</i> function actually calls the <i>WSASend</i> function, which maps to <i>WSPSend</i>. In Table 14-1, we noted the functions that indirectly map to SPI functions.</p>
+
+<A NAME="419"><H3>Instance count</H3></A>
+
+<p>In the Winsock specification, applications can call the <i>WSAStartup</i> and <i>WSACleanup</i> functions an unlimited number of times. Your service provider's <i>WSPStartup</i> and <i>WSPCleanup</i> functions will be called as many times as their API equivalents. As a result, your service provider should maintain an instance count for how many times the <i>WSPStartup</i> call is invoked, and you should decrement this count for each <i>WSPCleanup</i>. The purpose of maintaining an instance count is to allow you to streamline the initialization and cleanup procedures of your service provider. For example, if your provider allocates memory to manage internal structures, you can hold on to this memory as long as your instance count is greater than 0. In addition, when your instance count falls to 0, Ws2_32.dll will eventually unload your provider from memory.</p>
+
+<A NAME="420"><H2>Socket Handles</H2></A>
+
+<p>A service provider must return socket handles when an SPI client calls the <i>WSPSocket</i>, <i>WSPAccept</i>, and <i>WSPJoinLeaf</i> functions. Socket handles returned to SPI clients can be either Win32 installable file system (IFS) handles or non-IFS handles. If a service provider returns IFS handles, it is known as an IFS provider; otherwise, it's a non-IFS provider. All of the Microsoft base transport providers are IFS providers.</p>
+
+<p>Winsock is designed to allow Winsock applications to use the Win32 API functions <i>ReadFile</i> and <i>WriteFile</i> to receive and send data on a socket handle. Therefore, you have to consider how socket handles are created in a service provider. If you develop a service provider with the intention of providing service to Winsock applications that call <i>ReadFile</i> and <i>WriteFile</i> on a socket handle, consider developing an IFS provider. However, be aware of I/O limitations if you take this approach.</p>
+
+<A NAME="421"><H3>IFS provider</H3></A>
+
+<p>As we mentioned earlier, transport service providers can be layered or base. If you're developing a base IFS provider, your provider will have a kernel-mode operating system component, and this component enables the Winsock provider to create handles that can be used like file-system handles in <i>ReadFile</i> and <i>WriteFile</i>. Kernel-mode software development is beyond the scope of this book. If you want to know more about how to develop kernel-mode operating system components for Windows, consult the MSDN Device Development Kit (DDK) for more information.</p>
+
+<p>A layered service provider can also become an IFS provider, but only if the layered provider is layered on top of an existing base IFS provider. This involves passing a lower IFS provider's socket handles&#8212;retrieved in your layered provider&#8212;directly up to your SPI client. Passing socket handles directly up from a lower provider limits a layered provider's functionality in the following ways:</p>
+
+<ul>
+<p><li> The layered provider's <i>WSPSend</i> and <i>WSPRecv</i> functions will not be called if the <i>ReadFile</i> and <i>WriteFile</i> functions are called on a socket. These functions will bypass a layered provider and directly invoke the base IFS provider's implementation.</li></p>
+
+<p><li> A layered provider will not be able to postprocess overlapped I/O requests that are submitted to a completion port. Postprocessing of the completion port completely bypasses a layered provider.</li></p>
+</ul>
+
+<p>If your layered provider intends to monitor all I/O passed through the provider, you will have to develop a non-IFS layered provider, which we will discuss later in this chapter.</p>
+
+<p>Whenever an IFS provider (either layered or base) creates a new socket descriptor, the provider is required to call <i>WPUModifyIFSHandle</i> prior to supplying the new handle to an SPI client. This allows the Winsock Ws2_32.dll to greatly streamline the process of identifying the IFS service provider associated with a given socket when Win32 APIs such as <i>ReadFile</i> and <i>WriteFile</i> perform I/O on a socket. <i>WPUModifyIFSHandle</i> is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+SOCKET WPUModifyIFSHandle(
+    DWORD dwCatalogEntryId,
+    SOCKET ProposedHandle,
+    LPINT lpErrno
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>dwCatalogEntryId</i> field identifies the catalog ID of your service provider. The <i>ProposedHandle</i> parameter represents an IFS handle allocated by your service provider (in the case of a base provider). If you're developing a layered IFS provider, this handle will be passed up from a lower provider. The <i>lpErrno</i> parameter receives specific Winsock error code information if this function fails with the return value <i>INVALID_SOCKET</i>.</p>
+
+<A NAME="422"><H3>Non-IFS provider</H3></A>
+
+<p>If you're developing a layered provider and intend to monitor every read and write operation that occurs on a socket, you will have to develop a non-IFS provider. Non-IFS providers create socket handles by using the upcall <i>WPUCreateSocketHandle</i>. Socket handles created by <i>WPUCreateSocketHandle</i> are similar to IFS provider handles in that they also allow Winsock applications to use <i>ReadFile</i> and <i>WriteFile</i> functions on a socket. However, there is a significant I/O performance penalty associated with these two functions because the Winsock 2 architecture has to perform I/O redirection to a service provider's <i>WSPRecv</i> and <i>WSPSend</i> functions, respectively. <i>WPUCreateSocketHandle</i> is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+SOCKET WPUCreateSocketHandle(
+    DWORD dwCatalogEntryId,
+    DWORD dwContext,
+    LPINT lpErrno
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>dwCatalogEntryId</i> identifies the catalog ID of your service provider. The <i>dwContext</i> parameter allows you to associate provider data with a socket descriptor. Note that <i>dwContext</i> gives you a lot of freedom in terms of the information you can associate with a socket descriptor. In the LSP sample on the companion CD-ROM, we take advantage of this field by storing the byte count of send and receive data. Winsock provides an upcall <i>WPUQuerySocketHandleContext</i> that can be used to retrieve associated socket provider data saved in <i>dwContext</i>, and this upcall is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+int WPUQuerySocketHandleContext(
+    SOCKET s,
+    LPDWORD lpContext,
+    LPINT lpErrno
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>s</i> parameter represents the socket handle passed down from an SPI client (originally created from <i>WPUCreateSocketHandle</i>) that you want to retrieve socket provider data. The <i>lpContext</i> parameter receives the provider data originally passed in <i>WPUCreateSocketHandle</i>. The <i>lpErrno</i> parameter in both functions receives a specific Winsock error code if these functions fail. If <i>WPUCreateSocketHandle</i> fails, it returns <i>INVALID_SOCKET</i>; and if <i>WPUQuerySocketHandleContext</i> fails, it returns <i>SOCKET_ERROR</i>.</p>
+
+<A NAME="423"><H2>Winsock I/O Model Support</H2></A>
+
+<p>As you learned in <a href="ch08a.htm">Chapter 8</A>, Winsock features several I/O models that can be used to manage I/O on a socket. From a service provider's point of view, each model requires using some of the SPI upcall functions provided by Ws2_32.dll that are available from the <i>UpcallTable</i> parameter in <i>WSPStartup,</i> mentioned earlier. If you're developing a simple IFS layered provider, the principles of each I/O model described in the following sections don't apply&#8212;you simply rely on the lower provider to manage all of the I/O for each model. The principles outlined in these sections do apply to any other type of provider. We'll focus our discussion on development aspects of a non-IFS layered service provider.</p>
+
+<A NAME="424"><H3>Blocking and nonblocking</H3></A>
+
+<p>Blocking I/O is the simplest form of I/O in Winsock 2. Any I/O operation with a blocking socket won't return until the operation has completed. Therefore, any thread can execute only one I/O operation at a time. For example, when an SPI client calls the <i>WSPRecv</i> function in a blocking fashion, your provider only needs to relay the call directly to the next provider's <i>WSPRecv</i> call. Your provider's <i>WSPRecv</i> function will return only when the next provider's <i>WSPRecv</i> call completes.</p>
+
+<p>Even though blocking I/O is easy to implement, you still have to consider backward compatibility with Winsock 1.1 blocking hooks. The <i>WSASetBlockingCall</i> and <i>WSACancelBlocking</i> API calls have been removed from the Winsock 2 API specification. However, <i>WSPCancelBlockingHook</i> can still be called by Ws2_32.dll if a Winsock 1.1 application calls the <i>WSASetBlockingHook</i> and <i>WSACancelBlockingCall</i> functions. In a layered service provider, you can simply relay the <i>WSPCancelBlockingHook</i> call to the base provider's call. If you're implementing a base provider and a blocking call is in progress, you must implement a mechanism to call the <i>WPUQueryBlockingCallback</i> function periodically. <i>WPUQueryBlockingCallback</i> is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+int WPUQueryBlockingCallback( 
+    DWORD dwCatalogEntryId, 
+    LPBLOCKINGCALLBACK FAR *lplpfnCallback, 
+    LPDWORD lpdwContext, 
+    LPINT lpErrno
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>dwCatalogEntryId</i> parameter receives the catalog entry ID of your provider as described in the <i>WSPStartup</i> function. The <i>lplpfnCallback</i> parameter is a function pointer to the application's blocking hook function that you must call periodically to prevent the application's blocking calls from truly blocking. The callback function has the following form:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+typedef BOOL (CALLBACK FAR * LPBLOCKINGCALLBACK)(
+    DWORD dwContext
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>When your provider periodically invokes <i>lplpfnCallback</i>, pass the value of the <i>lpdwContext</i> parameter to the callback function's <i>dwContext</i> parameter. The final parameter of <i>WPUQueryBlockingCallback</i>, <i>lpErrno</i>, returns Winsock error code information if this function returns <i>SOCKET_ERROR.</i></p>
+
+<A NAME="425"><h3><i>select</i></h3></A>
+<p>The <i>select</i> I/O model requires that a provider manage the <i>fd_set</i> structures for the parameters <i>readfds</i>, <i>writefds</i>, and <i>exceptfds</i> in the <i>WSPSelect</i> function, which is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+int WSPSelect(
+    int nfds, 
+    fd_set FAR *readfds, 
+    fd_set FAR *writefds, 
+    fd_set FAR *exceptfds, 
+    const struct timeval FAR *timeout, 
+    LPINT lpErrno
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>Essentially, the <i>fd_set</i> data type represents a collection of sockets. When an SPI client calls your provider using <i>WSPSelect</i>, it passes socket handles to one or more of these sets. Your provider is responsible for determining when network activities have occurred on each of the sockets listed.</p>
+
+<p>For a non-IFS layered provider, this requires creating three <i>fd_set</i> data fields and mapping the SPI client's socket handles to the lower provider's socket handles in each set. Once all the sets are set up, your provider calls <i>WSPSelect</i> on the lower provider. When the lower provider completes, your provider has to determine which sockets have events pending in each of the <i>fd_set</i> fields. There is a useful upcall <i>WPUFDIsSet</i> that determines which lower provider sockets are set. This upcall is similar to the <i>FD_ISSET</i> macro discussed in <a href="ch08a.htm">Chapter 8</A> and is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+int WPUFDIsSet(
+    SOCKET s, 
+    FD_SET FAR *set
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>s</i> parameter represents the socket you're looking for in a set. The <i>set</i> parameter is an actual set of socket descriptors. Since your provider will check the contents of each set passed to the lower provider, your provider should save the socket mappings from the upper provider to the lower provider. When the lower provider completes the <i>WSPSelect</i> call, you can easily map back which sockets have I/O pending for the upper provider.</p>
+
+<p>Once you have determined which lower provider sockets have network events pending, you have to update the originating <i>fd_set</i> sets that were passed in from the originating SPI client. The Ws2spi.h file provides the three macros&#8212;<i>FD_CLR</i>, <i>FD_SET</i>, and <i>FD_ZERO&#8212;</i>that can be used to manage the originating sets. These macros are described in <a href="ch08a.htm">Chapter 8</A>. Figure 14-4 demonstrates one possibility for implementing <i>WSPSelect</i>.</p>
+
+<p><b>Figure 14-4.</b> <i>WSPSelect implementation details</i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+int WSPAPI WSPSelect(
+    int nfds,
+    fd_set FAR * readfds,
+    fd_set FAR * writefds,
+    fd_set FAR * exceptfds,
+    const struct timeval FAR * timeout,
+    LPINT lpErrno)
+{
+    SOCK_INFO *SocketContext;
+    u_int i;
+    u_int count;
+    int Ret;
+    int HandleCount;
+
+    // Build an Upper and Lower provider socket mapping table
+    struct
+    {
+        SOCKET ClientSocket;
+        SOCKET ProvSocket;
+    } Read[FD_SETSIZE], Write[FD_SETSIZE], Except[FD_SETSIZE];
+
+    fd_set ReadFds, WriteFds, ExceptFds;
+
+    // Build the ReadFds set for the lower provider
+    if (readfds)
+    {
+        FD_ZERO(&amp;ReadFds);
+
+        for (i = 0; i &lt; readfds-&gt;fd_count; i++)
+        {
+            if (MainUpCallTable.lpWPUQuerySocketHandleContext(
+                (Read[i].ClientSocket = readfds-&gt;fd_array[i]), 
+                (LPDWORD) &amp;SocketContext, lpErrno) ==
+                SOCKET_ERROR)
+                return SOCKET_ERROR;
+            FD_SET((Read[i].ProvSocket = 
+                SocketContext-&gt;ProviderSocket), &amp;ReadFds);
+        }
+    }
+
+    // Build the WriteFds set for the lower provider.
+    // This is just like the ReadFds set above.
+    ...
+
+    // Build the ExceptFds set for the lower provider.
+    // This is also like the ReadFds set above.
+    ...
+
+    // Call the lower provider's WSPSelect
+    Ret = NextProcTable.lpWSPSelect(nfds, 
+        (readfds ? &amp;ReadFds : NULL), 
+        (writefds ? &amp;WriteFds : NULL), 
+        (exceptfds ? &amp;ExceptFds : NULL), timeout, lpErrno);
+
+    if (Ret != SOCKET_ERROR)
+    {
+        HandleCount = Ret;
+
+        // Set up calling provider's readfds set
+        if (readfds)
+        {
+            count = readfds-&gt;fd_count;
+            FD_ZERO(readfds);
+
+            for(i = 0; (i &lt; count) &amp;&amp; HandleCount; i++)
+            {
+                if (MainUpCallTable.lpWPUFDIsSet(
+                    Read[i].ProvSocket, &amp;ReadFds))
+                {
+                    FD_SET(Read[i].ClientSocket, readfds);
+                    HandleCount--;
+                }
+            }
+        }
+
+        // Set up calling provider's writefds set.
+        // This is just like the readfds set above.
+        ...
+        // Set up calling provider's exceptfds set.
+        // This is also like the readfds set above.
+        ...
+    }
+
+    return Ret;
+}
+</pre>
+</td></tr></table>
+</p>
+
+<A NAME="426"><h3><i>WSAAsyncSelect</i></h3></A>
+<p>The <i>WSAAsyncSelect</i> I/O model involves managing Windows message-based notification of network events on a socket. SPI clients use this model by calling the <i>WSPAsyncSelect</i> function, which is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+int WSPAsyncSelect( 
+    SOCKET s, 
+    HWND hWnd, 
+    unsigned int wMsg, 
+    long lEvent, 
+    LPINT lpErrno
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>s</i> parameter represents the SPI client's socket that expects windows message notification of network events. The <i>hWnd</i> parameter identifies the window handle that should receive the message defined in the <i>wMsg</i> parameter when a network event (defined in the <i>lEvent</i> parameter) occurs on the socket <i>s.</i> The <i>lpErrno</i> parameter receives a Winsock error code if your implementation of this function returns <i>SOCKET_ERROR</i>. The network events your provider must support (identified in the <i>lEvent</i> parameter) are described in Table 8-3 in &quot;The <i>WSAAsyncSelect</i> Method&quot; section.</p>
+
+<p>When an SPI client calls <i>WSPAsyncSelect</i>, your provider is responsible for notifying the SPI client when network events occur on a socket using the client's supplied window handle and the client's supplied window message that is passed through the <i>WSPAsyncSelect</i> call. Your provider can notify an SPI client of network events by calling <i>WPUPostMessage</i>, which is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+BOOL WPUPostMessage(
+    HWND hWnd,
+    UINT Msg,
+    WPARAM wParam,
+    LPARAM lParam
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>Your provider uses the <i>hWnd</i> parameter to identify the SPI client's window handle to be signaled. The <i>Msg</i> parameter identifies the user-defined message that was originally passed into the <i>wMsg</i> parameter of <i>WSPAsyncSelect</i>. The <i>wParam</i> parameter accepts the socket handle where a network event has occurred. The final parameter, <i>lParam</i>, takes two pieces of information. The low word of <i>lParam</i> accepts the network event that has occurred. The high word of <i>lParam</i> accepts a Winsock error code if an error has occurred in your provider implementation with respect to the network event identified in the low word of <i>lParam</i>.</p>
+
+<p>If you're developing a non-IFS layered service provider, your provider is a client of a lower provider's <i>WSPAsyncSelect</i> function. As a result, your provider is required to translate an SPI client's socket handles to your provider's socket handles using <i>WPUQuerySocketHandleContext</i> before calling the lower provider's <i>WSPAsyncSelect</i> function. Since a service provider is required to inform an SPI client's window of network events using <i>WPUPostMessage</i>, your provider must intercept these window messages from the lower provider. This is a requirement because <i>WPUPostMessage</i> passes the lower provider's socket handle back in the high word of <i>lParam</i>. As a result, your provider must translate the socket handle in the high word of <i>lParam</i> to the SPI client's socket handle that was used in the originating <i>WSPAsyncSelect</i> call.</p>
+
+<p>The best way to manage the interception of window messages from a lower provider is to establish a worker thread that creates a hidden window to manage network event window messages. When your provider calls <i>WSPAsyncSelect</i> on the lower provider, you simply pass the worker window handle to the lower provider's <i>WSPAsyncSelect</i> call. From there, as your provider's worker window receives network event window messages from the lower provider, your provider can inform the SPI client of the network events using <i>WPUPostMessage</i>.</p>
+
+<A NAME="427"><h3><i>WSAEventSelect</i></h3></A>
+<p>The <i>WSAEventSelect</i> I/O model involves signaling event objects when network events occur on a socket. SPI clients use this model by calling the <i>WSPEventSelect</i> function, which is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+int WSPEventSelect(
+    SOCKET s, 
+    WSAEVENT hEventObject, 
+    long lNetworkEvents, 
+    LPINT lpErrno 
+); 
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>s</i> parameter represents the SPI client's socket that expects notification of network events. The <i>hEventObject</i> parameter is a <i>WSAEVENT</i> object handle that your provider signals when network events specified in <i>lNetworkEvents</i> occur on the socket <i>s</i>. The <i>lpErrno</i> parameter receives a Winsock error code if your implementation of this function returns <i>SOCKET_ERROR</i>. The network events that your provider must support (identified in the <i>lNetworkEvents</i> parameter) are the same as those specified in the <i>WSAAsyncSelect</i> I/O model.</p>
+
+<p>Implementing <i>WSPEventSelect</i> in a non-IFS layered provider is actually trivial. As an SPI client passes down an event object, your provider only needs to translate the SPI client's socket handle to the lower provider's socket handle using <i>WPUQuerySocketHandleContext</i>. After socket handle translation, you can call the lower provider's <i>WSPEventSelect</i> function using the event object directly from the SPI client. When I/O operations occur on the SPI client's event object, the lower provider directly signals the event object, and the SPI client is notified of the arrival of the network events. When the lower provider signals the event object, no socket handle is returned to the SPI client upon event completion. Therefore, your provider does not have to perform socket handle translation for the SPI client. This is unlike the <i>WSAAsyncSelect</i> model described earlier, in which your provider has to perform socket handle translation on a completed network event because a
+socket handle is passed in the window message sent from the lower provider.</p>
+
+<p>If you're developing a base provider, your provider is responsible for notifying the SPI client when network events specified in <i>lNetworkEvents</i> occur on a socket using the client's supplied event object that is passed through the <i>WSPEventSelect</i> call. Your provider can notify an SPI client of network events by using the upcall <i>WPUSetEvent,</i> which is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+BOOL WPUSetEvent (
+    WSAEVENT hEvent,
+    LPINT lpErrno
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>hEvent</i> parameter represents the event object handle your provider must signal that is passed in from <i>WSPEventSelect</i>. The <i>lpErrno</i> parameter returns with a specific Winsock error code if this function returns <i>FALSE</i>.</p>
+
+<A NAME="428"><H3>Overlapped I/O</H3></A>
+
+<p>The overlapped I/O model requires that your provider implement an overlapped I/O manager to service both event object_based and completion routine_based overlapped I/O requests. The following SPI functions use Win32 overlapped I/O in Winsock:</p>
+
+<ul>
+<p><li> <i>WSPSend</i></li></p>
+
+<p><li> <i>WSPSendTo</i></li></p>
+
+<p><li> <i>WSPRecv</i></li></p>
+
+<p><li> <i>WSPRecvFrom</i></li></p>
+
+<p><li> <i>WSPIoctl</i></li></p>
+</ul>
+
+
+
+<p>Each function features three common parameters: an optional pointer to a <i>WSAOVERLAPPED</i> structure, an optional pointer to a <i>WSAOVERLAPPED_COMPLETION_ROUTINE</i> function, and a pointer to a <i>WSATHREADID</i> structure identifying the application thread performing the call.</p>
+
+<p>The <i>WSAOVERLAPPED</i> structure is key to how a service provider communicates with an SPI client during overlapped I/O operations and is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+typedef struct _WSAOVERLAPPED {
+    DWORD    Internal;
+    DWORD    InternalHigh;
+    DWORD    Offset;
+    DWORD    OffsetHigh;
+    WSAEVENT hEvent;
+} WSAOVERLAPPED, FAR * LPWSAOVERLAPPED;
+</pre>
+</td></tr></table>
+</p>
+
+<p>Your service provider's overlapped I/O manager is responsible for managing the <i>Internal</i> field of an SPI client's <i>WSAOVERLAPPED</i> structure. At the start of overlapped processing, your service provider must set the <i>Internal</i> field to <i>WSS_OPERATION_IN_PROGRESS</i>. This is important because if the SPI client calls <i>WSPGetOverlappedResult</i> while your provider is servicing a pending overlapped operation, the <i>WSS_OPERATION_IN_PROGRESS</i> value can be used in your provider's implementation of <i>WSPGetOverlappedResult</i> to determine whether an overlapped operation is still in progress.</p>
+
+<p>When an I/O operation is complete, your provider sets the <i>OffsetHigh</i> and <i>Offset</i> fields. <i>OffsetHigh</i> is set to a Winsock error code resulting from the operation, and <i>Offset</i> should be set to the flags resulting from a <i>WSPRecv</i> and <i>WSPRecvFrom</i> I/O operation. After setting these fields, your provider notifies the SPI client of the completed overlapped request through either an event object or a completion routine, depending on how the above I/O functions used the optional <i>WSAOVERLAPPED</i> structure.</p>
+
+<p><b>Events</b></p>
+
+<p>In event-based overlapped I/O, an SPI client invokes one of the I/O functions mentioned earlier with a <i>WSAOVERLAPPED</i> structure containing an event object. <i>WSAOVERLAPPED_COMPLETION_ROUTINE</i> must also be set to the <i>NULL</i> value. Your service provider is responsible for managing the overlapped I/O request. When it completes, your provider must alert the caller's thread of the completed I/O request by calling the upcall <i>WPUCompleteOverlappedRequest</i>, which is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+WSAEVENT WPUCompleteOverlappedRequest(
+    SOCKET s, 
+    LPWSAOVERLAPPED lpOverlapped, 
+    DWORD dwError,
+    DWORD cbTransferred, 
+    LPINT lpErrno
+); 
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>s</i> parameter and the <i>lpOverlapped</i> parameter represent the originating socket and the <i>WSAOVERLAPPED</i> structure that were originally sent down from the client. Your provider should set the <i>dwError</i> parameter to the completion status of the overlapped I/O request and the <i>cbTransferred</i> parameter to the number of bytes that were transferred during the overlapped operation. The final parameter, <i>lpErrno</i>, reports a Winsock error code if this function call returns <i>SOCKET_ERROR</i>. When <i>WPUCompleteOverlappedRequest</i> completes, it sets two fields in the SPI client's <i>WSAOVERLAPPED</i> structure: <i>InternalHigh</i> is set to the <i>cbTransferred</i> byte count, and <i>Internal</i> is set to a value other than <i>WSS_OPERATION_IN_PROGRESS</i>.</p>
+
+<p>In event-based overlapped I/O, an SPI client eventually calls <i>WSPGetOverlappedResult</i> to retrieve the result of a completed overlapped request, which is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+BOOL WSPGetOverlappedResult (
+    SOCKET s, 
+    LPWSAOVERLAPPED lpOverlapped, 
+    LPDWORD lpcbTransfer, 
+    BOOL fWait, 
+    LPDWORD lpdwFlags, 
+    LPINT lpErrno
+); 
+</pre>
+</td></tr></table>
+</p>
+
+<p>When <i>WSPGetOverlappedResult</i> is called, your service provider has to report back the operating state of the original overlapped request. As we mentioned earlier, your provider is responsible for managing the <i>Internal</i>, <i>InternalHigh</i>, <i>Offset</i>, and <i>OffsetHigh</i> fields in the SPI client's <i>WSAOVERLAPPED</i> structure. When <i>WSPGetOverlappedResult</i> is called, your provider should first check the <i>Internal</i> field of the SPI client's <i>WSAOVERLAPPED</i> structure. If the <i>Internal</i> field is set to <i>WSS_OPERATION_IN_PROGRESS</i>, your provider is still processing an overlapped request. If the <i>fWait</i> parameter of <i>WSPGetOverlappedResult</i> is set to <i>TRUE</i>, your provider must wait for the overlapped operation to complete by waiting on the event handle passed in the SPI client's <i>WSAOVERLAPPED</i> structure before returning the results. If the <i>fWait</i> parameter is set to <i>FALSE</i>, your provider should return the Winsock error <i>WSA_IO_INCOMPLETE</i>. Once the overlapped operation is complete or completes after waiting for results, your provider should set the parameters of <i>WSPGetOverlappedResult</i> as follows:</p>
+
+<ul>
+<p><li> <i>lpcbTransfer</i> set to the value of the <i>InternalHigh</i> field from the <i>WSAOVERLAPPED</i> structure, which reports the number of bytes transferred by a send or receive operation</li></p>
+
+<p><li> <i>lpdwFlags</i> set to the value of the <i>Offset</i> field from the <i>WSAOVERLAPPED</i> structure, which reports any flags resulting from a <i>WSPRecv</i> or a <i>WSPRecvFrom</i> operation</li></p>
+
+<p><li> <i>lpErrno</i> set to the value of the <i>OffsetHigh</i> field from the <i>WSAOVERLAPPED</i> structure, which reports a resulting error code</li></p>
+</ul>
+
+
+
+<p>Figure 14-5 demonstrates one possible way to implement <i>WSPGetOverlappedResult.</i></p>
+
+<p><b>Figure 14-5.</b> WSPGetOverlappedResult <i>implementation details</i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+BOOL WSPAPI WSPGetOverlappedResult(
+    SOCKET s,
+    LPWSAOVERLAPPED lpOverlapped,
+    LPDWORD lpcbTransfer,
+    BOOL fWait,
+    LPDWORD lpdwFlags,
+    LPINT lpErrno)
+{
+    DWORD Ret;
+
+    if (lpOverlapped-&gt;Internal != WSS_OPERATION_IN_PROGRESS) 
+    {
+        *lpcbTransfer = lpOverlapped-&gt;InternalHigh;
+        *lpdwFlags = lpOverlapped-&gt;Offset;
+        *lpErrno = lpOverlapped-&gt;OffsetHigh;
+
+        return(lpOverlapped-&gt;OffsetHigh == 0 ? TRUE : FALSE);
+    }
+    else
+    {
+        if (fWait) 
+        {
+            Ret = WaitForSingleObject(lpOverlapped-&gt;hEvent,
+                INFINITE);
+            if ((Ret == WAIT_OBJECT_0) &amp;&amp; 
+                (lpOverlapped-&gt;Internal !=
+                WSS_OPERATION_IN_PROGRESS))
+            {
+                *lpcbTransfer = lpOverlapped-&gt;InternalHigh;
+                *lpdwFlags = lpOverlapped-&gt;Offset;
+                *lpErrno = lpOverlapped-&gt;OffsetHigh;
+
+                return(lpOverlapped-&gt;OffsetHigh == 0 ? TRUE :
+                    FALSE);
+            }
+            else 
+                *lpErrno = WSASYSCALLFAILURE;
+        }
+        else 
+            *lpErrno = WSA_IO_INCOMPLETE;
+    }
+
+    return FALSE;
+}
+</pre>
+</td></tr></table>
+</p>
+<p><b>Completion routines</b></p>
+
+<p>In completion routine_based overlapped I/O, an SPI client invokes one of the I/O functions mentioned earlier with a <i>WSAOVERLAPPED</i> structure and a <i>WSAOVERLAPPED_COMPLETION_ROUTINE</i> pointer. Your service provider is responsible for managing the overlapped I/O request. When the request completes, your provider must alert the caller's thread of the completed I/O by using the Win32 asynchronous procedure call (APC) I/O mechanism. The APC mechanism requires the caller's thread to be in an alertable wait state (described in <a href="ch08a.htm">Chapter 8</A>). When your service provider is finished servicing a completion routine_based overlapped request, it must alert the SPI client of the completion by calling the upcall <i>WPUQueueApc</i>, which is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+int WPUQueueApc(
+    LPWSATHREADID lpThreadId, 
+    LPWSAUSERAPC lpfnUserApc, 
+    DWORD dwContext,
+    LPINT lpErrno 
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>lpThreadId</i> parameter represents the SPI client's <i>WSATHREADID</i> structure, which is passed from an originating I/O call that supplies a completion routine. The <i>lpfnUserApc</i> parameter represents a pointer to a <i>WSAUSERAPC</i> function that serves as an intermediate function your provider must supply for callback to the SPI client. As an intermediate function, it must call the SPI client's <i>WSAOVERLAPPED_
+COMPLETION_ROUTINE</i> supplied in the original overlapped call. A <i>WSAUSERAPC</i> intermediate function prototype is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+typedef void (CALLBACK FAR * LPWSAUSERAPC)(DWORD dwContext);
+</pre>
+</td></tr></table>
+</p>
+
+<p>Notice that this function definition contains only one parameter: <i>dwContext</i>. When the SPI client calls this callback function, the <i>dwContext</i> parameter contains the information that was originally passed in the <i>dwContext</i> parameter of <i>WPUQueueApc</i>. Essentially, <i>dwContext</i> allows you to pass a data structure containing any information elements that you will need when you call the SPI client's <i>WSAOVERLAPPED_
+COMPLETION_ROUTINE</i>, which is described in <a href="ch08a.htm">Chapter 8</A> as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+void CALLBACK CompletionROUTINE(
+    IN DWORD dwError, 
+    IN DWORD cbTransferred, 
+    IN LPWSAOVERLAPPED lpOverlapped, 
+    IN DWORD dwFlags
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>Your provider should pass the following information through the <i>dwContext</i> parameter of <i>WPUQueueApc</i>:</p>
+
+<ul>
+<p><li> The status of the overlapped operation as a Winsock error code</li></p>
+
+<p><li> The number of bytes transferred through the overlapped operation</li></p>
+
+<p><li> The caller's <i>WSAOVERLAPPED</i> structure</li></p>
+
+<p><li> The caller's flags passed into the I/O call</li></p>
+</ul>
+
+
+
+<p>With this information, your provider can successfully call the SPI client's <i>WSAOVERLAPPED_COMPLETION_ROUTINE</i> from your intermediate completion routine.</p>
+
+<p><b>Completion ports</b></p>
+
+<p>The implementation of the completion port I/O model in Winsock 2 resides in the Ws2_32.dll module. As we mentioned in <a href="ch08a.htm">Chapter 8</A>, the completion port model relies on the overlapped I/O model using event-based overlapped I/O. Therefore, no special considerations are necessary for your service provider to manage the completion port model.</p>
+
+<p><b>Managing overlapped I/O</b></p>
+
+<p>When an SPI client calls your layered provider using any of the overlapped I/O models mentioned above, your provider's overlapped manager should call the lower provider using either the event-based or the completion port overlapped I/O method described in <a href="ch08a.htm">Chapter 8</A>. If your provider is running on Windows NT or Windows 2000, we recommend using completion ports to perform overlapped I/O on the lower provider. On Windows 95 and Windows 98, your only choice is to use event-based overlapped I/O. The following three upcalls are available to your provider for working with overlapped events:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+WSAEVENT WPUCreateEvent(LPINT lpErrno);
+BOOL WPUResetEvent(WSAEVENT hEvent, LPINT lpErrno);
+BOOL WPUCloseEvent(WSAEVENT hEvent, LPINT lpErrno);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>WPUCreateEvent</i> function creates and returns an event object. This function is exactly like the <i>WSACreateEvent</i> function described in <a href="ch08a.htm">Chapter 8</A>: it creates an event object that is in manual reset mode. If <i>WPUCreateEvent</i> fails to create an event object, <i>NULL</i> is returned and <i>lpErrno</i> will contain a specific Winsock error code. The <i>WSPResetEvent</i> function is just like the <i>WSAResetEvent</i> function: it resets an event object (parameter <i>hEvent</i>) from the signaled state to the nonsignaled state. The <i>WPUCloseEvent</i> function is just like <i>WSACloseEvent</i> and frees all operating resources associated with an event object handle.</P>
+
+<P>On the companion CD, our LSP example uses event-based overlapped I/O to manage all overlapped I/O activities for an SPI client. This allows the LSP sample to function on Windows 2000, Windows NT, Windows 98, and Windows 95. However, it is important to realize this example has only one thread for servicing overlapped I/O operations, limiting our provider to servicing no more than <i>WSA_MAXIMUM_WAIT_EVENTS</i> (64) event objects at a time using event-based overlapped I/O (described in <a href="ch08a.htm">Chapter 8</A>). If your provider expects to service more than 64 event objects, you can create more servicing threads to service more event objects. If you're developing your provider for Windows NT and Windows 2000, we recommend using completion ports instead of event-based overlapped I/O to avoid this limitation.</p>
+
+<A NAME="429"><H2>Extension Functions</H2></A>
+
+<p>The Winsock library Mswsock.lib provides applications with extension functions that enhance Winsock functionality. Table 14-2 defines the extension functions currently supported.</p>
+
+<p><b>Table 14-2.</b> <i>Winsock extension functions</i></p>
+
+<table cellpadding="5" border="0" width="95%">
+<tr><th><i>Extension Function</i></TH><TH><i>GUID</i></TH></TR>
+<tr><td valign="top"><i>AcceptEx</i></td><td valign="top"><i>WSAID_ACCEPTEX</I></td></tr>
+<tr><td valign="top"><I>GetAcceptExSockaddrs</i></td><td valign="top"><i>WSAID_GETACCEPTEXSOCKADDRS</I></td></tr>
+<tr><td valign="top"><I>TransmitFile</i></td><td valign="top"><i>WSAID_TRANSMITFILE</I></td></tr>
+<tr><td valign="top"><I>WSARecvEx</i></td><td valign="top">Does not have an associated GUID</td></tr>
+</TABLE>
+
+
+<P>When an application linked to Mswsock.lib uses <i>AcceptEx</i>, <i>GetAcceptExSockaddrs</i>, and <i>TransmitFile</i>, it implicitly calls your provider's <i>WSPIoctl</i> function using the <i>SIO_GET_EXTENSION_FUNCTION_POINTER</i> option. <i>WSPIoctl</i> is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+int WSPIoctl( 
+    SOCKET s, 
+    DWORD dwIoControlCode, 
+    LPVOID lpvInBuffer, 
+    DWORD cbInBuffer, 
+    LPVOID lpvOutBuffer, 
+    DWORD cbOutBuffer, 
+    LPDWORD lpcbBytesReturned, 
+    LPWSAOVERLAPPED lpOverlapped,
+    LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine,
+    LPWSATHREADID lpThreadId, 
+    LPINT lpErrno
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>When the call occurs, the <i>dwIoControlCode</i> parameter is set to the <i>SIO_GET_EXTENSION_FUNCTION_POINTER</i> value. The <i>lpvInBuffer</i> parameter contains a pointer to a globally unique identifier (GUID) that identifies which extension function the Mswsock.lib is looking for. (The GUID values listed in Table 14-2 define the currently supported extension functions.) If this GUID value matches any of the defined values, your provider must return a function pointer of your provider's implementation of the extension function through <i>lpvOutBuffer</i>. The remaining parameters do not apply directly to managing extension functions in the SPI.</p>
+
+<p>We noted that the <i>WSARecvEx</i> function does not have a GUID in Table 14-2. This is because <i>WSARecvEx</i> does not invoke <i>WSPIoctl.</i> Instead, it directly calls <i>WSARecv</i>. As a result, your provider cannot directly monitor the <i>WSARecvEx</i> extension function.</p>
+
+<A NAME="430"><H2>Installing Transport Service Providers</H2></A>
+
+<p>Installing transport service providers involves developing a simple application to insert a layered or a base provider into the Winsock 2 catalog of service providers. How a transport provider is installed determines whether it is a layered provider or a base provider. The installation program simply configures your transport provider in the Winsock 2 system configuration database, which is a catalog of all installed service providers. The configuration database lets Winsock 2 know that your service provider exists and defines the type of service you're providing. Winsock 2 uses the database to determine which transport service providers it needs to load when a Winsock application creates a socket. Ws2_32.dll searches the database for the first provider that matches socket input parameters of the <i>socket</i> and <i>WSASocket</i> API calls, such as address family, type of socket, and protocol. Once an appropriate matching entry is found, Ws2_32.dll loads the appropriate service provider DLL that is specified in the catalog.</p>
+
+<p>Essentially four SPI configuration functions are needed to successfully install and manage a service provider entry into the Winsock 2 service provider database. Each function begins with the WSC prefix:</p>
+
+<ul>
+<p><li> <i>WSCEnumProtocols</i></li></p>
+
+<p><li> <i>WSCInstallProvider</i></li></p>
+
+<p><li> <i>WSCWriteProviderOrder</i></li></p>
+
+<p><li> <i>WSCDeInstallProvider</i></li></p>
+</ul>
+
+
+
+<p>These functions query and manipulate the database using a <i>WSAPROTOCOL_INFOW</i> structure, which is described in <a href="ch05a.htm">Chapter 5</A> in &quot;<A HREF="ch05d.htm#89">Winsock 2 Protocol Information</A>.&quot; For the purpose of installing a transport service provider, we are primarily concerned with the <i>ProviderId</i>, <i>dwCatalogEntryId</i>, and <i>ProtocolChain</i> fields of this structure. The <i>ProviderId</i> field is a GUID that uniquely allows you to define and install a provider on any system. The <i>dwCatalogEntryId</i> field simply identifies each <i>WSAPROTOCOL_INFOW</i> catalog entry structure in the database with a unique numeric value. The <i>ProtocolChain</i> field determines whether a <i>WSAPROTOCOL_INFOW</i> structure is a catalog entry for a base provider, a layered provider, or a provider protocol chain. The <i>ProtocolChain</i> field is a <i>WSAPROTOCOLCHAIN</i> structure that is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+typedef struct {
+    int ChainLen;
+    DWORD ChainEntries[MAX_PROTOCOL_CHAIN];
+} WSAPROTOCOLCHAIN, FAR * LPWSAPROTOCOLCHAIN;
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>ChainLen</i> field determines whether a catalog entry represents a layered provider (<i>ChainLen</i> = 0), a base provider (<i>ChainLen</i> = 1), or a protocol chain (<i>ChainLen</i> &gt; 1). A <i>protocol chain</i> is a special catalog entry that defines how to position a layered service provider between Winsock and other service providers. (See Figure 14-2.) Layered and base providers have only a single catalog entry per provider in the database. The final field, <i>ChainEntries</i>, is an array of catalog IDs used to describe the order in which to load service providers in a protocol chain. When Ws2_32.dll searches the catalog for an appropriate service provider during socket creation, it looks only for protocol chain and base provider catalog entries. Layered provider catalog entries (where <i>ChainLen</i> is 0) are ignored by Ws2_32.dll and exist only to identify a layered provider to a protocol chain in protocol chain catalog entries.</p>
+
+<A NAME="431"><H3>Base provider installation</H3></A>
+
+<p>To install a base provider, you have to create a <i>WSAPROTOCOL_INFOW</i> catalog entry structure that represents the base provider. This requires populating most of the fields in this structure with protocol attribute information describing the base provider. Remember to set the <i>ProtocolChain</i> structure's <i>ChainLen</i> field to the value 1. Once the structure is defined you need to install it in the catalog using the <i>WSCInstallProvider</i> function, which is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+int WSCInstallProvider(
+    const LPGUID lpProviderId,
+    const LPWSTR lpszProviderDllPath,
+    const LPWSAPROTOCOL_INFOW lpProtocolInfoList,
+    DWORD dwNumberOfEntries,
+    LPINT lpErrno
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>lpProviderId</i> parameter is a GUID that allows you to identify a provider to the Winsock catalog. The <i>lpszProviderDllPath</i> parameter is a string containing the load path to the provider's DLL. The string can include environment variables such as %SystemRoot%. The <i>lpProtocolInfoList</i> parameter represents an array of <i>WSAPROTOCOL_INFOW</i> data structures to install in the catalog. For the purposes of installing a base provider, you can simply assign the <i>WSAPROTOCOL_INFOW</i> structure to the first element of the array. The <i>dwNumberOfEntries</i> parameter contains the number of entries in the <i>lpProtocolInfoList</i> array. The <i>lpErrno</i> parameter contains specific error code information if this function fails with <i>SOCKET_ERROR</i>.</p>
+
+<A NAME="432"><H3>Layered provider installation</H3></A>
+
+<p>If you're installing a layered service provider, you need to create two <i>WSAPROTOCOL_INFOW</i> catalog entry structures. One will represent your layered provider (for example, the protocol chain length equals 0), and the other will represent a protocol chain (for example, the protocol chain length is greater than 1) linking your layered provider to a base provider. These two structures should be initialized with properties of an existing service provider's <i>WSAPROTOCOL_INFOW</i> catalog entry structure that can be retrieved by calling <i>WSCEnumProtocols</i>, which is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+int WSCEnumProtocols( 
+    LPINT lpiProtocols, 
+    LPWSAPROTOCOL_INFOW lpProtocolBuffer, 
+    LPDWORD lpdwBufferLength, 
+    LPINT lpErrno 
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>lpiProtocols</i> parameter is an optional array of values. If <i>lpiProtocols</i> is <i>NULL</i>, information on all available protocols is returned; otherwise, information is retrieved only for those protocols listed in the array. The <i>lpProtocolBuffer</i> parameter is an application-supplied buffer that is filled in with <i>WSAPROTOCOL_INFOW</i> structures from the Winsock 2 catalog. The <i>lpdwBufferLength</i> parameter on input is the count of bytes in the <i>lpProtocolBuffer</i> buffer passed to <i>WSCEnumProtocols</i>. On output, it receives the minimum buffer size that can be passed to <i>WSCEnumProtocols</i> to retrieve all the requested information. The <i>lpErrno</i> parameter contains specific error information if this function fails with <i>SOCKET_ERROR</i>. Once you have the catalog entry of the provider that you're going to layer over, you can copy the properties of the provider's <i>WSAPROTOCOL_INFOW</i> into your newly created structures.</P>
+
+<P>After initialization, you first need to install your layered provider catalog entry using <i>WSCInstallProvider</i> and then retrieve the catalog ID that gets assigned to this structure after installation by enumerating the catalog entries using <i>WSCEnumProtocols</i>. The catalog entry can then be used in setting up a protocol chain catalog entry linking your layered provider to another provider. Next <i>WSCInstallProvider</i> is called to install the chained provider. This process is illustrated in the following pseudo-code:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+...
+WSAPROTOCOL_INFOW LayeredProtocolInfoBuff, 
+                  ProtocolChainProtoInfo, 
+                  BaseProtocolInfoBuff;
+...
+// Retrieve BaseProtocolInfoBuff using WSCEnumProtocols()
+
+memcpy (&amp;LayeredProtocolInfoBuff , &amp;BaseProtocolInfoBuff,
+    sizeof(WSAPROTOCOL_INFO));
+LayeredProtocolInfoBuff.dwProviderFlags = PFL_HIDDEN;
+LayeredProtocolInfoBuff.ProviderId = LayeredProviderGuid;
+
+// This entry will be filled in by the system
+LayeredProtocolInfoBuff.dwCatalogEntryId = 0;
+
+LayeredProtocolInfoBuff.ProtocolChain.ChainLen = 
+    LAYERED_PROTOCOL;
+
+WSCInstallProvider(&amp;LayeredProviderGuid, L&quot;lsp.dll&quot;,
+    &amp;LayeredProtocolInfoBuff, 1, &amp; install_error);
+
+// Determine the catalog ID of the layered provider
+// using the WSCEnumProtocols() function
+for (i = 0; i &lt; TotalProtocols; i++)
+    if (memcmp (&amp;ProtocolInfo[i].ProviderId, &amp;ProviderGuid,
+        sizeof (GUID))==0)
+   {
+      LayeredCatalogId = ProtocolInfo[i].dwCatalogEntryId;
+      break;
+   }
+
+Memcpy(&amp;ProtocolChainProtoInfo, &amp;BaseProtocolInfoBuff,
+       sizeof(WSAPROTOCOL_INFO));
+ProtocolChainProtoInfo.ProtocolChain.ChainLen = 2;
+ProtocolChainProtoInfo.ProtocolChain.ChainEntries[0] = 
+    LayeredProvideProtocolInfo.dwCatalogEntryId;
+ProtocolChainProtoInfo.ProtocolChain.ChainEntries[1] = 
+    BaseProtocolInfoBuff.dwCatalogEntryId;
+
+WSCInstallProvider(
+    &amp;ChainedProviderGuid,
+    L&quot;lsp.dll&quot;,               // lpszProviderDllPath
+    &amp;ProtocolChainProtoInfo,  // lpProtocolInfoList
+    1,                        // dwNumberOfEntries
+    &amp;install_error            // lpErrno
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>Notice that the <i>PFL_HIDDEN</i> flag is specified in the <i>WSAPROTOCOL_INFOW</i> structure for the layered provider in the above pseudo-code. This flag ensures that the <i>WSAEnumProtocols</i> function (described in <a href="ch05a.htm">Chapter 5</A>) does not include the catalog for the layered provider in its returned buffer.</P>
+
+<P>Another important flag your installation program should manage is <i>XP1_IFS_
+HANDLES</i>. Any non-IFS service provider that uses <i>WPUCreateSocketHandle</i> to create its socket handles should not set the <i>XP1_IFS_HANDLES</i> flag in its <i>WSAPROTOCOL</i>_
+<i>INFOW</i> structure. Winsock applications should take the absence of the <i>XP1_
+IFS_HANDLES</i> flag as a clue to avoid the use of <i>ReadFile</i> and <i>WriteFile</i> functions because of the performance penalty mentioned previously.</p>
+
+<A NAME="433"><H3>Ordering providers</H3></A>
+
+<p>Once a service provider is installed on a system, you must consider how Winsock 2 searches the database for service providers. Most Winsock applications specify which protocol they need through the parameters of a call to the <i>socket</i> and <i>WSASocket</i> functions. For example, if your application creates a socket using the address family <i>AF_INET</i> and the socket type <i>SOCK_STREAM</i>, Winsock 2 searches for the default TCP/IP protocol chain or base provider catalog entry in the database that provides this functionality. When you install a service provider using <i>WSCInstallProvider</i>, the catalog entry automatically becomes the last entry in the database. To make the service provider the default TCP/IP provider, you must reorder the providers in the database and place the protocol chain catalog entry ahead of other TCP/IP providers by calling <i>WSCWriteProviderOrder</i>, which is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+int WSCWriteProviderOrder( 
+    LPDWORD lpwdCatalogEntryId, 
+    DWORD dwNumberOfEntries 
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>lpwdCatalogEntryId</i> parameter accepts an array of catalog IDs that identify how the catalog should be ordered. You can retrieve the catalog IDs in the catalog by calling <i>WSCEnumProtocols</i>, as described earlier. The <i>dwNumberOfEntries</i> parameter is a count of how many catalog entries are in your array. This function returns <i>ERROR_SUCCESS</i> (0) if it is successful; otherwise, it returns a Winsock error code.</P>
+
+<P>The <i>WSCWriteProviderOrder</i> function is not part of the Ws2_32.dll library. To use this function, your application must link to Sporder.lib. Also, the associated Sporder.dll module is not part of the Windows operating system. The support DLL can be found in the Microsoft Developer Network (MSDN) library. If you plan to use it, you must distribute it with your installation application. The MSDN library also provides a convenient software utility named Sporder.exe that allows you to view and reorder catalog entries in the Winsock 2 database. Figure 14-6 offers a quick look (using Sporder.exe) at the Winsock 2 configuration after installing a layered provider on a Windows 2000 computer.</P>
+
+<P>
+<A HREF="javascript:fullSize('F14JI06x.htm')"> <img src="images/F14JI06.JPG" width=404 height=337 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!-- caption --><b>Figure 14-6.</b> <i>Sporder.exe</i><!-- /caption -->
+</P>
+
+<A NAME="434"><H3>Removing a service provider</H3></A>
+
+<p>Removing a service provider from the Winsock 2 catalog is easy. The main task is calling the <i>WSCDeinstallProvider</i> function, which is defined as</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+int WSCDeinstallProvider( 
+   LPGUID lpProviderId, 
+   LPINT lpErrno 
+);
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>lpProviderId</i> parameter represents the GUID of the service provider that you're removing. The <i>lpErrno</i> parameter receives a specific Winsock error code if the function returns <i>SOCKET_ERROR</i>.</p>
+
+
+<P><div class="sidebar"><blockquote><b>Troubles with Installing Layered Providers</b>
+<p>Layered service providers have tremendous potential for value-added networking services. However, the current Winsock 2 specification does not answer an important question: how can a layered service provider know where to insert itself in a protocol chain if it finds another layered provider installed? For example, if you want to install a data encryption provider on a system that already has a URL filtering provider, obviously the data encryption provider needs to be inserted below the filtering provider in the existing protocol chain. But the problem is that the provider installation program has no way to find out what type of service an existing provider provides and therefore does not know where to insert itself into a protocol chain. This is not a big concern for a controlled networking environment in which administrators decide which providers to install and in what order to install them. But the widespread success of layered service providers is, for all intents and purposes, prohibited because the only safe installation is to install a layered service provider directly over a base provider and make the new chain the default provider for the protocol. Such an approach guarantees the service of the new provider but removes the existing layered provider as the default provider chain.</p>
+
+<P>Besides the problem of layered service provider ordering in protocol chains, there's another related issue that's not addressed in the Winsock 2 specification: how existing layered providers can protect themselves from changes in the chaining or be notified when they occur. This concern is not as grave as the first. In practice, if a layered provider protocol chain is not to be modified, the layered provider developer can hardcode the chain order within the <i>WSPStartup</i> function and install the provider as a base provider by specifying 1 in the <i>ProtocolChain.ChainLen</i> member of the LSP's <i>WSAPROTOCOL_INFOW</i> structure.</p>
+</blockquote></div></P>
+
+<p>You should consider one important point when removing a service provider. There is always the possibility that a layered service provider includes your service provider's catalog ID in its protocol chain. If this is the case, you should remove your catalog ID from any protocol chains that reference your provider.</p>
+
+</BODY>
+</HTML>
+
+
+
+

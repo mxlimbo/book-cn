@@ -1,0 +1,566 @@
+<HTML>
+<HEAD><LINK REL="STYLESHEET" TYPE="text/css" HREF="Library.css">
+<TITLE>Using J/Direct to Implement Idle Event Processing</TITLE>
+
+
+</HEAD>
+<BODY BGCOLOR="#FFFFFF" TEXT="#000000">
+<SCRIPT LANGUAGE="JavaScript">
+<!--
+
+function fullSize(sURL){
+	window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+
+function LibraryHeaderNav(sBackward, sForward, sImgLeftOff, sImgLeftOn, sImgRightOff, sImgRightOn, iH, iW, sImgLeftStyle, sImgRightStyle, sImgRuleStyle, sRuleColor, sRuleSize){
+	var tableStr;
+	//validate questionable args for defs
+	tableStr = "<TABLE BORDER=0 CELLPADDING=0 CELLSPACING=0 border=0 width=100%>";
+	tableStr += "<TR VALIGN=top ALIGN=right>";
+
+	tableStr += "<TD align=right class=" + sImgRuleStyle + ">&nbsp;</TD>";	
+	
+	tableStr += "<TD width=34 align=right class=" + sImgLeftStyle + ">";
+	tableStr += "<A href='" + sBackward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgLeftOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgLeftOff + '\'\"';
+	tableStr += " SRC='" + sImgLeftOff + "' vspace=0 hspace=0></a></TD>";
+	
+	tableStr += "<TD width=34 align=left class=" + sImgRightStyle + ">";
+	tableStr += "<A href='" + sForward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgRightOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgRightOff + '\'\"';
+	tableStr += " SRC='" + sImgRightOff + "' vspace=0 hspace=0></a></TD></TR>";
+
+	tableStr += "<TR VALIGN=top>";
+	tableStr += "<TD height=3 align=center colspan=3 class=" + sImgRuleStyle + ">";
+	tableStr += "<HR color=" + sRuleColor + " size=" + sRuleSize + "></TD></TR></TABLE>";
+	//alert(tableStr);
+	document.write(tableStr);
+}
+
+ 																						     //purple is: #aa22aa   orange is: #ff9900
+LibraryHeaderNav("ch11d.htm", "ch11f.htm", "images/unit_o_a1.gif", "images/unit_o_a2.gif", "images/unit_o_b1.gif", "images/unit_o_b2.gif", 18, 34, "unit01", "unit02", "headerrule", "#ff9900", "2");
+//--></SCRIPT>
+<A NAME="385"><H1>Using J/Direct to Implement Idle Event Processing</H1></A>
+
+<p>You can use J/Direct to implement an efficient idle event handler. All Windows 
+events pass through a message queue in the form of Windows messages. When the 
+message queue is empty, Visual J++ 6 calls the idle event handler to perform 
+whatever background processing the application requires. During the time that the event 
+handler is running, the application can't read a message from the message queue, 
+which makes the application unresponsive to user input. Therefore, it is important that 
+most idle event handlers execute for only a short time before giving up control.
+
+<P>However, if the idle event handler could peek into the message queue, it 
+could retain control as long as no message were waiting in the queue to be processed. 
+As soon as the event handler detected a message, it could give up control to allow 
+the system to pick up the message and process it. Once all messages had been 
+processed, Visual J++ 6 would pass control back to the event handler.
+
+<P>In fact, the Win32 API function <I>PeekMessage()</I> enables a calling function to 
+check whether the Windows message queue is empty. J/Direct gives us access to 
+this <I>PeekMessage() </I>function.
+
+<p><div class="note"><blockquote>
+<b>NOTE</b><hr>
+Here is a case where no Visual J++ 6 library method exists that is the equivalent to the Win32 API function.
+</blockquote></div>
+
+<A NAME="386"><H2>The Problem</H2></A>
+
+<p>Let's create a new prime number generator to demonstrate the 
+<I>PeekMessage()</I> API background processing method. We'll call this version IdleEvent2. This 
+application will have an edit box to display prime numbers as it calculates them. In addition, 
+there will be Start and Stop buttons to turn background processing on and off. Finally, 
+to demonstrate that the application's performance is not affected by the idle 
+processing, we'll outfit the IdleEvent2 application with a simple drawing function.
+
+<P><DIV CLASS="sidebar"><BLOCKQUOTE>
+<P><B>Our Previous Solution</B><HR>
+
+<P>Back in <A HREF="ch10a.htm">Chapter 10</A>, we created an application called IdleEvent1 that uses 
+the idle event to perform background processing. That application performs 
+idle-time processing for a certain length of time, and then gives up control to 
+allow other events to be processed. If the time the idle event handler method 
+spends executing is not kept short, the application execution becomes jerky.
+
+<P>The problem with that application is that as soon as the event 
+handler returns WFC assumes that the application is done. Thus, IdleEvent1 has 
+to generate some event for the program to process to prod WFC into calling 
+the idle event handler again. IdleEvent1 sets a WFC timer to send a timer event 
+every 100 milliseconds. I remarked at the time this example was discussed that 
+there had to be a better way. The 
+<I>PeekMessage()</I> Win32 API method is that better way.
+</BLOCKQUOTE></DIV>
+
+<A NAME="387"><H2>The Forms Designer Work</H2></A>
+
+<p>Choose New Project from the Visual J++ 6 File menu, and create a new 
+Windows<I> </I>application. Name the new project IdleEvent2. Use the Project Explorer to 
+examine the new project.
+
+<P>Open Form1.java in the Forms Designer. Create the same form display that 
+we created in the IdleEvent1 application in <A HREF="ch10a.htm">Chapter 10</A>. You can see the final display 
+in Figure 11-6. The idle process will output prime numbers in the edit 
+box at the top of the form while the user draws in the panel at the bottom.
+
+<A NAME="388"><H2>The Code for Form1</H2></A>
+
+<p>The following code represents the Form1.java code.
+
+<p><pre>
+import com.ms.wfc.app.*;
+import com.ms.wfc.core.*;
+import com.ms.wfc.ui.*;
+import com.ms.wfc.html.*;
+
+import com.ms.wfc.util.*;
+
+/**
+ * This class demonstrates the use of idle processing using
+ * the idle process.
+ */
+public class Form1 extends Form implements IdleParent
+{
+    // define holder for the idle process handler
+    IdleProcess idle;
+    
+    public Form1()
+    {
+        // Required for Visual J++ Form Designer support
+        initForm();        
+
+        // create an idle process
+        idle = new IdleProcess(this, this);
+    }
+ 
+    /**
+     * Set the current prime in the current application.
+     */
+    public void setPrime(int numberOfPrimes,
+                         long prime)
+    {
+        outputEdit.setText(toString(numberOfPrimes) +
+                           &quot;-&quot; +
+                           toString(prime));
+    }
+    
+    /**
+     * Convert a number into a string with commas.
+     */
+    private String toString(long value)
+    {
+        // convert the long into a string
+        String s = Long.toString(value);
+        
+        // now add commas to that string
+        StringBuffer sb = new StringBuffer(20);
+        int offset = 0;
+        for(int length = s.length();
+            length &gt; 0;
+            length--)
+        {
+            // every 3 digits from the right side&#8230;
+            if ((length % 3) == 0)
+            {
+                // but not at the beginning&#8230;
+                if (offset != 0)
+                {
+                    // put a comma
+                    sb.append(',');
+                }
+            }
+            
+            // now add another digit
+            sb.append(s.charAt(offset++));
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Form1 overrides dispose so it can clean up the
+     * component list.
+     */
+    public void dispose()
+    {
+        super.dispose();
+    }
+
+    /**
+     * Turn idle processing on.
+     */
+    private void button1_click(Object source, Event e)
+    {
+        idle.setActive(true);
+    }
+
+    /**
+     * Turn idle processing off.
+     */
+    private void button2_click(Object source, Event e)
+    {
+        idle.setActive(false);
+    }
+
+    /**
+     * Allow the user to draw within the paint panel while
+     * the background onIdle processor continues to operate.
+     */
+    List squiggles = new List();
+    List squiggle  = null;
+    private void paintPanel_mouseDown(Object source, MouseEvent e)
+    {
+        // if the right mouse button is clicked&#8230;
+        if ((e.button &amp; MouseButton.RIGHT) != 0)
+        {
+            // clear the list of squiggles and trash
+            // the current squiggle
+            squiggles.setSize(0);
+            squiggle = null;
+            
+            // now repaint the blank screen
+            paintPanel.invalidate();
+        }
+        
+        // if the left mouse button&#8230;
+        if ((e.button &amp; MouseButton.LEFT) != 0)
+        {
+            // create a new squiggle
+            if (squiggle == null)
+            {
+                squiggle = new List();
+            }
+        }
+    }
+
+    /**
+     * As the mouse moves along with the left button held down,
+     * add each reported point to the current squiggle.
+     */
+    private void paintPanel_mouseMove(Object source, MouseEvent e)
+    {
+        if ((e.button &amp; MouseButton.LEFT) != 0)
+        {
+            squiggle.addItem(new Point(e.x, e.y));
+            paintPanel.invalidate();
+        }
+    }
+
+    /**
+     * When the user releases the mouse button, save
+     * the current squiggle in the list of squiggles.
+     */
+    private void paintPanel_mouseUp(Object source, MouseEvent e)
+    {
+        // if there is a current squiggle&#8230;
+        if (squiggle != null)
+        {
+            // add it to the squiggle list and
+            // start the current squiggle over
+            squiggles.addItem(squiggle);
+            squiggle = null;
+        }
+    }
+
+    /**
+     * Paint the squiggles the user has created so far.
+     */
+    private void paintPanel_paint(Object source, PaintEvent e)
+    {
+        Graphics g = e.graphics;
+ 
+        // draw the current squiggle
+        if (squiggle != null)
+        {
+            drawSquiggle(g, squiggle);
+        }
+
+        // iterate through previously saved squiggles,
+        // drawing each one
+        IEnumerator iter = squiggles.getItemEnumerator();
+        while (iter.hasMoreItems())
+        {
+            List list = (List)iter.nextItem();
+            drawSquiggle(g, list);
+        }
+    }
+
+    /**
+     * Draw a squiggle. A squiggle is a list of point segments.
+     */
+    private static void drawSquiggle(Graphics g, List squiggle)
+    {
+        try
+        {
+            // get the list of all squiggles
+            Object[] list = squiggle.getAllItems();
+            int length = list.length;
+            
+            // draw from each point to the next
+            Point previous = (Point)list[0];        
+            for (int i = 1; i &lt; length; i++)
+            {
+                Point current = (Point)list[i];
+                g.drawLine(previous, current);
+                previous = current;
+            }
+        }
+        catch(Exception e)
+        {
+        }
+    }
+
+    /**
+     * NOTE: The following code is required by the Visual J++ form
+     * designer.  It can be modified using the form editor.  Do not
+     * modify it using the code editor.
+     */
+    Container components = new Container();
+    Edit outputEdit = new Edit();
+    Label label1 = new Label();
+    Button button1 = new Button();
+    Button button2 = new Button();
+    Panel paintPanel = new Panel();
+
+    private void initForm()
+    {
+        // &#8230;generated by Forms Designer&#8230;
+    }
+
+    /**
+     * The main entry point for the application. 
+     */
+    public static void main(String args[])
+    {
+        Application.run(new Form1());
+    }
+}
+</PRE>
+
+<p>The majority of this code is dedicated to user drawing. The <I>mouseDown</I> event handler is the 
+<I>paintPanel_mouseDown()</I> method. When the right mouse button is clicked while the mouse pointer is in the drawing panel, 
+<I>paintPanel_mouseDown() </I>clears the drawing panel. When the left mouse button is clicked, 
+<I>paintPanel_mouseDown() </I>creates a squiggle object that will contain a list of mouse locations. 
+The <I>mouseMove</I> event handler continues to add mouse locations to the current 
+<I>squiggle</I> object as long as the left mouse button is held down. The <I>mouseUp</I> event handler terminates the squiggle, and adds the 
+<I>squiggle</I> object to a container of <I>squiggle</I> objects. The <I>paintPanel_paint()</I> method draws the squiggles one at a time, by 
+drawing a line between each consecutive point in a squiggle.
+
+<P>The <I>Form1()</I> constructor creates an object of the user-defined class <I>IdleProcess</I>, which we'll look at in a moment. This object represents the background 
+processing element. In addition, the <I>Form1</I> class contains a <I>setPrime()</I> method that displays the prime number data in the 
+<I>outputEdit</I> object. The <I>setPrime()</I> method is required because <I>Form1</I> implements the 
+<I>IdleParent</I> interface.
+
+<P>The <I>IdleParent</I> interface is defined as follows:
+
+<p><pre>
+public interface IdleParent
+{
+    // the following method is called
+    // to report a change in the current
+    // prime number
+    public void setPrime(int numberOfPrimes,
+                         long prime);
+}
+</PRE>
+
+<p>A class that implements the <I>IdleParent</I> interface accepts a prime number 
+along with the number of primes detected to date via the 
+<I>setPrime()</I> method.
+
+<A NAME="389"><H2>The Code for the J/Direct Interface</H2></A>
+
+<p>Before we can write the <I>IdleProcess</I> background process, we'll need access to 
+the <I>PeekMessage()</I> Win32 API function.
+
+<P>Open the J/Direct Call Builder (choose Other Windows from the View 
+menu). Clear the Structs and Constants check boxes, leaving only the Methods check 
+box selected. Scroll down through the list of API functions. Select PeekMessage and 
+choose Copy To Target.
+
+<P>The J/Direct Call Builder creates the Win32.java file. Edit the file to look 
+like the following code:
+
+<p><pre>
+public class Win32
+{
+    /**
+     * Peek into the message queue to see if there's anything to do.
+     * @dll.import(&quot;USER32&quot;,auto) 
+     */
+    public static native boolean PeekMessage(com.ms.win32.MSG lpMsg,
+                                             int hWnd,
+                                             int wMsgFilterMin,
+                                             int wMsgFilterMax,
+                                             int wRemoveMsg);
+    public static final int PM_NOREMOVE = 0x0000;
+    public static final int PM_NOYIELD = 0x0002;
+}
+</PRE>
+
+<p>The <I>PeekMessage()</I> function takes a number of arguments. The first 
+argument is the message that's at the top of the event queue. IdleEvent2 doesn't care what 
+that message is; all it cares about is whether there is one. The <I>hWnd</I> argument is the window handle for the main form. (We haven't discussed window handles so far, 
+and we won't now. Suffice it to say that the <I>Form</I> class provides a <I>getHandle()</I> 
+method to retrieve the form's window handle.) The min filter and max filter arguments 
+enable the program to look for a particular message or range of messages. Setting 
+both to 0 indicates that the program is interested in all messages. The last flag 
+indicates whether the message should be removed from the queue. (For this program 
+it shouldn't, so the flag will pass 
+<I>PM_NOREMOVE</I>).
+
+<A NAME="390"><h2>The Code for the <I>IdleProcess</I> Class</h2></A>
+<p>We can now create the background process class, which we'll call 
+<I>IdleProcess</I>. Choose Add Item from the Project menu. From the list of available items, select Class. 
+Enter the name <I>IdleProcess,</I> and choose Open.
+
+<P>Update the <I>IdleProcess</I> class to implement the <I>onIdle</I> background processing so the code looks as follows:
+
+<p><pre>
+import com.ms.wfc.app.*;
+import com.ms.wfc.core.*;
+import com.ms.wfc.ui.*;
+
+/**
+ * Implement processing in the background by attaching
+ * to the idle event.
+ */
+public class IdleProcess
+{
+    // parent object
+    IdleParent parent;
+    
+    // variable necessary to use the PeekMessage call:
+    // window handle of the parent form
+    int hWnd;
+    // a dummy message
+    com.ms.win32.MSG dummyMsg = new com.ms.win32.MSG();
+    
+    // idle event handler
+    EventHandler idleHandler;
+    
+    // note whether idle loop is active or not
+    boolean active = false;
+
+    // number of primes found and the last
+    // candidate for 'primehood'
+    int     numberOfPrimes = 0;
+    int     lastCandidate  = 0;
+    int     lastPrime      = 0;
+ 
+    /**
+     * Create an idle process that reports back
+     * to the parent through the IdleParent interface.
+     */
+    public IdleProcess(IdleParent parent, Form form)
+    {
+        // save the parent
+        this.parent = parent;
+        
+        // assign an onIdle event handler
+        Application.addOnIdle(new EventHandler(this.onIdle));
+        
+        // save the window handle of the parent form
+        hWnd = form.getHandle();
+    }
+ 
+    /**
+     * Turn the idle process on and off.
+     */
+    public void setActive(boolean active)
+    {
+        this.active = active;
+    }
+    
+    /**
+     * Invoked when the system is idle.
+     */
+    private void onIdle(Object sender, Event e)
+    {
+        // if we're active&#8230;
+        if (active)
+        {
+            // work until the system has something to do
+            while(!Win32.PeekMessage(dummyMsg, 
+                           hWnd, 0, 0, 
+                           Win32.PM_NOREMOVE | Win32.PM_NOYIELD))
+            {
+                // try the next number
+                if (isPrime(++lastCandidate))
+                {
+                    // it's prime, so count it
+                    numberOfPrimes++;
+                    lastPrime = lastCandidate;
+                        
+                    // report the results back to parent
+                    parent.setPrime(numberOfPrimes,
+                                    lastPrime);
+                }
+            }
+        }
+    }
+    
+    /**
+     * Test next number for prime.
+     */
+    private boolean isPrime(long number)
+    {
+        // &#8230;same as in earlier prime number processes&#8230;
+    }
+}
+</PRE>
+
+<p>We've added two data members to the <I>IdleProcess</I> class in IdleEvent2 that were not in 
+IdleEvent1:<I> hWnd</I>, which holds the form's window handle, and <I>dummyMsg</I>, which will receive the message from the 
+<I>PeekMessage() </I>method. The data type of <I>dummyMsg</I> is chosen to match the prototype for 
+<I>PeekMessage()</I> in Win32.java. The constructor for <I>com.ms.win32.MSG()</I> creates a message object to store the 
+message that is read.
+
+<P>The <I>hWnd</I> data member is initialized in the <I>IdleProcess() </I>constructor with the window handle of the current form, by invoking the 
+<I>form.getHandle()</I> method. (Again, it doesn't matter what a window handle is, because we won't use it for 
+anything except to call <I>PeekMessage()</I>.)
+
+<P>The <I>IdleProcess()</I> constructor assigns the <I>onIdle()</I> method to handle the idle event. The 
+<I>button1_onClick()</I> and <I>button2_onClick()</I> methods use the <I>IdleProcess.setActive()</I> method to turn background idle processing on and off.
+
+<P>The <I>IdleProcess.onIdle()</I> method starts by checking the <I>active</I> flag. If the <I>active</I> flag is set to 
+<I>false</I>,<I> </I>meaning that background processing has been turned off, <I>onIdle()</I> returns immediately without taking any action. If 
+<I>active</I> is set to <I>true</I>, <I>onIdle()</I> enters a loop to constantly check the Windows message queue.
+
+<P>The <I>onIdle()</I> method continues to loop as long as <I>PeekMessage()</I> returns <I>false</I>, which indicates that the message queue is empty. The two flags passed to 
+<I>PeekMessage() </I>that were copied from the windows.h file&#8212;<I>Win32.PM_NOREMOVE</I> and 
+<I>Win32.PM_NOYIELD</I>&#8212;indicate that the program is not to remove any message it 
+finds in the queue nor yield control to some other thread as a result of the call. As 
+soon as <I>PeekMessage()</I> returns <I>true</I>, <I>onIdle()</I> exits to allow the message to be 
+processed. Within the loop, <I>onIdle()</I> calculates prime numbers and displays them using 
+the <I>setPrime()</I> method provided by the parent class.
+
+<A NAME="391"><H2>The Results</H2></A>
+
+<p>Figure 11-6 shows the IdleEvent2 application in action. IdleEvent2 runs about the 
+same as IdleEvent1, but is considerably faster. In addition, the user drawing panel in  
+
+<P><IMG SRC="images/f11gh06.jpg" width=214 height=273 BORDER="0">
+<P>
+<!-- caption --><B>Figure 11-6.</b> <i>The IdleEvent2 application supports user drawing while calculating prime numbers during idle time.</I><!-- /caption -->
+
+<P>IdleEvent2 updates more rapidly, resulting in smoother squiggles that 
+update morerapidly. This is because the amount of time spent calculating prime numbers 
+in the <I>onIdle()</I> event handler is synchronized with external activity.
+
+<P><DIV CLASS="caution"><BLOCKQUOTE>
+<B>CAUTION</B>
+<HR>There is a certain danger in this approach. Since <I>onIdle()</I> doesn't yield control until a message appears in the Windows message queue, if 
+Visual J++ 6 or any other part of your program defines a second idle event handler, 
+the second handler will never get control.
+</blockquote></div>
+
+</BODY>
+</HTML>
+
+
+
+

@@ -1,0 +1,1072 @@
+<HTML>
+<HEAD>
+<TITLE>SSL with the SSPI</TITLE>
+<link rel="STYLESHEET" type="text/css" href="prosrvwin.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR = "#ffffff">
+<A HREF="ch12e.htm">[Previous]</A> <A HREF="ch12g.htm">[Next]</A><P>
+
+<A NAME="286"><h1>SSL with the SSPI</h1></A>
+<p>We have discussed the SSPI and authentication with Windows trustee accounts using NTLM and Kerberos. You can also use SSPI to authenticate via digital certificates. You do this by using the SSPI and the SChannel security provider for SSL. If you plan to use SSL, be sure to include both the Security.h and SChannel.h header files in your code. You should also link your project with the Secur32.lib library file.</p>
+
+<p>Unlike the protocols we have discussed so far, SSL focuses less on authenticating a client to a server and typically starts by authenticating the server to the client. It is possible to authenticate the client to the server as well, in which case impersonation is an option. Let's look at the more common scenario first. </p>
+
+<p>A client wants to attach to some site, most likely on the Internet. Before it sends the site critical information, it wants proof that it is communicating with the desired entity. The server sends the client its certificate. Certificates are signed and contain the public key of a public/private key pair.</p>
+
+<p>The client can tell from the certificate who issued it, and this helps the client decide whether to trust this certificate. If it trusts the certificate's CA, the client can trust that the information within the certificate is valid. After the certificate is verified, the client can read the certificate information, such as the URL of the server, and compare the information to the server it is communicating with. If the comparison is favorable, the client can be comfortable that it has contacted the correct server.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+There are many issues with the certificate model that have not yet been worked out by the industry. How can client software really trust the information in a certificate? Is there a good way to shift the burden of trust from the client software to the human user? How is the information relayed? What root authorities are trusted? Did the human user choose these authorities? Should all authorities be trusted for any type of certificate? Should certificate authorities also be industry authorities of specific groups such as doctors' offices or book retailers? Answers to these questions will surface as the technology matures. For now, I will focus on the technology.</blockquote>
+</div>
+</p>
+
+<p>Depending on the environment you are designing for secure communication, you might decide to be your own certificate authority. Microsoft Certificate Services allows you to issue certificates yourself, and as long as your client trusts your CA, you can create certificates that meet your exact standards. </p>
+
+<p>If you will be your own certificate authority, you could even go so far as to write client software that contains a hard-coded root certificate for trusting your CA. When a client connects to your server, you could use this implicit trust to begin a session for the client, and then generate a certificate for the client (where the client generates the private key and communicates the public key to your server). Your server uses the public key to generate a certificate from your own CA, and then it stores the information. Now each time this client connects to your server, you can use each other's public keys, in the form of certificates, to quickly authenticate each other, negotiate a session key, and
+get down to business. </p>
+
+<p>Assuming that the client has authenticated the server's certificate, the client can extract the public key from the certificate and use it to encrypt a symmetric session key, which it sends to the server. The server is the only entity holding the matching private key, so it can decrypt the session key. Now the client and server can communicate, safely assured that they are communicating with the proper party. </p>
+
+<p>In the standard scenario requiring secure communication, a browser or other client would send credit card or other sensitive information across the wire to a server. You can use the SSPI to implement SSL for transactions such as these.</p>
+
+<A NAME="287"><h2>Programming for SSL</h2></A>
+<p>Much of what you already know about the SSPI applies to communication with SSL. This section assumes knowledge of the SSPI with Kerberos and NTLM; in this section, we will build upon much of the information presented in this chapter thus far. </p>
+
+<p>As with the NTLM and Kerberos protocols, you call <i>AcquireCredentialsHandle</i> on both the client and server sides of the communication. However, with SSL you must establish a certificate for at least one side of the communication by passing in an SSP-specific authentication structure, SCHANNEL_CRED. The SCHANNEL_CRED structure is similar to the SEC_WINNT_AUTH_ IDENTITY structure (discussed earlier in this chapter), which provides a username, password, and domain name, except that SCHANNEL_CRED includes certificate information. The SCHANNEL_CRED structure is defined as follows:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+typedef struct _SCHANNEL_CRED {
+   DWORD           dwVersion;
+   DWORD           cCreds;
+   PCCERT_CONTEXT  *paCred; 
+   HCERTSTORE      hRootStore;
+   DWORD           cMappers;
+   struct _HMAPPER **aphMappers;
+   DWORD           cSupportedAlgs;
+   ALG_ID *        palgSupportedAlgs;
+   DWORD           grbitEnabledProtocols;
+   DWORD           dwMinimumCipherStrength;
+   DWORD           dwMaximumCipherStrength;
+   DWORD           dwSessionLifespan;
+   DWORD           dwFlags;
+   DWORD           reserved;
+} SCHANNEL_CRED;
+</pre></td></tr></table>
+</p>
+
+<p>Typically the server uses a certificate to initialize SCHANNEL_CRED before passing it to <i>AcquireCredentialsHandle</i>. Here is a code fragment showing how to do this:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+// Open the personal certificate store for the local machine
+HCERTSTORE hMyCertStore = 
+   CertOpenStore(
+      CERT_STORE_PROV_SYSTEM_A,
+      X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, 
+      0,
+      CERT_SYSTEM_STORE_LOCAL_MACHINE,
+      &quot;MY&quot;);
+if(hMyCertStore==NULL){
+   // Error
+}
+
+// Fill in an attribute structure for the certificate common name
+PSTR pszCommonName = &quot;Jason's Test Certificate&quot;;
+CERT_RDN_ATTR certRDNAttr[1];
+certRDNAttr[0].pszObjId = szOID_COMMON_NAME;
+certRDNAttr[0].dwValueType = CERT_RDN_PRINTABLE_STRING;
+certRDNAttr[0].Value.pbData = (PBYTE) pszCommonName;
+certRDNAttr[0].Value.cbData = lstrlen(pszCommonName);
+CERT_RDN certRDN = {1, certRDNAttr};
+
+// Find the certificate context
+PCCERT_CONTEXT pCertContext = 
+   CertFindCertificateInStore(
+      hMyCertStore, 
+      X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+      0,
+      CERT_FIND_SUBJECT_ATTR,
+      &amp;certRDN,
+      NULL);
+if (pCertContext == NULL){
+   // Error
+}
+
+// Fill in an SCHANNEL_CRED variable with certificate information
+SCHANNEL_CRED sslCredentials = {0};
+sslCredentials.dwVersion = SCHANNEL_CRED_VERSION;
+sslCredentials.cCreds = 1;
+sslCredentials.paCred = &amp;pCertContext;
+sslCredentials.grbitEnabledProtocols = SP_PROT_SSL3;
+
+// Get a credentials handle
+CredHandle hCredentials;
+TimeStamp tsExpires;
+SECURITY_STATUS ss = 
+   AcquireCredentialsHandle(
+      NULL, 
+      UNISP_NAME, 
+      SECPKG_CRED_INBOUND,
+      NULL, 
+      &amp;sslCredentials, 
+      NULL, NULL, 
+      &amp;hCredentials, 
+      &amp;tsExpires );
+if(ss != SEC_E_OK){
+   // Error
+}
+</pre></td></tr></table>
+</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+Notice that this code is using certificate functions discussed in the last section to retrieve a PCCERT_CONTEXT structure for a certificate whose common name is &quot;Jason's Test Certificate&quot;. </blockquote>
+</div>
+</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+When you use a certificate to get credentials by calling <i>AcquireCredentialsHandle</i>, the certificate must match the implied purpose. For example, for a server, the certificate must be signed to allow server authentication. Otherwise <i>AcquireCredentialsHandle</i> returns an error indicating unknown credentials.</blockquote>
+</div>
+</p>
+
+<p>The client might start communication with a certificate by using the preceding approach. It is also common for a client to use a NULL certificate that indicates anonymous authentication to the server. The following code fragment shows how to do this:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+SCHANNEL_CRED sslCredentials = {0};
+sslCredentials.dwVersion = SCHANNEL_CRED_VERSION;
+sslCredentials.grbitEnabledProtocols = SP_PROT_SSL3;
+sslCredentials.dwFlags = 
+   SCH_CRED_NO_DEFAULT_CREDS|SCH_CRED_MANUAL_CRED_VALIDATION;
+
+CredHandle hCredentials;
+TimeStamp tsExpires;
+SECURITY_STATUS ss = 
+   AcquireCredentialsHandle(
+      NULL,
+      UNISP_NAME,
+      SECPKG_CRED_OUTBOUND,
+      NULL,
+      &amp;sslCredentials,
+      NULL,
+      NULL,
+      &amp;hCredentials,
+      &amp;tsExpires);
+if(ss != SEC_E_OK){
+   // Error
+}
+</pre></td></tr></table>
+</p>
+
+<p>So far, using SSL is not too different from the authentication process we are used to. However, from this point forward things change somewhat, even though the client still calls <i>InitializeSecurityContext</i> and the server still calls <i>AcceptSecurityContext</i>.</p>
+
+<A NAME="288"><h3>SSL Is a Stream</h3></A>
+<p>Unlike the other protocols we have discussed, for which you are supposed to wrap the blobs passed to and from <i>InitializeSecurityContext</i> and <i>AcceptSecurityContext</i> before communicating them, SSL expects your software <i>not</i> to wrap the blobs at all! When you receive a blob from <i>InitializeSecurityContext</i>, instead of sending size information and then the data, you send only the data verbatim.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+Although SSL expects to send and receive data verbatim, there is nothing stopping you from implementing a &quot;meta protocol&quot; to indicate the blob sizes as you send them. Doing this can drastically simplify your SSL code, though technically you won't be following the HTTPS specification. If you pass extra size data across the wire, your client or server probably won't be able to communicate with a client or server that has implemented HTTPS, which is commonly used by Web browsers and Web servers.</blockquote>
+</div>
+</p>
+
+<p>You might be wondering how the receiving side of the communication knows how much data to read, and the answer is that it doesn't. With SSL your communication is a <i>stream</i>. The following scenario illustrates the effect SSL has on the flow of information. It shows how you read information until a message is complete.</p>
+
+<ol>
+<p><li>One side (for example, the client side) sends a blob across the wire, unmodified.</li></p>
+
+<p><li>The receiving side reads as much information as is available and passes it to its &quot;blob-handling&quot; function. (In our example, the server passes the data to <i>AcceptSecurityContext</i>.)</li></p>
+
+<p><li>If the receiving side did not read enough information from the wire to finish a leg of the transaction, the blob-handling function reports SEC_E_INCOMPLETE_MESSAGE.</li></p>
+
+<p><li>If the incomplete message value is returned, you must save the data you already have and go back to the wire to receive as much additional data as you can until you get a return value other than SEC_E_INCOMPLETE_MESSAGE.</li></p>
+</ol>
+
+<p>You might have also realized that the streaming nature of SSL creates a complication other than the possibility of receiving too little data. Your software can read <i>too much</i> information across the wire. In this scenario, <i>AcceptSecurityContext</i> or <i>InitializeSecurityContext</i> report that you have passed extra data, which must be saved for use in the future (presumably after reading more data across the wire). </p>
+
+<p>
+So as you can see, there are more scenarios to watch for with SSL. Here are two situations you must be aware of at all times:</p>
+
+<ol>
+<p><li>You might have too little information for an SSPI function to process, so you need to receive more data.</li></p>
+
+<p><li>You might have too much information for an SSPI function, so you need to save the information for a future call to an SSPI function.</li></p>
+
+<ol type="A">
+<p><li>You must get more information from the wire.</li></p>
+
+<p><li>You must not get more information from the wire.</li></p>
+</ol>
+</ol>
+
+
+<p>Notice that the second scenario has two subscenarios. Scenario 2A is somewhat to be expected, but scenario 2B might come as a surprise. There are cases in which <i>AcceptSecurityContext</i> or <i>InitializeSecurityContext</i> report that you have passed in extra data and that a &quot;continue&quot; is necessary. And yet in these cases the blob-handling function might not report any blob data to send back across the wire. So you must modify the buffer you just passed in, and then pass it back to the blob-handling function again. </p>
+
+<p>In my opinion, this scenario of having too much data should never have been exposed to the application via the SSPI, because <i>AcceptSecurityContext</i> and <i>InitializeSecurityContext</i> have all the information they need to process the data. The functions would need to stop only when there is not enough data to process a complete message. </p>
+
+<p>This problem of handling extra data is not as easily solved as you might think. Imagine
+this scenario: You receive a blob on the wire that is internally broken into three &quot;sections&quot; of which the last section is not complete, and you need to get more data from the wire. You pass this blob to <i>AcceptSecurityContext</i> (for example), and it processes the first two sections, internal to the blob. When it finishes, it finds that the last section is not complete and that it needs more data. However, it doesn't want your application to go back to the wire, get more data, and send the <i>whole</i> blob back to the blob-handling function since it has already handled the first two sections internal to the blob. </p>
+
+<p>To avoid this situation, the designers of the system decided that if any section or subsection internal to a blob is processed, <i>AcceptSecurityContext</i> and <i>InitializeSecurityContext</i> would return regardless of whether there is sufficient extra data for more processing. This way you can be aware of the extra data, adjust your buffers, and recall the function. </p>
+
+<p>Because of
+the complications surrounding extra data, as well as the possibility of reading too little data to be useful to the SSPI, it is best to allocate and use a single buffer for all of your communication with a client. This buffer should be large enough to hold the largest single message transferred across the wire with the SSL protocol. To find out this size, you should call <i>QuerySecurityPackageInfo</i> before beginning to communicate:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+SECURITY_STATUS QuerySecurityPackageInfo(
+   SEC_CHAR    *pszPackageName,    
+   PSecPkgInfo *ppPackageInfo);
+</pre></td></tr></table>
+</p>
+
+<p>This function returns a buffer containing a SecPkgInfo structure, which you must free using <i>FreeContextBuffer</i> when you are finished with it:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+typedef struct _SecPkgInfo {
+   ULONG    fCapabilities;  // Capability flags for package
+   USHORT   wVersion;       // Version of driver
+   USHORT   wRPCID;         // Used by the system
+   ULONG    cbMaxToken;     // Max message size for package
+   SEC_CHAR *Name;          // Text name
+   SEC_CHAR *Comment;       // Comment
+} SecPkgInfo;
+</pre></td></tr></table>
+</p>
+
+<p>As you can see, <i>QuerySecurityPackageInfo</i> returns interesting information in the SecPkgInfo structure. However, you are typically only going to need the <i>cbMaxToken</i> value to indicate the minimum size of the buffer that you should be using when negotiating authentication with SSL. In our previous discussion of the SSPI, I implemented functions to perform the authentication handshake between the client and server. The following code shows the functions that perform similar tasks for SSL. You will notice that these functions take a pointer to a buffer and a size of that buffer. They also take a parameter that indicates how much data is already in the buffer. This parameter is used to accommodate the extra data scenarios that arise from SSL. Here is <i>SSLServerHandshakeAuth</i>:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+BOOL SSLServerHandshakeAuth(
+   CredHandle* phCredentials,
+   PULONG plAttributes,
+   PCtxtHandle phContext,
+   PBYTE pbExtraData,
+   PULONG pcbExtraData,
+   ULONG lSizeExtraDataBuf){
+
+   BOOL fSuccess = FALSE;
+
+   __try
+   {
+      // Set up a buffer in terms of local variables
+      ULONG lEndBufIndex = *pcbExtraData;
+      ULONG lBufMaxSize = lSizeExtraDataBuf;      
+      PBYTE pbTokenBuf = pbExtraData;
+         
+      // Declare in and out buffers
+      SecBuffer secBufferIn[3]={0};
+      SecBufferDesc secBufDescriptorIn;  
+
+      SecBuffer secBufferOut;
+      SecBufferDesc secBufDescriptorOut;
+
+      // Set up loop state information
+      BOOL fFirstPass = TRUE;
+      SECURITY_STATUS ss = SEC_I_CONTINUE_NEEDED; 
+      while (ss == SEC_I_CONTINUE_NEEDED || 
+         ss == SEC_E_INCOMPLETE_MESSAGE){
+         // How much data can be read per pass
+         ULONG lReadBuffSize;
+         // Reset this if we are not doing an &quot;incomplete&quot; loop
+         if (ss != SEC_E_INCOMPLETE_MESSAGE){
+            // Reset state for another &quot;blob exchange&quot;
+            lEndBufIndex =0;
+            lReadBuffSize = lBufMaxSize;
+         }
+
+         // Receive blob data from client
+         ReceiveData(pbTokenBuf+lEndBufIndex, &amp;lReadBuffSize);
+         
+         // Here is how much we have read to date
+         lEndBufIndex += lReadBuffSize;         
+
+         // Set up our in buffers
+         secBufferIn[0].BufferType = SECBUFFER_TOKEN;
+         secBufferIn[0].cbBuffer = lEndBufIndex;
+         secBufferIn[0].pvBuffer = pbTokenBuf;
+
+         // This becomes a SECBUFFER_EXTRA buffer to let
+         // us know if we have extra data afterward
+         secBufferIn[1].BufferType = SECBUFFER_EMPTY;
+         secBufferIn[1].cbBuffer = 0;
+         secBufferIn[1].pvBuffer = NULL;
+
+         // Set up in buffer descriptor
+         secBufDescriptorIn.ulVersion = SECBUFFER_VERSION;
+         secBufDescriptorIn.cBuffers = 2;
+         secBufDescriptorIn.pBuffers = secBufferIn;
+
+         // Set up out buffer (allocated by the SSPI)
+         secBufferOut.BufferType = SECBUFFER_TOKEN;
+         secBufferOut.cbBuffer = 0;
+         secBufferOut.pvBuffer = NULL;
+
+         // Set up out buffer descriptor
+         secBufDescriptorOut.ulVersion = SECBUFFER_VERSION;
+         secBufDescriptorOut.cBuffers = 1;
+         secBufDescriptorOut.pBuffers = &amp;secBufferOut;
+             
+         // This inner loop handles the &quot;continue case&quot; in which there
+         // is no blob data to be sent. In this case, there are still
+         // more &quot;sections&quot; in our last blob entry that must be processed.
+         BOOL fMoreSections;
+         // This loop processes all complete &quot;sections&quot; of data in buffer
+         do{  
+            fMoreSections  = FALSE;
+            // Blob processing
+            ss = 
+               AcceptSecurityContext(
+                  phCredentials,
+                  fFirstPass ? NULL : phContext,
+                  &amp;secBufDescriptorIn,
+                  *plAttributes|
+                  ISC_REQ_ALLOCATE_MEMORY|ISC_REQ_STREAM,
+                  SECURITY_NATIVE_DREP,
+                  phContext,
+                  &amp;secBufDescriptorOut,
+                  plAttributes,
+                  NULL);
+            // Are there more &quot;sections&quot; to process?
+            if ((ss == SEC_I_CONTINUE_NEEDED) &amp;&amp; 
+               (secBufferOut.cbBuffer == 0)){
+               fMoreSections = TRUE; //Set state to loop
+               // This is how much data was left over
+               ULONG lExtraData = secBufferIn[1].cbBuffer;
+               // Let's move this data back to the beginning of our buffer
+               MoveMemory(pbTokenBuf, 
+                  pbTokenBuf+(lEndBufIndex - lExtraData), lExtraData);
+               // This is how much data is in our buffer
+               lEndBufIndex = lExtraData;
+
+               // Let's reset input buffers
+               secBufferIn[0].BufferType = SECBUFFER_TOKEN;
+               secBufferIn[0].cbBuffer = lEndBufIndex;
+               secBufferIn[0].pvBuffer = pbTokenBuf;
+
+               secBufferIn[1].BufferType = SECBUFFER_EMPTY;
+               secBufferIn[1].cbBuffer = 0;
+               secBufferIn[1].pvBuffer = NULL;
+            }
+         }while(fMoreSections);
+
+         // This is how much data our next read from the wire 
+         // can bring in without overflowing our buffer
+         lReadBuffSize = lBufMaxSize - lEndBufIndex;         
+
+         if (ss != SEC_E_INCOMPLETE_MESSAGE){            
+            // We are never on our first pass again
+            fFirstPass = FALSE;
+         }
+
+         // Was there data to be sent?
+         if (secBufferOut.cbBuffer != 0){ 
+            // Send it then            
+            ULONG lOut = secBufferOut.cbBuffer;
+            SendData(secBufferOut.pvBuffer, lOut);
+            // And free up that out buffer
+            FreeContextBuffer(secBufferOut.pvBuffer);
+         }         
+      }
+
+      if (ss == SEC_E_OK){
+         // If there is extra data, this is encrypted application 
+         // layer data. We'll put it in a buffer and the application
+         // layer can later decrypt it with DecryptMessage.
+         int nIndex = 1;
+         while(secBufferIn[nIndex].BufferType 
+            != SECBUFFER_EXTRA &amp;&amp; (nIndex-- != 0));
+         
+         if ((nIndex != -1) &amp;&amp; (secBufferIn[nIndex].cbBuffer != 0)){
+            *pcbExtraData = secBufferIn[nIndex].cbBuffer;
+            PBYTE pbTempBuf = pbTokenBuf;
+            pbTempBuf += (lEndBufIndex - *pcbExtraData);
+            MoveMemory(pbExtraData, pbTempBuf, *pcbExtraData);
+         } else *pcbExtraData = 0;
+         fSuccess = TRUE;
+      }
+
+   }__finally{}
+
+   return (fSuccess);
+}
+</pre></td></tr></table>
+</p>
+
+<p>Here is <i>SSLClientHandshakeAuth</i>:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+BOOL SSLClientHandshakeAuth(
+   CredHandle* phCredentials,
+   CredHandle* phCertCredentials,
+   PULONG plAttributes,
+   CtxtHandle* phContext,
+   PTSTR pszServer,
+   PBYTE pbExtraData,
+   PULONG pcbExtraData,
+   ULONG lSizeExtraDataBuf)
+{   
+   BOOL fSuccess = FALSE;
+
+   __try
+   {  
+      // Set up our own copy of the credentials handle
+      CredHandle credsUse;
+      CopyMemory(&amp;credsUse, phCredentials, sizeof(credsUse));
+
+      // Set up buffer in terms of local variables for readability
+      ULONG lEndBufIndex = *pcbExtraData;
+      ULONG lBufMaxSize = lSizeExtraDataBuf;      
+      PBYTE pbData = pbExtraData;
+
+      // Declare in and out buffers
+      SecBuffer secBufferOut;
+      SecBufferDesc secBufDescriptorOut;
+      
+      SecBuffer secBufferIn[2];
+      SecBufferDesc secBufDescriptorIn;
+      
+      // Set up loop state information
+      BOOL fFirstPass = TRUE;
+      SECURITY_STATUS ss = SEC_I_CONTINUE_NEEDED;
+      while ((ss == SEC_I_CONTINUE_NEEDED) || 
+         (ss == SEC_E_INCOMPLETE_MESSAGE)){
+         // How much data can we read for a pass
+         ULONG lReadBuffSize; 
+         // Reset if we are not doing an &quot;incomplete&quot; loop
+         if (ss != SEC_E_INCOMPLETE_MESSAGE){
+            // Reset state for another blob exchange
+            lEndBufIndex =0;
+            lReadBuffSize = lBufMaxSize;
+         }
+
+         // Some stuff we only do after the first pass
+         if (!fFirstPass){
+            // Receive as much data as we can            
+
+            ReceiveData(pbData+lEndBufIndex, &amp;lReadBuffSize);
+
+            // This is how much data we have so far
+            lEndBufIndex += lReadBuffSize;         
+     
+            // Set up in buffer with our current data
+            secBufferIn[0].BufferType = SECBUFFER_TOKEN;
+            secBufferIn[0].cbBuffer = lEndBufIndex;
+            secBufferIn[0].pvBuffer = pbData;
+
+            // This becomes a SECBUFFER_EXTRA buffer to let us
+            // know if we have extra data afterward
+            secBufferIn[1].BufferType = SECBUFFER_EMPTY;
+            secBufferIn[1].cbBuffer = 0;
+            secBufferIn[1].pvBuffer = NULL;
+
+            // Set up in buffer descriptor
+            secBufDescriptorIn.cBuffers = 2;
+            secBufDescriptorIn.pBuffers = secBufferIn;
+            secBufDescriptorIn.ulVersion = SECBUFFER_VERSION;
+         }
+      
+         // Set up out buffer (allocated by SSPI)
+         secBufferOut.BufferType = SECBUFFER_TOKEN;
+         secBufferOut.cbBuffer = 0;
+         secBufferOut.pvBuffer = NULL;
+         
+         // Set up out buffer descriptor
+         secBufDescriptorOut.cBuffers = 1;
+         secBufDescriptorOut.pBuffers = &amp;secBufferOut;
+         secBufDescriptorOut.ulVersion = SECBUFFER_VERSION;
+
+         // This inner loop handles the &quot;continue case&quot; in which there is
+         // no blob data to be sent. In this case, there are still more
+         // &quot;sections&quot; in our last blob entry that must be processed.
+         BOOL fNoOutBuffer;
+         do { 
+            fNoOutBuffer = FALSE;
+            // Blob processing
+            ss = 
+               InitializeSecurityContext(  
+                  &amp;credsUse,
+                  fFirstPass ? NULL : phContext,
+                  fFirstPass ? pszServer : NULL,
+                  *plAttributes|
+                  ISC_REQ_ALLOCATE_MEMORY|ISC_REQ_STREAM,
+                  0,
+                  SECURITY_NATIVE_DREP,
+                  fFirstPass ? NULL : &amp;secBufDescriptorIn,
+                  0,
+                  phContext,
+                  &amp;secBufDescriptorOut,
+                  plAttributes,
+                  NULL);
+            // Are there more sections to process?
+            if ((ss == SEC_I_CONTINUE_NEEDED) &amp;&amp; 
+               (secBufferOut.cbBuffer == 0)){
+               fNoOutBuffer = TRUE; //Set state to loop
+               // Here is how much data was left over
+               ULONG lExtraData = secBufferIn[1].cbBuffer;
+               // We want to move this data back to the 
+               // beginning of our buffer
+               MoveMemory(pbData, 
+                  pbData+(lEndBufIndex - lExtraData), lExtraData);
+               // Now we have a new lEndBufIndex
+               lEndBufIndex = lExtraData;
+
+               // Let's reset input buffers
+               secBufferIn[0].BufferType = SECBUFFER_TOKEN;
+               secBufferIn[0].cbBuffer = lEndBufIndex;
+               secBufferIn[0].pvBuffer = pbData;
+
+               secBufferIn[1].BufferType = SECBUFFER_EMPTY;
+               secBufferIn[1].cbBuffer = 0;
+               secBufferIn[1].pvBuffer = NULL;
+            }
+            if (ss == SEC_I_INCOMPLETE_CREDENTIALS){
+               // Server requested credentials. 
+               // Copy credentials with certificate.
+               // Normally, we would call AcquireCredentialsHandle here
+               // to pick up new credentials.
+               // However, we have already passed
+               // in certificate credentials in this sample function.
+               CopyMemory(&amp;credsUse, phCertCredentials, sizeof(credsUse));
+               // No input needed this pass
+               secBufDescriptorIn.cBuffers = 0;
+               // Keep on truckin'
+               fNoOutBuffer = TRUE; //Set state to loop
+            }
+         } while(fNoOutBuffer);
+         
+         // This is how much data our next read from the wire 
+         // can bring in without overflowing our buffer
+         lReadBuffSize = lBufMaxSize - lEndBufIndex;
+   
+         // Was there data to be sent?
+         if (secBufferOut.cbBuffer!=0){
+            // Send it then
+            ULONG lOut = secBufferOut.cbBuffer;
+            SendData(secBufferOut.pvBuffer, lOut);
+            // And free up that out buffer
+            FreeContextBuffer( secBufferOut.pvBuffer );
+         }
+      
+         if (ss != SEC_E_INCOMPLETE_MESSAGE){
+            fFirstPass = FALSE;            
+         }
+      }
+
+      if(ss == SEC_E_OK){
+         int nIndex = 1;
+         while(secBufferIn[nIndex].BufferType 
+            != SECBUFFER_EXTRA &amp;&amp; (nIndex-- != 0));
+
+         if((nIndex != -1) &amp;&amp; (secBufferIn[nIndex].cbBuffer != 0)){
+            *pcbExtraData = secBufferIn[nIndex].cbBuffer;
+            PBYTE pbTempBuf = pbData;
+            pbTempBuf += (lEndBufIndex - *pcbExtraData);
+            MoveMemory(pbExtraData, pbTempBuf, *pcbExtraData);
+         } else *pcbExtraData = 0;
+         fSuccess = TRUE;
+      }
+   } __finally{}
+
+   return (fSuccess);
+}
+</pre></td></tr></table>
+</p>
+
+<p>These functions differ from their Kerberos and NTLM counterparts in a couple of ways. Both of these functions check for a return value of SEC_E_INCOMPLETE_MESSAGE and continue to build the message buffer if this happens. </p>
+
+<p>These functions also differ from their counterparts in that the client function takes two credentials handles rather than one. One is the anonymous credentials handle, and the other is a credentials handle created with a client certificate. (You could pass the address of the anonymous handle for both if you did not have a client certificate.) This is because the client presents its anonymous credentials first and then switches to the certificate only if the server requests mutual authentication. The client detects this request by a return value of SEC_I_INCOMPLETE_CREDENTIALS.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+In a real-world client application, it is likely that the client would not search for a certificate and call <i>AcquireCredentialsHandle</i> until after it had found that the server was requiring mutual authentication. My sample function is assuming the possibility of a client certificate from the beginning, primarily as a means of simplifying the already complex logic of the sample.</blockquote>
+</div>
+</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>As you can see, the details of SSL complicate the situation dramatically! However, once your authentication has completed, one or both sides of the communication hold certificate information from the other side. You can retrieve the certificate information by calling the function <i>QueryContextAttributes</i> with the completed context and passing the SECPKG_ATTR_REMOTE_CERT_CONTEXT value plus a pointer to a PCCERT_CONTEXT structure.
+
+<p>When retrieving a certificate context from an SSL context, it is your responsibility to free the certificate context when you are finished with it. Use <i>CertFreeCertificateContext</i> to do this.</p>
+</blockquote>
+</div>
+</p>
+
+<p>After you have retrieved the certificate context, you can use the CryptoAPI functions we discussed in the previous section to extract information from the remote principal's certificate. </p>
+
+<p>Here is a code sample that shows how to retrieve certificate information. This code assumes a completed context and ends up with the common name of the remote certificate stored in the buffer named <i>szNameBuf</i>.</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+// Get server's certificate
+PCCERT_CONTEXT pCertContext = NULL;
+ss = QueryContextAttributes(&amp;hContext, SECPKG_ATTR_REMOTE_CERT_CONTEXT,
+   (PVOID)&amp;pCertContext);
+if(ss != SEC_E_OK){
+   // Error
+}
+
+
+// Find the size of the block that we are decoding from the certificate
+ULONG lSize = 0;
+CryptDecodeObject(
+   X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, 
+   X509_NAME,
+   pCertContext-&gt;pCertInfo-&gt;Subject.pbData, // Data to decode
+   pCertContext-&gt;pCertInfo-&gt;Subject.cbData, // Size of data
+   0, NULL, &amp;lSize);
+
+// Allocate memory for the block
+CERT_NAME_INFO* pcertNameInfo = (CERT_NAME_INFO*)alloca(lSize);
+
+// Actually decode the subject block from the certificate
+if(!CryptDecodeObject(
+   X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, 
+   X509_NAME, 
+   pCertContext-&gt;pCertInfo-&gt;Subject.pbData, // Data to decode
+   pCertContext-&gt;pCertInfo-&gt;Subject.cbData, // Size of data
+   0, pcertNameInfo, &amp;lSize)){
+   // Error
+}
+
+// Look up the common name attribute of the certificate
+PCERT_RDN_ATTR pcertRDNAttr = 
+   CertFindRDNAttr(szOID_COMMON_NAME, pcertNameInfo);
+if(pcertRDNAttr == NULL){
+   // Error
+}
+
+// Translate the information in the CERT_RDN_ATTR structure to a string
+// to use in your application
+TCHAR szNameBuf[1024];
+if(CertRDNValueToStr(CERT_RDN_PRINTABLE_STRING, 
+   &amp;pcertRDNAttr-&gt;Value, szNameBuf, 1024) == 0){
+   // Error
+}
+</pre></td></tr></table>
+</p>
+
+<A NAME="289"><h3>Encrypting and Decrypting Messages</h3></A>
+<p>As you might imagine, encryption is also somewhat more complex because of the stream-oriented approach of SSL. However, once you are comfortable receiving extra data from the receiving end of a function set, encryption and decryption are doable tasks. </p>
+
+<p>The following two functions demonstrate the sending and receiving ends of an encrypted message being sent. The first function is <i>SendEncryptedMessage</i>:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+BOOL SendEncryptedMessage(CtxtHandle* phContext, 
+   PVOID pvData, ULONG lSize){   
+   BOOL fSuccess = FALSE;
+
+   __try
+   {
+      SecPkgContext_StreamSizes Sizes;
+
+      // Get stream data properties
+      SECURITY_STATUS ss = 
+         QueryContextAttributes(
+            phContext,
+            SECPKG_ATTR_STREAM_SIZES,
+            &amp;Sizes);
+      if (ss != SEC_E_OK){
+         __leave;
+      }
+
+      // Can we handle this much data?
+      if (lSize &gt; Sizes.cbMaximumMessage){
+         __leave;
+      }
+
+      // This buffer is going to be a header, plus message, plus trailer
+      ULONG lIOBufferLength = Sizes.cbHeader + 
+         Sizes.cbMaximumMessage +
+         Sizes.cbTrailer;
+      PBYTE pbIOBuffer = (PBYTE)alloca(lIOBufferLength);
+      if (pbIOBuffer == NULL){         
+         __leave;
+      }
+
+      // The data is copied into the buffer after the header
+      CopyMemory(pbIOBuffer+Sizes.cbHeader,(PBYTE)pvData, lSize);
+
+      SecBuffer Buffers[3];      
+      // Set up the header in buffer
+      Buffers[0].BufferType   = SECBUFFER_STREAM_HEADER;
+      Buffers[0].pvBuffer     = pbIOBuffer;
+      Buffers[0].cbBuffer     = Sizes.cbHeader;         
+
+      // Set up the data in buffer
+      Buffers[1].BufferType   = SECBUFFER_DATA;
+      Buffers[1].pvBuffer     = pbIOBuffer + Sizes.cbHeader;
+      Buffers[1].cbBuffer     = lSize;         
+
+      // Set up the trailer in buffer
+      Buffers[2].BufferType   = SECBUFFER_STREAM_TRAILER;
+      Buffers[2].pvBuffer     = pbIOBuffer + Sizes.cbHeader + lSize;
+      Buffers[2].cbBuffer     = Sizes.cbTrailer;         
+
+      // Set up the buffer descriptor
+      SecBufferDesc secBufDescIn;
+      secBufDescIn.ulVersion       = SECBUFFER_VERSION;
+      secBufDescIn.cBuffers        = 3;
+      secBufDescIn.pBuffers        = Buffers;
+
+      // Encrypt the data
+      ss = EncryptMessage(phContext, 0, &amp;secBufDescIn, 0);
+      if (ss != SEC_E_OK){
+         __leave;
+      }
+
+      // Send all three buffers in one chunk
+      ULONG lOut = Buffers[0].cbBuffer + Buffers[1].cbBuffer + 
+         Buffers[2].cbBuffer;
+      SendData(pbIOBuffer, lOut);
+
+      fSuccess = TRUE;
+   }__finally{}
+
+   return (fSuccess);
+}
+</pre></td></tr></table>
+</p>
+
+<p>Here is <i>GetEncryptedMessage</i>:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+PVOID GetEncryptedMessage(  
+   CtxtHandle* phContext, 
+   PULONG plSize,
+   PBYTE* ppbExtraData,
+   PULONG pcbExtraData, 
+   ULONG  lSizeExtraDataBuf, 
+   BOOL* pfReneg){
+
+   PVOID pDecrypMsg = NULL;
+   *pfReneg = FALSE;
+
+   __try
+   {
+      // Declare buffer descriptor
+      SecBufferDesc  SecBuffDesc = {0};
+      // Declare buffers
+      SecBuffer      Buffers[4] = {0};
+      // Extra data coming in
+      PBYTE pbData = *ppbExtraData;
+      ULONG cbData = *pcbExtraData;
+
+      SECURITY_STATUS ss = SEC_E_INCOMPLETE_MESSAGE;
+      do
+      {  
+         // Set up initial data buffer to point
+         // to extra data
+         Buffers[0].BufferType = SECBUFFER_DATA;
+         Buffers[0].pvBuffer = pbData;
+         Buffers[0].cbBuffer = cbData;         
+
+         // Set up three empty out buffers
+         Buffers[1].BufferType = SECBUFFER_EMPTY;
+         Buffers[2].BufferType = SECBUFFER_EMPTY;
+         Buffers[3].BufferType = SECBUFFER_EMPTY;
+
+         // Set up descriptor
+         SecBuffDesc.ulVersion       = SECBUFFER_VERSION;
+         SecBuffDesc.cBuffers        = 4;
+         SecBuffDesc.pBuffers        = Buffers;
+
+         // If we have any data at all, let's try
+         // to decrypt it
+         if (cbData)
+            ss = DecryptMessage(phContext, &amp;SecBuffDesc, 0, NULL);
+
+         if (ss == SEC_E_INCOMPLETE_MESSAGE || cbData == 0){
+            ULONG lReadSize;
+            // Need to read in more data and try again
+            lReadSize = lSizeExtraDataBuf - cbData;
+            ReceiveData(pbData+cbData, &amp;lReadSize);
+            cbData += lReadSize;
+         }
+
+      }while (ss == SEC_E_INCOMPLETE_MESSAGE);
+   
+      // Was there actually a successful decryption?
+      if (ss == SEC_E_OK){
+         
+         // Allocate a buffer for the caller 
+         // and copy decrypted message to it
+         *plSize = Buffers[1].cbBuffer;
+         pDecrypMsg = (PVOID)LocalAlloc(0,*plSize);
+         if (pDecrypMsg == NULL){
+            __leave;
+         }
+         CopyMemory(pDecrypMsg,Buffers[1].pvBuffer,*plSize);
+
+         // If there is extra data, move it to the beginning of the 
+         // buffer, and then set the size of the extra data returned
+         int nIndex = 3;
+         while(Buffers[nIndex].BufferType 
+            != SECBUFFER_EXTRA &amp;&amp; (nIndex-- != 0));
+
+         if (nIndex != -1){
+            // There is more data to handle. Move it to front of 
+            // the extra data buffer and the caller can handle 
+            // the decrypted message and then come back to finish.
+            *pcbExtraData = Buffers[nIndex].cbBuffer;
+            MoveMemory(pbData,pbData + (cbData - *pcbExtraData),
+               *pcbExtraData);
+         } else *pcbExtraData = 0;
+      }
+      if (ss == SEC_I_RENEGOTIATE){
+         *pfReneg = TRUE;
+      }
+
+   }__finally{}
+
+   // Return decrypted message
+   return (pDecrypMsg);
+}
+</pre></td></tr></table>
+</p>
+
+<p>As you can see from the code, the logic is similar to other sample functions in this chapter, except that these functions must pay attention to the possibility of extra data. Whereas the sending function has no concern for extra data, the receiving or decrypting function must take a buffer with potential extra data and be able to return extra data in this same buffer. This receive can overlap with receives before or after it, or both. </p>
+
+<p>SSL merges the notions of encryption and message signing, so there is no need to implement <i>MakeSignature</i> and <i>VerifySignature</i> for SSL. The functions are not supported with the SChannel security package. </p>
+
+<p>You might have noticed that the <i>GetEncryptedMessage</i> sample function tests for a return value of SEC_I_RENEGOTIATE and populates a supplied Boolean variable with TRUE if this value is returned by <i>DecryptMessage</i>. This return value indicates that the server has requested a renegotiation of certificates, and typically it indicates that it wants to
+upgrade an anonymous client authentication to a client authentication complete with certificate. </p>
+
+<p>When <i>DecryptMessage</i> returns SEC_I_RENEGOTIATE, there is no message to decrypt, and there will not be any output buffers with decrypted data.</p>
+
+<A NAME="290"><h3>Handling Renegotiation</h3></A>
+<p>If a client requests a protected resource, your server might want to upgrade an anonymous client authentication to an authentication with a certificate. To do this, your server must initiate a renegotiation. </p>
+
+<p>Typically in an SSL communication, the client and server communicate by sending and receiving encrypted buffers full of data. However, when a server wants to initiate a renegotiation, rather than encrypting and sending information, a server calls <i>AcceptSecurityContext</i>. In this case, the server passes no input buffers to the function, and the function returns a blob that should be sent to the client. The client detects that this blob indicates that it should enter into a renegotiation. The following sample function shows how a server might implement this code:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+BOOL SSLServerInitReneg(
+   CredHandle* phCredentials,
+   CtxtHandle* phContext)
+{   
+   BOOL fSuccess = FALSE;
+
+   __try
+   {  
+
+      // Declare out buffer
+      SecBuffer secBufferOut;
+      SecBufferDesc secBufDescriptorOut;
+            
+      
+      // Set up out buffer (allocated by the SSPI)
+      secBufferOut.BufferType = SECBUFFER_TOKEN;
+      secBufferOut.cbBuffer = 0;
+      secBufferOut.pvBuffer = NULL;
+      
+      // Set up out buffer descriptor
+      secBufDescriptorOut.cBuffers = 1;
+      secBufDescriptorOut.pBuffers = &amp;secBufferOut;
+      secBufDescriptorOut.ulVersion = SECBUFFER_VERSION;
+
+      ULONG lAttrOut = 0;
+      SECURITY_STATUS ss = 
+         AcceptSecurityContext(
+            phCredentials, 
+            phContext, 
+            NULL,
+            ASC_REQ_ALLOCATE_MEMORY|ASC_REQ_STREAM|ASC_REQ_MUTUAL_AUTH,
+            SECURITY_NATIVE_DREP,
+            phContext, 
+            &amp;secBufDescriptorOut,
+            &amp;lAttrOut,
+            NULL);
+      if (ss != SEC_E_OK)
+         __leave;
+            
+      // Was there data to be sent?
+      if (secBufferOut.cbBuffer!=0){
+         // Send it then
+         ULONG lOut = secBufferOut.cbBuffer;
+         SendData(secBufferOut.pvBuffer, lOut);
+         // And free up that out buffer
+         FreeContextBuffer( secBufferOut.pvBuffer );
+      }
+      fSuccess = TRUE;
+   }__finally{}      
+
+   return (fSuccess);
+}
+</pre></td></tr></table>
+</p>
+
+<p>As I mentioned in my discussion of <i>DecryptMessage</i>, the client first knows of the server's desire to renegotiate when <i>DecryptMessage</i> returns SEC_I_ RENEGOTIATE. At this time, if the client is interested in doing a renegotiation, it should reenter the authentication loop with a credentials handle for an appropriate certificate. </p>
+
+<p>The server should enter into its side of the authentication renegotiation after requesting a renegotiation as well. It is the server's responsibility to verify that the client has provided an appropriate certificate. It is entirely possible that the client has resent its anonymous credentials. </p>
+
+<p>Using the sample functions listed in this chapter, the code fragment below would represent the server's role in a renegotiation.</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+// Server needs to renegotiate with the client
+if(!SSLServerInitReneg(
+   &amp;hCredentials,
+   &amp;hContext)){
+   // Error case
+}
+
+// Set up flags for our authentication handshake
+dwSSPIFlags = ASC_REQ_SEQUENCE_DETECT   |
+              ASC_REQ_REPLAY_DETECT     |
+              ASC_REQ_CONFIDENTIALITY   |
+              /* Indicates that client certificate is required */
+              ASC_REQ_MUTUAL_AUTH       |
+              ASC_RET_EXTENDED_ERROR;
+   
+
+cbExtra = 0;
+// Reenter the authentication loop
+ss = SSLServerHandshakeAuth(&amp;hCredentials, 
+   &amp;dwSSPIFlags, &amp;hContext, pIOBuff, &amp;cbExtra, lIOBuffSize);
+if (ss == SEC_E_OK){
+   // Renegotiation completed successfully
+}
+</pre></td></tr></table>
+</p>
+
+<p>In a similar way, the following code fragment shows the client's role in a renegotiation (assuming that the client does have a certificate to renegotiate with):</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+// Get decrypted message as usual
+cbMsg = 0;
+cbExtra = 0;      
+pMsg = 
+   GetEncryptedMessage(
+      &amp;hContext, 
+      &amp;cbMsg,
+      &amp;pIOBuff,
+      &amp;cbExtra, 
+      lIOBuffSize,
+      &amp;fReneg);
+// If it failed, is this a renegotiate request?
+if ((pMsg == NULL) &amp;&amp; fReneg){
+
+   // If so, then reenter the authentication loop with a
+   // credentials handle associated with a certificate
+   ULONG   lSSPIFlags = ISC_REQ_SEQUENCE_DETECT |
+                        ISC_REQ_REPLAY_DETECT     |
+                        ISC_REQ_CONFIDENTIALITY   |
+                        ISC_RET_EXTENDED_ERROR;   
+   ss = 
+      SSLClientHandshakeAuth(
+         &amp;hCertCredentials,
+         &amp;hCertCredentials,
+         &amp;lSSPIFlags,
+         &amp;hContext,
+         TEXT(&quot;Jason's Test Server Certificate on Davemm&quot;),
+         pIOBuff, &amp;cbExtra, lIOBuffSize);
+   if (ss == SEC_E_OK){
+      // Renegotiation success
+   }
+}
+</pre></td></tr></table>
+</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+If your client software will be communicating with a server that might request a renegotiation, it is important that your client be able to gracefully handle a renegotiation request whenever it calls <i>DecryptMessage</i>.</blockquote>
+</div>
+</p>
+
+<A NAME="291"><h3>SSL and Impersonation</h3></A>
+<p>If the server has authenticated the client by receiving a certificate from the client (as opposed to anonymous client authentication), it is possible for the server to then impersonate the client. In fact, the details of the impersonation do not differ from impersonation with other security protocols using the SSPI. You simply pass the completed context handle to <i>ImpersonateSecurityContext</i>, or you retrieve the token directly using <i>QuerySecurityContextToken</i>. (Both of these techniques were discussed earlier in this chapter.) </p>
+
+<p>However, one burning question remains: How does Windows 2000 create a token for a user with nothing other than the certificate? The answer to this question is via a certificate mapping in Active Directory, or via Microsoft- specific information imbedded in the certificate itself. In all, there are three ways in which a certificate can be mapped to a token for a user trustee account in a Windows 2000 domain. </p>
+
+<p>Before covering the ways in which you can map a certificate to a
+user in your domain, I would like to take a moment to point out the significance of this mapping ability. If your server running on Windows 2000 connects to a client with a known certificate, it is possible for your server to build a token and log this client on to your server machine, regardless of the operating system the client is using. This means you can impersonate a client who has connected to you and is running client software on a machine running UNIX, a machine running Windows, or any other machine capable of communicating via SSL. </p>
+
+<p>Here are the three different approaches you can use to map a certificate to a user account in Windows 2000:</p>
+
+
+<ul>
+<p><li><b>One-to-one mapping</b> Any certificate signed by an issuer trusted by the server can be associated with a user account. When this certificate is used in an SSL connection to initiate an impersonation, the system looks up the common name and issuer name on the certificate in Active Directory to find the user account for which a token should be built.</li></p>
+
+<p><li><b>Many-to-one mapping</b> Any CA trusted by the server can be associated with a user account. When any certificate signed by this CA is used in an SSL connection to initiate an impersonation, the system looks up the issuer name in Active Directory to find the user account for which a token should be built.</li></p>
+
+<p><li><b>User principal name (UPN) mapping</b> Unlike the other two approaches, UPN mapping uses information in the certificate to find the user account for which a token should be built. The UPN is the user principal name of the account that should be impersonated and will exist as a special field on the certificate. A UPN will look something like this: &quot;jclark@subdomain.microsoft.com&quot;.</li></p>
+</ul>
+
+ 
+
+<p>Although the impersonation of an SSL connection is simple, the administration of these certificate mappings is your responsibility. The simplest approach requiring the least administration is the UPN mapping. With UPN mapping, all you need is a CA running Microsoft Certificate Services as an enterprise CA. Then you request a &quot;user&quot; certificate from the CA. This user certificate will include the UPN attribute, which contains the user account name of the account that requested the certificate. If this certificate is used in a client connection to an SSL server, it can be impersonated as is. </p>
+
+<p>Of course, you might find that you want to impersonate certificates generated without the Microsoft-specific extension, and doing so requires you to do an explicit mapping in Active Directory. Both one-to-one mappings and the many-to-one mappings use a similar technique to map a certificate to a user in Active Directory. </p>
+
+<p>To start, you must export the certificate to a .CER file. This file type is a standard
+certificate export format that includes a signed copy of the certificate and the public key, but it does not include the matching private key for the certificate. The Certificates snap-in in the MMC allows you to export a certificate by right-clicking on the certificate and selecting All Tasks and then Export. This will start the Certificate Export Wizard. </p>
+
+<p>Once you have a .CER file, you should follow these steps to create a mapping to a user account in Active Directory:</p>
+
+<ol>
+<p><li>Open the Active Directory Users and Computers snap-in in the MMC.</li></p>
+
+<p><li>Select Advanced Features from the View menu.</li></p>
+
+<p><li>Select the Users folder in the left pane.</li></p>
+
+<p><li>Right-click on the user to which you wish to map a certificate in the right pane, and select Name Mappings from the context menu.</li></p>
+
+<p><li>In the X509 Certificates tab of the Security Identity Mapping dialog box, click the Add button.</li></p>
+
+<p><li>Select the .CER file for the certificate that you wish to map and click Open. The Add Certificate dialog box appears.</li></p>
+
+<p><li>If you check the Use Subject For Alternate Security Identity check box, then you will have a one-to-one mapping.</li></p>
+
+<p><li>If you uncheck the Use Subject For Alternate Security Identity check box and leave only the Use Issuer For Alternate Security Identity check box checked, you will have a many-to-one mapping.</li></p>
+</ol>
+
+<p>After these steps have been properly executed, your server software can impersonate a client.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+There are two common gotchas with certificate mapping that warrant mentioning. First, if the server does not trust the issuer of a certificate, the client connecting with that certificate cannot be impersonated. Second, if a certificate is a user certificate created by an enterprise CA running Microsoft Certificate Services, the UPN will be used for mapping before Active Directory is searched for an explicit mapping. This can cause unexpected results if you explicitly mapped such a certificate to a user in Active Directory.</blockquote>
+</div>
+</p>
+
+<A NAME="292"><h3>Troubleshooting SSL</h3></A>
+<p>The SChannel security package, which implements SSL on Windows 2000, supports an error and tracking reporting mechanism that adds events to the event log. By default it is set to report errors to the system log. However, it can also be configured to report warning-level and tracking-level events to the log. </p>
+
+<p>To enable these features, you must modify a value in the registry. The key is located in HKEY_LOCAL_MACHINE\System\CurrentControlSet\Control\SecurityProviders\Schannel, and the value is named EventLogging. </p>
+
+<p>The EventLogging value is the combination of three values where 1 indicates error reporting, 2 indicates warning reporting, and 4 indicates tracking event reporting. You can combine these values to achieve any combination of reporting you wish. For example, a value of 3 would indicate error and warning reporting, whereas a value of 7 would turn on all reporting levels. This feature can be helpful in understanding the underlying tasks that the security provider is performing on behalf of your client
+and server software using SSL. </p>
+
+<p>Using the SSPI to implement SSL certainly involves some relatively difficult coding, but knowing what you need to do and having good samples to work with can be helpful. I strongly suggest that you spend some time gaining an in-depth understanding of the samples in this book, as well as the samples in the Platform SDK documentation, before attempting to implement your own SSL server.</p>
+
+<A NAME="293"><h2>The SSLChat Sample Application</h2></A>
+<p>The SSLChat sample application (&quot;12 SSLChat.exe&quot;) demonstrates how to use all the SSL-related technologies we have discussed so far, including client and server certificate authentication, message signing, and encryption. The source code and resource files for the sample application are in the 12-SSLChat directory on the companion CD. The SSLChat sample application has the user interface shown in Figure 12-7.</p>
+
+<p>The SSLChat sample application is very similar to the SSPIChat sample application. However, in the SSLChat sample application, both the client and the server can select a certificate to use for authenticating to the remote principal.</p>
+
+<p>It is important that both the client and the server machine recognize the root CAs of each other's certificates. A full discussion on certificate management from the user perspective is beyond the scope of this book, but you can find quite a bit of information on this topic in the Windows 2000 Help.</p>
+
+<p>
+<A HREF="javascript:fullSize('F12FJ07x.htm')"> <img src="images/F12FJ07.JPG" width=404 height=324 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!-- caption --><b>Figure 12-7.</b> <i>User interface for the SSLChat sample application</i><!-- /caption -->
+</p>
+
+</BODY>
+</HTML>
+
+
+
+

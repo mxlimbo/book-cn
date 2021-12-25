@@ -1,0 +1,610 @@
+<HTML>
+ <HEAD>
+	<LINK REL=StyleSheet HREF="prowice.css" TYPE="text/css">
+<TITLE>Interprocess Communication</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="328"><H1>Interprocess Communication</H1></A>
+
+<P>There are many cases where two Windows CE processes need to communicate. The walls between processes that protect processes from one another prevent casual exchanging of data. The memory space of one process isn't exposed to another process. Handles to files or other objects can't be passed from one process to another. Windows CE doesn't support the <I>DuplicateHandle</I> function available under Windows NT, which allows one process to open a handle used by another process. Nor, as I mentioned before, does Windows CE support handle inheritance. Some of the other more common methods of interprocess communication, such as named pipes, are also not supported under Windows CE. However, you can choose from plenty of ways to enable two or more processes to exchange data.
+
+<A NAME="329"><H2>Finding Other Processes</H2></A>
+
+<P>Before you can communicate with another process, you have to determine whether it's running on the system. Strategies for finding whether another process is running depend mainly on whether you have control of the other process. If the process to be found is a third-party application in which you have no control over the design of the other process, the best method might be to use <I>FindWindow</I> to locate the other process's main window. <I>FindWindow</I> can search either by window class or by window title. You can also enumerate the top-level windows in the system using <I>EnumWindows. </I>You can also use the ToolHelp debugging functions to enumerate the processes running, but this works only when the ToolHelp DLL is loaded on the system and unfortunately, it generally isn't included, by default, on most systems.
+
+<P>If you're writing both processes, however, it's much easier to enumerate them. In this case, the best methods include using the tools you'll later use in one process to communicate with the other process, such as named mutexes, events, or memory-mapped objects. When you create one of these objects, you can determine whether you're the first to create the object or you're simply opening another object by calling <I>GetLastError</I> after another call created the object. And the simplest method might be the best; call <I>FindWindow</I> and send a WM_USER message to the main window of the other process.
+
+<A NAME="330"><H3>WM_COPYDATA</H3></A>
+
+<P>Once you've found your target process, the talking can begin. If you're staying at the window level, a simple method of communicating is to send a WM_COPYDATA message. WM_COPYDATA is unique in that it's designed to send blocks of data from one process to another. You can't use a standard, user-defined message to pass pointers to data from one process to another because a pointer isn't valid across processes. WM_COPYDATA gets around this problem by having the system translate the pointer to a block of data from one process's address space to another's. The recipient process is required to copy the data immediately into its own memory space, but this message does provide a quick and dirty method of sending blocks of data from one process to another.
+
+<A NAME="331"><H3>Named memory-mapped objects</H3></A>
+
+<P>The problem with WM_COPYDATA is that it can be used only to copy fixed blocks of data at a specific time. Using a named memory-mapped object, two processes can allocate a shared block of memory that's equally accessible to both processes at the same time. You should use named memory-mapped objects so that the system can maintain a proper use count on the object. This procedure prevents one process from freeing the block when it terminates while the other process is still using the block.
+
+<P>Of course, this level of interaction comes with a price. You need some synchronization between the processes when they're reading and writing data in the shared memory block. The use of named mutexes and named events allows processes to coordinate their actions. Using these synchronization objects requires the use of secondary threads so that the message loop can be serviced, but this isn't an exceptional burden.
+
+<P>I described how to create memory-mapped objects in <A HREF="ch06a.htm">Chapter 6</a>. The example program that shortly follows uses memory-mapped objects and synchronization objects to coordinate access to the shared block of memory.
+
+<A NAME="332"><H3>Communicating with files and databases</H3></A>
+
+<P>A more basic method of interprocess communication is the use of files or a custom database. These methods provide a robust, if slower, communication path. Slow is relative. Files and databases in the Windows CE object store are slow in the sense that the system calls to access these objects must find the data in the object store, uncompress the data, and deliver it to the process. However, since the object store is based in RAM, you see none of the extreme slowness of a mechanical hard disk that you'd see under Windows NT or Windows 98.
+
+<A NAME="333"><H2>The XTalk Example Program</H2></A>
+
+<P>The following example program, XTalk, uses events, mutexes, and a shared memory-mapped block of memory to communicate among different copies of itself. The example demonstrates the rather common problem of one-to-many communication. In this case, the XTalk window has an edit box with a Send button next to it. When a user taps the Send button, the text in the edit box is communicated to every copy of XTalk running on the system. Each copy of XTalk receives the text from the sending copy and places it in a list box also in the XTalk window. Figure 8-1 shows two XTalk programs communicating.
+
+<P><A HREF="javascript:fullSize('f08rg01x.htm')"> <img src="f08rg01.jpg" width=404 height=303 border=0 ALT="Click to view at full size."> </A>
+
+<p><!-- caption --><B>Figure 8-1.</B> <I>The desktop showing two XTalk windows.</I><!-- /caption -->
+
+<P>To perform this feat of communication, XTalk uses a named memory-mapped object as a transfer buffer, a mutex to coordinate access to the buffer, and two event objects to indicate the start and end of communication. A third event is used to tell the sender thread to read the text from the edit control and write the contents to the shared memory block. Figure 8-2 shows the source code for XTalk.
+
+
+
+<TABLE cellpadding=5 width="95%"><TR><td>
+<A NAME="334"><H3>XTalk.rc</H3></A>
+<p><pre>
+//======================================================================
+// Resource file
+//
+
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//======================================================================
+#include &quot;windows.h&quot;
+#include &quot;xtalk.h&quot;                        // Program-specific stuff
+
+//----------------------------------------------------------------------
+// Icons and bitmaps
+//
+ID_ICON ICON   &quot;xtalk.ico&quot;                // Program icon
+
+//----------------------------------------------------------------------
+xtalk DIALOG discardable 10, 10, 120, 60
+STYLE  WS_OVERLAPPED | WS_VISIBLE | WS_CAPTION | WS_SYSMENU | 
+       DS_CENTER | DS_MODALFRAME 
+CAPTION &quot;XTalk&quot;
+CLASS &quot;xtalk&quot;
+BEGIN
+    LTEXT &quot;&amp;Text&quot;                     -1,   2,  10,  20,  12
+    EDITTEXT                 IDD_OUTTEXT,  25,  10,  58,  12, 
+                                             WS_TABSTOP | ES_AUTOHSCROLL
+    PUSHBUTTON &quot;&amp;Send&quot;,     IDD_SENDTEXT,  88,  10,  30,  12, WS_TABSTOP
+
+    LISTBOX                   IDD_INTEXT,   2,  25, 116,  40, 
+                                             WS_TABSTOP | WS_VSCROLL
+END
+</pre>
+</td></tr></table>
+
+
+
+<TABLE cellpadding=5 width="95%"><TR><td>
+<A NAME="335"><H3>XTalk.h</H3></A>
+<p><pre>
+//======================================================================
+// Header file
+
+//
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//======================================================================
+// Returns number of elements
+#define dim(x) (sizeof(x) / sizeof(x[0])) 
+//----------------------------------------------------------------------
+// Generic defines and data types
+//
+struct decodeUINT {                            // Structure associates
+    UINT Code;                                 // messages 
+                                               // with a function.
+    LRESULT (*Fxn)(HWND, UINT, WPARAM, LPARAM);
+}; 
+struct decodeCMD {                             // Structure associates
+    UINT Code;                                 // menu IDs with a 
+    LRESULT (*Fxn)(HWND, WORD, HWND, WORD);    // function.
+};
+
+//----------------------------------------------------------------------
+// Generic defines used by application
+#define  ID_ICON             1   
+
+#define  IDD_INTEXT          10                // Control IDs
+#define  IDD_SENDTEXT        11
+#define  IDD_OUTTEXT         12
+
+#define  MMBUFFSIZE          1024              // Size of shared buffer
+#define  TEXTSIZE            256
+
+// Interprocess communication structure mapped in shared memory
+typedef struct {
+    int nAppCnt;
+    int nReadCnt;
+    TCHAR szText[TEXTSIZE];
+} SHAREBUFF;
+typedef SHAREBUFF *PSHAREBUFF;
+
+//----------------------------------------------------------------------
+// Function prototypes
+//
+int InitApp (HINSTANCE);
+HWND InitInstance (HINSTANCE, LPWSTR, int);
+int TermInstance (HINSTANCE, int);
+
+// Window procedures
+LRESULT CALLBACK MainWndProc (HWND, UINT, WPARAM, LPARAM);
+// Message handlers
+LRESULT DoCommandMain (HWND, UINT, WPARAM, LPARAM);
+LRESULT DoDestroyMain (HWND, UINT, WPARAM, LPARAM);
+
+// Command functions
+LPARAM DoMainCommandSend (HWND, WORD, HWND, WORD);
+LPARAM DoMainCommandExit (HWND, WORD, HWND, WORD);
+
+// Thread functions
+int SenderThread (PVOID pArg);
+int ReaderThread (PVOID pArg);
+</pre>
+</td></tr></table>
+
+
+
+
+<TABLE cellpadding=5 width="95%"><TR><td>
+<A NAME="336"><H3>XTalk.c</H3></A>
+<p><pre>
+//======================================================================
+
+// XTalk - A simple application for Windows CE
+//
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//======================================================================
+#include &lt;windows.h&gt;                 // For all that Windows stuff
+#include &lt;commctrl.h&gt;                // Command bar includes
+#include &quot;xtalk.h&quot;                   // Program-specific stuff
+
+//----------------------------------------------------------------------
+// Global data
+//
+const TCHAR szAppName[] = TEXT (&quot;xtalk&quot;);
+HINSTANCE hInst;                     // Program instance handle
+
+HANDLE g_hMMObj = 0;                 // Memory-mapped object
+PSHAREBUFF g_pBuff = 0;              // Pointer to mm object
+HANDLE g_hmWriteOkay = 0;            // Write mutex
+HANDLE g_hSendEvent = 0;             // Local send event
+HANDLE g_hReadEvent = 0;             // Shared read data event
+HANDLE g_hReadDoneEvent = 0;         // Shared data read event
+
+// Message dispatch table for MainWindowProc
+const struct decodeUINT MainMessages[] = {
+    WM_COMMAND, DoCommandMain,
+    WM_DESTROY, DoDestroyMain,
+};
+// Command Message dispatch for MainWindowProc
+const struct decodeCMD MainCommandItems[] = {
+    IDOK, DoMainCommandExit,
+    IDCANCEL, DoMainCommandExit,
+    IDD_SENDTEXT, DoMainCommandSend,
+};
+//======================================================================
+// Program entry point
+//
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    LPWSTR lpCmdLine, int nCmdShow) {
+    MSG msg;
+    int rc = 0;
+    HWND hwndMain;
+
+    // Initialize application.
+    rc = InitApp (hInstance);
+    if (rc) return rc;
+
+    // Initialize this instance.
+    hwndMain = InitInstance (hInstance, lpCmdLine, nCmdShow);
+    if (hwndMain == 0) 
+        return TermInstance (hInstance, 0x10);
+
+    // Application message loop
+    while (GetMessage (&amp;msg, NULL, 0, 0)) {
+        if ((hwndMain == 0) || !IsDialogMessage (hwndMain, &amp;msg)) {
+            TranslateMessage (&amp;msg);
+            DispatchMessage (&amp;msg);
+        }
+    }
+    // Instance cleanup
+    return TermInstance (hInstance, msg.wParam);
+}
+//----------------------------------------------------------------------
+// InitApp - Application initialization
+//
+int InitApp (HINSTANCE hInstance) {
+    WNDCLASS wc;
+
+    // Register application main window class.
+    wc.style = 0;                             // Window style
+    wc.lpfnWndProc = MainWndProc;             // Callback function
+    wc.cbClsExtra = 0;                        // Extra class data
+    wc.cbWndExtra = DLGWINDOWEXTRA;           // Extra window data
+    wc.hInstance = hInstance;                 // Owner handle
+    wc.hIcon = NULL,                          // Application icon
+    wc.hCursor = NULL;                        // Default cursor
+    wc.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH);
+    wc.lpszMenuName =  NULL;                  // Menu name
+    wc.lpszClassName = szAppName;             // Window class name
+
+    if (RegisterClass (&amp;wc) == 0) return 1;
+    return 0;
+}
+//----------------------------------------------------------------------
+// InitInstance - Instance initialization
+//
+HWND InitInstance (HINSTANCE hInstance, LPWSTR lpCmdLine, int nCmdShow){
+    HWND hWnd;
+    HANDLE hThread;
+    INT rc;
+    BOOL fFirstApp = TRUE;
+
+    // Save program instance handle in global variable.
+    hInst = hInstance;
+
+    // Create mutex used to share memory-mapped structure.
+    g_hmWriteOkay = CreateMutex (NULL, TRUE, TEXT (&quot;XTALKWRT&quot;));
+    rc = GetLastError();
+    if (rc == ERROR_ALREADY_EXISTS)
+        fFirstApp = FALSE;
+    else if (rc) return 0;
+
+    // Wait here for ownership to ensure the initialization is done.
+    // This is necessary since CreateMutex doesn't wait.
+    rc = WaitForSingleObject (g_hmWriteOkay, 2000);
+    if (rc != WAIT_OBJECT_0)
+        return 0;
+
+    // Create a file-mapping object.
+    g_hMMObj = CreateFileMapping ((HANDLE)-1, NULL, PAGE_READWRITE, 0, 
+                                  MMBUFFSIZE, TEXT (&quot;XTALKBLK&quot;));
+    if (g_hMMObj == 0) return 0;
+
+    // Map into memory the file-mapping object.
+    g_pBuff = (PSHAREBUFF)MapViewOfFile (g_hMMObj, FILE_MAP_WRITE, 
+                                         0, 0, 0);
+    if (!g_pBuff) 
+        CloseHandle (g_hMMObj);
+
+    // Initialize structure if first application started.
+    if (fFirstApp) 
+        memset (g_pBuff, 0, sizeof (SHAREBUFF));
+    // Increment app running count. Interlock not needed due to mutex.
+    g_pBuff-&gt;nAppCnt++;   
+
+    // Release the mutex.  We need to release the mutext twice 
+    // if we owned it when we entered the wait above.
+    ReleaseMutex (g_hmWriteOkay);
+    if (fFirstApp) 
+        ReleaseMutex (g_hmWriteOkay);
+
+    // Now create events for read and send notification.
+    g_hSendEvent = CreateEvent (NULL, FALSE, FALSE, NULL);
+    g_hReadEvent = CreateEvent (NULL, TRUE, FALSE, TEXT (&quot;XTALKREAD&quot;));
+    g_hReadDoneEvent = CreateEvent (NULL, FALSE, FALSE, 
+                                    TEXT (&quot;XTALKDONE&quot;));
+    if (!g_hReadEvent || !g_hSendEvent || !g_hReadDoneEvent)
+        return 0;
+
+    // Create main window.
+    hWnd = CreateDialog (hInst, szAppName, NULL, NULL);
+    rc = GetLastError();
+
+    // Create secondary threads for interprocess communication.
+    hThread = CreateThread (NULL, 0, SenderThread, hWnd, 0, &amp;rc);
+    if (hThread)
+        CloseHandle (hThread);
+    else { 
+        DestroyWindow (hWnd);
+        return 0;
+    }
+    hThread = CreateThread (NULL, 0, ReaderThread, hWnd, 0, &amp;rc);
+    if (hThread)
+        CloseHandle (hThread);
+    else { 
+        DestroyWindow (hWnd);
+        return 0;
+    }
+    
+    // Return fail code if window not created.
+    if (!IsWindow (hWnd)) return 0;
+
+    // Standard show and update calls
+    ShowWindow (hWnd, nCmdShow);
+    UpdateWindow (hWnd);
+    return hWnd;
+}
+//----------------------------------------------------------------------
+// TermInstance - Program cleanup
+//
+int TermInstance (HINSTANCE hInstance, int nDefRC) {
+
+    // Free memory-mapped object.
+    if (g_pBuff) {
+        // Decrement app running count. 
+        InterlockedDecrement (&amp;g_pBuff-&gt;nAppCnt);
+        UnmapViewOfFile (g_pBuff);
+    }
+    if (g_hMMObj)
+        CloseHandle (g_hMMObj);
+
+    // Free mutex.
+    if (g_hmWriteOkay)
+        CloseHandle (g_hmWriteOkay);
+
+    // Close event handles.
+    if (g_hReadEvent)
+        CloseHandle (g_hReadEvent);
+
+    if (g_hReadDoneEvent)
+        CloseHandle (g_hReadDoneEvent);
+
+    if (g_hSendEvent)
+        CloseHandle (g_hSendEvent);
+    return nDefRC;
+}
+//======================================================================
+// Message handling procedures for main window
+//----------------------------------------------------------------------
+// MainWndProc - Callback function for application window
+//
+LRESULT CALLBACK MainWndProc (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                              LPARAM lParam) {
+    INT i;
+    //
+    // Search message list to see if we need to handle this
+    // message.  If in list, call procedure.
+    //
+    for (i = 0; i &lt; dim(MainMessages); i++) {
+        if (wMsg == MainMessages[i].Code)
+            return (*MainMessages[i].Fxn)(hWnd, wMsg, wParam, lParam);
+    }
+    return DefWindowProc (hWnd, wMsg, wParam, lParam);
+}
+//----------------------------------------------------------------------
+// DoCommandMain - Process WM_COMMAND message for window.
+//
+LRESULT DoCommandMain (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                       LPARAM lParam) {
+    WORD    idItem, wNotifyCode;
+    HWND    hwndCtl;
+    INT    i;
+
+    // Parse the parameters.
+    idItem = (WORD) LOWORD (wParam);
+    wNotifyCode = (WORD) HIWORD (wParam);
+    hwndCtl = (HWND) lParam;
+
+    // Call routine to handle control message.
+    for(i = 0; i &lt; dim(MainCommandItems); i++) {
+        if(idItem == MainCommandItems[i].Code)
+            return (*MainCommandItems[i].Fxn)(hWnd, idItem, hwndCtl, 
+                                           wNotifyCode);
+    }
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoDestroyMain - Process WM_DESTROY message for window.
+//
+LRESULT DoDestroyMain (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                       LPARAM lParam) {
+    PostQuitMessage (0);
+    return 0;
+}
+//======================================================================
+// Command handler routines
+//----------------------------------------------------------------------
+// DoMainCommandExit - Process Program Exit command
+//
+LPARAM DoMainCommandExit (HWND hWnd, WORD idItem, HWND hwndCtl, 
+                          WORD wNotifyCode) {
+
+    SendMessage (hWnd, WM_CLOSE, 0, 0);
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoMainCommandSend - Process Program Send command.
+//
+LPARAM DoMainCommandSend (HWND hWnd, WORD idItem, HWND hwndCtl, 
+                          WORD wNotifyCode) {
+
+    SetEvent (g_hSendEvent);
+    return 0;
+}
+//======================================================================
+// SenderThread - Performs the interprocess communication
+//
+int SenderThread (PVOID pArg) {
+    HWND hWnd;
+    INT nGoCode, rc;
+    TCHAR szText[TEXTSIZE];
+
+    hWnd = (HWND)pArg;
+    while (1) {
+        nGoCode = WaitForSingleObject (g_hSendEvent, INFINITE);
+        if (nGoCode == WAIT_OBJECT_0) {
+            SendDlgItemMessage (hWnd, IDD_OUTTEXT, WM_GETTEXT, 
+                                sizeof (szText), (LPARAM)szText);
+
+            rc = WaitForSingleObject (g_hmWriteOkay, 2000);
+            if (rc == WAIT_OBJECT_0) {
+                lstrcpy (g_pBuff-&gt;szText, szText);
+                g_pBuff-&gt;nReadCnt = g_pBuff-&gt;nAppCnt;
+                PulseEvent (g_hReadEvent);
+
+                // Wait while reader threads get data.
+                while (g_pBuff-&gt;nReadCnt) 
+                    rc = WaitForSingleObject (g_hReadDoneEvent, 
+                                              INFINITE);
+                ReleaseMutex (g_hmWriteOkay);
+            } 
+        } else 
+            return _1;
+    }
+    return 0;
+}
+//======================================================================
+// ReaderThread - Performs the interprocess communication
+//
+int ReaderThread (PVOID pArg) {
+    HWND hWnd;
+    INT nGoCode, rc, i;
+    TCHAR szText[TEXTSIZE];
+
+    hWnd = (HWND)pArg;
+    while (1) {
+        nGoCode = WaitForSingleObject (g_hReadEvent, INFINITE);
+        if (nGoCode == WAIT_OBJECT_0) {
+            i = SendDlgItemMessage (hWnd, IDD_INTEXT, LB_ADDSTRING, 0, 
+                                (LPARAM)g_pBuff-&gt;szText);
+            SendDlgItemMessage (hWnd, IDD_INTEXT, LB_SETTOPINDEX, i, 0);
+
+            InterlockedDecrement (&amp;g_pBuff-&gt;nReadCnt);
+            SetEvent (g_hReadDoneEvent);
+        } else {
+            rc = GetLastError();
+            wsprintf (szText, TEXT (&quot;rc:%d&quot;), rc);
+            MessageBox (hWnd, szText, TEXT (&quot;ReadThread Err&quot;), MB_OK);
+        }
+    }
+    return 0;
+}
+</pre>
+</td></tr></table>
+
+
+
+<p><!-- caption --><B>Figure 8-2.</B> <I>The source code for XTalk.</I><!-- /caption -->
+
+<P>The interesting routines in the XTalk example are the <I>InitInstance</I> procedure and the two thread procedures <I>SenderThread</I> and <I>ReaderThread</I>. The relevant part of <I>InitInstance</I> is shown below with the error checking code removed for brevity.
+
+<p><pre>
+// Create mutex used to share memory-mapped structure.
+g_hmWriteOkay = CreateMutex (NULL, TRUE, TEXT (&quot;XTALKWRT&quot;));
+rc = GetLastError();
+if (rc == ERROR_ALREADY_EXISTS)
+    fFirstApp = FALSE;
+
+// Wait here for ownership to insure the initialization is done.
+// This is necessary since CreateMutex doesn't wait.
+rc = WaitForSingleObject (g_hmWriteOkay, 2000);
+if (rc != WAIT_OBJECT_0)
+    return 0;
+
+// Create a file-mapping object.
+g_hMMObj = CreateFileMapping ((HANDLE)-1, NULL, PAGE_READWRITE, 0, 
+                              MMBUFFSIZE, TEXT (&quot;XTALKBLK&quot;));
+
+// Map into memory the file-mapping object.
+g_pBuff = (PSHAREBUFF)MapViewOfFile (g_hMMObj, FILE_MAP_WRITE, 
+                                     0, 0, 0);
+
+// Initialize structure if first application started.
+if (fFirstApp) 
+    memset (g_pBuff, 0, sizeof (SHAREBUFF));
+
+// Increment app running count. Interlock not needed due to mutex.
+g_pBuff-&gt;nAppCnt++;   
+
+// Release the mutex.  We need to release the mutex twice 
+// if we owned it when we entered the wait above.
+ReleaseMutex (g_hmWriteOkay);
+if (fFirstApp) 
+    ReleaseMutex (g_hmWriteOkay);
+
+// Now create events for read and send notification.
+g_hSendEvent = CreateEvent (NULL, FALSE, FALSE, NULL);
+g_hReadEvent = CreateEvent (NULL, TRUE, FALSE, TEXT (&quot;XTALKREAD&quot;));
+g_hReadDoneEvent = CreateEvent (NULL, FALSE, FALSE, 
+                                TEXT (&quot;XTALKDONE&quot;));
+</pre>
+
+<P>This code is responsible for creating the necessary synchronization objects as well as creating and initializing the shared memory block. The mutex object is created first with the parameters set to request initial ownership of the mutex object. A call is then made to <I>GetLastError</I> to determine whether the mutex object has already been created. If not, the application assumes the first instance of XTalk is running and later will initialize the shared memory block. Once the mutex is created, an additional call is made to <I>WaitForSingleObject</I> to wait until the mutex is released. This call is necessary to prevent a late starting instance of XTalk from disturbing communication in progress. Once the mutex is owned, calls are made to <I>CreateFileMapping</I> and <I>MapViewOfFile</I> to create a named memory-mapped object. Since the object is named, each process that opens the object opens the same object and is returned a pointer to the same block of memory.
+
+<P>Once the shared memory block is created, the first instance of XTalk zeros out the block. This procedure also forces the block of RAM to be committed because memory-mapped objects by default are autocommit blocks. Then <I>nAppCnt</I>, which keeps a count of the running instances of XTalk, is incremented. Finally the mutex protecting the shared memory is released. If this is the first instance of XTalk, <I>ReleaseMutex</I> must be called twice because it gains ownership of the mutex twice&#8212;once when the mutex is created and again when the call to <I>WaitForSingleObject</I> is made.
+
+<P>Finally, three event objects are created. <I>SendEvent</I> is an unnamed event, local to each instance of XTalk. The primary thread uses this event to signal the sender thread that the user has pressed the Send button and wants the text in the edit box transmitted. The <I>ReadEvent</I> is a named event that tells the other instances of XTalk that there's data to be read in the transfer buffer. The <I>ReadDoneEvent</I> is a named event signaled by each of the receiving copies of XTalk to indicate that they have read the data.
+
+<P>The two threads, <I>ReaderThread</I> and <I>SenderThread</I> are created immediately after the main window of XTalk is created. The code for <I>SenderThread</I> is shown here:
+
+<p><pre>
+int SenderThread (PVOID pArg) {
+    HWND hWnd;
+    INT nGoCode, rc;
+    TCHAR szText[TEXTSIZE];
+
+    hWnd = (HWND)pArg;
+    while (1) {
+        nGoCode = WaitForSingleObject (g_hSendEvent, INFINITE);
+        if (nGoCode == WAIT_OBJECT_0) {
+            SendDlgItemMessage (hWnd, IDD_OUTTEXT, WM_GETTEXT, 
+                                sizeof (szText), (LPARAM)szText);
+
+            rc = WaitForSingleObject (g_hmWriteOkay, 2000);
+            if (rc == WAIT_OBJECT_0) {
+                lstrcpy (g_pBuff-&gt;szText, szText);
+                g_pBuff-&gt;nReadCnt = g_pBuff-&gt;nAppCnt;
+                PulseEvent (g_hReadEvent);
+
+                // Wait while reader threads get data.
+                while (g_pBuff-&gt;nReadCnt) 
+                    rc = WaitForSingleObject (g_hReadDoneEvent,
+                                              INFINITE);
+                ReleaseMutex (g_hmWriteOkay);
+            } 
+        }
+    }
+    return 0;
+}
+</pre>
+
+<P>The routine waits on the primary thread of XTalk to signal <I>SendEvent</I>. The primary thread of XTalk makes the signal in response to a WM_COMMAND message from the Send button. The thread is then unblocked, reads the text from the edit control, and waits to gain ownership of the <I>WriteOkay</I> mutex. This mutex protects two copies of XTalk from writing to the shared block at the same time. When the thread owns the mutex, it writes the string read from the edit control into the shared buffer. It then copies the number of active copies of XTalk into the <I>nReadCnt</I> variable in the same shared buffer, and pulses the <I>ReadEvent</I> to tell the other copies of XTalk to read the newly written data. A manual resetting event is used so that all threads waiting on the event will be unblocked when the event is signaled.
+
+<P>The thread then waits for the <I>nReadCnt</I> variable to return to 0. Each time a reader thread reads the data, the <I>nReadCnt</I> variable is decremented and the <I>ReadDone</I> event signaled. Note that the thread doesn't spin on this variable but uses an event to tell it when to check the variable again. This would actually be a great place to use <I>WaitForMultipleObjects</I> and have all reader threads signal when they've read the data, but Windows CE doesn't support the <I>WaitAll</I> flag in <I>WaitForMultipleObjects</I>.
+
+<P>Finally, when all the reader threads have read the data, the sender thread releases the mutex protecting the shared segment and the thread returns to wait for another send event.
+
+<P>The <I>ReaderThread</I> routine is even simpler. Here it is:
+
+<p><pre>
+int ReaderThread (PVOID pArg) {
+    HWND hWnd;
+    INT nGoCode, rc, i;
+    TCHAR szText[TEXTSIZE];
+
+    hWnd = (HWND)pArg;
+    while (1) {
+        nGoCode = WaitForSingleObject (g_hReadEvent, INFINITE);
+        if (nGoCode == WAIT_OBJECT_0) {
+            i = SendDlgItemMessage (hWnd, IDD_INTEXT, LB_ADDSTRING, 0, 
+                                    (LPARAM)g_pBuff-&gt;szText);
+            SendDlgItemMessage (hWnd, IDD_INTEXT, LB_SETTOPINDEX, i, 0);
+
+            InterlockedDecrement (&amp;g_pBuff-&gt;nReadCnt);
+            SetEvent (g_hReadDoneEvent);
+        }
+    }
+    return 0;
+}
+</pre>
+
+<P>The reader thread starts up and immediately blocks on <I>ReadEvent</I>. When it's unblocked, it adds the text from the shared buffer into the list box in its window. The list box is then scrolled to show the new line. After this is accomplished, the <I>nReadCnt</I> variable is decremented using <I>InterlockedDecrement</I> to be thread safe, and the <I>ReadDone</I> event is signaled to tell the <I>SenderThread</I> to check the read count. After that's accomplished, the routine loops around and waits for another read event to occur.
+
+</BODY>
+</HTML>
+
+
+
+

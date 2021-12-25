@@ -1,0 +1,1410 @@
+<HTML>
+<HEAD>
+	<LINK REL=StyleSheet HREF="petzoldi.css" TYPE="text/css">
+<TITLE>The DIB File Format</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="474"><h1>The DIB File Format</h1></A><P>Interestingly enough, the DIB format did not originate in Windows. It was first defined 
+in version 1.1 of OS/2, the operating system originally developed by IBM and 
+Microsoft beginning in the mid-1980s. OS/2 1.1 was released in 1988 and was the first version of 
+OS/2 to include a Windows-like graphical user interface, known as the Presentation 
+Manager (PM). The Presentation Manager included the Graphics Programming Interface (GPI), 
+which defined the bitmap format. 
+<P>That OS/2 bitmap format was then used in Windows 3.0 (released in 1990), where 
+it came to be known as the DIB. Windows 3.0 also included a variation of the original 
+DIB format that under Windows has come to be the standard. Additional enhancements 
+were defined in Windows 95 (and Windows NT 4.0) and Windows 98 (and Windows NT 
+5.0), as I'll discuss in this chapter.
+<P>The DIB is best examined first as a file format. DIB files have the filename 
+extension .BMP or, more rarely, .DIB. Bitmap images used by Windows applications (for 
+example, on the surfaces of buttons) are created as DIB files and generally stored as read-only 
+resources in the program's executable file. Icons and mouse cursors are also DIB files in 
+a slightly different form. 
+<P>A program can load a DIB file, minus the first 14 bytes, into a contiguous block 
+of memory. It is then sometimes referred to as &quot;a bitmap in the 
+<I>packed-DIB</I> format.&quot; Applications running under Windows can use the packed-DIB format for exchanging 
+images through the Windows clipboard or for creating brushes. Programs also have complete 
+access to the contents of the DIB and can modify the DIB in whatever way they choose. 
+<P>Programs can also create their own DIBs in memory and later save them in files. 
+The images in these DIBs can be &quot;painted&quot; by a program using GDI function calls. Or 
+the program can set and manipulate the pixel bits directly, perhaps using other 
+memory-based DIBs in the process.
+<P>When a DIB is loaded into memory, programs can also use the DIB data with 
+several Windows API function calls, that I'll discuss in this chapter. The DIB-related 
+API calls are few in number and are mainly concerned with displaying display DIBs on the 
+video display or a printer page and with converting them to and from GDI bitmap objects.
+<P>When all is said and done, however, there remain many, many, many DIB tasks 
+that application programs might need to perform for which there is no support in the 
+Windows operating system. For example, a program might have access to a 24-bit DIB and 
+might wish to convert it into an 8-bit DIB with an optimal 256-color palette. Windows will 
+not do this for you. But this chapter and the next will show you how to work with DIBs 
+beyond what the Windows API provides.
+
+<A NAME="475"><h2>The OS/2-Style DIB</h2></A><P>So that we don't get bogged down in too many details just yet, let's take a look at the 
+format of the Windows DIB that is compatible with the bitmap format first introduced in OS/2 1.1. 
+<P>A DIB file has four main sections:
+<UL>
+<p><li>A file header
+<p><li>An information header
+<p><li>An RGB color table (but not always)
+<p><li>The bitmap pixel bits
+</UL>
+<P>You can think of the first two parts as C data structures and the third part as an 
+array of data structures. These structures are documented in the Windows header file 
+WINGDI.H. A memory-based DIB in the packed-DIB format has three sections:
+<UL>
+<p><li>An information header
+<p><li>An RGB color table (but not always)
+<p><li>The bitmap pixel bits
+</UL>
+<P>It's exactly the same as a DIB stored in a file except that it doesn't have the file header.
+<P>The DIB file, but not the memory-based packed DIB, begins with a 14-byte file 
+header defined as a structure like so:
+<p><pre>
+typedef struct tagBITMAPFILEHEADER  // bmfh
+{ 
+     WORD  bfType ;        // signature word &quot;BM&quot; or 0x4D42
+     DWORD bfSize ;        // entire size of file
+     WORD  bfReserved1 ;   // must be zero
+     WORD  bfReserved2 ;   // must be zero
+     DWORD bfOffsetBits ;  // offset in file of DIB pixel bits
+}
+BITMAPFILEHEADER, * PBITMAPFILEHEADER ;
+</PRE>
+<P>This may not be exactly the way the structure is defined in WINGDI.H (for example, 
+the comments are mine), but it is functionally the same. The first comment (that is, the 
+text &quot;bmfh&quot;) shows the recommended abbreviation when naming a structure variable of 
+this data type. If you see a variable in one of my programs named 
+<I>pbmfh</I>, that will be a pointer to a structure of type BITMAPFILEHEADER or a variable of type PBITMAPFILEHEADER. 
+<P>The structure is 14 bytes in length. It begins with the two letters &quot;BM&quot; to indicate 
+a bitmap file. This is the WORD value 0x4D42. The &quot;BM&quot; indicator is followed by a 
+DWORD indicating the entire size of the file, including the file header, in bytes. The next 
+two WORD fields are set to zero. (In a mouse cursor file, which is similar in format to a 
+DIB file, these two fields are used to indicate the &quot;hot spot&quot; of the cursor.) The structure 
+concludes with a DWORD indicating the byte offset within the file where the pixel bits 
+begin. This number can be derived from information in the DIB information header, but it 
+is provided here for convenience.
+<P>In the OS/2-style DIB, the BITMAPFILEHEADER structure is followed 
+immediately by a BITMAPCOREHEADER structure, which provides the basic information about the 
+DIB image. A packed DIB begins with the BITMAPCOREHEADER:
+<p><pre>
+typedef struct tagBITMAPCOREHEADER  // bmch
+{ 
+     DWORD bcSize ;      // size of the structure = 12
+     WORD  bcWidth ;     // width of image in pixels
+     WORD  bcHeight ;    // height of image in pixels
+     WORD  bcPlanes ;    // = 1
+     WORD  bcBitCount ;  // bits per pixel (1, 4, 8, or 24)
+}
+BITMAPCOREHEADER, * PBITMAPCOREHEADER ;
+</PRE>
+<P>The word &quot;core&quot; sounds a little odd in this context, and it is. It means that this format 
+is the basis (thus the core) of other bitmap formats derived from it.
+<P>The <I>bcSize</I> field in the BITMAPCOREHEADER structure indicates the size of the 
+data structure, in this case 12 bytes.
+<P>The <I>bcWidth</I> and <I>bcHeight</I> fields contain the size of the bitmap in pixels. 
+Although the use of a WORD for these fields implies that a DIB may be 65,535 pixels high and 
+wide, you'll rarely encounter anything quite that large. 
+<P>The <I>bcPlanes</I> field is always 1. Always, always, always&#8212;from the time it was 
+defined until this very second. The field is a remnant of the earlier Windows GDI bitmap 
+object that we encountered in the last chapter. 
+<P>The <I>bcBitCount</I> field indicates the number of bits per pixel. For OS/2-style DIBs, 
+this can be either 1, 4, 8, or 24. The number of colors in the DIB image is equal to 
+2<SUP>bmch.bcBitCount </SUP>or, in C syntax, to
+<p><pre>
+1 &lt;&lt; bmch.bcBitCount
+</PRE>
+<P>Thus, the <I>bcBitCount</I> field is equal to:
+<UL>
+<p><li>1 for a 2-color DIB
+<p><li>4 for a 16-color DIB
+<p><li>8 for a 256-color DIB
+<p><li>24 for a full-color DIB
+</UL>
+<P>When I refer to &quot;an 8-bit DIB,&quot; I'll mean a DIB that has 8 bits per pixel.
+<P>For the first three cases (that is, for bit counts of 1, 4, and 8), the 
+BITMAPCOREHEADER is followed by the color table. The color table does not exist for 24-bit DIBs. 
+The color table is an array of 3-byte RGBTRIPLE structures, one for each color in the image:
+<p><pre>
+typedef struct tagRGBTRIPLE  // rgbt
+{
+     BYTE rgbtBlue ;   // blue level
+     BYTE rgbtGreen ;  // green level
+     BYTE rgbtRed ;    // red level
+}
+RGBTRIPLE ;
+</PRE>
+<P>It is recommended that the color table be arranged so that the most important colors 
+in the DIB appear first. We'll see why in the next chapter.
+<P>The WINGDI.H header file also defines the following structure:
+<p><pre>
+typedef struct tagBITMAPCOREINFO  // bmci
+{
+     BITMAPCOREHEADER bmciHeader ;     // core-header structure
+     RGBTRIPLE        bmciColors[1] ;  // color table array
+}
+BITMAPCOREINFO, * PBITMAPCOREINFO ;
+</PRE>
+<P>This structure combines the information header with the color table. Although the 
+number of RGBTRIPLE structures is seemingly equal to 1 in this structure, you'll never find just 
+one RGBTRIPLE in a DIB file. The size of the color table is always 2, 16, or 256 
+RGBTRIPLE structures, depending on the number of bits per pixel. If you need to allocate a 
+structure of PBITMAPCOREINFO for an 8-bit DIB, you can do it like so:
+<p><pre>
+pbmci = malloc (sizeof (BITMAPCOREINFO) + 255 * sizeof (RGBTRIPLE)) ;
+</PRE>
+<P>Then you can access whatever RGBTRIPLE structure you need like so:
+<p><pre>
+pbmci-&gt;bmciColors[i]
+</PRE>
+<P>Because the RGBTRIPLE structure is 3 bytes in length, some of the RGBTRIPLE 
+structures might begin at odd addresses within the DIB. However, because there are always 
+an even number of RGBTRIPLE structures in the DIB file, the data block that follows the 
+color table array always begins at a WORD address boundary.
+<P>The data that follow the color table (and what follows the information header for 
+DIBs with a bit count of 24) are the pixel bits themselves.
+
+<A NAME="476"><h2>Bottoms Up!</h2></A><P>Like most bitmap formats, the pixel bits in the DIB are organized in horizontal rows, 
+sometimes also called &quot;scan lines&quot; from the terminology of video display hardware. The 
+number of rows is equal to the <I>bcHeight</I> field of the BITMAPCOREHEADER structure. 
+However, unlike most bitmap formats, the DIB begins with the bottom row of the image and 
+proceeds up through the image.
+<P>Let's establish some terminology here. When I say &quot;top row&quot; and &quot;bottom row,&quot; I 
+mean the top and bottom of the visual image as it appears when correctly displayed on 
+the monitor or printer page. The top row of a portrait is hair; the bottom row of a portrait 
+is chin. When I say &quot;first row,&quot; I mean the row of pixels that is found directly after the 
+color table in the DIB file. And when I say &quot;last row,&quot; I mean the row of pixels at the very 
+end of the file.
+<P>So, in DIBs, the bottom row of the image is the first row of the file, and the top 
+row of the image is the last row in the file. This is called a bottom-up organization. 
+Because this organization is counterintuitive, you may ask why it's done this way.
+<P>Well, it all goes back to the OS/2 Presentation Manager. Someone at IBM decided 
+that all coordinate systems in PM&#8212;including those for windows, graphics, and 
+bitmaps&#8212;should be consistent. This provoked a debate: Most people, including programmers who 
+have worked with full-screen text programming or windowing environments, think in terms 
+of vertical coordinates that increase going down the screen. However, hardcore 
+computer graphics programmers approach the video display from a perspective that originates in 
+the mathematics of analytic geometry. This involves a rectangular (or Cartesian) 
+coordinate system where increasing vertical coordinates go up in space.
+<P>In short, the mathematicians won. Everything in PM was saddled with a 
+bottom-left origin, including window coordinates. And that's how DIBs came to be this way.
+
+<A NAME="477"><h2>The DIB Pixel Bits</h2></A><P>The last section of the DIB file&#8212;in most cases the great bulk of the DIB file&#8212;consists 
+of the actual DIB pixel bits. The pixel bits are organized in horizontal rows beginning 
+with the bottom row of the image and proceeding up through the image.
+<P>The number of rows in a DIB is equal to the 
+<I>bcHeight</I> field of the BITMAPCOREHEADER structure. Each row encodes a number of pixels equal to the 
+<I>bcWidth</I> field of the structure. Each row begins with the leftmost pixels and proceeds to the right of the 
+image. The number of bits per pixel is obtained from the 
+<I>bcBitCount</I> field, which is either 1, 4, 8, or 24.
+<P>The length of each row in bytes is always a multiple of 4. The row length can 
+be calculated like so:
+<p><pre>
+RowLength = 4 * ((bmch.bcWidth * bmch.bcBitCount + 31) / 32) ;
+</PRE>
+<P>Or, slightly more efficiently in C, like this:
+<p><pre>
+RowLength = ((bmch.bcWidth * bmch.bcBitCount + 31) &amp; ~31) &gt;&gt; 3 ;
+</PRE>
+<P>The row is padded at the right (customarily with zeros), if necessary, to achieve 
+this length. The total number of bytes of pixel data is equal to the product of 
+<I>RowLength</I> and <I>bmch.bcHeight</I>.
+<P>To see how the pixels are encoded, let's examine the four cases separately. In 
+the diagrams shown below, the bits of each byte are shown in boxes and are numbered 
+with 7 indicating the most-significant bit and 0 indicating the least-significant bit. Pixels are 
+also numbered beginning with 0 for the leftmost pixel in the row.
+<P>For DIBs with 1 bit per pixel, each byte corresponds to 8 pixels. The leftmost 
+pixel is the most-significant bit of the first byte:
+<P><A HREF="javascript:fullSize('G15zg01x.htm')"><IMG SRC="G15zg01.JPG" width=404 height=29 ALIGN="BOTTOM" BORDER=0 ALT="click here to view full size"></A>
+<P>Each pixel can be either a 0 or a 1. A 0 bit means that the color of that pixel is given 
+by the first RGBTRIPLE entry in the color table. A 1 bit is a pixel whose color is the 
+second entry of the color table.
+<P>For DIBs with 4 bits per pixel, each byte corresponds to 2 pixels. The leftmost 
+pixel is the high 4 bits of the first byte, and so on:
+<P><A HREF="javascript:fullSize('G15zg02x.htm')"><IMG SRC="G15zg02.JPG" width=404 height=29 ALIGN="BOTTOM" BORDER=0 ALT="click here to view full size"></A>
+<P>The value of each 4-bit pixel ranges from 0 to 15. This value is an index into the 16 
+entries in the color table.
+<P>For a DIB with 8 bits per pixel, each byte is 1 pixel:
+<P><A HREF="javascript:fullSize('G15zg03x.htm')"><IMG SRC="G15zg03.JPG" width=404 height=29 ALIGN="BOTTOM" BORDER=0 ALT="click here to view full size"></A>
+<P>The value of the byte is 0 through 255. Again, this is an index into the 256 entries in 
+the color table.
+<P>For DIBs with 24 bits-per-pixel, each pixel requires 3 bytes for the red, green, 
+and blue color values. Each row of pixel bits is basically an array of RGBTRIPLE 
+structures, possibly padded with 0 bytes at the end of each row so that the row has a multiple of 4 bytes:
+<P><A HREF="javascript:fullSize('G15zg04x.htm')"><IMG SRC="G15zg04.JPG" width=404 height=29 ALIGN="BOTTOM" BORDER=0 ALT="click here to view full size"></A>
+<P>Again, the 24-bit-per-pixel DIB has no color table.
+
+<A NAME="478"><h2>The Expanded Windows DIB</h2></A><P>Now that we've mastered the OS/2-compatible DIB introduced in Windows 3.0, we 
+can take a look at the expanded version of the DIB introduced in Windows at the same time.
+<P>This form of the DIB begins with a BITMAPFILEHEADER structure just like the 
+earlier format but then continues with a BITMAPINFOHEADER structure rather than a 
+BITMAPCOREHEADER structure:
+<p><pre>
+typedef struct tagBITMAPINFOHEADER  // bmih
+{
+     DWORD biSize ;           // size of the structure = 40
+     LONG  biWidth ;          // width of the image in pixels
+     LONG  biHeight ;         // height of the image in pixels
+     WORD  biPlanes ;         // = 1
+     WORD  biBitCount ;       // bits per pixel (1, 4, 8, 16, 24, or 32)
+     DWORD biCompression ;    // compression code
+     DWORD biSizeImage ;      // number of bytes in image
+     LONG  biXPelsPerMeter ;  // horizontal resolution
+     LONG  biYPelsPerMeter ;  // vertical resolution
+     DWORD biClrUsed ;        // number of colors used
+     DWORD biClrImportant ;   // number of important colors
+}
+BITMAPINFOHEADER, * PBITMAPINFOHEADER ;
+</PRE>
+<P>You can distinguish an OS/2-compatible DIB from a Windows DIB by checking 
+the first field of the structure, which is 12 in the former case and 40 in the latter case. 
+<P>As you'll note, there are six additional fields in this structure, but the 
+BITMAPINFOHEADER structure is not simply a BITMAPCOREHEADER with some new stuff tacked 
+on to the end. Take a closer look: In the BITMAPCOREHEADER structure, the 
+<I>bcWidth</I> and <I>bcHeight</I> fields are 16-bit WORD values. In this structure, they are 32-bit LONG values. 
+This is an annoying little change that is guaranteed to drive you nuts.
+<P>Another change: For 1-bit, 4-bit, and 8-bit DIBs using the BITMAPINFOHEADER 
+structure, the color table is not an array of RGBTRIPLE structures. Instead, the 
+BITMAPINFOHEADER structure is followed by an array of RGBQUAD structures:
+<p><pre>
+typedef struct tagRGBQUAD  // rgb
+{
+     BYTE rgbBlue ;      // blue level
+     BYTE rgbGreen ;     // green level
+     BYTE rgbRed ;       // red level
+     BYTE rgbReserved ;  // = 0 
+}
+RGBQUAD ;
+</PRE>
+<P>This is the same as the RGBTRIPLE structure except that it includes a fourth field that 
+is always set to 0. The WINGDI.H header file also defines the following structure:
+<p><pre>
+typedef struct tagBITMAPINFO  // bmi
+{
+     BITMAPINFOHEADER bmiHeader ;      // info-header structure
+     RGBQUAD          bmiColors[1] ;   // color table array
+}
+BITMAPINFO, * PBITMAPINFO ;
+</PRE>
+<P>Note that if the BITMAPINFO structure begins at a 32-bit address boundary, each entry 
+in the RGBQUAD array also begins at a 32-bit address boundary because the 
+BITMAPINFOHEADER structure is 40 bytes in length. This assures more efficient addressing of the 
+color table data by 32-bit microprocessors.
+<P>Although the BITMAPINFOHEADER was originally defined for Windows 3.0, 
+some of the fields were redefined in Windows 95 and Windows NT 4.0, and these have 
+been carried over into Windows 98 and Windows NT 5.0. For example, the current 
+documentation states: &quot;If <I>biHeight</I> is negative, the bitmap is a top-down DIB and its origin is 
+the upper left corner.&quot; That's good to know. It would be even better if somebody had 
+made this decision in 1990 when this DIB format was originally defined. My advice is to 
+avoid creating top-down DIBs. You're almost begging that some program written without 
+awareness of this new &quot;feature&quot; will crash upon encountering a negative 
+<I>biHeight</I> field. Or that programs such as the Microsoft Photo Editor included with Microsoft Word 97 will 
+report &quot;Illegal image height&quot; upon encountering a top-down DIB (although Word 97 itself does 
+fine with them).
+<P>The <I>biPlanes</I> field is still always 1, but the 
+<I>biBitCount</I> field can now be 16 or 32 as well as 1, 4, 8, or 24. This was also a new feature in Windows 95 and Windows NT 4.0. 
+I'll discuss how these additional formats work shortly.
+<P>Let me skip the <I>biCompression</I> and 
+<I>biSizeImage</I> fields for now. I'll also 
+discuss them shortly.
+<P>The <I>biXPelsPerMeter</I> and 
+<I>biYPelsPerMeter</I> fields indicate a suggested real-world 
+size of the image in the ungainly units of pixels per meter. (The &quot;pel&quot;&#8212;picture element&#8212;is 
+what IBM liked to call the pixel.) Internally, Windows does not use this information. 
+However, an application could use it to display a DIB in an accurate size. These fields are also 
+useful if the DIB originated from a device that does not have square pixels. In most DIBs, 
+these fields are set to 0, which indicates no suggested real-world size. A resolution of 72 
+dots per inch (which is sometimes used for video displays, although the actual resolution 
+depends on the size of the monitor) is approximately equivalent to 2,835 pixels per 
+meter, and a common printer resolution of 300-dpi is 11,811 pixels per meter.
+<P>The <I>biClrUsed</I> field is a very important field because it affects the number of 
+entries in the color table. For 4-bit and 8-bit DIBs, it can indicate that the color table contains 
+fewer than 16 or 256 entries, respectively. This is one method to shrink down the size of the 
+DIB, although not by very much. For example, suppose a DIB image contains only 64 
+gray shades. The <I>biClrUsed</I> field is set to 64, and the color table contains 64 RGBQUAD 
+structures for a total color table size of 256 bytes. The pixel values then range from 0x00 
+through 0x3F. The DIB still requires 1 byte per pixel, but the high 2 bits of each pixel byte are 
+zero. If the <I>biClrUsed</I> field is set to 0, it means that the color table contains the full number 
+of entries implied by the <I>biBitCount</I> field.
+<P>Beginning with Windows 95, the <I>biClrUsed</I> field can be nonzero for 16-bit, 
+24-bit, or 32-bit DIBs. In these cases, the color table is not used by Windows to interpret the 
+pixel bits. Instead, it indicates the size of a color table in the DIB that could be used by 
+programs to set a palette to display the DIB on 256-color video displays. You'll recall that 
+in the OS/2-compatible format, a 24-bit DIB had no color table. This was also true of the 
+extended format introduced in Windows 3.0. The change in Windows 95 means that a 
+24-bit DIB can have a color table the size of which is indicated by the 
+<I>biClrUsed</I> field.
+<P>To summarize:
+<UL>
+<p><li>For 1-bit DIBs, <I>biClrUsed</I> is always 0 or 2. The color table always has 2 entries.
+<p><li>For 4-bit DIBs, if the <I>biClrUsed</I> field is 0 or 16, the color table has 16 entries. 
+If it's a number from 2 through 15, it indicates the number of entries in the 
+color table. The maximum value of each pixel is 1 less than this number.
+<p><li>For 8-bit DIBs, if the <I>biClrUsed</I> field is 0 or 256, the color table has 256 
+entries. If it's a number from 2 through 255, it indicates the number of entries in 
+the color table. The maximum value of each pixel is 1 less than this number.
+<p><li>For 16-bit, 24-bit, and 32-bit DIBs, the 
+<I>biClrUsed</I> field is usually 0. If it's not 0, it indicates the number of entries in the color table. These entries could 
+be used by an application running with a 256-color video adapter to set a 
+palette for the DIB.
+</UL>
+<P>Another warning: Programs originally written using the earlier DIB 
+documentation do not expect to see a color table in 24-bit DIBs. You put one in at your own risk.
+<P>Despite its name, the <I>biClrImportant</I> field is actually much less important than 
+the <I>biClrUsed</I> field. It's usually set to 0 to indicate that all colors in the color table are 
+important, or it could be set to the same value as 
+<I>biClrUsed</I>. Both mean the same thing. If it's 
+set somewhere in between 0 and <I>biClrUsed</I>, it means that the DIB image can be 
+reasonably rendered using only the first 
+<I>biClrImportant</I> entries in the color table. This could be 
+useful when displaying two or more 8-bit DIBs side by side on a 256-color video adapter.
+<P>For 1-bit, 4-bit, 8-bit, and 24-bit DIBs, the organization of the pixel bits is the 
+same as in the OS/2-compatible DIB. I'll discuss the 16-bit and 32-bit DIBs shortly.
+
+<A NAME="479"><h2>Reality Check</h2></A><P>What can you expect to find when you encounter a DIB that was created by some 
+other program or person?
+<P>Although OS/2-style DIBs were common when Windows 3.0 was first released, 
+they have become quite scarce in recent years. Some programmers writing quickie DIB 
+routines virtually ignore them. Any 4-bit DIBs you'll encounter will probably have been created 
+in the Windows Paint program using a 16-color video display. The color table will have 
+the standard 16 colors on these displays.
+<P>Probably the most common DIBs you'll find will have a bit count of 8. The 8-bit 
+DIBs will fall into two categories: gray-shade DIBs and palletized color DIBs. 
+Unfortunately, nothing in the header indicates what type of 8-bit DIB you're dealing with.
+<P>Some gray-shade DIBs will have a 
+<I>biClrUsed</I> field equal to 64, indicating 64 
+entries in the color table. These entries will usually be in order of ascending levels of gray. That 
+is, the color table will begin with RGB values of 00-00-00, 04-04-04, 08-08-08, 0C-0C-0C, 
+and conclude with RGB values of F0-F0-F0, F4-F4-F4, F8-F8-F8, and FC-FC-FC. Such a color 
+table is calculated using a formula something like
+<p><pre>
+rgb[i].rgbRed = rgb[i].rgbGreen = rgb[i].rgbBlue = i * 256 / 64 ;
+</PRE>
+<P>where <I>rgb</I> is an array of RGBQUAD structures and 
+<I>i</I> ranges from 0 through 63. Or the gray-shade color table will have been calculated with a formula that looks like
+<p><pre>
+rgb[i].rgbRed = rgb[i].rgbGreen = rgb[i].rgbBlue = i * 255 / 63 ;
+</PRE>
+<P>so that the table ends with FF-FF-FF.
+<P>It really doesn't matter which formula is used. Many video display adapters 
+and monitors don't have a color precision greater than 6 bits anyway. The first formula 
+recognizes that fact; the second formula, however, is more appropriate when generating 
+fewer than 64 gray shades, perhaps 16 or 32 (in which case the divisor at the end of the 
+formula is 15 or 31, respectively), because it ensures that the last entry in the color table is 
+FF-FF-FF, which is white.
+<P>While some 8-bit gray-shade DIBs have 64 entries in the color table, other 
+gray-shade DIBs have 256 entries. The 
+<I>biClrUsed</I> field can actually be 0 (indicating 256 entries in 
+the color table) or anything from 2 through 256. Of course, it doesn't make much sense to 
+have a <I>biClrUsed</I> value of 2 (because such an 8-bit DIB could be re-coded as a 1-bit DIB) 
+or a value less than or equal to 16 (because that could be re-coded as a 4-bit DIB), 
+but it could be done. Whatever the case, the number of entries in the color table must be the 
+same as the <I>biClrUsed</I> field (or 256 if 
+<I>biClrUsed</I> is 0), and the pixel values cannot 
+number of color table entries minus 1. That's because the pixel values are indices into 
+the color table array. For 8-bit DIBs with a 
+<I>biClrUsed</I> value of 64, the pixel values range 
+from 0x00 to 0x3F.
+<P>Here's the important thing to remember: When an 8-bit DIB has a color table 
+consisting entirely of gray shades (that is, when the red, green, and blue levels are equal), 
+and when these gray-shade levels uniformly increase in the color table (as I described 
+above), then the pixel values themselves represent proportional levels of gray. That is, if 
+<I>biClrUsed</I> is 64, then a pixel value of 0x00 is black, a pixel value of 0x20 is 50 percent gray, and 
+a pixel value of 0x3F is white.
+<P>This can be important for some image-processing tasks because you can ignore 
+the color table entirely and deal solely with the pixel values. This is so useful that if I 
+were allowed to go back in time and make a single change to the BITMAPINFOHEADER 
+structure, I'd add a flag to indicate that the DIB image is gray-shaded, the DIB has no color 
+table, and the pixel values directly indicate the gray level.
+<P>Palletized 8-bit color DIBs will generally use the whole color table and thus have 
+a <I>biClrUsed</I> field of 0 or 256. However, you'll also encounter some that have a smaller 
+number of colors&#8212;for example, 236. This is in recognition of the fact that programs 
+usually can change only 236 entries in the Windows color palette to display these DIBs 
+accurately, as I'll discuss in the next chapter.
+<P>Encountering nonzero values of 
+<I>biXPelsPerMeter</I> and <I>biYPelsPerMeter</I> will be 
+rare. Also rare will be encountering a <I>biClrImportant</I>
+ field that is something other than 0 or the value of 
+<I>biClrUsed</I>.
+
+<A NAME="480"><h2>DIB Compression </h2></A><P>Earlier I delayed discussion of the 
+<I>biCompression</I> and <I>biSizeImage</I> fields in the 
+BITMAPINFOHEADER. Now's the time to examine these values.
+<P>The <I>biCompression</I> field can be one of four constants&#8212;BI_RGB, BI_RLE8, 
+BI_RLE4, or BI_BITFIELDS&#8212;defined in the WINGDI.H header file as the values 0 through 3, 
+respectively. This field serves two purposes: For 4-bit and 8-bit DIBs, it indicates that the 
+pixel bits have been compressed using a type of run-length encoding. For 16-bit and 32-bit 
+DIBs, it indicates whether color masking has been used to encode the pixel bits. This 
+second feature was introduced in Windows 95. 
+<P>Let's examine the RLE compression first:
+<UL>
+<p><li>For 1-bit DIBs, the <I>biCompression</I> field is always BI_RGB.
+<p><li>For 4-bit DIBs, the <I>biCompression</I> field can be either BI_RGB or BI_RLE4.
+<p><li>For 8-bit DIBs, the <I>biCompression</I> field can be either BI_RGB or BI_RLE8.
+<p><li>For 24-bit DIBs, the 
+<I>biCompression</I> field is always BI_RGB.
+</UL>
+<P>If the value is BI_RGB, the pixel bits are stored as described for OS/2-compatible 
+DIBs. Otherwise, the pixel bits are compressed using run-length encoding. 
+<P>Run-length encoding (RLE) is one of the simplest forms of data compression. It 
+is based on the knowledge that DIB images often have strings of identical pixels in a 
+row. RLE saves space by encoding the value of the repeating pixel and the number of times 
+it is repeated. The RLE scheme used for DIBs goes somewhat beyond this in allowing a 
+sparse definition of the rectangular DIB image. That is, some areas of the rectangle are left 
+undefined. This could be used for rendering nonrectangular images.
+<P>Run-length encoding is conceptually simpler with 8-bit DIBs, so let's begin with 
+those. The following chart will help you in understanding how the pixel bits are encoded 
+when the <I>biCompression</I> field equals BI_RGB8.
+<table CELLPADDING=5 WIDTH="95%">
+<TR>
+<TD VALIGN="TOP"><B><I>Byte 1</I></B></TD>
+<TD VALIGN="TOP"><B><I>Byte 2</I></B></TD>
+<TD VALIGN="TOP"><B><I>Byte 3</I></B></TD>
+<TD VALIGN="TOP"><B><I>Byte 4</I></B></TD>
+<TD VALIGN="TOP"><B><I>Meaning</I></B></TD>
+</TR>
+<TR>
+<TD VALIGN="TOP">00</TD>
+<TD VALIGN="TOP">00</TD>
+<TD VALIGN="TOP"></TD>
+<TD VALIGN="TOP"></TD>
+<TD VALIGN="TOP">End of row</TD>
+</TR>
+<TR>
+<TD VALIGN="TOP">00</TD>
+<TD VALIGN="TOP">01</TD>
+<TD VALIGN="TOP"></TD>
+<TD VALIGN="TOP"></TD>
+<TD VALIGN="TOP">End of image</TD>
+</TR>
+<TR>
+<TD VALIGN="TOP">00</TD>
+<TD VALIGN="TOP">02</TD>
+<TD VALIGN="TOP"><I>dx</I></TD>
+<TD VALIGN="TOP"><I>dy</I></TD>
+<TD VALIGN="TOP">Move to(<I>x</I>+<I>dx</I></TD>
+</TR>
+<TR>
+<TD VALIGN="TOP">00</TD>
+<TD VALIGN="TOP"><I>n</I> = 03 through FF</TD>
+<TD VALIGN="TOP"></TD>
+<TD VALIGN="TOP"></TD>
+<TD VALIGN="TOP">Use next <I>n</I> pixels</TD>
+</TR>
+<TR>
+<TD VALIGN="TOP"><I>n</I> = 01 through FF</TD>
+<TD VALIGN="TOP">pixel</TD>
+<TD VALIGN="TOP"></TD>
+<TD VALIGN="TOP"></TD>
+<TD VALIGN="TOP">Repeat pixel <I>n</I> times</TD>
+</TR>
+</TABLE>
+
+
+<P>When decoding a compressed DIB, look at the DIB data bytes in pairs, as 
+indicated by the &quot;Byte 1&quot; and &quot;Byte 2&quot; headings in this table. The table is arranged in increasing 
+values of these bytes, but it makes more sense to discuss the table from the bottom up.
+<P>If the first byte is nonzero (the case shown in the last row of the table), then 
+that's a run-length repetition factor. The following pixel value is repeated that many times. 
+For example, the byte pair
+<p><pre>
+0x05 0x27
+</PRE>
+<P>decodes to the pixel values:
+<p><pre>
+0x27 0x27 0x27 0x27 0x27
+</PRE>
+<P>The DIB will, of course, have much data that does not repeat from pixel to pixel. 
+That's the case handled by the second-to-last row of the table. It indicates a number of pixels 
+that follow that should be used literally. For example, consider the sequence
+<p><pre>
+0x00 0x06 0x45 0x32 0x77 0x34 0x59 0x90
+</PRE>
+<P>It decodes to the pixel values
+<p><pre>
+0x45 0x32 0x77 0x34 0x59 0x90
+</PRE>
+<P>These sequences are always aligned on 2-byte boundaries. If the second byte is 
+odd, then there's an extra byte in the sequence that is unused. For example, the sequence
+<p><pre>
+0x00 0x05 0x45 0x32 0x77 0x34 0x59 0x00
+</PRE>
+<P>decodes to the pixel values
+<p><pre>
+0x45 0x32 0x77 0x34 0x59
+</PRE>
+<P>That's how the run-length encoding works. As is obvious, if there are no 
+repeating pixels in the DIB image, then using this compression technique will actually increase 
+the size of the DIB file.
+<P>The first three rows of the table shown above indicate how some 
+parts of the rectangular DIB image can be left undefined. Imagine yourself, or a program 
+you wrote, decompressing a compressed DIB. During this decompression routine, you 
+will maintain a number pair (<I>y</I>,<I>x</I>) starting at (0,0). You will increment 
+<I>x</I> by 1 every time you decode a pixel, resetting 
+<I>x</I> to 0 and incrementing <I>y</I> every time you finish a row. 
+
+<P>When you encounter the byte 0x00 followed by 0x02, you read the next two 
+bytes and add them as unsigned increments to your current 
+<I>x</I> and <I>y</I> values and then continue decoding. When you read the byte 0x00 followed by 0x00, you're done with the row. 
+Set <I>x</I> equal to 0 and increment <I>y</I>. When you encounter the byte 0x00 followed by 0x01, 
+you're done decoding. These codes allow the DIB to contain areas that are not defined, which 
+is sometimes useful for encoding a nonrectangular image or for making digital 
+animations or movies (because each frame mostly has information from the previous frame and 
+need not be recoded).
+<P>For 4-bit DIBs, the encoding is generally the same but is complicated 
+somewhat because there isn't a one-to-one correspondence between bytes and pixels.
+<P>If the first byte you read is nonzero, that's a repetition factor 
+<I>n</I>. The second byte (which is to be repeated) contains 2 pixels, which alternate in the decoded sequence for 
+<I>n</I> pixels. For example, the pair
+<p><pre>
+0x07 0x35
+</PRE>
+<P>is decoded as
+<p><pre>
+0x35 0x35 0x35 0x3?
+</PRE>
+<P>where the question mark indicates that the pixel is as yet unknown. If the pair 0x07 
+0x35 shown above is followed by the pair
+<p><pre>
+0x05 0x24
+</PRE>
+<P>then the full decoded sequence becomes
+<p><pre>
+0x35 0x35 0x35 0x32 0x42 0x42
+</PRE>
+<P>If the first byte in the pair is 0x00 and the second is 0x03 or greater, use the 
+number of pixels indicated by the second byte. For example, the sequence
+<p><pre>
+0x00 0x05 0x23 0x57 0x10 0x00
+</PRE>
+<P>decodes to
+<p><pre>
+0x23 0x57 0x1?
+</PRE>
+<P>Notice that the encoded sequence must be padded to have an even number of bytes.
+<P>Whenever the <I>biCompression</I> field is BI_RLE4 or BI_RLE8, the 
+<I>biSizeImage</I> field indicates the size of the DIB pixel data in bytes. If the 
+<I>biCompression</I> field is BI_RGB, then 
+<I>biSizeImage</I> is usually 0, but it could be set to 
+<I>biHeight</I> times the byte length of the row, as calculated earlier in this chapter.
+<P>The current documentation says that &quot;Top-down DIBs cannot be compressed.&quot; 
+The top-down DIBs are those with negative 
+<I>biHeight</I> fields.
+
+<A NAME="481"><h2>Color Masking</h2></A><P>The <I>biCompression</I> field is also used in conjunction with the 16-bit and 32-bit DIBs 
+that were new with Windows 95. For these DIBs, the 
+<I>biCompression</I> field can be either BI_RGB or BI_BITFIELDS (defined as equaling the value 3).
+<P>As a review, let's look at the pixel format of the 24-bit DIB, which always has 
+a <I>biCompression</I> field equal to BI_RGB: 
+<P><A HREF="javascript:fullSize('G15zg05x.htm')"><IMG SRC="G15zg05.JPG" width=404 height=29 ALIGN="BOTTOM" BORDER=0 ALT="click here to view full size"></A>
+<P>That is, each row is basically an array of RGBTRIPLE structures, with possible padding 
+at the end of the row so that the number of bytes in the row is a multiple of 4.
+<P>For a 16-bit DIB with a <I>biCompression</I> field of BI_RGB, each pixel requires two 
+bytes. The colors are encoded like so:
+<P><A HREF="javascript:fullSize('G15zg06x.htm')"><IMG SRC="G15zg06.JPG" width=404 height=42 ALIGN="BOTTOM" BORDER=0 ALT="click here to view full size"></A>
+<P>Each color uses five bits. For the first pixel in the row, the blue value is the 
+least-significant five bits of the first byte. The green value requires bits from the first and second byte: 
+the two most-significant bits of the green value are the two least-significant bits of the 
+second byte, and the three least-significant bits of the green value are the three 
+most-significant bits of the first byte. The red value is bits 2 through 6 of the second byte. The 
+most-significant bit of the second byte is 0.
+<P>This makes a whole lot more sense when you access the pixel value as a 16-bit 
+word. Because the least-significant bytes of multibyte values are stored first, the pixel word 
+looks like this:
+<P><A HREF="javascript:fullSize('G15zg07x.htm')"><IMG SRC="G15zg07.JPG" width=404 height=39 ALIGN="BOTTOM" BORDER=0 ALT="click here to view full size"></A>
+<P>Suppose you have the 16-bit pixel stored in 
+<I>wPixel</I>. You can calculate the red, green, and blue values like so:
+<p><pre>
+Red   = ((0x7C00 &amp; wPixel) &gt;&gt; 10) &lt;&lt; 3 ;
+Green = ((0x03E0 &amp; wPixel) &gt;&gt;  5) &lt;&lt; 3 ;
+Blue  = ((0x001F &amp; wPixel) &gt;&gt;  0) &lt;&lt; 3 ;
+</PRE>
+<P>First, the pixel undergoes a bitwise AND operation with a mask value. The result 
+is shifted right 10 bits for red, 5 bits for green, and 0 bits for blue. I will be referring to 
+these shift values as &quot;right-shift&quot; values. This produces color values in the range 0x00 
+through 0x1F. The values must then be shifted left 3 bits so that the resultant color values 
+range from 0x00 through 0xF8. I will refer to these shift values as &quot;left-shift&quot; values.
+<P>And keep this in mind: if the pixel width of a 16-bit DIB is odd, each row will 
+have an extra 2 bytes padded at the end to achieve a byte width divisible by 4.
+<P>For a 32-bit DIB, if <I>biCompression</I> equals BI_RGB, each pixel requires 4 bytes. 
+The blue color value is the first byte, green is the second, red is the third, and the fourth 
+byte equals 0. In other words, the pixels are an array of RGBQUAD structures. Because 
+each pixel is 4 bytes in length, padding is never required at the end of the row.
+<P>If you access each pixel as a 32-bit double word, it looks like this:
+<P><A HREF="javascript:fullSize('G15zg08x.htm')"><IMG SRC="G15zg08.JPG" width=404 height=29 ALIGN="BOTTOM" BORDER=0 ALT="click here to view full size"></A>
+<P>Or, if <I>dwPixel</I> is the 32-bit double word,
+<p><pre>
+Red   = ((0x00FF0000 &amp; dwPixel) &gt;&gt; 16) &lt;&lt; 0 ;
+Green = ((0x0000FF00 &amp; dwPixel) &gt;&gt;  8) &lt;&lt; 0 ;
+Blue  = ((0x000000FF &amp; dwPixel) &gt;&gt;  0) &lt;&lt; 0 ;
+</PRE>
+<P>The left-shift values are all zero because the color values are already maximized at 
+0xFF. Be aware that this double word is <I>not</I> consistent with the 32-bit COLORREF value used 
+to specify RGB color in Windows GDI function calls. In the COLORREF value, red is the 
+least-significant byte.
+<P>So far, we've covered the default case for 16-bit and 32-bit DIBs when the 
+<I>biCompression</I> field is BI_RGB. If the 
+<I>biCompression</I> field is BI_BITFIELDS, the 
+BITMAPINFOHEADER structure of the DIB is immediately followed by three 32-bit color masks, the 
+first for red, the second for green, and the third for blue. You use the C bitwise AND 
+operator (&amp;) to apply these masks to the 16-bit or 32-bit pixel value. You then shift the result 
+right by right-shift values, which are unfortunately unknown until you examine the masks 
+themselves. The rules regarding these color masks should be obvious when you think 
+about them: the 1 bits in each color mask must be contiguous, and the 1 bits must not 
+overlap among the three masks.
+<P>Let's take an example. You have a 16-bit DIB, and the 
+<I>biCompression</I> field is BI_BITFIELDS. You examine the first three double words following the 
+BITMAPINFOHEADER structure:
+<p><pre>
+0x0000F800
+0x000007E0
+0x0000001F 
+</PRE>
+<P>Note that only bits among the bottom 16 bits are set to 1 because this is a 16-bit 
+DIB. You set the variables <I>dwMask[0]</I>, 
+<I>dwMask[1]</I>, and <I>dwMask[2]</I> to these values. Now you 
+write little routines that calculate right-shift and left-shift values from the masks:
+<p><pre>
+int MaskToRShift (DWORD dwMask)
+{
+     int iShift ;
+
+     if (dwMask == 0)
+          return 0 ;
+
+     for (iShift = 0 ; !(dwMask &amp; 1)  ; iShift++)
+          dwMask &gt;&gt;= 1 ;
+
+     return iShift ;
+}
+
+int MaskToLShift (DWORD dwMask)
+{
+     int iShift ;
+
+     if (dwMask == 0)
+          return 0 ;
+
+     while (!(dwMask &amp; 1))
+          dwMask &gt;&gt;= 1 ;
+
+     for (iShift = 0 ; dwMask &amp; 1 ; iShift++)
+          dwMask &gt;&gt;= 1 ;
+
+     return 8 - iShift ;
+}
+</PRE>
+<P>Then you call the <I>MaskToRShift</I> function three times to obtain right-shift values:
+<p><pre>
+iRShift[0] = MaskToRShift (dwMask[0]) ;
+iRShift[1] = MaskToRShift (dwMask[1]) ;
+iRShift[2] = MaskToRShift (dwMask[2]) ;
+</PRE>
+<P>You get values 11, 5, and 0, respectively. You can then call 
+<I>MaskToLShift</I> similarly:
+<p><pre>
+iLShift[0] = MaskToLShift (dwMask[0]) ;
+iLShift[1] = MaskToLShift (dwMask[1]) ;
+iLShift[2] = MaskToLShift (dwMask[2]) ;
+</PRE>
+<P>You get values of 3, 2, and 3, respectively. Now you can extract each color from 
+the pixel value:
+<p><pre>
+Red   = ((dwMask[0] &amp; wPixel) &gt;&gt; iRShift[0]) &lt;&lt; iLShift[0] ;
+Green = ((dwMask[1] &amp; wPixel) &gt;&gt; iRShift[1]) &lt;&lt; iLShift[1] ;
+Blue  = ((dwMask[2] &amp; wPixel) &gt;&gt; iRShift[2]) &lt;&lt; iLShift[2] ;
+</PRE>
+<P>The procedure is the same for 32-bit DIBs except that the color masks can be greater 
+than 0x0000FFFF, which is the maximum mask value for 16-bit DIBs. 
+<P>Note that with either 16-bit or 32-bit DIBs, the red, green, and blue color values 
+can be greater than 255. In fact, in a 32-bit DIB, if two of the masks are 0, the third could 
+be 0xFFFFFFFF, for a 32-bit color value! Of course, this is somewhat ridiculous, so I 
+wouldn't worry about it too much.
+<p>Unlike Windows NT, Windows 95 and Windows 98 have some restrictions when 
+using color masks. The only allowable values are shown in the table below.
+<table CELLPADDING=5 WIDTH="95%"><TR>
+<TD VALIGN="TOP"></TD>
+<TD VALIGN="TOP"><B><I>16-Bit DIB</I></B></TD>
+<TD VALIGN="TOP"><B><I>16-Bit DIB</I></B></TD>
+<TD VALIGN="TOP"><B><I>32-Bit DIB</I></B></TD>
+</TR>
+<TR>
+<TD VALIGN="TOP">Red Mask</TD>
+<TD VALIGN="TOP">0x00007C00</TD>
+<TD VALIGN="TOP">0x0000F800</TD>
+<TD VALIGN="TOP">0x00FF0000</TD>
+</TR>
+<TR>
+<TD VALIGN="TOP">Green Mask</TD>
+<TD VALIGN="TOP">0x000003E0</TD>
+<TD VALIGN="TOP">0x000007E0</TD>
+<TD VALIGN="TOP">0x0000FF00</TD>
+</TR>
+<TR>
+<TD VALIGN="TOP">Blue Mask</TD>
+<TD VALIGN="TOP">0x0000001F</TD>
+<TD VALIGN="TOP">0x0000001F</TD>
+<TD VALIGN="TOP">0x000000FF</TD>
+</TR>
+<TR>
+<TD VALIGN="TOP">Shorthand</TD>
+<TD VALIGN="TOP">5-5-5</TD>
+<TD VALIGN="TOP">5-6-5</TD>
+<TD VALIGN="TOP">8-8-8</TD>
+</TR>
+</TABLE>
+          
+               
+               
+<P>In other words, you can use the two sets of masks that you would get by default 
+when <I>biCompression</I> is BI_RGB, plus the set of masks I showed above in the example. The 
+bottom row in the table shows a shorthand notation for indicating the number of red, green, 
+and blue bits per pixel.
+
+<A NAME="482"><h2>The Version 4 Header</h2></A><P>We're not quite finished yet. As I mentioned, Windows 95 changed some of the 
+original BITMAPINFOHEADER field definitions. Windows 95 also included a new expanded 
+information header called BITMAPV4HEADER. The name of this structure is clear when 
+you realize that Windows 95 might have been called Windows 4.0 and that this structure 
+was also supported by Windows NT 4.0.
+<p><pre>
+typedef struct 
+{
+DWORD        bV4Size ;           // size of the structure = 120
+LONG         bV4Width ;          // width of the image in pixels
+LONG         bV4Height ;         // height of the image in pixels
+WORD         bV4Planes ;         // = 1
+WORD         bV4BitCount ;       // bits per pixel (1, 4, 8, 16, 24, or 32)
+DWORD        bV4Compression ;    // compression code
+DWORD        bV4SizeImage ;      // number of bytes in image
+LONG         bV4XPelsPerMeter ;  // horizontal resolution
+LONG         bV4YPelsPerMeter ;  // vertical resolution
+DWORD        bV4ClrUsed ;        // number of colors used
+DWORD        bV4ClrImportant ;   // number of important colors
+DWORD        bV4RedMask ;        // Red color mask
+DWORD        bV4GreenMask ;      // Green color mask
+DWORD        bV4BlueMask ;       // Blue color mask
+DWORD        bV4AlphaMask ;      // Alpha mask
+DWORD        bV4CSType ;         // color space type
+CIEXYZTRIPLE bV4Endpoints ;      // XYZ values
+DWORD        bV4GammaRed ;       // Red gamma value
+DWORD        bV4GammaGreen ;     // Green gamma value
+DWORD        bV4GammaBlue ;      // Blue gamma value
+}
+BITMAPV4HEADER, * PBITMAPV4HEADER ;
+</PRE>
+<P>Notice that the first 11 fields are the same as in the BITMAPINFOHEADER 
+structure. The last five fields support the image color-matching technology of Windows 95 and 
+Windows NT 4.0. Unless you use the last four fields of the BITMAPV4HEADER structure, 
+you should use BITMAPINFOHEADER (or BITMAPV5HEADER) instead.
+<p>The <I>bV4RedMask</I>, <I>bV4GreenMask</I>, and 
+<I>bV4BlueMask</I> values are applicable only for 16-bit and 32-bit DIBs when the 
+<I>bV4Compression</I> field equals BI_BITFIELDS. These 
+serve the same function as the color masks defined in the BITMAPINFOHEADER structure 
+and actually occur in the same place in the DIB file as when using the original structure 
+except that here they are explicit structure fields. As far as I know, the 
+<I>bV4AlphaMask</I> field is not used.
+<p>The remaining fields in the BITMAPV5HEADER structure involve Windows 
+Image Color Management, which I'm afraid is a subject beyond the scope of this book. 
+However, a little background may help get you started.
+<p>The problem with using an RGB scheme for color is that it is dependent on the 
+technologies of video monitors, color cameras, and color scanners. If a color is specified 
+as the RGB value (255, 0, 0), all that means is that a maximum voltage should be applied 
+to the red electron gun in a cathode ray tube. An RGB value of (128, 0, 0) indicates that 
+half the voltage is to be applied. Monitors can differ in their response. Moreover, printers 
+use a different method of color that involves combinations of cyan, magenta, yellow, and 
+black inks. These methods are known as CMY (cyan-magenta-yellow) and CMYK 
+(cyan-magenta-yellow-black). Mathematical formulas can translate RGB values to CMY and CMYK, but 
+there is no guarantee that the printer color will match a monitor color. Image Color 
+Management is an attempt to relate colors to device-independent standards.
+<p>The phenomenon of color is related to the wavelengths of visible light, which 
+range from 380 nanometers (blue) to 780 nm (red). Any light that we visually perceive is 
+made up of combinations of different amounts of various wavelengths in the visible 
+spectrum. In 1931, the Commission Internationale de L'&Eacute;clairage (International Commission on 
+Illumination) or CIE developed a method for scientifically quantifying color. This involves 
+using three color-matching functions (named <img src="xlinel.gif" width=9 height=10 BORDER=0>, 
+<img src="ylinel.gif" width=11 height=15 BORDER=0>, and 
+<img src="zlinel.gif" width=9 height=15 BORDER=0>) that in their abridged form (with 
+values for every 5 nm) are documented in CIE Publication 15.2-1986, &quot;Colorimetry, 
+Second Edition,&quot; Table 2.1. 
+<p>A spectrum (<I>S</I>) of a color is a set of values that indicate the strength of each 
+wavelength. If a spectrum is known, the color-matching functions can be applied to the 
+spectrum to calculate <I>X</I>, <I>Y</I>, and 
+<I>Z</I>:
+     
+<P><img src="ch15p742.gif" width=207 height=292 BORDER=0> 
+
+<P>These values are called <I>Big X</I>, <I>Big 
+Y</I>, and <I>Big Z</I>. The <img src="ylinel.gif" width=11 height=15 BORDER=0> color-matching function is 
+equivalent to the response of the human eye to the range of light in the visible spectrum. (It 
+looks like a bell curve that goes to 0 at 380 nm and 780 nm.) <I>Y</I> is called the CIE Luminance because it indicates an overall intensity of the light.
+<P>If you're using the BITMAPV5HEADER structure, the 
+<I>bV4CSType</I> field must be set to LCS_CALIBRATED_RGB, which is equal to 0. The next four fields must be set to valid values.
+<P>The CIEXYZTRIPLE structure is defined like so:
+<p><pre>
+typedef struct tagCIEXYZTRIPLE
+{
+     CIEXYZ  ciexyzRed ;
+     CIEXYZ  ciexyzGreen ;
+     CIEXYZ  ciexyzBlue ;
+}
+CIEXYZTRIPLE, * LPCIEXYZTRIPLE ;
+</PRE>
+<P>And the CIEXYZ structure is
+<p><pre>
+typedef struct tagCIEXYZ
+{
+     FXPT2DOT30 ciexyzX ;
+     FXPT2DOT30 ciexyzY ;
+     FXPT2DOT30 ciexyzZ ;
+}
+CIEXYZ, * LPCIEXYZ ;
+</PRE>
+<P>The three fields are defined as FXPT2DOT30 values, which means that they are 
+interpreted as fixed-point values with a 2-bit integer part and a 30-bit fractional part. Thus, 
+0x40000000 is 1.0 and 0x48000000 is 1.5. The maximum value 0xFFFFFFFF is just a smidgen under 4.0.
+<P>The <I>bV4Endpoints</I> field provides three 
+<I>X</I>, <I>Y</I>, and <I>Z</I> values that correspond to 
+the RGB colors (255, 0, 0), (0, 255, 0), and (0, 0, 255). These values should be inserted 
+by the application that creates the DIB to indicate the device-independent meaning of 
+these RGB colors.
+<p>The remaining three fields of BITMAPV4HEADER refer to &quot;gamma.&quot; Gamma 
+(the lowercase Greek letter g) refers to a nonlinearity in the specification of color levels. In 
+a DIB, levels of red, green, and blue range from 0 through 255. On the video board, 
+these three digital values are converted to three analog voltages that go to the monitor. 
+The voltages determine the intensity of each pixel. However, due to characteristics of the 
+electronics of the electron guns in a cathode ray tube, the intensity 
+(<I>I</I>) of the pixel is not linearly related to the voltage 
+(<I>V</I>). Instead, the relationship is
+<p><I>I </I>=<I> </I>(<I>V</I> + <I>e</I>)<SUP>g</SUP>
+<p>where e is the black-level of the monitor set by the monitor's Brightness control. 
+(Preferably this is 0.) The exponent g is set by the monitor's Picture or Contrast control. For 
+most monitors, g is about 2.5.
+<p>To compensate for this nonlinearity, video cameras have traditionally included 
+&quot;gamma correction&quot; in their circuitry. The light input to a camera is modified by an exponent 
+of 0.45. This implies a video display gamma of about 2.2. (The higher gamma of video 
+displays increases the contrast somewhat, which is usually not undesirable because 
+ambient light tends to lower contrast.)
+<p>This nonlinear response of video monitors is actually much more felicitous than 
+it may at first seem. This is because human response to light is also nonlinear. Earlier 
+I mentioned that <I>Y</I> is called CIE Luminance. This is a linear measure of light. The CIE 
+also defines a Lightness value that approximates human perception. Lightness is 
+<I>L*</I> (pronounced &quot;ell star&quot;) and is calculated from 
+<I>Y</I> using the formulas
+<p><IMG SRC="EQ15zg01.gif" width=328 height=111 ALIGN="BOTTOM" BORDER=0>
+<P>where <I>Y<SUB>n</SUB></I> is a white level. The first part of the formula is a small linear segment. 
+Generally, human perception of lightness is related to the cube root of the linear luminance, 
+which is indicated by the second formula. 
+<I>L*</I> ranges from 0 to 100. Each integral increment of 
+<I>L*</I> is generally assumed to be the smallest change in lightness that humans can perceive.
+<P>It is preferable to code light intensities based on perceptual lightness rather than 
+linear luminance. This keeps the number of bits down to a reasonable level and also reduces 
+noise in analog circuity.
+<P>Let's go through the whole process. The pixel value 
+(<I>P</I>) ranges from 0 to 255. This is linearly converted to a voltage level, which we can assume is normalized to a 
+value between 0.0 and 1.0. Assuming the monitor's black level is set to 0, the intensity of 
+the pixel is
+<P><IMG SRC="EQ15zg02.gif" width=124 height=45 ALIGN="BOTTOM" BORDER=0>
+<P>where g is probably about 2.5. Human perception of lightness 
+(<I>L*</I>) is based on the cube root of this intensity and ranges from 0 to 100, so approximately
+<P><IMG SRC="EQ15zg03.gif" width=124 height=55 ALIGN="BOTTOM" BORDER=0>
+<P>That exponent will be about 0.85 or so. If the exponent were 1, then CIE lightness 
+would be perfectly matched to pixel values. We don't have quite that situation, but it's much 
+closer than if the pixel values indicated linear luminance.
+<P>The last three fields of the BITMAPV4HEADER provide a way for programs that 
+create a DIB to indicate a gamma value assumed for the pixel values. These values are 
+interpreted as 16-bit integer values and 16-bit fractional values. For example, 0x10000 is 1.0. 
+If the DIB is created by capturing a real-world image, this gamma value is probably 
+implied by the capture hardware and will probably be 2.2 (encoded as 0x23333). If the DIB 
+is generated algorithmically by a program, the program would convert any linear 
+luminances it uses to CIE lightness values using a power function. The inverse of the exponent 
+would be the gamma encoded in the DIB.
+
+<A NAME="483"><h2>The Version 5 Header</h2></A><P>Programs written for Windows 98 and Windows NT 5.0 can use DIBs that have a 
+new BITMAPV5HEADER information structure:
+<p><pre>
+typedef struct 
+{
+DWORD        bV5Size ;           // size of the structure = 120
+LONG         bV5Width ;          // width of the image in pixels
+LONG         bV5Height ;         // height of the image in pixels
+WORD         bV5Planes ;         // = 1
+WORD         bV5BitCount ;       // bits per pixel (1, 4, 8, 16, 24, or 32)
+DWORD        bV5Compression ;    // compression code
+DWORD        bV5SizeImage ;      // number of bytes in image
+LONG         bV5XPelsPerMeter ;  // horizontal resolution
+LONG         bV5YPelsPerMeter ;  // vertical resolution
+DWORD        bV5ClrUsed ;        // number of colors used
+DWORD        bV5ClrImportant ;   // number of important colors
+DWORD        bV5RedMask ;        // Red color mask
+DWORD        bV5GreenMask ;      // Green color mask
+DWORD        bV5BlueMask ;       // Blue color mask
+DWORD        bV5AlphaMask ;      // Alpha mask
+DWORD        bV5CSType ;         // color space type
+CIEXYZTRIPLE bV5Endpoints ;      // XYZ values
+DWORD        bV5GammaRed ;       // Red gamma value
+DWORD        bV5GammaGreen ;     // Green gamma value
+DWORD        bV5GammaBlue ;      // Blue gamma value
+DWORD        bV5Intent ;         // rendering intent
+DWORD        bV5ProfileData ;    // profile data or filename
+DWORD        bV5ProfileSize ;    // size of embedded data or filename
+DWORD        bV5Reserved ;
+}
+BITMAPV5HEADER, * PBITMAPV5HEADER ;
+</PRE>
+<P>This has four new fields, only three of which are used. These fields support a 
+proposal made by the International Color Consortium (founded by Adobe, Agfa, Apple, 
+Kodak, Microsoft, Silicon Graphics, Sun Microsystems, and others) called the 
+<I>ICC Profile Format Specification</I>. You can obtain a copy of this from 
+<I>http://www.icc.org</I>. Basically, each input (scanner 
+or camera), output (printer or film recorder), and display (monitor) device is associated 
+with a profile that relates the native device-dependent colors (generally RGB or CMYK) to 
+a device-independent color specification, ultimately based on CIE XYZ values. These 
+profiles have filenames with the extension .ICM (for &quot;image color management&quot;). A profile 
+can be embedded into a DIB file or linked from the DIB file to indicate how the DIB 
+was created. You can obtain more information about Image Color Management in Windows 
+at <I>/Platform SDK/Graphics and Multimedia Services/Color Management.</I>
+<p>The <I>bV5CSType</I> field in the BITMAPV5HEADER can take on several different 
+values. If it's LCS_CALIBRATED_RGB, then it's compatible with the BITMAPV4HEADER 
+structure. The <I>bV5Endpoints</I> field and the gamma fields must be valid.
+<p>If the <I>bV5CSType</I> field is LCS_sRGB, none of the remaining fields need to be set. 
+The implied color space is a &quot;standard&quot; RGB color space devised by Microsoft and 
+Hewlett-Packard to attempt some relative device independence, particularly across the 
+Internet, without the bulk of profiles. This is documented at 
+<I>http://www.color.org/contrib/sRGB.html</I>.
+<p>If the <I>bV5CSType</I> field is LCS_WINDOWS_COLOR_SPACE, none of the 
+remaining fields need be set. Windows uses the color space implied by API function calls for 
+displaying the bitmap.
+<p>If the <I>bV5CSType</I> field is PROFILE_EMBEDDED, the DIB file contains an ICC 
+profile. If the field is PROFILE_LINKED, the DIB file contains the fully qualified filename of an 
+ICC profile. In either case, <I>bV5ProfileData</I> is an offset from the beginning of the 
+BITMAPV5HEADER to the start of the profile data or filename. The 
+<I>bV5ProfileSize</I> field gives the size of the data or filename. The endpoints and gamma fields need not be set.
+
+<A NAME="484"><h2>Displaying DIB Information</h2></A><P>It is now time to look at some code. We don't know enough to actually display a DIB 
+just yet, but we can at least display information about the DIB from the header structures. 
+The DIBHEADS program shown in Figure 15-1 does this.
+<p><B>Figure 15-1.</b> <i>The DIBHEADS program.</I>
+<TABLE CELLPADDING=5 WIDTH="95%"><TR><TD>
+<P><A NAME="485"><H3>DIBHEADS.C</H3></A>
+<P><PRE>
+/*-----------------------------------------------
+   DIBHEADS.C -- Displays DIB Header Information
+                 (c) Charles Petzold, 1998
+  -----------------------------------------------*/
+
+
+
+#include &lt;windows.h&gt;
+#include &quot;resource.h&quot;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+TCHAR szAppName[] = TEXT (&quot;DibHeads&quot;) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     HACCEL   hAccel ;
+     HWND     hwnd ;
+     MSG      msg ;
+     WNDCLASS wndclass ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = szAppName ;
+     wndclass.lpszClassName = szAppName ;
+
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;), 
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;DIB Headers&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT, 
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+     hAccel = LoadAccelerators (hInstance, szAppName) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          if (!TranslateAccelerator (hwnd, hAccel, &amp;msg))
+          {
+               TranslateMessage (&amp;msg) ;
+               DispatchMessage (&amp;msg) ;
+          }
+     }
+     return msg.wParam ;
+}
+
+void Printf (HWND hwnd, TCHAR * szFormat, ...)
+{
+     TCHAR   szBuffer [1024] ;
+     va_list pArgList ;
+
+     va_start (pArgList, szFormat) ;
+     wvsprintf (szBuffer, szFormat, pArgList) ;
+     va_end (pArgList) ;
+
+     SendMessage (hwnd, EM_SETSEL, (WPARAM) -1, (LPARAM) -1) ;
+     SendMessage (hwnd, EM_REPLACESEL, FALSE, (LPARAM) szBuffer) ;
+     SendMessage (hwnd, EM_SCROLLCARET, 0, 0) ;
+}
+void DisplayDibHeaders (HWND hwnd, TCHAR * szFileName)
+{
+     static TCHAR     * szInfoName [] = { TEXT (&quot;BITMAPCOREHEADER&quot;), 
+                                          TEXT (&quot;BITMAPINFOHEADER&quot;),
+                                          TEXT (&quot;BITMAPV4HEADER&quot;),
+                                          TEXT (&quot;BITMAPV5HEADER&quot;) } ;
+     static TCHAR     * szCompression [] = { TEXT (&quot;BI_RGB&quot;), TEXT (&quot;BI_RLE8&quot;),
+                                             TEXT (&quot;BI_RLE4&quot;),
+                                             TEXT (&quot;BI_BITFIELDS&quot;),
+                                             TEXT (&quot;unknown&quot;) } ;
+     BITMAPCOREHEADER * pbmch ;
+     BITMAPFILEHEADER * pbmfh ;
+     BITMAPV5HEADER   * pbmih ;
+     BOOL               bSuccess ;
+     DWORD              dwFileSize, dwHighSize, dwBytesRead ;
+     HANDLE             hFile ;
+     int                i ;
+     PBYTE              pFile ;
+     TCHAR            * szV ;
+
+          // Display the file name
+
+     Printf (hwnd, TEXT (&quot;File: %s\r\n\r\n&quot;), szFileName) ;
+
+          // Open the file
+
+     hFile = CreateFile (szFileName, GENERIC_READ, FILE_SHARE_READ, NULL,
+                         OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL) ;
+
+     if (hFile == INVALID_HANDLE_VALUE)
+     {
+          Printf (hwnd, TEXT (&quot;Cannot open file.\r\n\r\n&quot;)) ;
+          return ;
+     }
+          
+          // Get the size of the file
+
+     dwFileSize = GetFileSize (hFile, &amp;dwHighSize) ;
+
+     if (dwHighSize)
+     {
+          Printf (hwnd, TEXT (&quot;Cannot deal with &gt;4G files.\r\n\r\n&quot;)) ;
+          CloseHandle (hFile) ;
+          return ;
+     }
+          // Allocate memory for the file
+
+     pFile = malloc (dwFileSize) ;
+
+     if (!pFile)
+     {
+          Printf (hwnd, TEXT (&quot;Cannot allocate memory.\r\n\r\n&quot;)) ;
+          CloseHandle (hFile) ;
+          return ;
+     }
+
+          // Read the file
+
+     SetCursor (LoadCursor (NULL, IDC_WAIT)) ;
+     ShowCursor (TRUE) ;
+
+     bSuccess = ReadFile (hFile, pFile, dwFileSize, &amp;dwBytesRead, NULL) ;
+
+     ShowCursor (FALSE) ;
+     SetCursor (LoadCursor (NULL, IDC_ARROW)) ;
+
+     if (!bSuccess || (dwBytesRead != dwFileSize))
+     {
+          Printf (hwnd, TEXT (&quot;Could not read file.\r\n\r\n&quot;)) ;
+          CloseHandle (hFile) ;
+          free (pFile) ;
+          return ;
+     }
+
+          // Close the file
+
+     CloseHandle (hFile) ;
+
+          // Display file size
+
+     Printf (hwnd, TEXT (&quot;File size = %u bytes\r\n\r\n&quot;), dwFileSize) ;
+
+          // Display BITMAPFILEHEADER structure
+
+     pbmfh = (BITMAPFILEHEADER *) pFile ;
+
+     Printf (hwnd, TEXT (&quot;BITMAPFILEHEADER\r\n&quot;)) ;
+     Printf (hwnd, TEXT (&quot;\t.bfType = 0x%X\r\n&quot;), pbmfh-&gt;bfType) ;
+     Printf (hwnd, TEXT (&quot;\t.bfSize = %u\r\n&quot;), pbmfh-&gt;bfSize) ;
+     Printf (hwnd, TEXT (&quot;\t.bfReserved1 = %u\r\n&quot;), pbmfh-&gt;bfReserved1) ;
+     Printf (hwnd, TEXT (&quot;\t.bfReserved2 = %u\r\n&quot;), pbmfh-&gt;bfReserved2) ;
+     Printf (hwnd, TEXT (&quot;\t.bfOffBits = %u\r\n\r\n&quot;), pbmfh-&gt;bfOffBits) ;
+
+          // Determine which information structure we have
+
+     pbmih = (BITMAPV5HEADER *) (pFile + sizeof (BITMAPFILEHEADER)) ;
+
+     switch (pbmih-&gt;bV5Size)
+     {
+     case sizeof (BITMAPCOREHEADER):  i = 0 ;                       break ;
+     case sizeof (BITMAPINFOHEADER):  i = 1 ;  szV = TEXT (&quot;i&quot;)  ;  break ;
+     case sizeof (BITMAPV4HEADER):    i = 2 ;  szV = TEXT (&quot;V4&quot;) ;  break ;
+     case sizeof (BITMAPV5HEADER):    i = 3 ;  szV = TEXT (&quot;V5&quot;) ;  break ;
+     default:
+          Printf (hwnd, TEXT (&quot;Unknown header size of %u.\r\n\r\n&quot;), 
+                        pbmih-&gt;bV5Size) ;
+          free (pFile) ;
+          return ;
+     }
+
+     Printf (hwnd, TEXT (&quot;%s\r\n&quot;), szInfoName[i]) ;
+
+          // Display the BITMAPCOREHEADER fields
+
+     if (pbmih-&gt;bV5Size == sizeof (BITMAPCOREHEADER))
+     {
+          pbmch = (BITMAPCOREHEADER *) pbmih ;
+
+          Printf (hwnd, TEXT (&quot;\t.bcSize = %u\r\n&quot;), pbmch-&gt;bcSize) ;
+          Printf (hwnd, TEXT (&quot;\t.bcWidth = %u\r\n&quot;), pbmch-&gt;bcWidth) ;
+          Printf (hwnd, TEXT (&quot;\t.bcHeight = %u\r\n&quot;), pbmch-&gt;bcHeight) ;
+          Printf (hwnd, TEXT (&quot;\t.bcPlanes = %u\r\n&quot;), pbmch-&gt;bcPlanes) ;
+          Printf (hwnd, TEXT (&quot;\t.bcBitCount = %u\r\n\r\n&quot;), pbmch-&gt;bcBitCount) ;
+          free (pFile) ;
+          return ;
+     }
+
+          // Display the BITMAPINFOHEADER fields
+
+     Printf (hwnd, TEXT (&quot;\t.b%sSize = %u\r\n&quot;), szV, pbmih-&gt;bV5Size) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sWidth = %i\r\n&quot;), szV, pbmih-&gt;bV5Width) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sHeight = %i\r\n&quot;), szV, pbmih-&gt;bV5Height) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sPlanes = %u\r\n&quot;), szV, pbmih-&gt;bV5Planes) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sBitCount = %u\r\n&quot;), szV, pbmih-&gt;bV5BitCount) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sCompression = %s\r\n&quot;), szV, 
+                   szCompression [min (4, pbmih-&gt;bV5Compression)]) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sSizeImage = %u\r\n&quot;), szV, pbmih-&gt;bV5SizeImage) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sXPelsPerMeter = %i\r\n&quot;), szV, 
+                   pbmih-&gt;bV5XPelsPerMeter) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sYPelsPerMeter = %i\r\n&quot;), szV, 
+                   pbmih-&gt;bV5YPelsPerMeter) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sClrUsed = %i\r\n&quot;), szV, pbmih-&gt;bV5ClrUsed) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sClrImportant = %i\r\n\r\n&quot;), szV, 
+                   pbmih-&gt;bV5ClrImportant) ;
+
+     if (pbmih-&gt;bV5Size == sizeof (BITMAPINFOHEADER))
+     {
+          if (pbmih-&gt;bV5Compression == BI_BITFIELDS)
+          {
+               Printf (hwnd, TEXT (&quot;Red Mask   = %08X\r\n&quot;), 
+                             pbmih-&gt;bV5RedMask) ;
+               Printf (hwnd, TEXT (&quot;Green Mask = %08X\r\n&quot;), 
+                             pbmih-&gt;bV5GreenMask) ;
+               Printf (hwnd, TEXT (&quot;Blue Mask  = %08X\r\n\r\n&quot;), 
+                             pbmih-&gt;bV5BlueMask) ;
+          }
+          free (pFile) ;
+          return ;
+     }
+
+          // Display additional BITMAPV4HEADER fields
+
+     Printf (hwnd, TEXT (&quot;\t.b%sRedMask   = %08X\r\n&quot;), szV, 
+                   pbmih-&gt;bV5RedMask) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sGreenMask = %08X\r\n&quot;), szV, 
+                   pbmih-&gt;bV5GreenMask) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sBlueMask  = %08X\r\n&quot;), szV, 
+                   pbmih-&gt;bV5BlueMask) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sAlphaMask = %08X\r\n&quot;), szV, 
+                   pbmih-&gt;bV5AlphaMask) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sCSType = %u\r\n&quot;), szV, 
+                   pbmih-&gt;bV5CSType) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sEndpoints.ciexyzRed.ciexyzX   = %08X\r\n&quot;),  
+                   szV, pbmih-&gt;bV5Endpoints.ciexyzRed.ciexyzX) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sEndpoints.ciexyzRed.ciexyzY   = %08X\r\n&quot;), 
+                   szV, pbmih-&gt;bV5Endpoints.ciexyzRed.ciexyzY) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sEndpoints.ciexyzRed.ciexyzZ   = %08X\r\n&quot;), 
+                   szV, pbmih-&gt;bV5Endpoints.ciexyzRed.ciexyzZ) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sEndpoints.ciexyzGreen.ciexyzX = %08X\r\n&quot;), 
+                   szV, pbmih-&gt;bV5Endpoints.ciexyzGreen.ciexyzX) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sEndpoints.ciexyzGreen.ciexyzY = %08X\r\n&quot;), 
+                   szV, pbmih-&gt;bV5Endpoints.ciexyzGreen.ciexyzY) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sEndpoints.ciexyzGreen.ciexyzZ = %08X\r\n&quot;), 
+                   szV, pbmih-&gt;bV5Endpoints.ciexyzGreen.ciexyzZ) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sEndpoints.ciexyzBlue.ciexyzX  = %08X\r\n&quot;),
+                   szV, pbmih-&gt;bV5Endpoints.ciexyzBlue.ciexyzX) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sEndpoints.ciexyzBlue.ciexyzY  = %08X\r\n&quot;), 
+                   szV, pbmih-&gt;bV5Endpoints.ciexyzBlue.ciexyzY) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sEndpoints.ciexyzBlue.ciexyzZ  = %08X\r\n&quot;), 
+                   szV, pbmih-&gt;bV5Endpoints.ciexyzBlue.ciexyzZ) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sGammaRed   = %08X\r\n&quot;), szV, 
+                   pbmih-&gt;bV5GammaRed) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sGammaGreen = %08X\r\n&quot;), szV, 
+                   pbmih-&gt;bV5GammaGreen) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sGammaBlue  = %08X\r\n\r\n&quot;), szV, 
+                   pbmih-&gt;bV5GammaBlue) ;
+
+     if (pbmih-&gt;bV5Size == sizeof (BITMAPV4HEADER))
+     {
+          free (pFile) ;
+          return ;
+     }
+
+          // Display additional BITMAPV5HEADER fields
+
+     Printf (hwnd, TEXT (&quot;\t.b%sIntent = %u\r\n&quot;), szV, pbmih-&gt;bV5Intent) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sProfileData = %u\r\n&quot;), szV, 
+                   pbmih-&gt;bV5ProfileData) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sProfileSize = %u\r\n&quot;), szV, 
+                   pbmih-&gt;bV5ProfileSize) ;
+     Printf (hwnd, TEXT (&quot;\t.b%sReserved = %u\r\n\r\n&quot;), szV, 
+                   pbmih-&gt;bV5Reserved) ;
+
+     free (pFile) ;
+     return ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static HWND         hwndEdit ;
+     static OPENFILENAME ofn ;
+     static TCHAR        szFileName [MAX_PATH], szTitleName [MAX_PATH] ;
+     static TCHAR        szFilter[] = TEXT (&quot;Bitmap Files (*.BMP)\0*.bmp\0&quot;)
+                                      TEXT (&quot;All Files (*.*)\0*.*\0\0&quot;) ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+          hwndEdit = CreateWindow (TEXT (&quot;edit&quot;), NULL,
+                         WS_CHILD | WS_VISIBLE | WS_BORDER | 
+                              WS_VSCROLL | WS_HSCROLL |
+                              ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY, 
+                         0, 0, 0, 0, hwnd, (HMENU) 1,
+                         ((LPCREATESTRUCT) lParam)-&gt;hInstance, NULL) ;
+
+          ofn.lStructSize       = sizeof (OPENFILENAME) ;
+          ofn.hwndOwner         = hwnd ;
+          ofn.hInstance         = NULL ;
+          ofn.lpstrFilter       = szFilter ;
+          ofn.lpstrCustomFilter = NULL ;
+          ofn.nMaxCustFilter    = 0 ;
+          ofn.nFilterIndex      = 0 ;
+          ofn.lpstrFile         = szFileName ;
+          ofn.nMaxFile          = MAX_PATH ;
+          ofn.lpstrFileTitle    = szTitleName ;
+          ofn.nMaxFileTitle     = MAX_PATH ;
+          ofn.lpstrInitialDir   = NULL ;
+          ofn.lpstrTitle        = NULL ;
+          ofn.Flags             = 0 ;
+          ofn.nFileOffset       = 0 ;
+          ofn.nFileExtension    = 0 ;
+          ofn.lpstrDefExt       = TEXT (&quot;bmp&quot;) ;
+          ofn.lCustData         = 0 ;
+          ofn.lpfnHook          = NULL ;
+          ofn.lpTemplateName    = NULL ;
+          return 0 ;
+
+     case WM_SIZE:
+          MoveWindow (hwndEdit, 0, 0, LOWORD (lParam), HIWORD (lParam), TRUE) ;
+          return 0 ;
+
+     case WM_COMMAND:
+          switch (LOWORD (wParam))
+          {
+          case IDM_FILE_OPEN:
+               if (GetOpenFileName (&amp;ofn))
+                    DisplayDibHeaders (hwndEdit, szFileName) ;
+
+               return 0 ;
+          }
+
+          break ;
+     
+     case WM_DESTROY:
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+	 
+</PRE>	 
+</TD></TR>
+</TABLE>
+
+<P><TABLE CELLPADDING=5 WIDTH="95%"><TR><TD>
+<A NAME="486"><H3>DIBHEADS.RC (excerpts)</H3></A>
+<p><PRE>//Microsoft Developer Studio generated resource script.
+
+
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+
+
+////////////////////////////////////////////////////////////////////
+// Accelerator
+
+DIBHEADS ACCELERATORS DISCARDABLE 
+BEGIN
+    &quot;O&quot;,            IDM_FILE_OPEN,          VIRTKEY, CONTROL, NOINVERT
+END
+
+////////////////////////////////////////////////////////////////////
+// Menu
+
+DIBHEADS MENU DISCARDABLE 
+BEGIN
+    POPUP &quot;&amp;File&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Open\tCtrl+O&quot;,        IDM_FILE_OPEN
+    END
+END
+</PRE>
+</TD></TR>
+</TABLE>
+
+<P><TABLE CELLPADDING=5 WIDTH="95%"><TR><TD>
+<P><A NAME="487"><H3>RESOURCE.H (excerpts)</H3></A>
+<P><PRE>
+// Microsoft Developer Studio generated include file.
+// Used by DibHeads.rc
+
+
+
+#define IDM_FILE_OPEN                   40001
+</PRE>
+</TD></TR>
+</TABLE>
+
+<p>This program has a short <I>WndProc</I> function that creates a read-only edit 
+window filling its client area and that processes File Open commands from the menu. It uses 
+the standard File Open dialog box invoked from the 
+<I>GetOpenFileName</I> function and then calls the large function 
+<I>DisplayDibHeaders</I>. This function reads the entire DIB file into 
+memory and displays all the header information field by field.
+
+</BODY>
+</HTML>
+
+
+
+
+

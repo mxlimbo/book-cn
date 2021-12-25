@@ -1,0 +1,1083 @@
+<HTML>
+<HEAD>
+	<LINK REL=StyleSheet HREF="petzoldi.css" TYPE="text/css">
+<title>Paragraph Formatting</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="640"><h1>Paragraph Formatting</h1></A>
+<p>Equipped with the ability to select and create logical fonts, it's time to try our hand at text formatting. The process involves placing each line of text within margins in one of four ways: aligned on the left margin, aligned on the right margin, centered between the margins, or justified&#8212;that is, running from one margin to the other, with equal spaces between the words. For the first three jobs, you can use the <I>DrawText</I> function with the DT_WORDBREAK argument, but this approach has limitations. For instance, you can't determine what part of the text <I>DrawText</I> was able to fit within the rectangle. <I>DrawText</I> is convenient for some simple jobs, but for more complex formatting tasks, you'll probably want to employ <I>TextOut</I>.
+
+<A NAME="641"><h2>Simple Text Formatting</h2></A>
+<p>One of the most useful functions for working with text is <I>GetTextExtentPoint32</I>. (This is a function whose name reveals some changes since the early versions of Windows.) The function tells you the width and height of a character string based on the current font selected in the device context:
+
+<P><pre>
+GetTextExtentPoint32 (hdc, pString, iCount, &amp;size) ;
+</PRE>
+
+<p>The width and height of the text in logical units are returned in the <I>cx</I> and <I>cy</I> fields of the SIZE structure. I'll begin with an example using one line of text. Let's say that you have selected a font into your device context and now want to write the text:
+
+<P><pre>
+TCHAR * szText [] = TEXT (&quot;Hello, how are you?&quot;) ;
+</PRE>
+
+<p>You want the text to start at the vertical coordinate <I>yStart</I>, within margins set by the coordinates <I>xLeft</I> and <I>xRight</I>. Your job is to calculate the <I>xStart</I> value for the horizontal coordinate where the text begins.
+
+<p>This job would be considerably easier if the text were displayed using a fixed-pitch font, but that's not the general case. First you get the text extents of the string:
+
+<P><pre>
+GetTextExtentPoint32 (hdc, szText, lstrlen (szText), &amp;size) ;
+</PRE>
+
+<p>If <I>size.cx</I> is larger than <I>(xRight </I>-<I> xLeft)</I>, the line is too long to fit within the margins. Let's assume it can fit.
+
+<p>To align the text on the left margin, you simply set <I>xStart</I> equal to <I>xLeft</I> and then write the text:
+
+<P><pre>
+TextOut (hdc, xStart, yStart, szText, lstrlen (szText)) ;
+</PRE>
+
+<p>This is easy. You can now add the <I>size.cy</I> to <I>yStart</I>, and you're ready to write the next line of text.
+
+<p>To align the text on the right margin, you use this formula for <I>xStart</I>:
+
+<P><pre>
+xStart = xRight - size.cx ;
+</PRE>
+
+<p>To center the text between the left and right margins, use this formula:
+
+<P><pre>
+xStart = (xLeft + xRight - size.cx) / 2 ;
+</PRE>
+
+<p>Now here's the tough job&#8212;to justify the text within the left and right margins. The distance between the margins is <I>(xRight </I>-<I> xLeft)</I>. Without justification, the text is <I>size.cx</I> wide. The difference between these two values, which is
+
+<P><pre>
+xRight - xLeft - size.cx
+</PRE>
+
+<p>must be equally distributed among the three space characters in the character string. It sounds like a terrible job, but it's not too bad. To do it, you call
+
+<P><pre>
+SetTextJustification (hdc, xRight - xLeft - size.cx, 3)
+</PRE>
+
+<p>The second argument is the amount of space that must be distributed among the space characters in the character string. The third argument is the number of space characters, in this case 3. Now set <I>xStart</I> equal to <I>xLeft</I>, and write the text with <I>TextOut</I>:
+
+<P><pre>
+TextOut (hdc, xStart, yStart, szText, lstrlen (szText)) ;
+</PRE>
+
+<p>The text will be justified between the <I>xLeft</I> and <I>xRight</I> margins.
+
+<p>Whenever you call <I>SetTextJustification</I>, it accumulates an error term if the amount of space doesn't distribute evenly among the space characters. This error term will affect subsequent <I>GetTextExtentPoint32</I> calls. Each time you start a new line, you should clear out the error term by calling
+
+<P><pre>
+SetTextJustification (hdc, 0, 0) ;
+</PRE>
+
+<A NAME="642"><h2>Working with Paragraphs</h2></A>
+<p>If you're working with a whole paragraph, you have to start at the beginning and scan through the string looking for space characters. Every time you encounter a space character (or another character that can be used to break the line), you call <I>GetTextExtentPoint32</I> to determine whether the text still fits between the left and right margins. When the text exceeds the space allowed for it, you backtrack to the previous blank. Now you have determined the character string for the line. If you want to justify the line, call <I>SetTextJustification</I> and <I>TextOut</I>, clear out the error term, and proceed to the next line.
+
+<p>The JUSTIFY1 program, shown in Figure 17-9, does this job for the first paragraph of Mark Twain's <I>The Adventures of Huckleberry Finn</I>. You can pick the font you want from a dialog box, and you can also use a menu selection to change the alignment (left, right, centered, or justified). Figure 17-10 shows a typical JUSTIFY1 display.
+
+<p><B>Figure 17-9.</b> <i>The JUSTIFY1 program.</i>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="643"><h3>JUSTIFY1.C</h3></A><P><pre>
+/*-----------------------------------------
+   JUSTIFY1.C -- Justified Type Program #1
+                 (c) Charles Petzold, 1998
+  -----------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &quot;resource.h&quot;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+	 
+TCHAR szAppName[] = TEXT (&quot;Justify1&quot;) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     HWND     hwnd ;
+     MSG      msg ;
+     WNDCLASS wndclass ;
+     
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = szAppName ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+               szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Justified Type #1&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+void DrawRuler (HDC hdc, RECT * prc)
+{
+     static int iRuleSize [16] = { 360, 72, 144, 72, 216, 72, 144, 72,
+                                   288, 72, 144, 72, 216, 72, 144, 72 } ;
+     int        i, j ;
+     POINT      ptClient ;
+     
+     SaveDC (hdc) ;
+     
+          // Set Logical Twips mapping mode
+     
+     SetMapMode (hdc, MM_ANISOTROPIC) ;
+     SetWindowExtEx (hdc, 1440, 1440, NULL) ;
+     SetViewportExtEx (hdc, GetDeviceCaps (hdc, LOGPIXELSX),
+                            GetDeviceCaps (hdc, LOGPIXELSY), NULL) ;
+     
+          // Move the origin to a half inch from upper left
+     
+     SetWindowOrgEx (hdc, -720, -720, NULL) ;
+     
+          // Find the right margin (quarter inch from right)
+     
+     ptClient.x = prc-&gt;right ;
+     ptClient.y = prc-&gt;bottom ;
+     DPtoLP (hdc, &amp;ptClient, 1) ;
+     ptClient.x -= 360 ;
+     
+          // Draw the rulers
+     
+     MoveToEx (hdc, 0,          -360, NULL) ;
+     LineTo   (hdc, ptClient.x, -360) ;
+     MoveToEx (hdc, -360,          0, NULL) ;
+     LineTo   (hdc, -360, ptClient.y) ;
+     
+     for (i = 0, j = 0 ; i &lt;= ptClient.x ; i += 1440 / 16, j++)
+     {
+          MoveToEx (hdc, i, -360, NULL) ;
+          LineTo   (hdc, i, -360 - iRuleSize [j % 16]) ;
+     }
+     
+     for (i = 0, j = 0 ; i &lt;= ptClient.y ; i += 1440 / 16, j++)
+     {
+          MoveToEx (hdc, -360, i, NULL) ;
+          LineTo   (hdc, -360 - iRuleSize [j % 16], i) ;
+     }
+     
+     RestoreDC (hdc, -1) ;
+}
+void Justify (HDC hdc, PTSTR pText, RECT * prc, int iAlign)
+{
+     int   xStart, yStart, cSpaceChars ;
+     PTSTR pBegin, pEnd ;
+     SIZE  size ;
+     
+     yStart = prc-&gt;top ;
+     do                            // for each text line
+     {
+          cSpaceChars = 0 ;        // initialize number of spaces in line
+
+          while (*pText == ` `)    // skip over leading spaces
+               pText++ ;
+
+          pBegin = pText ;         // set pointer to char at beginning of line
+          
+          do                       // until the line is known
+          {
+               pEnd = pText ;      // set pointer to char at end of line
+
+                    // skip to next space 
+               
+               while (*pText != `\0' &amp;&amp; *pText++ != ` `) ;
+
+               if (*pText == `\0')
+                    break ;
+
+                    // after each space encountered, calculate extents
+
+               cSpaceChars++ ;
+               GetTextExtentPoint32(hdc, pBegin, pText - pBegin - 1, &amp;size) ;
+          }
+          while (size.cx &lt; (prc-&gt;right - prc-&gt;left)) ;
+          
+          cSpaceChars-- ;               // discount last space at end of line
+          
+          while (*(pEnd - 1) == ` `)    // eliminate trailing spaces
+          {
+               pEnd-- ;
+               cSpaceChars-- ;
+          }
+
+               // if end of text and no space characters, set pEnd to end
+          
+          if (*pText == `\0' || cSpaceChars &lt;= 0)
+               pEnd = pText ;
+          GetTextExtentPoint32 (hdc, pBegin, pEnd - pBegin, &amp;size) ;
+          
+          switch (iAlign)               // use alignment for xStart
+          {
+          case IDM_ALIGN_LEFT:
+               xStart = prc-&gt;left ;
+               break ;
+               
+          case IDM_ALIGN_RIGHT:
+               xStart = prc-&gt;right - size.cx ;
+               break ;
+               
+          case IDM_ALIGN_CENTER:
+               xStart = (prc-&gt;right + prc-&gt;left - size.cx) / 2 ;
+               break ;
+               
+          case IDM_ALIGN_JUSTIFIED:
+               if (*pText != `\0' &amp;&amp; cSpaceChars &gt; 0)
+                    SetTextJustification (hdc,
+                                          prc-&gt;right - prc-&gt;left - size.cx,
+                                          cSpaceChars) ;
+               xStart = prc-&gt;left ;
+               break ;
+          }
+               // display the text
+          
+          TextOut (hdc, xStart, yStart, pBegin, pEnd - pBegin) ;
+
+               // prepare for next line
+
+          SetTextJustification (hdc, 0, 0) ;
+          yStart += size.cy ;
+          pText = pEnd ;
+     }
+     while (*pText &amp;&amp; yStart &lt; prc-&gt;bottom - size.cy) ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static CHOOSEFONT cf ;
+     static DOCINFO    di = { sizeof (DOCINFO), TEXT (&quot;Justify1: Printing&quot;) } ;
+     static int        iAlign = IDM_ALIGN_LEFT ;
+     static LOGFONT    lf ;
+     static PRINTDLG   pd ;
+     static TCHAR      szText[] = { 
+                              TEXT (&quot;You don't know about me, without you &quot;)
+                              TEXT (&quot;have read a book by the name of \&quot;The &quot;)
+                              TEXT (&quot;Adventures of Tom Sawyer,\&quot; but that &quot;)
+                              TEXT (&quot;ain't no matter. That book was made by &quot;)
+                              TEXT (&quot;Mr. Mark Twain, and he told the truth, &quot;)
+                              TEXT (&quot;mainly. There was things which he &quot;)
+                              TEXT (&quot;stretched, but mainly he told the truth. &quot;)
+                              TEXT (&quot;That is nothing. I never seen anybody &quot;)
+                              TEXT (&quot;but lied, one time or another, without &quot;)
+                              TEXT (&quot;it was Aunt Polly, or the widow, or &quot;)
+                              TEXT (&quot;maybe Mary. Aunt Polly -- Tom's Aunt &quot;)
+                              TEXT (&quot;Polly, she is -- and Mary, and the Widow &quot;)
+                              TEXT (&quot;Douglas, is all told about in that book &quot;)
+                              TEXT (&quot;-- which is mostly a true book; with &quot;)
+                              TEXT (&quot;some stretchers, as I said before.&quot;) } ;
+     BOOL              fSuccess ;
+     HDC               hdc, hdcPrn ;
+     HMENU             hMenu ;
+     int               iSavePointSize ;
+     PAINTSTRUCT       ps ;
+     RECT              rect ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+               // Initialize the CHOOSEFONT structure
+
+          GetObject (GetStockObject (SYSTEM_FONT), sizeof (lf), &amp;lf) ;
+
+          cf.lStructSize    = sizeof (CHOOSEFONT) ;
+          cf.hwndOwner      = hwnd ;
+          cf.hDC            = NULL ;
+          cf.lpLogFont      = &amp;lf ;
+          cf.iPointSize     = 0 ;
+          cf.Flags          = CF_INITTOLOGFONTSTRUCT | CF_SCREENFONTS | 
+                              CF_EFFECTS ;
+          cf.rgbColors      = 0 ;
+          cf.lCustData      = 0 ;
+          cf.lpfnHook       = NULL ;
+          cf.lpTemplateName = NULL ;
+          cf.hInstance      = NULL ;
+          cf.lpszStyle      = NULL ;
+          cf.nFontType      = 0 ;      
+          cf.nSizeMin       = 0 ;
+          cf.nSizeMax       = 0 ;
+  
+          return 0 ;
+     case WM_COMMAND:
+          hMenu = GetMenu (hwnd) ;
+          
+          switch (LOWORD (wParam))
+          {
+          case IDM_FILE_PRINT:
+                                   // Get printer DC
+
+               pd.lStructSize = sizeof (PRINTDLG) ;
+               pd.hwndOwner   = hwnd ;
+               pd.Flags       = PD_RETURNDC | PD_NOPAGENUMS | PD_NOSELECTION ;
+
+               if (!PrintDlg (&amp;pd))
+                    return 0 ;
+
+               if (NULL == (hdcPrn = pd.hDC))
+               {
+                    MessageBox (hwnd, TEXT (&quot;Cannot obtain Printer DC&quot;),
+                                szAppName, MB_ICONEXCLAMATION | MB_OK) ;
+                    return 0 ;
+               }
+                    // Set margins of 1 inch
+
+               rect.left   = GetDeviceCaps (hdcPrn, LOGPIXELSX) -
+                             GetDeviceCaps (hdcPrn, PHYSICALOFFSETX) ;
+
+               rect.top    = GetDeviceCaps (hdcPrn, LOGPIXELSY) -
+                             GetDeviceCaps (hdcPrn, PHYSICALOFFSETY) ;
+
+               rect.right  = GetDeviceCaps (hdcPrn, PHYSICALWIDTH) -
+                             GetDeviceCaps (hdcPrn, LOGPIXELSX) -
+                             GetDeviceCaps (hdcPrn, PHYSICALOFFSETX) ;
+
+               rect.bottom = GetDeviceCaps (hdcPrn, PHYSICALHEIGHT) - 
+                             GetDeviceCaps (hdcPrn, LOGPIXELSY) -
+                             GetDeviceCaps (hdcPrn, PHYSICALOFFSETY) ;
+
+                    // Display text on printer
+
+               SetCursor (LoadCursor (NULL, IDC_WAIT)) ;
+               ShowCursor (TRUE) ;
+
+               fSuccess = FALSE ;
+               if ((StartDoc (hdcPrn, &amp;di) &gt; 0) &amp;&amp; (StartPage (hdcPrn) &gt; 0))
+               {
+                         // Select font using adjusted lfHeight
+
+                    iSavePointSize = lf.lfHeight ;
+                    lf.lfHeight = -(GetDeviceCaps (hdcPrn, LOGPIXELSY) *
+                                         cf.iPointSize) / 720 ;
+
+                    SelectObject (hdcPrn, CreateFontIndirect (&amp;lf)) ;
+                    lf.lfHeight = iSavePointSize ;
+
+                         // Set text color 
+
+                    SetTextColor (hdcPrn, cf.rgbColors) ;
+               
+                         // Display text
+
+                    Justify (hdcPrn, szText, &amp;rect, iAlign) ;
+
+                    if (EndPage (hdcPrn) &gt; 0)
+                    {
+                         fSuccess = TRUE ;
+                         EndDoc (hdcPrn) ;
+                    }
+               }
+               ShowCursor (FALSE) ;
+               SetCursor (LoadCursor (NULL, IDC_ARROW)) ;
+
+               DeleteDC (hdcPrn) ;
+
+               if (!fSuccess)
+                    MessageBox (hwnd, TEXT (&quot;Could not print text&quot;),
+                                szAppName, MB_ICONEXCLAMATION | MB_OK) ;
+               return 0 ;
+
+          case IDM_FONT:
+               if (ChooseFont (&amp;cf))
+                    InvalidateRect (hwnd, NULL, TRUE) ;
+               return 0 ;
+               
+          case IDM_ALIGN_LEFT:
+          case IDM_ALIGN_RIGHT:
+          case IDM_ALIGN_CENTER:
+          case IDM_ALIGN_JUSTIFIED:
+               CheckMenuItem (hMenu, iAlign, MF_UNCHECKED) ;
+               iAlign = LOWORD (wParam) ;
+               CheckMenuItem (hMenu, iAlign, MF_CHECKED) ;
+               InvalidateRect (hwnd, NULL, TRUE) ;
+               return 0 ;
+          }
+          return 0 ;
+
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+          
+          GetClientRect (hwnd, &amp;rect) ;
+          DrawRuler (hdc, &amp;rect) ;
+          
+          rect.left  += GetDeviceCaps (hdc, LOGPIXELSX) / 2 ;
+          rect.top   += GetDeviceCaps (hdc, LOGPIXELSY) / 2 ;
+          rect.right -= GetDeviceCaps (hdc, LOGPIXELSX) / 4 ;
+
+          SelectObject (hdc, CreateFontIndirect (&amp;lf)) ;
+          SetTextColor (hdc, cf.rgbColors) ;
+          
+          Justify (hdc, szText, &amp;rect, iAlign) ;
+          
+          DeleteObject (SelectObject (hdc, GetStockObject (SYSTEM_FONT))) ;
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+          
+     case WM_DESTROY:
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</PRE>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="644"><h3>JUSTIFY1.RC</h3></A><P><pre>
+//Microsoft Developer Studio generated resource script.
+
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+// Menu
+
+JUSTIFY1 MENU DISCARDABLE 
+BEGIN
+    POPUP &quot;&amp;File&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Print&quot;,                      IDM_FILE_PRINT
+    END
+    POPUP &quot;&amp;Font&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Font...&quot;,                    IDM_FONT
+    END
+    POPUP &quot;&amp;Align&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Left&quot;,                       IDM_ALIGN_LEFT, CHECKED
+        MENUITEM &quot;&amp;Right&quot;,                      IDM_ALIGN_RIGHT
+        MENUITEM &quot;&amp;Centered&quot;,                   IDM_ALIGN_CENTER
+        MENUITEM &quot;&amp;Justified&quot;,                  IDM_ALIGN_JUSTIFIED
+    END
+END
+</PRE>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="645"><h3>RESOURCE.H</h3></A><P><pre>
+// Microsoft Developer Studio generated include file.
+// Used by Justify1.rc
+
+#define IDM_FILE_PRINT                  40001
+#define IDM_FONT                        40002
+#define IDM_ALIGN_LEFT                  40003
+#define IDM_ALIGN_RIGHT                 40004
+#define IDM_ALIGN_CENTER                40005
+#define IDM_ALIGN_JUSTIFIED             40006
+</PRE></td></tr></table>
+
+<p>JUSTIFY1 displays a ruler (in logical inches, of course) across the top and down the left side of the client area. The <I>DrawRuler</I> function draws the ruler. A rectangle structure defines the area in which the text must be justified.
+
+<p>The bulk of the work involved with formatting this text is in the <I>Justify</I> function. The function starts searching for blanks at the beginning of the text and uses <I>GetTextExtentPoint32</I> to measure each line. When the length of the line exceeds the width of the display area, JUSTIFY1 returns to the previous space and uses the line up to that point. Depending on the value of the <I>iAlign</I> constant, the line is left-aligned, right-aligned, centered, or justified.
+
+<p>JUSTIFY1 isn't perfect. It doesn't have any logic for hyphens, for example. Also, the justification logic falls apart when there are fewer than two words in each line. Even if we solve this problem, which isn't a particularly difficult one, the program still won't work properly when a single word is too long to fit within the left and right margins. Of course, matters can become even more complex when you start working with programs that can use multiple fonts on the same line (as Windows word processors do with apparent ease). But nobody ever claimed this stuff was easy. It's just easier than if you were doing all the work yourself.
+
+<p><A HREF="javascript:fullSize('F17zg10x.htm')"><IMG SRC="F17zg10.JPG" width=404 height=288 ALIGN="BOTTOM" BORDER=0 ALT="click to view full size"></A>
+
+<p><!-- caption --><B>Figure 17-10.</b> <i>A typical JUSTIFY1 display.</I><!-- /caption -->
+
+<A NAME="646"><h2>Previewing Printer Output</h2></A>
+<p>Some text is not strictly for viewing on the screen. Some text is for printing. And often in that case, the screen preview of the text must match the formatting of the printer output precisely. It's not enough to show the same fonts and sizes and character formatting. With TrueType, that's a snap. What's also needed is for each line in a paragraph to break at the same place. This is the hard part of WYSIWYG.
+
+<p>JUSTIFY1 includes a Print option, but what it does is simply set one-inch margins at the top, left, and right sides of the page. Thus, the formatting is completely independent of the screen display. Here's an interesting exercise: change a few lines in JUSTIFY1 so that both the screen and the printer logic are based on a six-inch formatting rectangle. To do this, change the definitions of <I>rect.right</I> in both the WM_PAINT and Print command logic. In the WM_PAINT logic, the statement is
+
+<P><pre>
+rect.right = rect.left + 6 * GetDeviceCaps (hdc, LOGPIXELSX) ;
+</PRE>
+
+<p>In the Print command logic, the statement is
+
+<P><pre>
+rect.right = rect.left + 6 * GetDeviceCaps (hdcPrn, LOGPIXELSX) ;
+</PRE>
+
+<p>If you select a TrueType font, the line breaks on the screen should be the same as on the printer output.
+
+<p>But they aren't. Even though the two devices are using the same font in the same point size and displaying text in the same formatting rectangle, the different display resolutions and rounding errors cause the line breaks to occur at different places. Obviously, a more sophisticated approach is needed for the screen previewing of printer output.
+
+<p>A stab at such an approach is demonstrated by the JUSTIFY2 program shown in Figure 17-11. The code in JUSTIFY2 is based on a program called TTJUST (&quot;TrueType Justify&quot;) written by Microsoft's David Weise, which was in turn based on a version of the JUSTIFY1 program in an earlier edition of this book. To symbolize the increased complexity of this program, the Mark Twain excerpt has been replaced with the first paragraph from Herman Melville's <I>Moby-Dick</I>.
+
+<p><B>Figure 17-11.</b> <i>The JUSTIFY2 program.</i>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="647"><h3>JUSTIFY2.C</h3></A><P><pre>
+/*-----------------------------------------
+   JUSTIFY2.C -- Justified Type Program #2
+                 (c) Charles Petzold, 1998
+  -----------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &quot;resource.h&quot;
+
+#define OUTWIDTH 6       // Width of formatted output in inches
+#define LASTCHAR 127     // Last character code used in text
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+TCHAR szAppName[] = TEXT (&quot;Justify2&quot;) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     HWND     hwnd ;
+     MSG      msg ;
+     WNDCLASS wndclass ;
+     
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = szAppName ;
+     wndclass.lpszClassName = szAppName ;
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+               szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Justified Type #2&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+void DrawRuler (HDC hdc, RECT * prc)
+{
+     static int iRuleSize [16] = { 360, 72, 144, 72, 216, 72, 144, 72,
+                                   288, 72, 144, 72, 216, 72, 144, 72 } ;
+     int        i, j ;
+     POINT      ptClient ;
+     
+     SaveDC (hdc) ;
+     
+          // Set Logical Twips mapping mode
+     
+     SetMapMode (hdc, MM_ANISOTROPIC) ;
+     SetWindowExtEx (hdc, 1440, 1440, NULL) ;
+     SetViewportExtEx (hdc, GetDeviceCaps (hdc, LOGPIXELSX),
+                            GetDeviceCaps (hdc, LOGPIXELSY), NULL) ;
+     
+          // Move the origin to a half inch from upper left
+     
+     SetWindowOrgEx (hdc, -720, -720, NULL) ;
+     
+          // Find the right margin (quarter inch from right)
+     
+     ptClient.x = prc-&gt;right ;
+     ptClient.y = prc-&gt;bottom ;
+     DPtoLP (hdc, &amp;ptClient, 1) ;
+     ptClient.x -= 360 ;
+     
+          // Draw the rulers
+     
+     MoveToEx (hdc, 0,               -360, NULL) ;
+     LineTo   (hdc, OUTWIDTH * 1440, -360) ;
+     MoveToEx (hdc, -360,               0, NULL) ;
+     LineTo   (hdc, -360,      ptClient.y) ;
+     
+     for (i = 0, j = 0 ; i &lt;= ptClient.x &amp;&amp; i &lt;= OUTWIDTH * 1440 ;
+                         i += 1440 / 16, j++)
+     {
+          MoveToEx (hdc, i, -360, NULL) ;
+          LineTo   (hdc, i, -360 - iRuleSize [j % 16]) ;
+     }
+     
+     for (i = 0, j = 0 ; i &lt;= ptClient.y ; i += 1440 / 16, j++)
+     {
+          MoveToEx (hdc, -360, i, NULL) ;
+          LineTo   (hdc, -360 - iRuleSize [j % 16], i) ;
+     }
+     
+     RestoreDC (hdc, -1) ;
+}
+
+/*----------------------------------------------------------------------
+   GetCharDesignWidths:  Gets character widths for font as large as the
+                         original design size
+  ----------------------------------------------------------------------*/
+
+UINT GetCharDesignWidths (HDC hdc, UINT uFirst, UINT uLast, int * piWidths)
+{
+     HFONT             hFont, hFontDesign ;
+     LOGFONT           lf ;
+     OUTLINETEXTMETRIC otm ;
+
+     hFont = GetCurrentObject (hdc, OBJ_FONT) ;
+     GetObject (hFont, sizeof (LOGFONT), &amp;lf) ;
+
+          // Get outline text metrics (we'll only be using a field that is
+          //   independent of the DC the font is selected into)
+
+     otm.otmSize = sizeof (OUTLINETEXTMETRIC) ;
+     GetOutlineTextMetrics (hdc, sizeof (OUTLINETEXTMETRIC), &amp;otm) ;
+          // Create a new font based on the design size
+
+     lf.lfHeight = - (int) otm.otmEMSquare ;
+     lf.lfWidth  = 0 ;
+     hFontDesign = CreateFontIndirect (&amp;lf) ;
+
+          // Select the font into the DC and get the character widths
+
+     SaveDC (hdc) ;
+     SetMapMode (hdc, MM_TEXT) ;
+     SelectObject (hdc, hFontDesign) ;
+
+     GetCharWidth (hdc, uFirst, uLast, piWidths) ;
+     SelectObject (hdc, hFont) ;
+     RestoreDC (hdc, -1) ;
+
+          // Clean up
+
+     DeleteObject (hFontDesign) ;
+
+     return otm.otmEMSquare ;
+}
+
+/*---------------------------------------------------------------------
+   GetScaledWidths:  Gets floating point character widths for selected
+                     font size
+  ---------------------------------------------------------------------*/
+
+void GetScaledWidths (HDC hdc, double * pdWidths)
+{
+     double  dScale ;
+     HFONT   hFont ;
+     int     aiDesignWidths [LASTCHAR + 1] ;
+     int     i ;
+     LOGFONT lf ;
+     UINT    uEMSquare ;
+
+          // Call function above
+
+     uEMSquare = GetCharDesignWidths (hdc, 0, LASTCHAR, aiDesignWidths) ;
+
+          // Get LOGFONT for current font in device context
+
+     hFont = GetCurrentObject (hdc, OBJ_FONT) ;
+     GetObject (hFont, sizeof (LOGFONT), &amp;lf) ;
+          // Scale the widths and store as floating point values
+
+     dScale = (double) -lf.lfHeight / (double) uEMSquare ;
+
+     for (i = 0 ; i &lt;= LASTCHAR ; i++)
+          pdWidths[i] = dScale * aiDesignWidths[i] ;
+}
+
+/*--------------------------------------------------------------
+   GetTextExtentFloat:  Calculates text width in floating point
+  --------------------------------------------------------------*/
+
+double GetTextExtentFloat (double * pdWidths, PTSTR psText, int iCount)
+{
+     double dWidth = 0 ;
+     int    i ;
+
+     for (i = 0 ; i &lt; iCount ; i++)
+          dWidth += pdWidths [psText[i]] ;
+
+     return dWidth ;
+}
+
+/*------------------------------------------------------------------
+   Justify:  Based on design units for screen/printer compatibility
+  ------------------------------------------------------------------*/
+
+void Justify (HDC hdc, PTSTR pText, RECT * prc, int iAlign)
+{
+     double dWidth, adWidths[LASTCHAR + 1] ;
+     int    xStart, yStart, cSpaceChars ;
+     PTSTR  pBegin, pEnd ;
+     SIZE   size ;
+
+          // Fill the adWidths array with floating point character widths
+
+     GetScaledWidths (hdc, adWidths) ;
+
+          // Call this function just once to get size.cy (font height)
+
+     GetTextExtentPoint32(hdc, pText, 1, &amp;size) ;
+     
+     yStart = prc-&gt;top ;
+     do                            // for each text line
+     {
+          cSpaceChars = 0 ;        // initialize number of spaces in line
+          while (*pText == ` `)    // skip over leading spaces
+               pText++ ;
+
+          pBegin = pText ;         // set pointer to char at beginning of line
+          
+          do                       // until the line is known
+          {
+               pEnd = pText ;      // set pointer to char at end of line
+
+                    // skip to next space 
+               
+               while (*pText != `\0' &amp;&amp; *pText++ != ` `) ;
+
+               if (*pText == `\0')
+                    break ;
+
+                    // after each space encountered, calculate extents
+
+               cSpaceChars++ ;
+               dWidth = GetTextExtentFloat (adWidths, pBegin, 
+                                                      pText - pBegin - 1) ;
+          }
+          while (dWidth &lt; (double) (prc-&gt;right - prc-&gt;left)) ;
+          
+          cSpaceChars-- ;               // discount last space at end of line
+          
+          while (*(pEnd - 1) == ` `)    // eliminate trailing spaces
+          {
+               pEnd-- ;
+               cSpaceChars-- ;
+          }
+
+               // if end of text and no space characters, set pEnd to end
+          
+          if (*pText == `\0' || cSpaceChars &lt;= 0)
+               pEnd = pText ;
+          
+          dWidth = GetTextExtentFloat (adWidths, pBegin, pText - pBegin - 1) ;
+          
+          switch (iAlign)               // use alignment for xStart
+          {
+          case IDM_ALIGN_LEFT:
+               xStart = prc-&gt;left ;
+               break ;
+          case IDM_ALIGN_RIGHT:
+               xStart = prc-&gt;right - (int) (dWidth + .5) ;
+               break ;
+               
+          case IDM_ALIGN_CENTER:
+               xStart = (prc-&gt;right + prc-&gt;left - (int) (dWidth + .5)) / 2 ;
+               break ;
+               
+          case IDM_ALIGN_JUSTIFIED:
+               if (*pText != `\0' &amp;&amp; cSpaceChars &gt; 0)
+                    SetTextJustification (hdc,
+                                          prc-&gt;right - prc-&gt;left - 
+                                                       (int) (dWidth + .5),
+                                          cSpaceChars) ;
+               xStart = prc-&gt;left ;
+               break ;
+          }
+               // display the text
+          
+          TextOut (hdc, xStart, yStart, pBegin, pEnd - pBegin) ;
+
+               // prepare for next line
+
+          SetTextJustification (hdc, 0, 0) ;
+          yStart += size.cy ;
+          pText = pEnd ;
+     }
+     while (*pText &amp;&amp; yStart &lt; prc-&gt;bottom - size.cy) ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static CHOOSEFONT cf ;
+     static DOCINFO    di = { sizeof (DOCINFO), TEXT (&quot;Justify2: Printing&quot;) } ;
+     static int        iAlign = IDM_ALIGN_LEFT ;
+     static LOGFONT    lf ;
+     static PRINTDLG   pd ;
+     static TCHAR      szText[] = { 
+                              TEXT (&quot;Call me Ishmael. Some years ago -- never &quot;)
+                              TEXT (&quot;mind how long precisely -- having little &quot;)
+                              TEXT (&quot;or no money in my purse, and nothing &quot;)
+                              TEXT (&quot;particular to interest me on shore, I &quot;)
+                              TEXT (&quot;thought I would sail about a little and &quot;)
+                              TEXT (&quot;see the watery part of the world. It is &quot;)
+                              TEXT (&quot;a way I have of driving off the spleen, &quot;)
+                              TEXT (&quot;and regulating the circulation. Whenever &quot;)
+                              TEXT (&quot;I find myself growing grim about the &quot;)
+                              TEXT (&quot;mouth; whenever it is a damp, drizzly &quot;)
+                              TEXT (&quot;November in my soul; whenever I find &quot;)
+                              TEXT (&quot;myself involuntarily pausing before &quot;)
+                              TEXT (&quot;coffin warehouses, and bringing up the &quot;)
+                              TEXT (&quot;rear of every funeral I meet; and &quot;)
+                              TEXT (&quot;especially whenever my hypos get such an &quot;)
+                              TEXT (&quot;upper hand of me, that it requires a &quot;)
+                              TEXT (&quot;strong moral principle to prevent me &quot;)
+                              TEXT (&quot;from deliberately stepping into the &quot;)
+                              TEXT (&quot;street, and methodically knocking &quot;)
+                              TEXT (&quot;people's hats off -- then, I account it &quot;)
+                              TEXT (&quot;high time to get to sea as soon as I &quot;)
+                              TEXT (&quot;can. This is my substitute for pistol &quot;)
+                              TEXT (&quot;and ball. With a philosophical flourish &quot;)
+                              TEXT (&quot;Cato throws himself upon his sword; I &quot;)
+                              TEXT (&quot;quietly take to the ship. There is &quot;)
+                              TEXT (&quot;nothing surprising in this. If they but &quot;)
+                              TEXT (&quot;knew it, almost all men in their degree, &quot;)
+                              TEXT (&quot;some time or other, cherish very nearly &quot;)
+                              TEXT (&quot;the same feelings towards the ocean with &quot;)
+                              TEXT (&quot;me.&quot;) } ;
+     BOOL              fSuccess ;
+     HDC               hdc, hdcPrn ;
+     HMENU             hMenu ;
+     int               iSavePointSize ;
+     PAINTSTRUCT       ps ;
+     RECT              rect ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+               // Initialize the CHOOSEFONT structure
+
+          hdc = GetDC (hwnd) ;
+          lf.lfHeight = - GetDeviceCaps (hdc, LOGPIXELSY) / 6 ;
+          lstrcpy (lf.lfFaceName, TEXT (&quot;Times New Roman&quot;)) ;
+          ReleaseDC (hwnd, hdc) ;
+
+          cf.lStructSize    = sizeof (CHOOSEFONT) ;
+          cf.hwndOwner      = hwnd ;
+          cf.hDC            = NULL ;
+          cf.lpLogFont      = &amp;lf ;
+          cf.iPointSize     = 0 ;
+          cf.Flags          = CF_INITTOLOGFONTSTRUCT | CF_SCREENFONTS | 
+                              CF_TTONLY | CF_EFFECTS ;
+          cf.rgbColors      = 0 ;
+          cf.lCustData      = 0 ;
+          cf.lpfnHook       = NULL ;
+          cf.lpTemplateName = NULL ;
+          cf.hInstance      = NULL ;
+          cf.lpszStyle      = NULL ;
+          cf.nFontType      = 0 ;      
+          cf.nSizeMin       = 0 ;
+          cf.nSizeMax       = 0 ;
+  
+          return 0 ;
+
+     case WM_COMMAND:
+          hMenu = GetMenu (hwnd) ;
+          
+          switch (LOWORD (wParam))
+          {
+          case IDM_FILE_PRINT:
+                                   // Get printer DC
+
+               pd.lStructSize = sizeof (PRINTDLG) ;
+               pd.hwndOwner   = hwnd ;
+               pd.Flags       = PD_RETURNDC | PD_NOPAGENUMS | PD_NOSELECTION ;
+
+               if (!PrintDlg (&amp;pd))
+                    return 0 ;
+
+               if (NULL == (hdcPrn = pd.hDC))
+               {
+                    MessageBox (hwnd, TEXT (&quot;Cannot obtain Printer DC&quot;),
+                                szAppName, MB_ICONEXCLAMATION | MB_OK) ;
+                    return 0 ;
+               }
+                    // Set margins for OUTWIDTH inches wide
+
+               rect.left  = (GetDeviceCaps (hdcPrn, PHYSICALWIDTH) -
+                             GetDeviceCaps (hdcPrn, LOGPIXELSX) * OUTWIDTH) / 2 
+                           - GetDeviceCaps (hdcPrn, PHYSICALOFFSETX) ;
+               
+               rect.right = rect.left + 
+                             GetDeviceCaps (hdcPrn, LOGPIXELSX) * OUTWIDTH ;
+
+                    // Set margins of 1 inch at top and bottom
+
+               rect.top    = GetDeviceCaps (hdcPrn, LOGPIXELSY) -
+                             GetDeviceCaps (hdcPrn, PHYSICALOFFSETY) ;
+               rect.bottom = GetDeviceCaps (hdcPrn, PHYSICALHEIGHT) - 
+                             GetDeviceCaps (hdcPrn, LOGPIXELSY) -
+                             GetDeviceCaps (hdcPrn, PHYSICALOFFSETY) ;
+
+                    // Display text on printer
+
+               SetCursor (LoadCursor (NULL, IDC_WAIT)) ;
+               ShowCursor (TRUE) ;
+
+               fSuccess = FALSE ;
+
+               if ((StartDoc (hdcPrn, &amp;di) &gt; 0) &amp;&amp; (StartPage (hdcPrn) &gt; 0))
+               {
+                         // Select font using adjusted lfHeight
+
+                    iSavePointSize = lf.lfHeight ;
+                    lf.lfHeight = -(GetDeviceCaps (hdcPrn, LOGPIXELSY) *
+                                         cf.iPointSize) / 720 ;
+
+                    SelectObject (hdcPrn, CreateFontIndirect (&amp;lf)) ;
+                    lf.lfHeight = iSavePointSize ;
+
+                         // Set text color 
+
+                    SetTextColor (hdcPrn, cf.rgbColors) ;
+               
+                         // Display text
+
+                    Justify (hdcPrn, szText, &amp;rect, iAlign) ;
+
+                    if (EndPage (hdcPrn) &gt; 0)
+                    {
+                         fSuccess = TRUE ;
+                         EndDoc (hdcPrn) ;
+                    }
+               }
+               ShowCursor (FALSE) ;
+               SetCursor (LoadCursor (NULL, IDC_ARROW)) ;
+
+               DeleteDC (hdcPrn) ;
+
+               if (!fSuccess)
+                    MessageBox (hwnd, TEXT (&quot;Could not print text&quot;),
+                                szAppName, MB_ICONEXCLAMATION | MB_OK) ;
+               return 0 ;
+          case IDM_FONT:
+               if (ChooseFont (&amp;cf))
+                    InvalidateRect (hwnd, NULL, TRUE) ;
+               return 0 ;
+               
+          case IDM_ALIGN_LEFT:
+          case IDM_ALIGN_RIGHT:
+          case IDM_ALIGN_CENTER:
+          case IDM_ALIGN_JUSTIFIED:
+               CheckMenuItem (hMenu, iAlign, MF_UNCHECKED) ;
+               iAlign = LOWORD (wParam) ;
+               CheckMenuItem (hMenu, iAlign, MF_CHECKED) ;
+               InvalidateRect (hwnd, NULL, TRUE) ;
+               return 0 ;
+          }
+          return 0 ;
+
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+          
+          GetClientRect (hwnd, &amp;rect) ;
+          DrawRuler (hdc, &amp;rect) ;
+          
+          rect.left  += GetDeviceCaps (hdc, LOGPIXELSX) / 2 ;
+          rect.top   += GetDeviceCaps (hdc, LOGPIXELSY) / 2 ;
+          rect.right = rect.left + OUTWIDTH * GetDeviceCaps (hdc, LOGPIXELSX) ;
+
+          SelectObject (hdc, CreateFontIndirect (&amp;lf)) ;
+          SetTextColor (hdc, cf.rgbColors) ;
+          
+          Justify (hdc, szText, &amp;rect, iAlign) ;
+          
+          DeleteObject (SelectObject (hdc, GetStockObject (SYSTEM_FONT))) ;
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+          
+     case WM_DESTROY:
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</PRE>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="648"><h3>JUSTIFY2.RC</h3></A><P><pre>
+
+//Microsoft Developer Studio generated resource script.
+
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+// Menu
+
+JUSTIFY2 MENU DISCARDABLE 
+BEGIN
+    POPUP &quot;&amp;File&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Print&quot;,                      IDM_FILE_PRINT
+    END
+    POPUP &quot;&amp;Font&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Font...&quot;,                    IDM_FONT
+    END
+    POPUP &quot;&amp;Align&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Left&quot;,                       IDM_ALIGN_LEFT, CHECKED
+        MENUITEM &quot;&amp;Right&quot;,                      IDM_ALIGN_RIGHT
+        MENUITEM &quot;&amp;Centered&quot;,                   IDM_ALIGN_CENTER
+        MENUITEM &quot;&amp;Justified&quot;,                  IDM_ALIGN_JUSTIFIED
+    END
+END
+</PRE>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="649"><h3>RESOURCE.H</h3></A><P><pre>
+// Microsoft Developer Studio generated include file.
+// Used by Justify2.rc
+
+#define IDM_FILE_PRINT                  40001
+#define IDM_FONT                        40002
+#define IDM_ALIGN_LEFT                  40003
+#define IDM_ALIGN_RIGHT                 40004
+#define IDM_ALIGN_CENTER                40005
+#define IDM_ALIGN_JUSTIFIED             40006
+</PRE>
+</td></tr></table>
+
+<p>JUSTIFY2 works with TrueType fonts only. In its <I>GetCharDesignWidths</I> function, the program uses the <I>GetOutlineTextMetrics</I> function to get a seemingly unimportant piece of information. This is the OUTLINETEXTMETRIC field <I>otmEMSquare</I>.
+
+<p>A TrueType font is designed on an em-square grid. (As I've said, the word &quot;em&quot; refers to the width of a square piece of type, an <I>M</I> equal in width to the point size of the font.) All the characters of any particular TrueType font are designed on the same grid, although they generally have different widths. The <I>otmEMSquare</I> field of the OUTLINETEXTMETRIC structure gives the dimension of this em-square for any particular font. For most TrueType fonts, you'll find that the <I>otmEMSquare</I> field is equal to 2048, which means that the font was designed on a 2048-by-2048 grid.
+
+<p>Here's the key: You can set up a LOGFONT structure for the particular TrueType typeface name you want to use but with an <I>lfHeight</I> field equal to the negative of the <I>otmEMSquare</I> value. After creating that font and selecting it into a device context, you can call <I>GetCharWidth</I>. This function gives you the width of individual characters in the font in logical units. Normally, these character widths are not exact because they've been scaled to a different font size. But with a font based on the <I>otmEMSquare</I> size, these widths are always exact integers independent of any device context.
+
+<p>The <I>GetCharDesignWidths</I> function obtains the original character design widths in this manner and stores them in an integer array. The JUSTIFY2 program knows that its text uses ASCII characters only, so this array needn't be very large. The <I>GetScaledWidths</I> function converts these integer widths to floating point widths based on the actual point size of the font in the device's logical coordinates. The <I>GetTextExtentFloat</I> function uses those floating point widths to calculate the width of a whole string. That's the function the new <I>Justify</I> function uses to calculate the widths of lines of text.
+
+</BODY>
+</HTML>
+
+
+
+
+

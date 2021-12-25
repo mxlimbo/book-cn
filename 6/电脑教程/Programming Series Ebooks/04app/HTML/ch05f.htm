@@ -1,0 +1,178 @@
+<HTML>
+<HEAD>
+<TITLE>Job Notifications</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch05e.htm">[Previous]</A> <A HREF="ch05g.htm">[Next]</A><P>
+
+<A NAME="72"><H1>Job Notifications</H1></A>
+
+<p>At this point, you certainly know the basics about job objects; the
+only thing left to cover is notifications. For example, wouldn't
+you like to know when all of the processes in the job terminate or if
+all the allotted CPU time has expired? Or maybe you'd like to know
+when a new process is spawned within a job or when a process in the job
+terminates. If you don't care about these notifications&#8212;and
+many applications won't care&#8212;working with jobs is as easy as
+what I've already described. If you do care about these events, you
+have a little more to do.</p> 
+<p>If all you care about is whether all the allotted CPU time has expired,
+you can easily get this notification. Job objects are nonsignaled while
+the processes in the job have not used up the allotted CPU time. Once
+all the allotted CPU time has been used, Windows forcibly kills all the
+processes in the job and signals the job object. You can easily trap
+this event by calling <i>WaitForSingleObject</i> (or a similar
+function). Incidentally, you can reset the job object back to the
+nonsignaled state later by calling <i>SetInformationJobObject</i> and
+granting the job more CPU time. </p>
+<p>When I first started working with jobs, it seemed to me that the job
+object should be signaled when no processes are running within it.
+After all, process and thread objects are signaled when they stop
+running; so it seemed that a job should be signaled when it stops
+running. In this way, you could easily determine when a job had run to
+completion. However, Microsoft chose to signal the job when the
+allotted time expires because that signals an error condition. Since
+many jobs start off with one parent process that hangs around until all
+its children are done, you can simply wait on the parent process's
+handle to know when the entire job is finished. My <i>
+StartRestrictedProcess</i> function shows how to determine when the
+job's allotted time has expired or when the parent process in the
+job has terminated. </p>
+<p>Well, I've described how to get some simple notifications, but I
+haven't explained what you need to do to get more
+&quot;advanced&quot; notifications such as process
+creation/termination. If you want these additional notifications, you
+must put a lot more infrastructure into your application. In
+particular, you must create an I/O completion port kernel object and
+associate your job object or objects with the completion port. Then you
+must have one or more threads that wait on the completion port for job
+notifications to arrive so that they can be processed. </p>
+<p>Once you create the I/O completion port, you associate a job with it by
+calling <i>SetInformationJobObject</i>, as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+JOBOBJECT_ASSOCIATE_COMPLETION_PORT joacp;
+joacp.CompletionKey  = 1;   // Any value to uniquely identify this job
+joacp.CompletionPort = hIOCP;   // Handle of completion port that 
+                                // receives notifications
+SetInformationJobObject(hJob, JobObjectAssociateCompletionPortInformation,
+   &amp;joacp,  sizeof(jaocp));
+</pre></td></tr></table></p>
+
+<p>After the code above executes, the system monitors the job, and as
+events occur it posts them to the I/O completion port. (By the way, you
+can call <i>QueryInformationJobObject</i> to retrieve the completion
+key and completion port handle, but it is rare that you ever have to do
+this.) Threads monitor an I/O completion port by calling <i>
+GetQueuedCompletionStatus</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL GetQueuedCompletionStatus(
+   HANDLE hIOCP, 
+   PDWORD pNumBytesTransferred,
+   PULONG_PTR pCompletionKey, 
+   POVERLAPPED *pOverlapped, 
+   DWORD dwMilliseconds);
+</pre></td></tr></table></p>
+
+<p>When this function returns a job event notification, <i>
+*pCompletionKey</i> contains the completion key value set when <i>
+SetInformationJobObject</i> was called to associate the job with the
+completion port. This lets you know which job had an event. The value
+in <i>*pNumBytesTransferred</i> indicates which event occurred. (See
+Table 5-4.) Depending on the event, the value in <i>*pOverlapped</i>
+will indicate a process ID.</p>
+
+<p><b>Table 5-4.</b> <i>Job event notifications that the system
+can send to a job's associated completion port</i></p>
+
+<p><table cellpadding=5 width="95%"><tr>
+<th>Event</th>
+<th>Description</th>
+</tr><tr>
+<td valign="top">JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO</td>
+<td valign="top">Posted when no processes are running in the
+job.</td>
+</tr><tr>
+<td valign="top">JOB_OBJECT_MSG_END_OF_PROCESS_TIME</td>
+<td valign="top">Posted when a process's allotted CPU time
+is exceeded. The process is terminated and the
+process's ID is given.</td>
+</tr><tr>
+<td valign="top">JOB_OBJECT_MSG_ACTIVE_PROCESS_LIMIT</td>
+<td valign="top">Posted when attempting to exceed the number
+of active processes in the job.</td>
+</tr><tr>
+<td valign="top">JOB_OBJECT_MSG_PROCESS_MEMORY_LIMIT</td>
+<td valign="top">Posted when a process attempts to commit
+storage over the process's limit. The process's ID is
+given.</td>
+</tr><tr>
+<td valign="top">JOB_OBJECT_MSG_JOB_MEMORY_LIMIT</td>
+<td valign="top">Posted when a process attempts to commit
+storage over the job's limit. The process's ID is
+given.</td>
+</tr><tr>
+<td valign="top">JOB_OBJECT_MSG_NEW_PROCESS</td>
+<td valign="top">Posted when a process is added to a job. The 
+ process's ID is given.</td>
+</tr><tr>
+<td valign="top">JOB_OBJECT_MSG_EXIT_PROCESS</td>
+<td valign="top">Posted when a process terminates. The
+process's ID is given.</td>
+</tr><tr>
+<td valign="top">JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS</td>
+<td valign="top">Posted when a process terminates due to an
+unhandled exception. The process's ID is given.</td>
+</tr><tr>
+<td valign="top">JOB_OBJECT_MSG_END_OF_JOB_TIME</td>
+<td valign="top">Posted when the job's allotted CPU time is
+exceeded. The processes are not terminated. You can allow 
+ them to continue running, set a new time limit, or 
+ call <i>TerminateJobObject</i> yourself.</td>
+</tr></table></p>
+
+
+
+
+<p>Just one last note: by default, a job object is configured so that
+when the job's allotted CPU time expires, all the job's
+processes are automatically terminated and the
+JOB_OBJECT_MSG_END_OF_JOB_TIME notification does not get posted. If you
+want to prevent the job object from killing the processes and instead
+just notify you that the time has been exceeded, you must execute code
+like this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// Create a JOBOBJECT_END_OF_JOB_TIME_INFORMATION structure 
+// and initialize its only member.
+JOBOBJECT_END_OF_JOB_TIME_INFORMATION joeojti;
+joeojti.EndOfJobTimeAction = JOB_OBJECT_POST_AT_END_OF_JOB;
+
+// Tell the job object what we want it to do when the job time is
+// exceeded.
+SetInformationJobObject(hJob, JobObjectEndOfJobTimeInformation,
+   &amp;joeojti, sizeof(joeojti)); 
+</pre></td></tr></table></p>
+
+<p>The only other value you can specify for an end-of-job-time action
+is JOB_ 
+OBJECT_TERMINATE_AT_END_OF_JOB, which is the default when jobs are
+created anyway.</p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

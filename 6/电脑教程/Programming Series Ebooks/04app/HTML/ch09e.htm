@@ -1,0 +1,437 @@
+<HTML>
+<HEAD>
+<TITLE>Waitable Timer Kernel Objects</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch09d.htm">[Previous]</A> <A HREF="ch09f.htm">[Next]</A><P>
+
+<A NAME="128"><H1>Waitable Timer Kernel Objects</H1></A>
+
+<p>Waitable timers are kernel objects that signal themselves at a
+certain time or at regular intervals. They are most commonly used to
+have some operation performed at a certain time.</p>
+
+<p>To create a waitable timer, you simply call <i>CreateWaitableTimer</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HANDLE CreateWaitableTimer(
+   PSECURITY_ATTRIBUTES psa,
+   BOOL fManualReset, 
+   PCTSTR pszName);
+</pre></td></tr></table></p>
+
+<p>The <i>psa</i> and <i>pszName</i> parameters are discussed in
+<A HREF="ch03a.htm">Chapter 3</A>. Of course, a process can obtain its own process-relative
+handle to an existing waitable timer by calling <i>
+OpenWaitableTimer</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HANDLE OpenWaitableTimer(
+   DWORD dwDesiredAccess,
+   BOOL bInheritHandle, 
+   PCTSTR pszName);
+</pre></td></tr></table></p>
+
+<p>As with events, the <i>fManualReset</i> parameter indicates a
+manual-reset or an auto-reset timer. When a manual-reset timer is
+signaled, all threads waiting on the timer become schedulable. When an
+auto-reset timer is signaled, only one waiting thread becomes
+schedulable.</p>
+
+<p>Waitable timer objects are always created in the nonsignaled state. You
+must call the <i>SetWaitableTimer</i> function to tell the timer when
+you want it to become signaled:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL SetWaitableTimer(
+   HANDLE hTimer,
+   const LARGE_INTEGER *pDueTime, 
+   LONG lPeriod,
+   PTIMERAPCROUTINE pfnCompletionRoutine, 
+   PVOID pvArgToCompletionRoutine, 
+   BOOL fResume);
+</pre></td></tr></table></p>
+
+<p>This function takes several parameters and can be quite confusing to
+use. Obviously, the <i>hTimer</i> parameter indicates the timer that
+you want to set. The next two parameters, <i>pDueTime</i> and <i>
+lPeriod</i>, are used together. The <i>pDueTime</i> parameter indicates
+when the timer should go off for the first time, and the <i>lPeriod</i>
+parameter indicates how frequently the timer should go off after that.
+The following code sets a timer to go off for the first time on January
+1, 2002, at 1:00 P.M., and then to go off every six hours after
+that:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// Declare our local variables.
+HANDLE hTimer;
+SYSTEMTIME st;
+FILETIME ftLocal, ftUTC;
+LARGE_INTEGER liUTC;
+
+// Create an auto-reset timer.
+hTimer = CreateWaitableTimer(NULL, FALSE, NULL);
+
+// First signaling is at January 1, 2002, at 1:00 P.M. (local time).
+st.wYear         = 2002; // Year
+st.wMonth        = 1;    // January
+st.wDayOfWeek    = 0;    // Ignored
+st.wDay          = 1;    // The first of the month
+st.wHour         = 13;   // 1PM
+st.wMinute       = 0;    // 0 minutes into the hour
+st.wSecond       = 0;    // 0 seconds into the minute
+st.wMilliseconds = 0;    // 0 milliseconds into the second
+
+SystemTimeToFileTime(&amp;st, &amp;ftLocal);
+
+// Convert local time to UTC time.
+LocalFileTimeToFileTime(&amp;ftLocal, &amp;ftUTC);
+// Convert FILETIME to LARGE_INTEGER because of different alignment.
+liUTC.LowPart  = ftUTC.dwLowDateTime;
+liUTC.HighPart = ftUTC.dwHighDateTime;
+
+// Set the timer.
+SetWaitableTimer(hTimer, &amp;liUTC, 6 * 60 * 60 * 1000,
+   NULL, NULL, FALSE);
+
+<img src="images/grayvellip.JPG" width=3 height=13 border="0">
+</pre></td></tr></table></p>
+
+<p>The code above first initializes a SYSTEMTIME structure that
+indicates when the timer should first go off (be signaled). I set this
+time in local time&#8212;the correct time for the machine's time
+zone. <i>SetWaitableTimer</i>'s second parameter is prototyped as a
+<i>const</i> LARGE_INTEGER * and therefore cannot accept a SYSTEMTIME
+structure directly. However, a FILETIME structure and a LARGE_INTEGER
+structure have identical binary formats: both structures contain two
+32-bit values. So we can convert our SYSTEMTIME structure to a FILETIME
+structure. The next problem is that <i>SetWaitableTimer</i> expects the
+time always to be passed to it in Coordinated Universal Time (UTC)
+time. You can call <i>LocalFileTimeToFileTime</i> to easily make this
+conversion.</p>
+
+<p>Since FILETIME and LARGE_INTEGER structures have identical binary
+formats, you might be tempted to pass the address of the FILETIME
+structure directly to <i>SetWaitableTimer</i>, as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// Set the timer.
+SetWaitableTimer(hTimer, (PLARGE_INTEGER) &amp;ftUTC, 
+   6 * 60 * 60 * 1000, NULL, NULL, FALSE);
+</pre></td></tr></table></p>
+
+<p>In fact, this is what I originally did. However, this is a big
+mistake! Though FILETIME and LARGE_INTEGER structures have identical
+binary format, the alignment requirements of both structures are
+different. The address of all FILETIME structures must begin on a
+32-bit boundary, but the address of all LARGE_INTEGER structures must
+begin on a 64-bit boundary. Whether calling <i>SetWaitableTimer</i> and
+passing it a FILETIME structure works correctly depends on whether the
+FILETIME structure happens to be on a 64-bit boundary. However, the
+compiler ensures that LARGE_INTEGER structures always begin on 64-bit
+boundaries, so the proper thing to do (the thing that is guaranteed to
+work all the time) is to copy the FILETIME's members into a
+LARGE_INTEGER's members and then pass the address of the LARGE_ 
+INTEGER to <i>SetWaitableTimer</i>.</p>
+
+<P><DIV CLASS="NOTE"><BLOCKQUOTE>
+<B>NOTE</B><HR>
+The <i>x</i>86 processors deal with unaligned data references silently. So
+passing the address of a FILETIME to <i>SetWaitableTimer</i> always
+works when your application is running on an <i>x</i>86 CPU. However,
+other processors, such as the Alpha, do not handle unaligned references
+as silently. In fact, most other processors raise an EXCEPTION_ 
+DATATYPE_MISALIGNMENT exception that causes your process to terminate.
+Alignment errors are the biggest cause of problems when you port code
+that works on <i>x</i>86 computers to other processors. If you pay
+attention to alignment issues now, you can save months of porting
+effort later! For more information about alignment issues, see
+<a href="ch13a.htm#161">Chapter 13</a>.
+</BLOCKQUOTE></DIV>
+</P>
+
+<p>Now, to have the timer go off every six hours after January 1, 2002,
+at 1:00 P.M., we turn our attention to the <i>lPeriod</i> parameter.
+This parameter indicates, in milliseconds, how often the timer should
+go off after it initially goes off. For six hours, I pass 21,600,000 (6
+hours * 60 minutes per hour * 60 seconds per minute * 1000 milliseconds
+per second). By the way, <i>SetWaitableTimer</i> does not fail if you
+pass it an absolute time in the past such as January 1, 1975, at 1:00
+P.M.</p>
+
+<p>Instead of setting an absolute time that the timer should first go off,
+you can have the timer go off at a time relative to calling <i>
+SetWaitableTimer</i>. You simply pass a negative value in the <i>
+pDueTime</i> parameter. The value you pass must be in 100-nanosecond
+intervals. Since we don't normally think in intervals of 100
+nanoseconds, you might find this useful: 1 second = 1,000 milliseconds
+= 1,000,000 microseconds = 10,000,000 100-nanoseconds.</p>
+
+<p>The following code sets a timer to initially go off 5 seconds after the
+call to <i>SetWaitableTimer</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// Declare our local variables.
+HANDLE hTimer;
+LARGE_INTEGER li;
+
+// Create an auto-reset timer.
+hTimer = CreateWaitableTimer(NULL, FALSE, NULL);
+
+// Set the timer to go off 5 seconds after calling SetWaitableTimer.
+// Timer unit is 100-nanoseconds.
+const int nTimerUnitsPerSecond = 10000000; 
+
+// Negate the time so that SetWaitableTimer knows we 
+// want relative time instead of absolute time.
+li.QuadPart = -(5 * nTimerUnitsPerSecond);
+ 
+// Set the timer.
+SetWaitableTimer(hTimer, &amp;li, 6 * 60 * 60 * 1000,
+   NULL, NULL, FALSE);
+
+<img src="images/grayvellip.JPG" width=3 height=13 border="0">
+</pre></td></tr></table></p>
+
+<p>Usually, you want a one-shot timer that signals itself once and
+never signals itself again. To accomplish this, you simply pass 0 for
+the <i>lPeriod</i> parameter. You can then call <i>CloseHandle</i> to
+close the timer or you can call <i>SetWaitableTimer</i> again to reset
+the time, giving it new criteria to follow.</p>
+
+<p><i>SetWaitableTimer</i>'s last parameter, <i>fResume,</i> is useful
+for computers that support suspend and resume. Usually, you pass FALSE
+for this argument, as I've done in the code fragments above.
+However, if you're writing a meeting planner_type application in
+which you want to set timers that remind the user of scheduled
+meetings, you should pass TRUE. When the timer goes off, it takes the
+machine out of suspend mode (if it's in suspend mode) and wakes up
+the threads that are waiting on the timer. The application then plays a
+wave file and presents a message box telling the user of the upcoming
+meeting. If you pass FALSE for the <i>fResume</i> parameter, the timer
+object becomes signaled but any threads that it wakes up do not get CPU
+time until the machine is somehow resumed (usually by the user waking
+it up).</p>
+
+<p>Our discussion of waitable timers would not be complete without talking
+about <i>CancelWaitableTimer</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL CancelWaitableTimer(HANDLE hTimer);
+</pre></td></tr></table></p>
+
+<p>This simple function takes the handle of a timer and cancels it so
+that the timer never goes off unless there is a subsequent call to <i>
+SetWaitableTimer</i> to reset the timer. If you ever want to change the
+criteria for a timer, you don't have to call <i>
+CancelWaitableTimer</i> before calling <i>SetWaitableTimer</i>. Each
+call to <i>SetWaitableTimer</i> cancels the criteria for the timer
+before setting the new criteria.</p>
+
+
+<A NAME="129"><H2>Having Waitable Timers Queue APC Entries</H2></A>
+
+<p>So far, you've learned how to create a timer and how to set the
+timer. You also know how to wait on the timer by passing its handle to
+the <i>WaitForSingleObject</i> or <i>WaitForMultipleObjects</i>
+functions. Microsoft also allows timers to queue an asynchronous
+procedure call (APC) to the thread that calls <i>SetWaitableTimer</i>
+when the timer is signaled.</p>
+
+<p>Normally, when you call <i>SetWaitableTimer</i>, you pass NULL for both
+the <i>pfnCompletionRoutine</i> and <i>pvArgToCompletionRoutine</i>
+parameters. When <i>SetWaitableTimer</i> sees NULL for these
+parameters, it knows to signal the timer object when the time comes
+due. However, if you prefer to have the timer queue an APC when the
+time comes due, you must pass the address of a timer APC routine, which
+you must implement. The function should look like this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+VOID APIENTRY TimerAPCRoutine(PVOID pvArgToCompletionRoutine,
+   DWORD dwTimerLowValue, DWORD dwTimerHighValue) {
+
+   // Do whatever you want here.
+}
+</pre></td></tr></table></p>
+
+<p>I've named the function <i>TimerAPCRoutine</i>, but you can name
+it anything you like. This function is called using the same thread
+that called <i>SetWaitableTimer</i> when the timer goes off if and only
+if the calling thread is in an alertable state. In other words, the
+thread must be waiting in a call to <i>SleepEx</i>, <i>
+WaitForSingleObjectEx</i>, <i>WaitForMultipleObjectsEx</i>, <i>
+MsgWaitForMultipleObjectsEx</i>, or <i>SignalObjectAndWait</i>. If the
+thread is not waiting in one of these functions, the system does not
+queue the timer APC routine. This prevents the thread's APC queue
+from becoming overloaded with timer APC notifications, which can waste
+an enormous amount of memory inside the system.</p>
+
+<p>If your thread is in an alertable wait when the timer goes off, the
+system makes your thread call the callback routine. The first parameter
+to the callback routine is the same value that you passed to <i>
+SetWaitableTimer</i>'s <i>pvArgToCompletionRoutine</i> parameter.
+You can pass some context information (usually a pointer to a structure
+that you define) to the <i>TimerAPCRoutine</i>. The remaining two
+parameters, <i>dwTimerLowValue</i> and <i>dwTimerHighValue</i>,
+indicate when the timer went off. The following code takes this
+information and shows it to the user:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+VOID APIENTRY TimerAPCRoutine(PVOID pvArgToCompletionRoutine,
+   DWORD dwTimerLowValue, DWORD dwTimerHighValue) {
+
+   FILETIME ftUTC, ftLocal;
+   SYSTEMTIME st;
+   TCHAR szBuf[256];
+
+   // Put the time in a FILETIME structure.
+   ftUTC.dwLowDateTime = dwTimerLowValue;
+   ftUTC.dwHighDateTime = dwTimerHighValue;
+
+   // Convert the UTC time to the user's local time.
+   FileTimeToLocalFileTime(&amp;ftUTC, &amp;ftLocal);
+
+   // Convert the FILETIME to the SYSTEMTIME structure
+   // required by GetDateFormat and GetTimeFormat.
+   FileTimeToSystemTime(&amp;ftLocal, &amp;st);
+
+   // Construct a string with the 
+   // date/time that the timer went off.
+   GetDateFormat(LOCALE_USER_DEFAULT, DATE_LONGDATE, 
+      &amp;st, NULL, szBuf, sizeof(szBuf) / sizeof(TCHAR));
+   _tcscat(szBuf, _ _TEXT(&quot; &quot;));
+   GetTimeFormat(LOCALE_USER_DEFAULT, 0,
+      &amp;st, NULL, _tcschr(szBuf, 0), 
+      sizeof(szBuf) / sizeof(TCHAR) - _tcslen(szBuf));
+
+   // Show the time to the user.
+   MessageBox(NULL, szBuf, &quot;Timer went off at...&quot;, MB_OK);
+}
+</pre></td></tr></table></p>
+
+<p>Only after all APC entries have been processed does an alertable
+function return. Therefore, you must make sure that your <i>
+TimerAPCRoutine</i> function finishes executing before the timer
+becomes signaled again so that APC entries are not queued faster than
+they can be processed.</p>
+
+<p>This code shows the proper way to use timers and APCs:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+void SomeFunc() {
+   // Create a timer. (It doesn't matter whether it's manual-reset 
+   // or auto-reset.)
+   HANDLE hTimer = CreateWaitableTimer(NULL, TRUE, NULL);
+
+   // Set timer to go off in 5 seconds.
+   LARGE_INTEGER li = { 0 };
+   SetWaitableTimer(hTimer, &amp;li, 5000, TimerAPCRoutine, NULL, FALSE);
+
+   // Wait in an alertable state for the timer to go off.
+   SleepEx(INFINITE, TRUE);
+
+   CloseHandle(hTimer);
+}
+</pre></td></tr></table></p>
+
+<p>One final word: a thread should not wait on a timer's handle and
+wait on a timer alertably. Take a look at this code:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HANDLE hTimer = CreateWaitableTimer(NULL, FALSE, NULL);
+SetWaitableTimer(hTimer, ..., TimerAPCRoutine,...);
+WaitForSingleObjectEx(hTimer, INFINITE, TRUE);
+</pre></td></tr></table></p>
+
+<p>You should not write code like this because the call to <i>
+WaitForSingleObjectEx</i> is actually waiting on the timer twice:
+alertably and with a kernel object handle. When the timer becomes
+signaled, the wait is successful and the thread wakes, which takes the
+thread out of the alertable state, and the APC routine is not called.
+As I said earlier, you won't often have a reason to use an APC
+routine with waitable timers because you can always wait for the timer
+to be signaled and then do what you want.</p>
+
+
+<A NAME="130"><H2>Timer Loose Ends</H2></A>
+
+<p>Timers are frequently used in communication protocols. For example,
+if a client makes a request of a server and the server doesn't
+respond in a certain amount of time, the client assumes that the server
+is not available. Today, client machines typically communicate with
+many servers simultaneously. If you were to create a timer kernel
+object for every single request, system performance would be hampered.
+You can imagine that it would be possible, for most applications, to
+create a single timer object and simply change the due time as
+necessary.</p>
+
+<p>This managing of due times and resetting of the timer can be tedious;
+few applications go to the effort. However, among the new thread
+pooling functions (covered in <A HREF="ch11a.htm">Chapter 11</A>) is a new function called <i>
+CreateTimerQueueTimer</i> that does all of this work for you. If you
+find yourself creating and managing several timer objects, take a look
+at this function to reduce your application's overhead.</p>
+
+<p>While it is nice that timers can queue APC entries, most applications
+written today do not use APCs; they use the I/O completion port
+mechanism. In the past, I have needed a thread in my own thread pool
+(managed with an I/O completion port) to wake up at specific timer
+intervals. Unfortunately, waitable timers do not offer this facility.
+To accomplish this, I have had to create a single thread whose sole job
+is to set and wait on a waitable timer. When the timer becomes
+signaled, the thread calls <i>PostQueuedCompletionStatus</i> to force
+an event to a thread in my thread pool.</p>
+
+<p>One last note: any seasoned Windows developer will immediately compare
+waitable timers and User timers (set with the <i>SetTimer</i>
+function). The biggest difference is that User timers require a lot of
+additional user interface infrastructure in your application, which
+makes them more resource intensive. Also, waitable timers are kernel
+objects, which means that they can be shared by multiple threads and
+are securable.</p>
+
+<p>User timers generate WM_TIMER messages that come back to the thread
+that called <i>SetTimer</i> (for callback timers) or the thread that
+created the window (for window-based timers). So only one thread is
+notified when a User timer goes off. Multiple threads, on the other
+hand, can wait on waitable timers, and several threads can be scheduled
+if the timer is a manual-reset timer.</p>
+
+<p>If you are going to perform user-interface-related events in response
+to a timer, it is probably easier to structure your code using User
+timers because using a waitable timer requires that your threads wait
+for messages as well as kernel objects. (If you want to restructure
+your code, use the <i>MsgWaitForMultipleObjects</i> function, which
+exists for exactly this purpose.) Finally, with waitable timers,
+you're more likely to be notified when the time actually expires.
+As <A HREF="ch27a.htm">Chapter 27</A> explains, WM_TIMER messages are always the lowestpriority
+messages and are retrieved when no other messages are in a thread's
+queue. Waitable timers are not treated any differently than other
+kernel objects; if the timer goes off and your thread is waiting, your
+thread will wake up.</p>
+
+
+</BODY>
+</HTML>
+
+
+
+
+
+

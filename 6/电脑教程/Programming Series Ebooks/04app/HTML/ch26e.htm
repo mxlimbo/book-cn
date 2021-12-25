@@ -1,0 +1,475 @@
+<HTML>
+<HEAD>
+<TITLE>Waking a Thread</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch26d.htm">[Previous]</A> <A HREF="ch26f.htm">[Next]</A><P>
+
+<A NAME="352"><H1>Waking a Thread</H1></A>
+
+<p>When a thread calls <i>GetMessage</i> or <i>WaitMessage</i> and
+there are no messages for the thread or windows created by the thread,
+the system can suspend the thread so that it is not scheduled any CPU
+time. However, when a message is posted or sent to the thread, the
+system sets a wake flag indicating that the thread should now be
+scheduled CPU time to process the message. Under normal circumstances,
+the user is not typing or moving the mouse and no messages are being
+sent to any of the windows. This means that most of the threads in the
+system are not being scheduled any CPU time.</p>
+
+<A NAME="353"><H2>The Queue Status Flags</H2></A>
+
+<p>When a thread is running, it can query the status of its queues by
+calling the <i>GetQueueStatus</i> function:</p>
+
+<p><table cellpadding=5><tr><td>
+<PRE>
+DWORD GetQueueStatus(UINT fuFlags);
+</pre></td></tr></table></p>
+
+<p>The <i>fuFlags</i> parameter is a flag or a set of flags ORed
+together that allows you to test for specific wake bits. The following
+table shows the possible flag values and their meanings.</p>
+
+<p><table cellpadding=5 width="95%">
+<tr><th>Flag</th>
+<th>Message in the Queue</th></tr>
+
+<tr><td valign="top">QS_KEY</td>
+<td valign="top">WM_KEYUP, WM_KEYDOWN, WM_SYSKEYUP, or WM_SYSKEYDOWN</td></tr>
+
+<tr><td valign="top">QS_MOUSEMOVE</td>
+<td valign="top">WM_MOUSEMOVE</td></tr>
+
+<tr><td valign="top">QS_MOUSEBUTTON</td>
+<td valign="top">WM_?BUTTON* (Where ? is L, M, or R, and * is DOWN, UP, or DBLCLK)</td></tr>
+
+<tr><td valign="top">QS_MOUSE</td>
+<td valign="top">Same as QS_MOUSEMOVE | QS_MOUSEBUTTON</td></tr>
+
+<tr><td valign="top">QS_INPUT</td>
+<td valign="top">Same as QS_MOUSE | QS_KEY</td></tr>
+
+<tr><td valign="top">QS_PAINT</td>
+<td valign="top">WM_PAINT</td></tr>
+
+<tr><td valign="top">QS_TIMER</td>
+<td valign="top">WM_TIMER</td></tr>
+
+<tr><td valign="top">QS_HOTKEY</td>
+<td valign="top">WM_HOTKEY</td></tr>
+
+<tr><td valign="top">QS_POSTMESSAGE</td>
+<td valign="top">Posted message (other than from a hardware input event). This flag is identical to QS_ALLPOSTMESSAGE except that this flag is cleared when the queue has no posted messages in the desired message filter range.</td></tr>
+
+<tr><td valign="top">QS_ALLPOSTMESSAGE</td>
+<td valign="top">Posted message (other than from a hardware input event). This flag is identical to QS_POSTMESSAGE except that this flag is only cleared when the queue has absolutely no posted messages (regardless of any message filter range).</td></tr>
+
+<tr><td valign="top">QS_ALLEVENTS</td>
+<td valign="top">Same as QS_INPUT | QS_POSTMESSAGE | QS_TIMER | QS_PAINT | QS_HOTKEY</td></tr>
+
+<tr><td valign="top">QS_QUIT</td>
+<td valign="top"><i>PostQuitMessage</i> has been called. Note that this flag is not documented and does not exist in the WinUser.h file. It is used internally by the system.</td></tr>
+
+<tr><td valign="top">QS_SENDMESSAGE</td>
+<td valign="top">Message sent by another thread</td></tr>
+
+<tr><td valign="top">QS_ALLINPUT</td>
+<td valign="top">Same as QS_ALLEVENTS | QS_SENDMESSAGE</td></tr>
+</table></p>
+
+<p>When you call the <i>GetQueueStatus</i> function, the <i>fuFlags</i>
+parameter tells <i>GetQueueStatus</i> the types of messages to check
+for in the queues. The fewer the number of QS_* identifiers you OR
+together, the faster the call executes. Then when <i>GetQueueStatus</i>
+returns, the types of messages currently in the thread's queues can
+be found in the high word of the return value. This returned set of
+flags will always be a subset of what you asked for. For example,
+let's say you make the following call:</p>
+
+<p><table cellpadding=5><tr><td>
+<PRE>
+BOOL fPaintMsgWaiting = HIWORD(GetQueueStatus(QS_TIMER)) &amp; QS_PAINT;
+</pre></td></tr></table></p>
+
+<p>The value of <i>fPaintMsgWaiting</i> will always be FALSE whether or
+not a WM_PAINT message is waiting in the queue, because QS_PAINT was not
+specified as a flag in the parameter passed to 
+<i>GetQueueStatus</i>.</p>
+
+<p>The low word of <i>GetQueueStatus</i>'s return value indicates
+the types of messages that have been added to the queue and that
+haven't been processed since the last call to 
+<i>GetQueueStatus</i>, <i>GetMessage</i>, or <i>PeekMessage</i>.</p>
+
+<p>Not all the wake flags are treated equally by the system. For the
+QS_MOUSEMOVE flag, the flag is turned on as long as an unprocessed 
+WM_MOUSEMOVE message exists in the queue. When <i>GetMessage</i> or 
+<i>PeekMessage</i> (with PM_REMOVE) pulls the last WM_MOUSEMOVE message
+from the queue, the flag is turned off until a new WM_MOUSEMOVE message
+is placed in the input queue. The QS_KEY, QS_MOUSEBUTTON, and QS_HOTKEY
+flags work in the same way for their respective messages.</p>
+
+<p>The QS_PAINT flag is handled differently. If a window created by the
+thread has an invalid region, the QS_PAINT flag is turned on. When the
+area occupied by all windows created by this thread becomes validated
+(usually by a call to <i>ValidateRect</i>, <i>ValidateRegion</i>, or
+<i>BeginPaint</i>), the QS_PAINT flag is turned off. This flag is
+turned off only when all windows created by the thread are validated.
+Calling <i>GetMessage</i> or <i>PeekMessage</i> has no effect on this
+wake flag.</p>
+
+<p>The QS_POSTMESSAGE flag is set whenever at least one message is in
+the thread's posted-message queue. This doesn't include
+hardware event messages that are in the thread's virtualized input
+queue. When all the messages in the thread's posted-message queue
+have been processed and the queue is empty, this flag is reset.</p>
+
+<p>The QS_TIMER flag is set whenever a timer (created by the thread)
+goes off. After <i>GetMessage</i> or <i>PeekMessage</i> returns the
+WM_TIMER event, the QS_TIMER flag is reset until the timer goes off again.</p>
+
+<p>The QS_SENDMESSAGE flag indicates that a message is in the
+thread's send-message queue. This flag is used by the system
+internally to identify and process messages being sent from one thread
+to another. It is not set for messages that a thread sends to itself.
+Although you can use the QS_SENDMESSAGE flag, you'd rarely need to.
+I've never seen an application use this flag.</p>
+
+<p>There is another queue status flag that is not
+documented&#8212;QS_QUIT. When a thread calls <i>PostQuitMessage</i>,
+the QS_QUIT flag is turned on. The system does not actually append a
+WM_QUIT message to the thread's message queue. The 
+<i>GetQueueStatus</i> function does not return the state of this flag.</p>
+
+<A NAME="354"><H2>The Algorithm for Extracting Messages from a Thread's Queue</H2></A>
+
+<p>When a thread calls <i>GetMessage</i> or <i>PeekMessage</i>, the
+system must examine the state of the thread's queue status flags
+and determine which message should be processed. Figure 26-2 and the
+following steps illustrate how the system determines which message the
+thread should process next.</p>
+
+<ol>
+<p><li>If the QS_SENDMESSAGE flag is turned on, the system sends the
+message to the proper window procedure. Both the <i>GetMessage</i> and
+<i>PeekMessage</i> functions handle this processing internally and do
+not return to the thread after the window procedure has processed the
+message; instead, these functions sit and wait for another message to
+process.</li></p>
+
+<p><li>If messages are in the thread's posted-message queue, 
+<i>GetMessage</i> and <i>PeekMessage</i> fill the MSG structure passed to
+these functions, and then the functions return. The thread's
+message loop usually calls <i>DispatchMessage</i> at this point to have
+the message processed by the appropriate window procedure.</li></p>
+
+<p><li>If the QS_QUIT flag is turned on, <i>GetMessage</i> and 
+<i>PeekMessage</i> return a WM_QUIT message (where the <i>wParam</i>
+parameter is the specified exit code) and reset the QS_QUIT flag.</li></p>
+
+<p><li>If messages are in the thread's virtualized input queue, 
+<i>GetMessage</i> and <i>PeekMessage</i> return the hardware input
+message.</li></p>
+
+<p><li>If the QS_PAINT flag is turned on, <i>GetMessage</i> and 
+<i>PeekMessage</i> return a WM_PAINT message for the proper window.</li></p>
+
+<p><li>If the QS_TIMER flag is turned on, <i>GetMessage</i> and 
+<i>PeekMessage</i> return a WM_TIMER message.</li></p>
+</ol>
+
+<p>Although you might find it hard to believe, there's a reason for
+this madness. The big assumption that Microsoft made when designing
+this algorithm was that applications should be user-driven and that the
+user would drive the applications by creating hardware input events
+(keyboard and mouse operations). While using an application, the user
+might press a mouse button, causing a sequence of events to occur. An
+application makes each of the individual events occur by posting
+messages to the thread's message queue.</p>
+
+<p>
+<A HREF="javascript:fullSize('F26si02x.htm')"> <img src="images/F26si02.JPG" width=404 height=253 border=0 ALT="Click to view at full size."> </A>
+</p><p>
+<!-- CAPTION --><b>Figure 26-2.</b> <i>The algorithm for extracting messages from a thread's queue</i><!-- /CAPTION -->
+</p>
+
+<p>So if you press the mouse button, the window that processes the
+WM_LBUTTONDOWN message might post three messages to different windows.
+Because it is the hardware event that sparks these three software
+events, the system processes the software events before retrieving the
+user's next hardware event. This explains why the posted-message
+queue is checked before the virtualized input queue.</p>
+
+<p>An excellent example of this sequence of events is a call to the 
+<i>TranslateMessage</i> function. This function checks whether a
+WM_KEYDOWN or a WM_SYSKEYDOWN message was retrieved from the input
+queue. If one of these messages was retrieved, the system checks
+whether the virtual key information can be converted to a character
+equivalent. If the virtual key information can be converted, 
+<i>TranslateMessage</i> calls <i>PostMessage</i> to place a WM_CHAR
+message or a WM_SYSCHAR message in the posted-message queue. The next
+time <i>GetMessage</i> is called, the system first checks the contents
+of the posted-message queue and, if a message exists there, pulls the
+message from the queue and returns it. The returned message will be the
+WM_CHAR message or the WM_SYSCHAR message. The next time 
+<i>GetMessage</i> is called, the system checks the posted-message queue
+and finds it empty. The system then checks the input queue, where it
+finds the WM_(SYS)KEYUP message. <i>GetMessage</i> returns this
+message.</p>
+
+<p>Because the system works this way, the following sequence of
+hardware events WM_KEYDOWN WM_KEYUP generates the following sequence of
+messages to your window procedure (assuming that the virtual key
+information can be converted to a character equivalent):</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+WM_KEYDOWN
+WM_CHAR
+WM_KEYUP
+</pre></td></tr></table></p>
+
+<p>Now let's get back to discussing how the system decides what
+messages to return from <i>GetMessage</i> and <i>PeekMessage</i>. After
+the system checks the posted-message queue&#8212;but before it checks
+the virtualized input queue&#8212;it checks the QS_QUIT flag. Remember
+that the QS_QUIT flag is set when the thread calls 
+<i>PostQuitMessage</i>. Calling <i>PostQuitMessage</i> is similar (but not
+identical) to calling <i>PostThreadMessage</i>, which places the
+message at the end of the message queue and causes the message to be
+processed before the input queue is checked. So why does 
+<i>PostQuitMessage</i> set a flag instead of placing a WM_QUIT message in
+the message queue? There are two reasons.</p>
+
+<p>First, it is possible that posting a message could fail in very low
+memory situations. If an application wants to quit, it should be
+allowed to quit&#8212;even (or especially) in low-memory situations. The
+second reason is that using a flag allows the thread to finish
+processing all the other posted messages before the thread's message 
+loop terminates. So if you have the following
+code fragment, the WM_USER message will be retrieved from the queue
+before a WM_QUIT message, even though the WM_USER message is posted to
+the queue after <i>PostQuitMessage</i> is called.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+case WM_CLOSE:
+   PostQuitMessage(0);
+   PostMessage(hwnd, WM_USER, 0, 0);
+</pre></td></tr></table></p>
+
+<p>The last two messages are WM_PAINT and WM_TIMER. A WM_PAINT message
+has low priority because painting the screen is a slow process. If a
+WM_PAINT message were sent every time a window became invalid, the
+system would be too slow to use. By placing WM_PAINT messages after
+keyboard input, the system runs much faster. For example, you can
+select a menu item that invokes a dialog box, choose an item from the
+box, and press Enter all before the dialog box even appears on the
+screen. If you type fast enough, your keystroke messages will always be
+pulled from the queue before any WM_PAINT messages. When you press
+Enter to accept the dialog box options, the dialog box window is
+destroyed and the system resets the QS_PAINT flag.</p>
+
+<p>The last message, WM_TIMER, has an even lower priority than a
+WM_PAINT message. To understand why, think about an application that
+updates its display with every WM_TIMER message. If the timer messages
+came in too fast, the display would not get a chance to repaint itself.
+By processing WM_PAINT messages before WM_TIMER messages, this problem
+is avoided and the application is always able to update its
+display.</p>
+
+<p><div class="note"><blockquote><b>NOTE</b><hr>
+Remember that the <i>GetMessage</i> and <i>PeekMessage</i> functions
+check only the wake flags and message queues of the calling thread.
+This means that threads can never retrieve messages from a queue that
+is attached to another thread&#8212;including messages for threads that
+are part of the same process.
+</blockquote></div></p>
+
+<A NAME="355"><H2>Waking a Thread with Kernel Objects or with Queue Status Flags</H2></A>
+
+<p>The <i>GetMessage</i> and <i>PeekMessage</i> functions cause a
+thread to sleep until the thread needs to process a UI-related task.
+Sometimes, it's convenient to have a thread that can wake up to
+process a UI-related task or some other task. For example, a thread
+could start some long operation and give the user the ability to cancel
+the operation. This thread needs to know when the operation has
+completed (a non-UI-related task), or if the user clicks on a Cancel
+button (a UI-related task) to terminate the operation.</p>
+
+<p>A thread can call the <i>MsgWaitForMultipleObjects</i> or 
+<i>MsgWaitForMultipleObjectsEx</i> functions to cause the thread to wait
+for its own messages:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+DWORD MsgWaitForMultipleObjects(
+   DWORD nCount, 
+   PHANDLE phObjects,
+   BOOL fWaitAll, 
+   DWORD dwMilliseconds, 
+   DWORD dwWakeMask);
+
+DWORD MsgWaitForMultipleObjectsEx(
+   DWORD nCount, 
+   PHANDLE phObjects,
+   DWORD dwMilliseconds, 
+   DWORD dwWakeMask, 
+   DWORD dwFlags);
+</pre></td></tr></table></p>
+
+<p>These functions are similar to the <i>WaitForMultipleObjects</i>
+function (discussed in <A HREF="ch09a.htm">Chapter 9</A>). The difference is that these
+functions allow a thread to be scheduled when a kernel object becomes
+signaled or when a window message needs dispatching to a window created
+by the calling thread.</p>
+
+<p>Internally, the system is just adding an event kernel object to the
+array of kernel handles. The <i>dwWakeMask</i> parameter tells the
+system when you want the event to be signaled. The legal domain of
+possible values that can be specified in <i>dwWakeMask</i> parameter is
+the same as the values that can be passed to the <i>GetQueueStatus</i>
+function.</p>
+
+<p>Normally, when the <i>WaitForMultipleObjects</i> function returns,
+it returns the index of the object that became signaled to satisfy the
+call (WAIT_OBJECT_0 to WAIT_OBJECT_0 + <i>nCount</i> 1). Adding the 
+<i>dwWakeMask</i> parameter is like adding another handle to the call. If
+<i>MsgWaitForMultipleObjects(Ex)</i> is satisfied because of the wake
+mask, the return value will be WAIT_OBJECT_0 + <i>nCount</i>.</p>
+
+<p>Here's an example demonstrating how to call <i>MsgWaitForMultipleObjects</i>:</p>
+
+<p><table cellpadding=5><tr><td>
+<PRE>
+MsgWaitForMultipleObjects(0, NULL, TRUE, INFINITE, QS_INPUT);
+</pre></td></tr></table></p>
+
+<p>This statement says that we're not passing any handles of
+synchronization objects, as indicated by passing 0 and NULL for the 
+<i>nCount</i> and <i>phObjects</i> parameters. We're telling the
+function to wait for all objects to be signaled. But because we're
+specifying only one object to wait on, the <i>fWaitAll</i> parameter
+could have easily been FALSE without altering the effect of this call.
+We are also telling the system that we want to wait&#8212;however long
+it takes&#8212;until either a keyboard message or a mouse message is
+available in the calling thread's input queue.</p>
+
+<p>As soon as you start getting creative using 
+<i>MsgWaitForMultipleObjects</i>, you realize that this function lacks
+many important features. This is why Microsoft was forced to create the
+<i>MsgWaitForMultipleObjectsEx</i> function. This 
+<i>MsgWaitForMultipleObjectsEx</i> function is a superset of 
+<i>MsgWaitForMultipleObjects.</i> The new features come by way of the 
+<i>dwFlags</i> parameter. For this parameter, you can specify any
+combination of the following flags.</p>
+
+<p><table cellpadding=5 width="95%">
+<tr><th>Flag</th>
+<th>Description</th></tr>
+
+<tr><td valign="top">MWMO_WAITALL</td>
+<td valign="top">The function waits for all the kernel objects to become signaled and for the specified messages to appear in the thread's queue. Without this flag, the function waits until any kernel object becomes signaled or for the specified message to appear in the thread's queue.</td></tr>
+
+<tr><td valign="top">MWMO_ALERTABLE</td>
+<td valign="top">The function waits in an alertable state.</td></tr>
+
+<tr><td valign="top">MWMO_INPUTAVAILABLE</td>
+<td valign="top">The function wakes if any of the specified messages are in the thread's queue. (I'll explain this in more detail a little later on in this section.)</td></tr>
+</table></p>
+
+<p>If you don't want any of these additional features, you just
+pass zero (0) for the <i>dwFlags</i> parameter.</p>
+
+<p>Here are the important things to note about 
+<i>MsgWaitForMultipleObjects(Ex)</i>:</p>
+
+<ul>
+<p><li>Since this function just appends an internal event kernel object
+to the array of kernel handles, the maximum value of the <i>nCount</i>
+parameter is MAXIMUM_WAIT_OBJECTS minus 1, or 63.</li></p>
+
+<p><li>When you pass FALSE for the <i>fWaitAll</i> parameter, the
+function returns when either a kernel object is signaled or when the
+specified message type appears in the thread's queue.</li></p>
+
+<p><li>When you pass TRUE for the <i>fWaitAll</i> parameter, the
+function returns when all of the kernel objects are signaled <i>and</i>
+the specified message type appears in the thread's queue. This
+behavior seems to catch many developers by surprise. Many developers
+want a way to have their thread wake up when all the kernel objects are
+signaled <i>or</i> when the specified message type appears in the
+thread's queue. There is no function that is capable of the
+latter.</li></p>
+
+<p><li>When you call either of these functions, they actually check to
+see if <i>new</i> messages of the specified type have been placed into
+the calling thread's queue.</li></p>
+</ul>
+
+<p>Note that the last point also catches many developers by surprise.
+Here's an example of the problem. Let's say that a thread's
+queue currently contains two keystroke messages in it. If the thread
+were to now call <i>MsgWaitForMultipleObjects(Ex)</i> with the 
+<i>dwWakeMask</i> parameter set to QS_INPUT, the thread would wake 
+up, pull the first keystroke message
+from the queue, and process the message. Now, if the thread were to
+call <i>MsgWaitForMultipleObjects(Ex)</i> again, the thread would not
+wake up because there is no <i>new</i> message in the thread's
+queue.</p>
+
+<p>This has become such a major problem for developers that Microsoft
+added the MWMO_INPUTAVAILABLE flag, which can be used only with 
+<i>MsgWaitForMultipleObjectsEx</i>, not <i>MsgWaitForMultipleObjects.</i></p>
+
+<p>Here is an example of how to properly code a message loop using <i>MsgWaitForMultipleObjectsEx</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL  fQuit = FALSE;         // Should the loop terminate?
+
+while (!fQuit) {
+
+   // Wake when the kernel object is signaled OR
+   // if we have to process a UI message.
+   DWORD dwResult = MsgWaitForMultipleObjectsEx(1, &amp;hEvent,
+      INFINITE, QS_ALLEVENTS, MWMO_INPUTAVAILABLE);
+
+   switch (dwResult) {
+      case WAIT_OBJECT_0:    // The event became signaled.
+         break;
+
+      case WAIT_OBJECT_0 + 1:  // A message is in our queue.
+
+         // Dispatch all of the messages.
+         MSG msg;
+         while (PeekMessage(&amp;msg, NULL, 0, 0, PM_REMOVE)) {
+
+            if (msg.message == WM_QUIT) {
+               // A WM_QUIT message, exit the loop
+               fQuit = TRUE;
+            } else {
+               // Translate and dispatch the message.
+               TranslateMessage(&amp;msg);
+               DispatchMessage(&amp;msg);
+            }
+         } // Our queue is empty.
+         break;
+   }
+}   // End of while loop
+</pre></td></tr></table></p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

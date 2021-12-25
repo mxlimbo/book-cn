@@ -1,0 +1,137 @@
+<HTML>
+<HEAD>
+<TITLE>Passing Requests Down to Lower Levels</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch05d.htm">[Previous]</A> <A HREF="ch05f.htm">[Next]</a>
+</p>
+
+<A NAME="164"><H1>Passing Requests Down to Lower Levels</H1></A>
+
+<p>The whole goal of the layering of device objects which WDM facilitates is that you want to
+be able to easily pass IRPs from one layer down to the next. Back in Chapter 2, &quot;<A HREF="ch02a.htm#30">Basic Structure of a WDM Driver</A>,&quot; I discussed how your AddDevice routine would contribute its
+portion of the effort required to create a stack of device objects with a statement like this
+one:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+pdx-&gt;LowerDeviceObject = IoAttachDeviceToDeviceStack(fdo, pdo);
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>where <b>fdo</b> is the address of your own device object and <b>pdo</b> is the address of
+the physical device object (PDO) at the bottom of the device stack. <b>
+IoAttachDeviceToDeviceStack</b> returns to you the address of the device object immediately
+underneath yours. When you decide to forward an IRP that you received from above, this is the
+device object you'll specify in the eventual call to IoCallDriver.</p>
+
+<p>When you pass an IRP down, you have the additional responsibility of initializing the
+IO_STACK_LOCATION that the next driver will use to obtain its parameters. One way of doing this
+is to perform a physical copy, like this:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+...
+IoCopyCurrentIrpStackLocationToNext(Irp);
+status = IoCallDriver(pdx-&gt;LowerDeviceObject, Irp);
+...
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p><b>IoCopyCurrentIrpStackLocationToNext</b> is a macro in WDM.H that copies all the fields in
+an IO_STACK_LOCATION&#8212;except for the ones that pertain to the I/O completion
+routines&#8212;from the current stack location to the next one. In previous versions of Windows
+NT, kernel-mode driver writers sometimes copied the entire stack location, which would cause
+the caller's completion routine to be called <i>twice.</i> (Recall that your completion
+routine pointer goes in the stack location underneath yours.) For an explanation of how this
+particular trap could bite the unwary developer, see &quot;Secrets of the Universe Revealed!
+How NT Handles I/O Completion&quot; in <i>The NT Insider</i> (May 1997, vol. 4, no. 3). The
+IoCopyCurrentIrpStackLocationToNext macro, which is new with the WDM, avoids the problem.</p>
+
+<p>Driver writers that don't care what happens to the IRP after they pass it down often use a
+shortcut to get around actually copying a stack location. In such a situation, they won't
+be installing a completion routine&#8212;I just said they don't care what happens to the
+IRP. Refer to Figure 5-8 for an illustration of the timing of events in this case.</p>
+
+<p>
+<A HREF="javascript:fullSize('F05wi08x.htm')"> <img src="images/F05wi08.JPG" width=404 height=320 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 5-8.</b> <i>Passing an IRP down and ignoring its ending status.</i><!--/caption-->
+</p>
+
+
+<p>There's no reason to spend the machine cycles to copy your stack location to the next
+location&#8212;the one you already have contains the parameters you want the next driver to see
+as well as whatever completion pointer the driver above you might have specified. You therefore
+use the following shortcut:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+NTSTATUS ForwardAndForget(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+  IoSkipCurrentIrpStackLocation(Irp);
+  return IoCallDriver(pdx-&gt;LowerDeviceObject, Irp);
+  }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The shortcut is in the function (actually a macro) misleadingly named <b>
+IoSkipCurrentIrpStackLocation</b>. What this macro does is <i>retard</i> the IRP's stack
+pointer by one position. IoCallDriver will immediately <i>advance</i> the stack pointer. The
+net effect is to not change the stack pointer. When the next driver's dispatch routine
+calls IoGetCurrentIrpStackLocation, it will retrieve exactly the same IO_STACK_LOCATION pointer
+that we were working with, and it will thereby process exactly the same request (same major and
+minor function codes) with the same parameters.</p>
+
+<p>You'll notice that the array of IO_STACK_LOCATIONs contains an entry at the very bottom
+that won't be used in this scenario. In fact, if drivers underneath us play the same trick,
+there might be more than one location that won't be used. That's not a problem,
+though&#8212;it just means that something allocated more stack locations than it needed to.
+It's not a problem that the stack gets unwound a little bit quicker during completion
+processing, either. IoCompleteRequest doesn't use any absolute indices or pointers when it
+unwinds the stack. It just starts at whatever the current location is when it gains control and
+works its way upward calling completion routines. All the completion routines that got
+installed will get called, and the then-current stack locations will be the ones that their
+drivers were expecting to work with.</p>
+
+<p>The explanation of why IoSkipCurrentIrpStackLocation works is so tricky that I thought an
+illustration might help. Figure 5-9 illustrates a situation in which three drivers are in a
+particular stack: yours (the functional device object [FDO]) and two others (an upper filter
+device object [FiDO] and the PDO). In the first picture (a), you see the relationship between
+stack locations, parameters, and completion routines when we do the copy step with
+IoCopyCurrentIrpStackLocationToNext. In the second picture (b), you see the same relationships
+when we use the IoSkipCurrentIrpStackLocation shortcut. In the second picture, the third and
+last stack location is fallow, but nobody gets confused by that fact.</p>
+
+<p>
+<A HREF="javascript:fullSize('F05wi09x.htm')"> <img src="images/F05wi09.JPG" width=404 height=366 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 5-9.</b> <i>Comparison of copying vs. skipping I/O stack locations.</i><!--/caption-->
+</p>
+
+
+
+</BODY>
+</HTML>
+
+
+
+
+

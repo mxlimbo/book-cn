@@ -1,0 +1,1016 @@
+<HTML>
+<HEAD>
+	<LINK REL=StyleSheet HREF="petzoldi.css" TYPE="text/css">
+<TITLE>The Union of DIBs and DDBs</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="507"><h1>The Union of DIBs and DDBs</h1></A><P>You can do a lot knowing the format of the DIB and by calling the two DIB-drawing 
+functions, <I>SetDIBitsToDevice</I> and 
+<I>StretchDIBits</I>. You have direct access to every single bit, 
+byte, and pixel in the DIB, and once you come up with a bunch of functions that let you 
+examine and alter this data in a structured manner, there are no restrictions on what you can do.
+<P>Actually, we've found that there <I>are</I> some restrictions. In the last chapter, we saw 
+how you can use GDI functions to draw images on a DDB. So far, there doesn't appear to 
+be any way we can do that with DIBs. Another problem is that 
+<I>SetDIBitsToDevice</I> and <I>StretchDIBits</I> are not nearly as fast as 
+<I>BitBlt</I> and <I>StretchBlt</I>, particularly under Windows NT 
+and when many nearest-color searches have to be performed, such as when 24-bit DIBs 
+are displayed on 8-bit video boards. 
+<P>So, it might be advantageous to convert between DIBs and DDBs. For example, 
+if we had a DIB that we needed to display to the screen and we might have to do this 
+numerous times, then it would make more sense to convert the DIB into a DDB so that 
+we could use the faster <I>BitBlt</I> and 
+<I>StretchBlt</I> functions with it.
+
+<A NAME="508"><h2>Creating a DDB from a DIB</h2></A><P>Is it possible to create a GDI bitmap object from a DIB? We basically already know 
+how to do it: If you have a DIB, you can use 
+<I>CreateCompatibleBitmap</I> to create a GDI 
+bitmap object of the same size as the DIB and compatible with the video display. You then 
+select the bitmap object into a memory device context and call 
+<I>SetDIBitsToDevice</I> to draw on that memory DC. The result is a DDB with the same image as the DIB but with a color 
+organization that is compatible with the video display.
+<P>Or you can do the job with a fewer number of steps by using 
+<I>CreateDIBitmap</I>. The function has the following syntax:
+<p><pre>
+hBitmap = CreateDIBitmap (
+               hdc,        // device context handle
+               pInfoHdr,   // pointer to DIB information header
+               fInit,      // 0 or CBM_INIT
+               pBits,      // pointer to DIB pixel bits
+               pInfo,      // pointer to DIB information
+               fClrUse) ;  // color use flag
+</PRE>
+<P>Notice the two arguments I've called 
+<I>pInfoHdr</I> and <I>pInfo</I>. These are defined as 
+pointers to a BITMAPINFOHEADER structure and a BITMAPINFO structure, respectively. As 
+we know, the BITMAPINFO structure is a BITMAPINFOHEADER structure followed by a 
+color table. We'll see how this distinction works shortly. The last argument is either 
+DIB_RGB_ COLORS (which equals 0) or DIB_PAL_COLORS, as with the 
+<I>SetDIBitsToDevice</I> functions. I'll have more to say about this in the next chapter.
+<P>It is important in understanding the full array of bitmap functions in Windows to 
+realize that, despite its name, the 
+<I>CreateDIBitmap</I> function <I>does not create a 
+device-independent bitmap</I>. It creates a 
+device-<I>dependent</I> bitmap from a device-independent 
+specification. Notice that the function returns a handle to a GDI bitmap object, the same as 
+<I>CreateBitmap</I>, <I>CreateBitmapIndirect</I>, and 
+<I>CreateCompatibleBitmap</I>.
+<P>The simplest way to call the 
+<I>CreateDIBitmap</I> function is like so:
+<p><pre>
+hBitmap = CreateDIBitmap (NULL, pbmih, 0, NULL, NULL, 0) ;
+</PRE>
+<P>The only argument is a pointer to a BITMAPINFOHEADER structure (without the 
+color table). In this form, the function creates a monochrome GDI bitmap object. The 
+second simplest way to call the function is
+<p><pre>
+hBitmap = CreateDIBitmap (hdc, pbmih, 0, NULL, NULL, 0) ;
+</PRE>
+<P>In this form, the function creates a DDB that is compatible with the device context 
+indicated by the <I>hdc</I> argument. So far, we've done nothing we couldn't have done 
+using <I>CreateBitmap</I> (to create a monochrome bitmap) or 
+<I>CreateCompatibleBitmap</I> (to create one compatible with the video display).
+<p>In these two simplified forms of 
+<I>CreateDIBitmap</I>, the pixel bits remain 
+uninitialized. If the third argument to 
+<I>CreateDIBitmap</I> is CBM_INIT, Windows creates the DDB and 
+uses the last three arguments to initialize the bitmap bits. The 
+<I>pInfo</I> argument is a pointer to a BITMAPINFO structure that includes a color table. The 
+<I>pBits</I> argument is a pointer to an array of bits in the color format indicated by the BITMAPINFO structure. Based on the 
+color table, these bits are converted to the color format of the device. This is identical to 
+what happens in <I>SetDIBitsToDevice</I>. Indeed, the entire 
+<I>CreateDIBitmap</I> function could probably be implemented with the following code:
+<p><pre>
+HBITMAP CreateDIBitmap (HDC hdc, CONST BITMAPINFOHEADER * pbmih,
+                        DWORD fInit, CONST VOID * pBits, 
+                        CONST BITMAPINFO * pbmi, UINT fUsage)
+{
+     HBITMAP hBitmap ;
+     HDC     hdc ;
+     int     cx, cy, iBitCount ;
+
+     if (pbmih-&gt;biSize == sizeof (BITMAPCOREHEADER))
+     {
+          cx        = ((PBITMAPCOREHEADER) pbmih)-&gt;bcWidth ;
+          cy        = ((PBITMAPCOREHEADER) pbmih)-&gt;bcHeight ;
+          iBitCount = ((PBITMAPCOREHEADER) pbmih)-&gt;bcBitCount ;
+     }
+     else
+     {
+          cx        = pbmih-&gt;biWidth ;
+          cy        = pbmih-&gt;biHeight ;
+          iBitCount = pbmih-&gt;biBitCount ;
+     }
+     if (hdc)
+          hBitmap = CreateCompatibleBitmap (hdc, cx, cy) ;
+     else
+          hBitmap = CreateBitmap (cx, cy, 1, 1, NULL) ;
+
+     if (fInit == CBM_INIT)
+     {
+           hdcMem = CreateCompatibleDC (hdc) ;
+           SelectObject (hdcMem, hBitmap) ;
+           SetDIBitsToDevice (hdcMem, 0, 0, cx, cy, 0, 0, 0 cy, 
+                              pBits, pbmi, fUsage) ;
+           DeleteDC (hdcMem) ;
+     }
+
+return hBitmap ;
+}
+</PRE>
+<P>If you're going to display a DIB only once and you're worried about the 
+performance of <I>SetDIBitsToDevice</I>, it doesn't make much sense to call 
+<I>CreateDIBitmap</I> and then display the DDB by using 
+<I>BitBlt</I> or <I>StretchBlt</I>. The two jobs will take the same length of 
+time because <I>SetDIBitsToDevice</I> and 
+<I>CreateDIBitmap</I> both have to perform a color 
+conversion. Only if you're displaying a DIB multiple times&#8212;which is very likely when 
+processing WM_PAINT messages&#8212;does this conversion make sense.
+<p>The DIBCONV program shown in Figure 15-10 shows how you can use 
+<I>SetDIBitsToDevice</I> to convert a DIB file to a DDB.
+<P><B>Figure 15-10.</b> <i>The DIBCONV program.</I>
+<P><table CELLPADDING=5 WIDTH="95%"><TR><TD>
+<A NAME="509"><p><H3>DIBCONV.C</H3></A>
+<P><PRE>
+/*----------------------------------------
+   DIBCONV.C -- Converts a DIB to a DDB
+                (c) Charles Petzold, 1998
+  ----------------------------------------*/
+
+
+#include &lt;windows.h&gt;
+#include &lt;commdlg.h&gt;
+#include &quot;resource.h&quot;
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+     
+TCHAR szAppName[] = TEXT (&quot;DibConv&quot;) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     HWND     hwnd ;
+     MSG      msg ;
+     WNDCLASS wndclass ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = szAppName ;
+     wndclass.lpszClassName = szAppName ;
+
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;), 
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+
+     hwnd = CreateWindow (szAppName, TEXT (&quot;DIB to DDB Conversion&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT, 
+                          NULL, NULL, hInstance, NULL) ;
+
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+
+     }
+     return msg.wParam ;
+}
+HBITMAP CreateBitmapObjectFromDibFile (HDC hdc, PTSTR szFileName)
+{
+     BITMAPFILEHEADER * pbmfh ;
+     BOOL               bSuccess ;
+     DWORD              dwFileSize, dwHighSize, dwBytesRead ;
+     HANDLE             hFile ;
+     HBITMAP            hBitmap ;
+
+          // Open the file: read access, prohibit write access
+
+     hFile = CreateFile (szFileName, GENERIC_READ, FILE_SHARE_READ, NULL, 
+                         OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL) ;
+
+     if (hFile == INVALID_HANDLE_VALUE)
+          return NULL ;
+
+          // Read in the whole file
+
+     dwFileSize = GetFileSize (hFile, &amp;dwHighSize) ;
+
+     if (dwHighSize)
+     {
+          CloseHandle (hFile) ;
+          return NULL ;
+     }
+
+     pbmfh = malloc (dwFileSize) ;
+
+     if (!pbmfh)
+     {
+          CloseHandle (hFile) ;
+          return NULL ;
+     }
+
+     bSuccess = ReadFile (hFile, pbmfh, dwFileSize, &amp;dwBytesRead, NULL) ;
+     CloseHandle (hFile) ;
+
+          // Verify the file
+
+     if (!bSuccess || (dwBytesRead != dwFileSize)         
+                   || (pbmfh-&gt;bfType != * (WORD *) &quot;BM&quot;) 
+                   || (pbmfh-&gt;bfSize != dwFileSize))
+     {
+          free (pbmfh) ;
+          return NULL ;
+     }
+          // Create the DDB 
+
+     hBitmap = CreateDIBitmap (hdc,              
+                               (BITMAPINFOHEADER *) (pbmfh + 1),
+                               CBM_INIT,
+                               (BYTE *) pbmfh + pbmfh-&gt;bfOffBits,
+                               (BITMAPINFO *) (pbmfh + 1),
+                               DIB_RGB_COLORS) ;
+     free (pbmfh) ;
+     return hBitmap ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static HBITMAP      hBitmap ;
+     static int          cxClient, cyClient ;
+     static OPENFILENAME ofn ;
+     static TCHAR        szFileName [MAX_PATH], szTitleName [MAX_PATH] ;
+     static TCHAR        szFilter[] = TEXT (&quot;Bitmap Files (*.BMP)\0*.bmp\0&quot;)
+                                      TEXT (&quot;All Files (*.*)\0*.*\0\0&quot;) ;
+     BITMAP              bitmap ;
+     HDC                 hdc, hdcMem ;
+     PAINTSTRUCT         ps ;
+
+     switch (message)
+     {
+     case WM_CREATE:
+          ofn.lStructSize       = sizeof (OPENFILENAME) ;
+          ofn.hwndOwner         = hwnd ;
+          ofn.hInstance         = NULL ;
+          ofn.lpstrFilter       = szFilter ;
+          ofn.lpstrCustomFilter = NULL ;
+          ofn.nMaxCustFilter    = 0 ;
+          ofn.nFilterIndex      = 0 ;
+          ofn.lpstrFile         = szFileName ;
+          ofn.nMaxFile          = MAX_PATH ;
+          ofn.lpstrFileTitle    = szTitleName ;
+          ofn.nMaxFileTitle     = MAX_PATH ;
+          ofn.lpstrInitialDir   = NULL ;
+          ofn.lpstrTitle        = NULL ;
+          ofn.Flags             = 0 ;
+          ofn.nFileOffset       = 0 ;
+          ofn.nFileExtension    = 0 ;
+          ofn.lpstrDefExt       = TEXT (&quot;bmp&quot;) ;
+          ofn.lCustData         = 0 ;
+          ofn.lpfnHook          = NULL ;
+          ofn.lpTemplateName    = NULL ;
+
+          return 0 ;
+
+     case WM_SIZE:
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+          return 0 ;
+     case WM_COMMAND:
+          switch (LOWORD (wParam))
+          {
+          case IDM_FILE_OPEN:
+
+                    // Show the File Open dialog box
+
+               if (!GetOpenFileName (&amp;ofn))
+                    return 0 ;
+               
+                    // If there's an existing DIB, delete it
+
+               if (hBitmap)
+               {
+                    DeleteObject (hBitmap) ;
+                    hBitmap = NULL ;
+               }
+                    // Create the DDB from the DIB
+
+               SetCursor (LoadCursor (NULL, IDC_WAIT)) ;
+               ShowCursor (TRUE) ;
+
+               hdc = GetDC (hwnd) ;
+               hBitmap = CreateBitmapObjectFromDibFile (hdc, szFileName) ;
+               ReleaseDC (hwnd, hdc) ;
+
+               ShowCursor (FALSE) ;
+               SetCursor (LoadCursor (NULL, IDC_ARROW)) ;
+
+                    // Invalidate the client area for later update
+
+               InvalidateRect (hwnd, NULL, TRUE) ;
+
+               if (hBitmap == NULL)
+               {
+                    MessageBox (hwnd, TEXT (&quot;Cannot load DIB file&quot;), 
+                                szAppName, MB_OK | MB_ICONEXCLAMATION) ;
+               }
+               return 0 ;
+          }
+          break ;
+
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+
+          if (hBitmap)
+          {
+               GetObject (hBitmap, sizeof (BITMAP), &amp;bitmap) ;
+
+               hdcMem = CreateCompatibleDC (hdc) ;
+               SelectObject (hdcMem, hBitmap) ;
+
+               BitBlt (hdc,    0, 0, bitmap.bmWidth, bitmap.bmHeight, 
+                       hdcMem, 0, 0, SRCCOPY) ;
+
+               DeleteDC (hdcMem) ;
+          }
+
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+          
+     case WM_DESTROY:
+          if (hBitmap)
+               DeleteObject (hBitmap) ;
+
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</PRE>
+</td></TR>
+</TABLE>
+
+<P><table CELLPADDING=5 WIDTH="95%"><TR><TD>
+<A NAME="510"><p><H3>DIBCONV.RC (excerpts)</H3></A>
+<P><PRE>
+//Microsoft Developer Studio generated resource script.
+
+
+
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+/////////////////////////////////////////////////////////////////////////////
+// Menu
+
+DIBCONV MENU DISCARDABLE 
+BEGIN
+    POPUP &quot;&amp;File&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Open&quot;,                       IDM_FILE_OPEN
+    END
+END
+</PRE>
+</TD></TR>
+</TABLE>
+
+<P><table CELLPADDING=5 WIDTH="95%"><TR><TD>
+<A NAME="511"><p><H3>RESOURCE.H (excerpts)</H3></A>
+<P><PRE>
+
+// Microsoft Developer Studio generated include file.
+// Used by DibConv.rc
+
+#define IDM_FILE_OPEN                   40001
+</PRE>
+</TD></TR>
+</TABLE>
+
+<p>DIBCONV.C is self-contained and requires no earlier files. In response to its only 
+menu command (File Open), <I>WndProc</I> calls the program's 
+<I>CreateBitmapObjectFromDibFile</I> function. This function reads the entire file into memory and passes pointers to the 
+memory block to the <I>CreateDIBitmap</I> function. The function returns a handle to the bitmap. 
+The memory block containing the DIB can then be freed. During the WM_PAINT 
+message, <I>WndProc</I> selects the bitmap in a compatible memory device context and uses 
+<I>BitBlt</I> rather than <I>SetDIBitsToDevice</I> to display the bitmap on the client area. It obtains the width 
+and height of the bitmap by calling 
+<I>GetObject</I> with the BITMAP structure on the bitmap handle.
+<p>You do not need to initialize the DDB pixel bits while creating the bitmap from 
+<I>CreateDIBitmap</I>. You can do it later by calling 
+<I>SetDIBits</I>. This function has the following syntax:
+<p><pre>
+iLines = SetDIBits (
+               hdc,        // device context handle
+               hBitmap,    // bitmap handle
+               yScan,      // first scan line to convert
+               cyScans,    // number of scan lines to convert
+               pBits,      // pointer to pixel bits
+               pInfo,      // pointer to DIB information
+               fClrUse) ;  // color use flag
+</PRE>
+<P>The function uses the color table in the BITMAPINFO structure to convert the bits into 
+the device-dependent format. The device context handle is required only if the last 
+argument is set to DIB_PAL_COLORS. 
+
+<A NAME="512"><h2>From DDB to DIB</h2></A><P>A function similar to the <I>SetDIBits</I> function is 
+<I>GetDIBits</I>. You can use this function for 
+converting a DDB to a DIB:
+<p><pre>
+int WINAPI GetDIBits (
+               hdc,        // device context handle
+               hBitmap,    // bitmap handle
+               yScan,      // first scan line to convert
+               cyScans,    // number of scan lines to convert
+               pBits,      // pointer to pixel bits (out)
+               pInfo,      // pointer to DIB information (out)
+               fClrUse) ;  // color use flag
+</PRE>
+<P>However, I'm afraid that this function is not simply the reverse of 
+<I>SetDIBits</I>. In the general case, if you convert a DIB to a DDB using 
+<I>CreateDIBitmap</I> and <I>SetDIBits</I> and 
+then convert back to a DIB using <I>GetDIBits</I>, you won't get what you started out with. This 
+is because some information is lost when a DIB is converted to a device-dependent 
+format. How much information is lost depends on the particular video mode you're running 
+Windows under when you do the conversion.
+<P>You probably won't find a need to use 
+<I>GetDIBits</I> much. Think about it: In what circumstances does your program find itself with a bitmap handle without having the 
+data used to create the bitmap in the first place? The clipboard? But the clipboard 
+provides automatic conversion to DIBs. The one instance in which the 
+<I>GetDIBits</I> function <I>does</I> come in handy is when you're doing screen captures, such as what the BLOWUP program 
+did in <a href="ch14a.htm#426">Chapter 14</a>. I won't be demonstrating this function, but some information is 
+available in Knowledge Base article Q80080.
+
+<A NAME="513"><h2>The DIB Section</h2></A><P>Now, I hope, you have a good feel for the difference between device-dependent and 
+device-independent bitmaps. A DIB can have one of several color organizations; a DDB must 
+be either monochrome or the same format as a real-output device. A DIB is a file or a 
+
+block of memory; a DDB is a GDI bitmap object and is represented by a bitmap handle. A 
+DIB can be displayed or converted to a DDB and back again, but this involves a process 
+to convert between device-independent bits and device-specific bits.
+<P>Now you're about to encounter a function that seems to break these rules. This 
+function was introduced in the 32-bit versions of Windows and is called 
+<I>CreateDIBSection</I>. The syntax is
+<p><pre>
+hBitmap = CreateDIBSection (
+               hdc,         // device context handle
+               pInfo,       // pointer to DIB information
+               fClrUse,     // color use flag
+               ppBits,      // pointer to pointer variable
+               hSection,    // file-mapping object handle
+               dwOffset) ;  // offset to bits in file-mapping object
+</PRE>
+<P><I>CreateDIBSection</I> is one of the most important functions in the Windows API (well, at 
+least if you're working with bitmaps a lot), yet it's burdened with such weirdness that you 
+may find it inordinately esoteric and difficult to comprehend.
+<P>Let's begin with the very name of the function. We know what a DIB is, but what 
+on earth is a &quot;DIB section&quot;? When you first began examining 
+<I>CreateDIBSection</I>, you may have kept looking for some way that the function works with only part of the DIB. That's 
+almost right. What <I>CreateDIBSection</I> does is indeed create a section of the DIB&#8212;a 
+memory block for the bitmap pixel bits.
+<P>Now let's look at the return value. It's a handle to a GDI bitmap object. That 
+return value is probably the most deceptive aspect of the function call. The return value 
+seems to imply that <I>CreateDIBSection</I> is similar in functionality to 
+<I>CreateDIBitmap</I>. Yes, it's similar but also totally different. In fact, the bitmap handle returned from 
+<I>CreateDIBSection</I> is intrinsically different from the bitmap handle returned from all the previous 
+bitmap-creation functions we've encountered in this chapter and the last chapter.
+<P>Once you understand the true nature of 
+<I>CreateDIBSection</I>, you might wonder why the return value wasn't defined somewhat differently. You might also conclude that 
+<I>CreateDIBSection</I> should have been called 
+<I>CreateDIBitmap</I> and that 
+<I>CreateDIBitmap</I> should have been called, as I indicated earlier, 
+<I>CreateDDBitmap</I>. 
+<P>To first approach <I>CreateDIBSection</I>, let's examine how we can simplify it and put 
+it to use right away. First, you can set the last two arguments, 
+<I>hSection</I> and <I>dwOffset</I>, to NULL and 0, respectively. I'll discuss the use of these arguments towards the end of this 
+chapter. Second, the <I>hdc</I> parameter is used only if the 
+<I>fColorUse</I> parameter is set to DIB_ PAL_COLORS. If 
+<I>fColorUse</I> is DIB_RGB_COLORS (or 0), 
+<I>hdc</I> is ignored. (This is not the case with 
+<I>CreateDIBitmap</I>, in which the <I>hdc</I> parameter is used to get the color format of 
+the device that the DDB is to be compatible with.)
+<P>So, in its simplest form, 
+<I>CreateDIBSection</I> requires only the second and fourth 
+arguments. The second argument is a pointer to a BITMAPINFO structure, something 
+we've worked with before. I hope the pointer to a pointer definition of the fourth argument 
+doesn't upset you too much. It's actually quite simple when using the function.
+<p>Let's suppose you want to create a 384&#215;256-bit DIB with 24 bits per pixel. The 
+24-bit format is simplest because it doesn't require a color table, so we can use a 
+BITMAPINFOHEADER structure for the BITMAPINFO parameter.
+<p>You define three variables: a BITMAPINFOHEADER structure, a BYTE pointer, 
+and a bitmap handle:
+<p><pre>
+BITMAPINFOHEADER bmih ;
+BYTE           * pBits ;
+HBITMAP          hBitmap ;
+</PRE>
+<P>Now initialize the fields of the BITMAPINFOHEADER structure:
+<p><pre>
+bmih-&gt;biSize          = sizeof (BITMAPINFOHEADER) ;
+bmih-&gt;biWidth         = 384 ;
+bmih-&gt;biHeight        = 256 ;
+bmih-&gt;biPlanes        = 1 ;
+bmih-&gt;biBitCount      = 24 ;
+bmih-&gt;biCompression   = BI_RGB ;
+bmih-&gt;biSizeImage     = 0 ;
+bmih-&gt;biXPelsPerMeter = 0 ;
+bmih-&gt;biYPelsPerMeter = 0 ;
+bmih-&gt;biClrUsed       = 0 ;
+bmih-&gt;biClrImportant  = 0 ;
+</PRE>
+<P>With this minimum amount of preparation, we are now ready to call the function:
+<p><pre>
+hBitmap = CreateDIBSection (NULL, (BITMAPINFO *)  &amp;bmih, 0, &amp;pBits, NULL, 0) ;
+</PRE>
+<P>Notice that we're taking the address of the BITMAPINFOHEADER structure for the 
+second argument, as usual, but also the address of the BYTE pointer 
+<I>pBits</I>, which is not usual. Thus, the fourth argument is a pointer to a pointer, as required by the function.
+<p>Here's what the function call does: 
+<I>CreateDIBSection</I> examines the BITMAPINFOHEADER structure and allocates a block of memory sufficient to hold the DIB pixel 
+bits. (In this particular case, the block is 384&#215;256&#215;3 bytes in size.) It stores a pointer to 
+this memory block in the <I>pBits</I> parameter that you've supplied. The function also returns 
+a handle to a bitmap, which, as I've said, is not quite the same as the handle returned 
+from <I>CreateDIBitmap</I> and other bitmap-creation functions. 
+<p>We're not quite done yet, however. The bitmap pixel bits are uninitialized. If 
+you're reading a DIB file, you can simply pass the 
+<I>pBits</I> parameter to the <I>ReadFile</I> function 
+and read them in. Or you can set them &quot;manually&quot; with some program code. 
+<p>The DIBSECT program shown in Figure 15-11 is similar to the DIBCONV 
+program except that it calls 
+<I>CreateDIBSection</I> rather than 
+<I>CreateDIBitmap</I>.
+<P><B>Figure 15-11.</b> <I>The DIBSECT program.</I>
+<P><table CELLPADDING=5 WIDTH="95%"><TR><TD>
+<A NAME="514"><p><H3>DIBSECT.C</H3></A>
+<P><PRE>
+/*--------------------------------------------------------
+   DIBSECT.C -- Displays a DIB Section in the client area
+                (c) Charles Petzold, 1998
+  --------------------------------------------------------*/
+#include &lt;windows.h&gt;
+#include &lt;commdlg.h&gt;
+#include &quot;resource.h&quot;
+
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+TCHAR szAppName[] = TEXT (&quot;DibSect&quot;) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     HWND     hwnd ;
+     MSG      msg ;
+     WNDCLASS wndclass ;
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = szAppName ;
+     wndclass.lpszClassName = szAppName ;
+
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;), 
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+
+     hwnd = CreateWindow (szAppName, TEXT (&quot;DIB Section Display&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT, 
+                          NULL, NULL, hInstance, NULL) ;
+
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+
+     }
+     return msg.wParam ;
+}
+HBITMAP CreateDibSectionFromDibFile (PTSTR szFileName)
+{
+     BITMAPFILEHEADER bmfh ;
+     BITMAPINFO     * pbmi ;
+     BYTE           * pBits ;
+     BOOL             bSuccess ;
+     DWORD            dwInfoSize, dwBytesRead ;
+     HANDLE           hFile ;
+     HBITMAP          hBitmap ;
+          // Open the file: read access, prohibit write access
+
+     hFile = CreateFile (szFileName, GENERIC_READ, FILE_SHARE_READ,
+                         NULL, OPEN_EXISTING, 0, NULL) ;
+
+     if (hFile == INVALID_HANDLE_VALUE)
+          return NULL ;
+
+          // Read in the BITMAPFILEHEADER
+
+     bSuccess = ReadFile (hFile, &amp;bmfh, sizeof (BITMAPFILEHEADER), 
+                          &amp;dwBytesRead, NULL) ;
+
+     if (!bSuccess || (dwBytesRead != sizeof (BITMAPFILEHEADER))         
+                   || (bmfh.bfType != * (WORD *) &quot;BM&quot;))
+     {
+          CloseHandle (hFile) ;
+          return NULL ;
+     }
+
+          // Allocate memory for the BITMAPINFO structure &amp; read it in
+
+     dwInfoSize = bmfh.bfOffBits - sizeof (BITMAPFILEHEADER) ;
+
+     pbmi = malloc (dwInfoSize) ;
+
+     bSuccess = ReadFile (hFile, pbmi, dwInfoSize, &amp;dwBytesRead, NULL) ;
+
+     if (!bSuccess || (dwBytesRead != dwInfoSize))
+     {
+          free (pbmi) ;
+          CloseHandle (hFile) ;
+          return NULL ;
+     }
+          // Create the DIB Section
+
+     hBitmap = CreateDIBSection (NULL, pbmi, DIB_RGB_COLORS, &amp;pBits, NULL, 0) ;
+
+     if (hBitmap == NULL)
+     {
+          free (pbmi) ;
+          CloseHandle (hFile) ;
+          return NULL ;
+     }
+
+          // Read in the bitmap bits
+
+     ReadFile (hFile, pBits, bmfh.bfSize - bmfh.bfOffBits, &amp;dwBytesRead, NULL) ;
+
+     free (pbmi) ;
+     CloseHandle (hFile) ;
+
+     return hBitmap ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static HBITMAP      hBitmap ;
+     static int          cxClient, cyClient ;
+     static OPENFILENAME ofn ;
+     static TCHAR        szFileName [MAX_PATH], szTitleName [MAX_PATH] ;
+     static TCHAR        szFilter[] = TEXT (&quot;Bitmap Files (*.BMP)\0*.bmp\0&quot;)
+                                      TEXT (&quot;All Files (*.*)\0*.*\0\0&quot;) ;
+     BITMAP              bitmap ;
+     HDC                 hdc, hdcMem ;
+     PAINTSTRUCT         ps ;
+
+     switch (message)
+     {
+     case WM_CREATE:
+          ofn.lStructSize       = sizeof (OPENFILENAME) ;
+          ofn.hwndOwner         = hwnd ;
+          ofn.hInstance         = NULL ;
+          ofn.lpstrFilter       = szFilter ;
+          ofn.lpstrCustomFilter = NULL ;
+          ofn.nMaxCustFilter    = 0 ;
+          ofn.nFilterIndex      = 0 ;
+          ofn.lpstrFile         = szFileName ;
+          ofn.nMaxFile          = MAX_PATH ;
+          ofn.lpstrFileTitle    = szTitleName ;
+          ofn.nMaxFileTitle     = MAX_PATH ;
+          ofn.lpstrInitialDir   = NULL ;
+          ofn.lpstrTitle        = NULL ;
+          ofn.Flags             = 0 ;
+          ofn.nFileOffset       = 0 ;
+          ofn.nFileExtension    = 0 ;
+          ofn.lpstrDefExt       = TEXT (&quot;bmp&quot;) ;
+          ofn.lCustData         = 0 ;
+          ofn.lpfnHook          = NULL ;
+          ofn.lpTemplateName    = NULL ;
+
+          return 0 ;
+
+     case WM_SIZE:
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+          return 0 ;
+
+     case WM_COMMAND:
+          switch (LOWORD (wParam))
+          {
+          case IDM_FILE_OPEN:
+
+                    // Show the File Open dialog box
+
+               if (!GetOpenFileName (&amp;ofn))
+                    return 0 ;
+               
+                    // If there's an existing bitmap, delete it
+
+               if (hBitmap)
+               {
+                    DeleteObject (hBitmap)                 hBitmap = NULL ;
+               }
+                    // Create the DIB Section from the DIB file
+
+               SetCursor (LoadCursor (NULL, IDC_WAIT)) ;
+               ShowCursor (TRUE) ;
+
+               hBitmap = CreateDibSectionFromDibFile (szFileName) ;
+               ShowCursor (FALSE) ;
+               SetCursor (LoadCursor (NULL, IDC_ARROW)) ;
+
+                    // Invalidate the client area for later update
+
+               InvalidateRect (hwnd, NULL, TRUE) ;
+
+               if (hBitmap == NULL)
+               {
+                    MessageBox (hwnd, TEXT (&quot;Cannot load DIB file&quot;), 
+                                szAppName, MB_OK | MB_ICONEXCLAMATION) ;
+               }
+               return 0 ;
+          }
+          break ;
+
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+
+          if (hBitmap)
+          {
+               GetObject (hBitmap, sizeof (BITMAP), &amp;bitmap) ;
+
+               hdcMem = CreateCompatibleDC (hdc) ;
+               SelectObject (hdcMem, hBitmap) ;
+
+               BitBlt (hdc,    0, 0, bitmap.bmWidth, bitmap.bmHeight, 
+                       hdcMem, 0, 0, SRCCOPY) ;
+
+               DeleteDC (hdcMem) ;
+          }
+
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+          
+     case WM_DESTROY:
+          if (hBitmap)
+               DeleteObject (hBitmap) ;
+
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</pre>
+</TD></TR>
+</TABLE>
+<P><table CELLPADDING=5 WIDTH="95%"><TR><TD>
+<A NAME="515"><p><H3>DIBSECT.RC (excerpts)</H3></A>
+<P><PRE>
+//Microsoft Developer Studio generated resource script.
+
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+
+// Menu
+
+DIBSECT MENU DISCARDABLE 
+BEGIN
+    POPUP &quot;&amp;File&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Open&quot;,                       IDM_FILE_OPEN
+    END
+END
+</PRE>
+</TD></TR>
+</TABLE>
+
+<P><table CELLPADDING=5 WIDTH="95%"><TR><TD>
+<A NAME="516"><p><H3>RESOURCE.H (excerpts)</H3></A>
+<P><PRE>
+// Microsoft Developer Studio generated include file.
+// Used by DibSect.rc
+
+#define IDM_FILE_OPEN                   40001
+
+</PRE>
+</TD></TR>
+</TABLE>
+
+<p>Notice the differences between the 
+<I>CreateBitmapObjectFromDibFile</I> function in DIBCONV and the 
+<I>CreateDibSectionFromDibFile</I> function in DIBSECT. DIBCONV 
+reads the entire file in one shot and then passes pointers to the DIB memory block to the 
+<I>CreateDIBitmap</I> function. DIBSECT reads in the BITMAPFILEHEADER structure first and 
+then determines how big the BITMAPINFO structure is. Memory is allocated for that, and 
+it's read in on the second <I>ReadFile</I> call. The function then passes pointers to the 
+BITMAPINFO structure and to the pointer variable 
+<I>pBits</I> to <I>CreateDIBSection</I>. The function returns 
+a bitmap handle and sets <I>pBits</I> to point to a block of memory into which the function 
+then reads the DIB pixel bits.
+<p>The memory block pointed to by <I>pBits</I> is owned by the system. The memory is 
+automatically freed when you delete the bitmap by calling 
+<I>DeleteObject</I>. However, programs can use the pointer to alter the DIB bits directly. That the system owns this memory 
+block makes it not subject to the speed penalty incurred under Windows NT when an 
+application passes large memory blocks across the API.
+<p>As I noted above, when you display a DIB on a video display, at some point 
+it must undergo a conversion from device-independent pixels to 
+device-dependent pixels. Sometimes this format conversion can be lengthy. Let's look at the 
+three approaches we've used to display DIBs:
+<UL>
+<p><li>When you use <I>SetDIBitsToDevice</I> or 
+<I>StretchDIBits</I> to display a DIB directly to the screen, the format conversion occurs during the 
+<I>SetDIBitsToDevice</I> or <I>StretchDIBits</I> call.
+<p><li>When you convert a DIB to a DDB using 
+<I>CreateDIBitmap</I> and (possibly) 
+<I>SetDIBits</I> and then use <I>BitBlt</I> or 
+<I>StretchBlt</I> to display it, the format conversion 
+occurs during <I>CreateDIBitmap</I>, if the CBM_INIT flag is set, or 
+<I>SetDIBits</I>.
+<p><li>When you create a DIB section using 
+<I>CreateDIBSection</I> and then display it using 
+<I>BitBlt</I> or <I>StretchBlt</I>, the format conversion occurs during the 
+<I>BitBlt</I> to <I>StretchBlt</I> call.
+</UL>
+<P>Read that last sentence over again and make sure you didn't misread it. This is 
+one way in which the bitmap handle returned from 
+<I>CreateDIBSection</I> is different from the 
+other bitmap handles we've encountered. This bitmap handle actually references a DIB that 
+is stored in memory maintained by the system but to which an application has access. 
+This DIB is converted to a particular color format when necessary, which is usually when 
+it's displayed using <I>BitBlt</I> or 
+<I>StretchBlt</I>.
+<P>You can also select the bitmap handle into a memory device context and use 
+GDI functions to draw on it. The results will be reflected in the DIB pixel bits pointed to 
+by the <I>pBits</I> variable. Because of batching of GDI calls under Windows NT, call 
+<I>GdiFlush</I> after drawing on the memory device context before accessing the bits &quot;manually.&quot;
+<P>In DIBSECT we discarded the <I>pBits</I> variable because it was no longer required 
+by the program. If you need to alter the bits directly, which is a major reason why you'll 
+use <I>CreateDIBSection</I>, hold onto it. There seems to be no way to later obtain the bits 
+pointer after the <I>CreateDIBSection</I> call.
+
+<A NAME="517"><h2>More DIB Section Differences</h2></A><P>The bitmap handle returned from 
+<I>CreateDIBitmap</I> has the same planes and 
+bits-per-pixel organization as the device referenced by the 
+<I>hdc</I> parameter to the function. You can 
+verify this by calling <I>GetObject</I> with the BITMAP structure.
+<p><I>CreateDIBSection</I> is different. If you call 
+<I>GetObject</I> with the BITMAP structure on the bitmap handle returned from the function, you'll find that the bitmap has the same 
+color organization as indicated by the fields of the BITMAPINFOHEADER structure. Yet you 
+can select this handle into a memory device context compatible with the video display. 
+This contradicts what I said in the last chapter about DDBs, of course, but that's why I 
+contend that this DIB section bitmap handle is different.
+<P>Another oddity: As you'll recall, the byte length of the rows of pixel data in DIBs 
+is always a multiple of 4. The byte length of rows in GDI bitmap objects, which you can 
+get from the <I>bmWidthBytes</I> field of the BITMAP structure used with 
+<I>GetObject</I>, is always a multiple of 2. Well, if you set up the BITMAPINFOHEADER structure shown above 
+with 24 bits per pixel and a width of 2 pixels (for example) and later call 
+<I>GetObject</I>, you'll find that the 
+<I>bmWidthBytes</I> field is 8 rather than 6.
+<P>With the bitmap handle returned from 
+<I>CreateDIBSection</I>, you can also call 
+<I>GetObject</I> with a DIBSECTION structure, like so:
+<p><pre>
+GetObject (hBitmap, sizeof (DIBSECTION), &amp;dibsection) ;
+</PRE>
+<P>This won't work with a bitmap handle returned from any of the other 
+bitmap-creation functions. The DIBSECTION structure is defined like so:
+<p><pre>
+typedef struct tagDIBSECTION  // ds
+{
+     BITMAP           dsBm ;             // BITMAP structure
+     BITMAPINFOHEADER dsBmih ;           // DIB information header
+     DWORD            dsBitfields [3] ;  // color masks
+     HANDLE           dshSection ;       // file-mapping object handle
+     DWORD            dsOffset ;         // offset to bitmap bits
+}
+DIBSECTION, * PDIBSECTION ;
+</PRE>
+<P>This structure contains both a BITMAP structure and a BITMAPINFOHEADER structure. 
+The last two fields are the last two arguments passed to 
+<I>CreateDIBSection</I>, which I'll discuss shortly.
+<P>The DIBSECTION structure tells you much of what you need to know about 
+the bitmap, except for the color table. When you select the DIB section bitmap handle into 
+a memory device context, you can get the color table by calling 
+<I>GetDIBColorTable</I>:
+<p><pre>
+hdcMem = CreateCompatibleDC (NULL) ;
+SelectObject (hdcMem, hBitmap) ;
+GetDIBColorTable (hdcMem, uFirstIndex, uNumEntries, &amp;rgb) ;
+DeleteDC (hdcMem) ;
+</PRE>
+<P>Similary, you can set entries in the color table by calling <I>SetDIBColorTable</I>.
+
+<A NAME="518"><h2>The File-Mapping Option</h2></A><P>I haven't yet discussed the last two arguments to 
+<I>CreateDIBSection</I>, which are a handle to a file-mapping object and an offset within that file where the bitmap bits begin. A 
+file-mapping object allows you to treat a file as if it were located in memory. That is, you 
+can access the file by using memory pointers, but the file needn't be entirely located in memory.
+<p>In the case of large DIBs, this technique can help reduce memory requirements. 
+The DIB pixel bits can remain on disk but still be accessed as if they were in memory, 
+albeit with a performance penalty. The problem is, while the pixel bits can indeed remain 
+stored on disk, they can't be part of an actual DIB file. They'd have to be in some other file.
+<p>To demonstrate, the function shown below is very similar to the function that 
+creates the DIB section in DIBSECT except that it doesn't read the pixel bits into 
+memory; instead, it supplies a file-mapping object and an offset to the 
+<I>CreateDIBSection</I> function:
+<p><pre>
+HBITMAP CreateDibSectionMappingFromFile (PTSTR szFileName)
+{
+     BITMAPFILEHEADER bmfh ;
+     BITMAPINFO     * pbmi ;
+     BYTE           * pBits ;
+     BOOL             bSuccess ;
+     DWORD            dwInfoSize, dwBytesRead ;
+     HANDLE           hFile, hFileMap ;
+     HBITMAP          hBitmap ;
+
+     hFile = CreateFile (szFileName, GENERIC_READ | GENERIC_WRITE, 
+                         0,                  // No sharing!
+                         NULL, OPEN_EXISTING, 0, NULL) ;
+
+     if (hFile == INVALID_HANDLE_VALUE)
+          return NULL ;
+
+     bSuccess = ReadFile (hFile, &amp;bmfh, sizeof (BITMAPFILEHEADER), 
+                          &amp;dwBytesRead, NULL) ;
+
+     if (!bSuccess || (dwBytesRead != sizeof (BITMAPFILEHEADER))         
+                   || (bmfh.bfType != * (WORD *) &quot;BM&quot;))
+     {
+          CloseHandle (hFile) ;
+          return NULL ;
+     }
+     dwInfoSize = bmfh.bfOffBits - sizeof (BITMAPFILEHEADER) ;
+     pbmi = malloc (dwInfoSize) ;
+     bSuccess = ReadFile (hFile, pbmi, dwInfoSize, &amp;dwBytesRead, NULL) ;
+
+     if (!bSuccess || (dwBytesRead != dwInfoSize))
+     {
+          free (pbmi) ;
+          CloseHandle (hFile) ;
+          return NULL ;
+     }
+     hFileMap = CreateFileMapping (hFile, NULL, PAGE_READWRITE, 0, 0, NULL) ;
+
+     hBitmap = CreateDIBSection (NULL, pbmi, DIB_RGB_COLORS, &amp;pBits,
+                                 hFileMap, bmfh.bfOffBits) ;
+     free (pbmi) ;
+     return hBitmap ;
+}
+</PRE>
+<P>Alas, this does not work. The documentation of 
+<I>CreateDIBSection</I> indicates that 
+&quot;<I>dwOffset</I> [the final argument to the function] must be a multiple of the size of a 
+DWORD.&quot; Although the size of the information header is always a multiple of 4 and the size of 
+the color table is always a multiple of 4, the bitmap file header is not. It's 14 bytes. 
+So <I>bmfh.bfOffBits</I> is never a multiple of 4.
+
+<A NAME="519"><h2>In Summary</h2></A><P>If you have small DIBs and you need to frequently manipulate the pixel bits, you 
+can display them using <I>SetDIBitsToDevice</I> and 
+<I>StretchDIBits</I>. However, for larger DIBs, 
+this technique will encounter performance problems, particularly on 8-bit video displays 
+and under Windows NT.
+<p>You can convert a DIB to a DDB by using 
+<I>CreateDIBitmap</I> and <I>SetDIBits</I>. 
+Displaying the bitmap will now involve the speedy 
+<I>BitBlt</I> and <I>StretchBlt</I> functions. However, 
+you no longer have access to the device-independent pixel bits.
+<p><I>CreateDIBSection</I> is a good compromise. Using the bitmap handle with 
+<I>BitBlt</I> and <I>StretchBlt</I> gives you better performance under Windows NT than using 
+<I>SetDIBitsToDevice</I> and <I>StretchDIBits</I> but with none of the drawbacks of the DDB. You still have access to 
+the DIB pixel bits.
+<p>In the next chapter, we'll wrap up our exploration of bitmaps after looking at 
+the Windows Palette Manager.
+</BODY>
+</HTML>
+
+
+
+
+
+

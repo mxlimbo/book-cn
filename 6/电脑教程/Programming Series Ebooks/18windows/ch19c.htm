@@ -1,0 +1,731 @@
+<HTML>
+<HEAD>
+	<LINK REL=StyleSheet HREF="petzoldi.css" TYPE="text/css">
+<title>A Sample MDI Implementation</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="699"><h1>A Sample MDI Implementation</h1></A>
+<p>The MDIDEMO program, shown in Figure 19-2, demonstrates the basics of writing an MDI application.
+
+<p><B>Figure 19-2.</b> <i>The MDIDEMO program.</i>
+<table cellpadding=5 width="95%"><tr><td>
+<A NAME="700"><h3>MDIDEMO.C</h3></A>
+<p><pre>
+
+/*--------------------------------------------------------
+   MDIDEMO.C -- Multiple-Document Interface Demonstration
+                (c) Charles Petzold, 1998
+  --------------------------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &quot;resource.h&quot;
+
+#define INIT_MENU_POS    0
+#define HELLO_MENU_POS   2
+#define RECT_MENU_POS    1
+
+#define IDM_FIRSTCHILD   50000
+
+LRESULT CALLBACK FrameWndProc  (HWND, UINT, WPARAM, LPARAM) ;
+BOOL    CALLBACK CloseEnumProc (HWND, LPARAM) ;
+LRESULT CALLBACK HelloWndProc  (HWND, UINT, WPARAM, LPARAM) ;
+LRESULT CALLBACK RectWndProc   (HWND, UINT, WPARAM, LPARAM) ;
+
+     // structure for storing data unique to each Hello child window
+
+typedef struct tagHELLODATA
+{
+     UINT     iColor ;
+     COLORREF clrText ;
+}
+HELLODATA, * PHELLODATA ;
+
+     // structure for storing data unique to each Rect child window
+
+typedef struct tagRECTDATA
+{
+     short cxClient ;
+     short cyClient ;
+}
+RECTDATA, * PRECTDATA ;
+     // global variables
+
+TCHAR     szAppName[]    = TEXT (&quot;MDIDemo&quot;) ;
+TCHAR     szFrameClass[] = TEXT (&quot;MdiFrame&quot;) ;
+TCHAR     szHelloClass[] = TEXT (&quot;MdiHelloChild&quot;) ;
+TCHAR     szRectClass[]  = TEXT (&quot;MdiRectChild&quot;) ;
+HINSTANCE hInst ;
+HMENU     hMenuInit, hMenuHello, hMenuRect ;
+HMENU     hMenuInitWindow, hMenuHelloWindow, hMenuRectWindow ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     HACCEL   hAccel ;
+     HWND     hwndFrame, hwndClient ;
+     MSG      msg ;
+     WNDCLASS wndclass ;
+     
+     hInst = hInstance ;
+     
+          // Register the frame window class
+          
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = FrameWndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) (COLOR_APPWORKSPACE + 1) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szFrameClass ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+        
+          // Register the Hello child window class
+          
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = HelloWndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = sizeof (HANDLE) ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szHelloClass ;
+          
+     RegisterClass (&amp;wndclass) ;
+          
+          // Register the Rect child window class
+          
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = RectWndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = sizeof (HANDLE) ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szRectClass ;
+          
+     RegisterClass (&amp;wndclass) ;
+
+          // Obtain handles to three possible menus &amp; submenus
+     
+     hMenuInit  = LoadMenu (hInstance, TEXT (&quot;MdiMenuInit&quot;)) ;
+     hMenuHello = LoadMenu (hInstance, TEXT (&quot;MdiMenuHello&quot;)) ;
+     hMenuRect  = LoadMenu (hInstance, TEXT (&quot;MdiMenuRect&quot;)) ;
+     
+     hMenuInitWindow  = GetSubMenu (hMenuInit,   INIT_MENU_POS) ;
+     hMenuHelloWindow = GetSubMenu (hMenuHello, HELLO_MENU_POS) ;
+     hMenuRectWindow  = GetSubMenu (hMenuRect,   RECT_MENU_POS) ;
+          
+          // Load accelerator table
+     
+     hAccel = LoadAccelerators (hInstance, szAppName) ;
+
+          // Create the frame window
+     
+     hwndFrame = CreateWindow (szFrameClass, TEXT (&quot;MDI Demonstration&quot;),
+                               WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+                               CW_USEDEFAULT, CW_USEDEFAULT,
+                               CW_USEDEFAULT, CW_USEDEFAULT,
+                               NULL, hMenuInit, hInstance, NULL) ;
+     hwndClient = GetWindow (hwndFrame, GW_CHILD) ;
+     
+     ShowWindow (hwndFrame, iCmdShow) ;
+     UpdateWindow (hwndFrame) ;
+     
+          // Enter the modified message loop
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          if (!TranslateMDISysAccel (hwndClient, &amp;msg) &amp;&amp;
+              !TranslateAccelerator (hwndFrame, hAccel, &amp;msg))
+          {
+               TranslateMessage (&amp;msg) ;
+               DispatchMessage (&amp;msg) ;
+          }
+     }
+          // Clean up by deleting unattached menus
+     
+     DestroyMenu (hMenuHello) ;
+     DestroyMenu (hMenuRect) ;
+     
+     return msg.wParam ;
+     }
+     
+LRESULT CALLBACK FrameWndProc (HWND hwnd, UINT message, 
+                               WPARAM wParam, LPARAM lParam)
+{
+     static HWND        hwndClient ;
+     CLIENTCREATESTRUCT clientcreate ;
+     HWND               hwndChild ;
+     MDICREATESTRUCT    mdicreate ;
+          
+     switch (message)
+     {
+     case WM_CREATE:           // Create the client window
+          
+          clientcreate.hWindowMenu  = hMenuInitWindow ;
+          clientcreate.idFirstChild = IDM_FIRSTCHILD ;
+          
+          hwndClient = CreateWindow (TEXT (&quot;MDICLIENT&quot;), NULL,
+                                     WS_CHILD | WS_CLIPCHILDREN | WS_VISIBLE,   
+                                     0, 0, 0, 0, hwnd, (HMENU) 1, hInst,
+                                     (PSTR) &amp;clientcreate) ;
+          return 0 ;
+
+     case WM_COMMAND:
+          switch (LOWORD (wParam))
+          {
+          case IDM_FILE_NEWHELLO:       // Create a Hello child window
+               
+               mdicreate.szClass = szHelloClass ;
+               mdicreate.szTitle = TEXT (&quot;Hello&quot;) ;
+               mdicreate.hOwner  = hInst ;
+               mdicreate.x       = CW_USEDEFAULT ;
+               mdicreate.y       = CW_USEDEFAULT ;
+               mdicreate.cx      = CW_USEDEFAULT ;
+               mdicreate.cy      = CW_USEDEFAULT ;
+               mdicreate.style   = 0 ;
+               mdicreate.lParam  = 0 ;
+               
+               hwndChild = (HWND) SendMessage (hwndClient,
+                                   WM_MDICREATE, 0,
+                                   (LPARAM) (LPMDICREATESTRUCT) &amp;mdicreate) ;
+               return 0 ;
+               
+          case IDM_FILE_NEWRECT:        // Create a Rect child window
+               
+               mdicreate.szClass = szRectClass ;
+               mdicreate.szTitle = TEXT (&quot;Rectangles&quot;) ;
+               mdicreate.hOwner  = hInst ;
+               mdicreate.x       = CW_USEDEFAULT ;
+               mdicreate.y       = CW_USEDEFAULT ;
+               mdicreate.cx      = CW_USEDEFAULT ;
+               mdicreate.cy      = CW_USEDEFAULT ;
+               mdicreate.style   = 0 ;
+               mdicreate.lParam  = 0 ;
+               
+               hwndChild = (HWND) SendMessage (hwndClient,
+                                   WM_MDICREATE, 0,
+                                   (LPARAM) (LPMDICREATESTRUCT) &amp;mdicreate) ;
+               return 0 ;
+               
+          case IDM_FILE_CLOSE:          // Close the active window
+               
+               hwndChild = (HWND) SendMessage (hwndClient,
+                                               WM_MDIGETACTIVE, 0, 0) ;
+               
+               if (SendMessage (hwndChild, WM_QUERYENDSESSION, 0, 0))
+                    SendMessage (hwndClient, WM_MDIDESTROY,
+                                 (WPARAM) hwndChild, 0) ;
+               return 0 ;
+          case IDM_APP_EXIT:            // Exit the program
+               
+               SendMessage (hwnd, WM_CLOSE, 0, 0) ;
+               return 0 ;
+               
+               // messages for arranging windows
+
+          case IDM_WINDOW_TILE:
+               SendMessage (hwndClient, WM_MDITILE, 0, 0) ;
+               return 0 ;
+               
+          case IDM_WINDOW_CASCADE:
+               SendMessage (hwndClient, WM_MDICASCADE, 0, 0) ;
+               return 0 ;
+               
+          case IDM_WINDOW_ARRANGE:
+               SendMessage (hwndClient, WM_MDIICONARRANGE, 0, 0) ;
+               return 0 ;
+               
+          case IDM_WINDOW_CLOSEALL:     // Attempt to close all children
+               
+               EnumChildWindows (hwndClient, CloseEnumProc, 0) ;
+               return 0 ;
+               
+          default:             // Pass to active child...
+
+               hwndChild = (HWND) SendMessage (hwndClient,
+                                               WM_MDIGETACTIVE, 0, 0) ;
+               if (IsWindow (hwndChild))
+                    SendMessage (hwndChild, WM_COMMAND, wParam, lParam) ;
+               
+               break ;        // ...and then to DefFrameProc
+          }
+          break ;
+          
+     case WM_QUERYENDSESSION:
+     case WM_CLOSE:                      // Attempt to close all children
+               
+          SendMessage (hwnd, WM_COMMAND, IDM_WINDOW_CLOSEALL, 0) ;
+               
+          if (NULL != GetWindow (hwndClient, GW_CHILD))
+               return 0 ;
+               
+          break ;   // i.e., call DefFrameProc 
+
+     case WM_DESTROY:
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+          // Pass unprocessed messages to DefFrameProc (not DefWindowProc)
+     
+     return DefFrameProc (hwnd, hwndClient, message, wParam, lParam) ;
+}
+
+BOOL CALLBACK CloseEnumProc (HWND hwnd, LPARAM lParam)
+{
+     if (GetWindow (hwnd, GW_OWNER))         // Check for icon title
+          return TRUE ;
+     
+     SendMessage (GetParent (hwnd), WM_MDIRESTORE, (WPARAM) hwnd, 0) ;
+     
+     if (!SendMessage (hwnd, WM_QUERYENDSESSION, 0, 0))
+          return TRUE ;
+     
+     SendMessage (GetParent (hwnd), WM_MDIDESTROY, (WPARAM) hwnd, 0) ;
+     return TRUE ;
+}
+
+LRESULT CALLBACK HelloWndProc (HWND hwnd, UINT message, 
+                               WPARAM wParam, LPARAM lParam)
+{
+     static COLORREF clrTextArray[] = { RGB (0,   0, 0), RGB (255, 0,   0),
+                                        RGB (0, 255, 0), RGB (  0, 0, 255),
+                                        RGB (255, 255, 255) } ;
+     static HWND     hwndClient, hwndFrame ;
+     HDC             hdc ;
+     HMENU           hMenu ;
+     PHELLODATA      pHelloData ;
+     PAINTSTRUCT     ps ;
+     RECT            rect ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+               // Allocate memory for window private data
+          
+          pHelloData = (PHELLODATA) HeapAlloc (GetProcessHeap (),
+                              HEAP_ZERO_MEMORY, sizeof (HELLODATA)) ;
+          pHelloData-&gt;iColor  = IDM_COLOR_BLACK ;
+          pHelloData-&gt;clrText = RGB (0, 0, 0) ;
+          SetWindowLong (hwnd, 0, (long) pHelloData) ;
+          
+               // Save some window handles
+          
+          hwndClient = GetParent (hwnd) ;
+          hwndFrame  = GetParent (hwndClient) ;
+          return 0 ;
+          
+     case WM_COMMAND:
+          switch (LOWORD (wParam))
+          {
+          case IDM_COLOR_BLACK:
+          case IDM_COLOR_RED:
+          case IDM_COLOR_GREEN:
+          case IDM_COLOR_BLUE:
+          case IDM_COLOR_WHITE:
+                    // Change the text color
+               
+               pHelloData = (PHELLODATA) GetWindowLong (hwnd, 0) ;
+               
+               hMenu = GetMenu (hwndFrame) ;
+               
+               CheckMenuItem (hMenu, pHelloData-&gt;iColor, MF_UNCHECKED) ;
+               pHelloData-&gt;iColor = wParam ;
+               CheckMenuItem (hMenu, pHelloData-&gt;iColor, MF_CHECKED) ;
+               
+               pHelloData-&gt;clrText = clrTextArray[wParam - IDM_COLOR_BLACK] ;
+               
+               InvalidateRect (hwnd, NULL, FALSE) ;
+          }
+          return 0 ;
+          
+     case WM_PAINT:
+               // Paint the window
+               
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+               
+          pHelloData = (PHELLODATA) GetWindowLong (hwnd, 0) ;
+          SetTextColor (hdc, pHelloData-&gt;clrText) ;
+               
+          GetClientRect (hwnd, &amp;rect) ;
+               
+          DrawText (hdc, TEXT (&quot;Hello, World!&quot;), -1, &amp;rect,
+                    DT_SINGLELINE | DT_CENTER | DT_VCENTER) ;
+
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+               
+     case WM_MDIACTIVATE:
+               // Set the Hello menu if gaining focus
+               
+          if (lParam == (LPARAM) hwnd)
+               SendMessage (hwndClient, WM_MDISETMENU,
+                            (WPARAM) hMenuHello, (LPARAM) hMenuHelloWindow) ;
+               
+               // Check or uncheck menu item
+               
+          pHelloData = (PHELLODATA) GetWindowLong (hwnd, 0) ;
+          CheckMenuItem (hMenuHello, pHelloData-&gt;iColor,
+                    (lParam == (LPARAM) hwnd) ? MF_CHECKED : MF_UNCHECKED) ;
+               
+               // Set the Init menu if losing focus
+               
+          if (lParam != (LPARAM) hwnd)
+               SendMessage (hwndClient, WM_MDISETMENU, (WPARAM) hMenuInit,
+                            (LPARAM) hMenuInitWindow) ;
+               
+          DrawMenuBar (hwndFrame) ;
+          return 0 ;
+
+     case WM_QUERYENDSESSION:
+     case WM_CLOSE:
+          if (IDOK != MessageBox (hwnd, TEXT (&quot;OK to close window?&quot;),
+                                  TEXT (&quot;Hello&quot;), 
+                                  MB_ICONQUESTION | MB_OKCANCEL))
+               return 0 ;
+               
+          break ;   // i.e., call DefMDIChildProc
+               
+     case WM_DESTROY:
+          pHelloData = (PHELLODATA) GetWindowLong (hwnd, 0) ;
+          HeapFree (GetProcessHeap (), 0, pHelloData) ;
+          return 0 ;
+     }
+          // Pass unprocessed message to DefMDIChildProc
+     
+     return DefMDIChildProc (hwnd, message, wParam, lParam) ;
+}
+LRESULT CALLBACK RectWndProc (HWND hwnd, UINT message, 
+                              WPARAM wParam, LPARAM lParam)
+{
+     static HWND hwndClient, hwndFrame ;
+     HBRUSH      hBrush ;
+     HDC         hdc ;
+     PRECTDATA   pRectData ;
+     PAINTSTRUCT ps ;
+     int         xLeft, xRight, yTop, yBottom ;
+     short       nRed, nGreen, nBlue ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+               // Allocate memory for window private data
+          
+          pRectData = (PRECTDATA) HeapAlloc (GetProcessHeap (),
+                                   HEAP_ZERO_MEMORY, sizeof (RECTDATA)) ;
+          
+          SetWindowLong (hwnd, 0, (long) pRectData) ;
+          
+               // Start the timer going
+          
+          SetTimer (hwnd, 1, 250, NULL) ;
+          
+               // Save some window handles
+          hwndClient = GetParent (hwnd) ;
+          hwndFrame  = GetParent (hwndClient) ;
+          return 0 ;
+          
+     case WM_SIZE:             // If not minimized, save the window size
+          
+          if (wParam != SIZE_MINIMIZED)
+          {
+               pRectData = (PRECTDATA) GetWindowLong (hwnd, 0) ;
+               
+               pRectData-&gt;cxClient = LOWORD (lParam) ;
+               pRectData-&gt;cyClient = HIWORD (lParam) ;
+          }
+          
+          break ;        // WM_SIZE must be processed by DefMDIChildProc
+          
+     case WM_TIMER:            // Display a random rectangle
+          
+          pRectData = (PRECTDATA) GetWindowLong (hwnd, 0) ;
+          xLeft   = rand () % pRectData-&gt;cxClient ;
+          xRight  = rand () % pRectData-&gt;cxClient ;
+          yTop    = rand () % pRectData-&gt;cyClient ;
+          yBottom = rand () % pRectData-&gt;cyClient ;
+          nRed    = rand () &amp; 255 ;
+          nGreen  = rand () &amp; 255 ;
+          nBlue   = rand () &amp; 255 ;
+          
+          hdc = GetDC (hwnd) ;
+          hBrush = CreateSolidBrush (RGB (nRed, nGreen, nBlue)) ;
+          SelectObject (hdc, hBrush) ;
+          
+          Rectangle (hdc, min (xLeft, xRight), min (yTop, yBottom),
+               max (xLeft, xRight), max (yTop, yBottom)) ;
+          
+          ReleaseDC (hwnd, hdc) ;
+          DeleteObject (hBrush) ;
+          return 0 ;
+          
+     case WM_PAINT:            // Clear the window
+          
+          InvalidateRect (hwnd, NULL, TRUE) ;
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+          
+     case WM_MDIACTIVATE:      // Set the appropriate menu
+          if (lParam == (LPARAM) hwnd)
+               SendMessage (hwndClient, WM_MDISETMENU, (WPARAM) hMenuRect,
+                            (LPARAM) hMenuRectWindow) ;
+          else
+               SendMessage (hwndClient, WM_MDISETMENU, (WPARAM) hMenuInit,
+                            (LPARAM) hMenuInitWindow) ;
+          
+          DrawMenuBar (hwndFrame) ;
+          return 0 ;
+          
+     case WM_DESTROY:
+          pRectData = (PRECTDATA) GetWindowLong (hwnd, 0) ;
+          HeapFree (GetProcessHeap (), 0, pRectData) ;
+          KillTimer (hwnd, 1) ;
+          return 0 ;
+     }
+          // Pass unprocessed message to DefMDIChildProc
+     
+     return DefMDIChildProc (hwnd, message, wParam, lParam) ;
+}
+</pre>
+</td></tr></table>
+<p><table cellpadding=5 width="95%"><tr><td>
+<A NAME="701"><h3>MDIDEMO.RC (excerpts)</h3></A>
+<p><PRE>
+
+//Microsoft Developer Studio generated resource script.
+
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+// Menu
+
+MDIMENUINIT MENU DISCARDABLE 
+BEGIN
+    POPUP &quot;&amp;File&quot;
+    BEGIN
+        MENUITEM &quot;New &amp;Hello&quot;,                  IDM_FILE_NEWHELLO
+        MENUITEM &quot;New &amp;Rectangle&quot;,              IDM_FILE_NEWRECT
+        MENUITEM SEPARATOR
+        MENUITEM &quot;E&amp;xit&quot;,                       IDM_APP_EXIT
+    END
+END
+
+MDIMENUHELLO MENU DISCARDABLE 
+BEGIN
+    POPUP &quot;&amp;File&quot;
+    BEGIN
+        MENUITEM &quot;New &amp;Hello&quot;,                  IDM_FILE_NEWHELLO
+        MENUITEM &quot;New &amp;Rectangle&quot;,              IDM_FILE_NEWRECT
+        MENUITEM &quot;&amp;Close&quot;,                      IDM_FILE_CLOSE
+        MENUITEM SEPARATOR
+        MENUITEM &quot;E&amp;xit&quot;,                       IDM_APP_EXIT
+    END
+    POPUP &quot;&amp;Color&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Black&quot;,                      IDM_COLOR_BLACK
+        MENUITEM &quot;&amp;Red&quot;,                        IDM_COLOR_RED
+        MENUITEM &quot;&amp;Green&quot;,                      IDM_COLOR_GREEN
+        MENUITEM &quot;B&amp;lue&quot;,                       IDM_COLOR_BLUE
+        MENUITEM &quot;&amp;White&quot;,                      IDM_COLOR_WHITE
+    END
+    POPUP &quot;&amp;Window&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Cascade\tShift+F5&quot;,          IDM_WINDOW_CASCADE
+        MENUITEM &quot;&amp;Tile\tShift+F4&quot;,             IDM_WINDOW_TILE
+        MENUITEM &quot;Arrange &amp;Icons&quot;,              IDM_WINDOW_ARRANGE
+        MENUITEM &quot;Close &amp;All&quot;,                  IDM_WINDOW_CLOSEALL
+    END
+END
+
+MDIMENURECT MENU DISCARDABLE 
+BEGIN
+    POPUP &quot;&amp;File&quot;
+    BEGIN
+        MENUITEM &quot;New &amp;Hello&quot;,                  IDM_FILE_NEWHELLO
+        MENUITEM &quot;New &amp;Rectangle&quot;,              IDM_FILE_NEWRECT
+        MENUITEM &quot;&amp;Close&quot;,                      IDM_FILE_CLOSE
+        MENUITEM SEPARATOR
+        MENUITEM &quot;E&amp;xit&quot;,                       IDM_APP_EXIT
+    END
+    POPUP &quot;&amp;Window&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Cascade\tShift+F5&quot;,          IDM_WINDOW_CASCADE
+        MENUITEM &quot;&amp;Tile\tShift+F4&quot;,             IDM_WINDOW_TILE
+        MENUITEM &quot;Arrange &amp;Icons&quot;,              IDM_WINDOW_ARRANGE
+        MENUITEM &quot;Close &amp;All&quot;,                  IDM_WINDOW_CLOSEALL
+    END
+END
+
+/////////////////////////////////////////////////////////////////////////////
+// Accelerator
+
+MDIDEMO ACCELERATORS DISCARDABLE 
+BEGIN
+    VK_F4,          IDM_WINDOW_TILE,        VIRTKEY, SHIFT, NOINVERT
+    VK_F5,          IDM_WINDOW_CASCADE,     VIRTKEY, SHIFT, NOINVERT
+END
+</PRE>
+</td></tr></table>
+<p><table cellpadding=5 width="95%"><tr><td>
+<A NAME="702"><h3>RESOURCE.H (excerpts)</h3></A>
+<p><pre>
+
+// Microsoft Developer Studio generated include file.
+// Used by MDIDemo.rc
+
+
+#define IDM_FILE_NEWHELLO               40001
+#define IDM_FILE_NEWRECT                40002
+#define IDM_APP_EXIT                    40003
+#define IDM_FILE_CLOSE                  40004
+#define IDM_COLOR_BLACK                 40005
+#define IDM_COLOR_RED                   40006
+#define IDM_COLOR_GREEN                 40007
+#define IDM_COLOR_BLUE                  40008
+#define IDM_COLOR_WHITE                 40009
+#define IDM_WINDOW_CASCADE              40010
+#define IDM_WINDOW_TILE                 40011
+#define IDM_WINDOW_ARRANGE              40012
+#define IDM_WINDOW_CLOSEALL             40013
+</pre>
+</td></tr></table>
+<p>MDIDEMO supports two types of extremely simple document windows: one displays &quot;Hello, World!&quot; in the center of its client area, and the other displays a series of random rectangles. (In the source code listings and identifier names, these are referred to as the Hello document and the Rect document.) Different menus are associated with these two types of document windows. The document window that displays &quot;Hello, World!&quot; has a menu that allows you to change the color of the text.
+
+<A NAME="703"><h2>Three Menus</h2></A>
+<p>Let's turn first to the MDIDEMO.RC resource script. The resource script defines three menu templates used by the program.
+
+<p>The program displays the MdiMenuInit menu when no document windows are present. This menu simply allows creating a new document or exiting the program.
+
+<p>The MdiMenuHello menu is associated with the document window that displays &quot;Hello, World!&quot; The File submenu allows opening a new document of either type, closing the active document, and exiting the program. The Color submenu lets you set the text color. The Window submenu has options for arranging the document windows in a cascaded or tiled fashion, arranging the document icons, and closing all the windows. This submenu will also list all the document windows as they are created.
+
+<p>The MdiMenuRect menu is associated with the random rectangle document. This is the same as the MdiMenuHello menu except that it does not include the Color submenu.
+
+<p>As usual, the RESOURCE.H header file defines all the menu identifiers. In addition, the following three constants are defined in MDIDEMO.C:
+
+<p><pre>
+#define INIT_MENU_POS     0
+#define HELLO_MENU_POS    2
+#define RECT_MENU_POS     1
+</pre>
+
+<p>These identifiers indicate the position of the Window submenu in each of the three menu templates. This information is needed by the program to inform the client window where the document list is to appear. Of course, the MdiMenuInit menu doesn't have a Window submenu, so I've indicated that the list should be appended to the first submenu (position 0). The list will never actually be viewed there, however. (You'll see why this is needed when I discuss the program later.)
+
+<p>The IDM_FIRSTCHILD identifier defined in MDIDEMO.C doesn't correspond to a menu item. This is the identifier that will be associated with the first document window in the list that will appear in the Window submenu. This identifier should be greater than all the other menu IDs.
+
+<A NAME="704"><h2>Program Initialization</h2></A>
+<p>In MDIDEMO.C, <I>WinMain</I> begins by registering window classes for the frame window and the two child windows. The window procedures are called <I>FrameWndProc</I>, <I>HelloWndProc</I>, and <I>RectWndProc</I>. Normally, different icons should be associated with these window classes. For the purpose of simplicity, I've used the standard IDI_APPLICATION icon for the frame and child.
+
+<p>Note that I've defined the <I>hbrBackground</I> field of the WNDCLASS structure for the frame window class to be the COLOR_APPWORKSPACE system color. This is not entirely necessary because the client area of the frame window is covered up by the client window, and the client window has this color anyway. However, using this color looks a little better when the frame window is first displayed.
+
+<p>The <I>lpszMenuName</I> field is set to NULL for each of these three window classes. For the Hello and Rect child window classes, this is normal. For the frame window class, I've chosen to indicate the menu handle in the <I>CreateWindow</I> function when creating the frame window.
+
+<p>The window classes for the Hello and Rect child windows allocate extra space for each window using a nonzero value as the <I>cbWndExtra</I> field of the WNDCLASS structure. This space will be used to store a pointer that will reference a block of memory (the size of the HELLODATA or RECTDATA structures defined near the top of MDIDEMO.C) used to store information unique to each document window.
+
+<p>Next, <I>WinMain</I> uses <I>LoadMenu</I> to load the three menus and save their handles in global variables. Three calls to the <I>GetSubMenu</I> function obtain handles to the Window submenu to which the document list will be appended. These are also saved in global variables. The <I>LoadAccelerators</I> function loads the accelerator table.
+
+<p>A call to <I>CreateWindow</I> in <I>WinMain</I> creates the frame window. During the WM_CREATE processing in <I>FrameWndProc</I>, the frame window creates the client window. This involves another call to <I>CreateWindow</I>. The window class is set to MDICLIENT, which is the preregistered class for MDI client windows. Much of the support in Windows for MDI is encapsulated in the MDICLIENT window class. The client window procedure serves as an intermediary layer between the frame window and the various document windows. When calling <I>CreateWindow</I> to create the client window, the last argument must be set to a pointer to a structure of type CLIENTCREATESTRUCT. This structure has two fields,
+<UL>
+
+<p><li><I>hWindowMenu</I> is the handle of the submenu to which the document list will be appended. In MDIDEMO, this is <I>hMenuInitWindow</I>, which was obtained during <I>WinMain</I>. You'll see later how the menu is changed.
+
+<p><li><I>idFirstChild</I> is the menu ID to be associated with the first document window in the document list. This is simply IDM_FIRSTCHILD.
+</UL>
+
+<p>Back in <I>WinMain</I>, MDIDEMO displays the newly created frame window and enters the message loop. The message loop differs a little from a normal loop: after obtaining a message from the message queue with a call to <I>GetMessage</I>, an MDI program passes the message to <I>TranslateMDISysAccel</I> (and to <I>TranslateAccelerator</I> if, like the MDIDEMO program, the program also has menu accelerators).
+
+<p>The <I>TranslateMDISysAccel</I> function translates any keystrokes that may correspond to the special MDI accelerators (Ctrl-F6, for example) into a WM_SYSCOMMAND message. If either <I>TranslateMDISysAccel</I> or <I>TranslateAccelerator</I> returns TRUE (indicating that a message was translated by one of these functions), do not call <I>TranslateMessage</I> and <I>DispatchMessage</I>.
+
+<p>Notice the two window handles passed to <I>TranslateMDISysAccel</I> and <I>TranslateAccelerator</I>: <I>hwndClient</I> and <I>hwndFrame</I>, respectively. The <I>WinMain</I> function obtains the <I>hwndClient</I> window handle by calling <I>GetWindow</I> with the GW_CHILD argument.
+
+<A NAME="705"><h2>Creating the Children</h2></A>
+<p>The bulk of <I>FrameWndProc</I> is devoted to processing WM_COMMAND messages that signal menu selections. As usual, the low word of the <I>wParam</I> parameter to <I>FrameWndProc</I> contains the menu ID number.
+
+<p>For menu ID values of IDM_FILE_NEWHELLO and IDM_FILE_NEWRECT, <I>FrameWndProc</I> must create a new document window. This involves initializing the fields of an MDICREATESTRUCT structure (most of which correspond to <I>CreateWindow</I> arguments) and sending the client window a WM_MDICREATE message with <I>lParam</I> set to a pointer to this structure. The client window then creates the child document window. (Another possibility is using the <I>CreateMDIWindow</I> function.)
+
+<p>Normally the <I>szTitle</I> field of the MDICREATESTRUCT structure would be the filename corresponding to the document. The style field can be set to the window styles WS_HSCROLL or WS_VSCROLL or both to include scroll bars in the document window. The style field can also include WS_MINIMIZE or WS_MAXIMIZE to initially display the document window in a minimized or maximized state.
+
+<p>The <I>lParam</I> field of the MDICREATESTRUCT structure provides a way for the frame window and the child window to share some variables. This field could be set to a pointer to a memory block containing a structure. During the WM_CREATE message in the child document window, <I>lParam</I> is a pointer to a CREATESTRUCT structure and the <I>lpCreateParams</I> field of this structure is a pointer to the MDICREATESTRUCT structure used to create the window.
+
+<p>On receipt of the WM_MDICREATE message, the client window creates the child document window and adds the title of the window to the bottom of the submenu specified in the MDICLIENTSTRUCT structure used to create the client window. When the MDIDEMO program creates its first document window, this is the File submenu of the <I>MdiMenuInit</I> menu. We'll see later how this document list gets moved to the Window submenu of the <I>MdiMenuHello</I> and <I>MdiMenuRect</I> menus.
+
+<p>Up to nine documents can be listed on the menu, each preceded by an underlined number from 1 to 9. If more than nine document windows are created, this list is followed by a More Windows item on the menu. This item invokes a dialog box with a list box that lists all the document windows. The maintenance of this document list is one of the nicest features of the Windows MDI support.
+
+<A NAME="706"><h2>More Frame Window Message Processing</h2></A>
+<p>Let's continue with <I>FrameWndProc</I> message processing before turning our attention to the child document windows.
+
+<p>When you select Close from the File menu, MDIDEMO closes the active child window. It obtains the handle to the active child window by sending the client window a WM_MDIGETACTIVE message. If the child window responds affirmatively to a WM_QUERYENDSESSION message, then MDIDEMO sends the client window a WM_MDIDESTROY message to close the child window.
+
+<p>Processing the Exit option from the File menu requires only that the frame window procedure send itself a WM_CLOSE message.
+
+<p>Processing the Tile, Cascade, and Arrange Icons options from the Window submenu is a snap, requiring only that the WM_MDITILE, WM_MDICASCADE, and WM_MDIICONARRANGE messages be sent to the client window.
+
+<p>The Close All option is a little more complex. <I>FrameWndProc</I> calls <I>EnumChildWindows</I>, passing a pointer referencing the <I>CloseEnumProc</I> function. This function sends a WM_MDIRESTORE message to each child window, followed by a WM_QUERYENDSESSION and, possibly, a WM_MDIDESTROY message. This is not done for the icon title window, indicated by a non-NULL return value from <I>GetWindow</I> with the GW_OWNER argument.
+
+<p>You'll notice that <I>FrameWndProc</I> does not process any of the WM_COMMAND messages that signal one of the colors being selected from the Color menu. These messages are really the responsibility of the document window. For this reason, <I>FrameWndProc</I> sends all unprocessed WM_COMMAND messages to the active child window so that the child window can process those messages that pertain to its window.
+
+<p>All messages that the frame window procedure chooses not to process must be passed to <I>DefFrameProc</I>. This function replaces <I>DefWindowProc</I> in the frame window procedure. Even if a frame window procedure traps the WM_MENUCHAR, WM_SETFOCUS, or WM_SIZE messages, these also must be passed to <I>DefFrameProc</I>.
+
+<p>Unprocessed WM_COMMAND messages must also be passed to <I>DefFrameProc</I>. In particular, <I>FrameWndProc</I> does not process any of the WM_COMMAND messages resulting from the user selecting one of the documents from the list in the Window submenu. (The <I>wParam</I> values for these options begin with IDM_FIRSTCHILD.) These messages are passed to <I>DefFrameProc</I> and processed there.
+
+<p>Notice that the frame window does not need to maintain a list of window handles of the document windows that it creates. If ever these handles are needed (such as when processing the Close All option from the menu), they can be obtained using <I>EnumChildWindows</I>.
+
+<A NAME="707"><h2>The Child Document Windows</h2></A>
+<p>Now let's look at <I>HelloWndProc</I>, which is the window procedure used for the child document windows that display &quot;Hello, World!&quot;
+
+<p>As with any window class used for more than one window, static variables defined in the window procedure (or any function called from the window procedure) are shared by all windows created based on that window class.
+
+<p>Data that is unique to each window must be stored using a method other than static variables. One such technique involves window properties. Another approach&#8212;the one I used&#8212;uses memory space reserved by defining a nonzero value in the <I>cbWndExtra</I> field of the WNDCLASS structure used to register the window class.
+
+<p>In MDIDEMO, I use this space to store a pointer that references a block of memory the size of the HELLODATA structure. <I>HelloWndProc</I> allocates this memory during the WM_CREATE message, initializes the two fields (which indicate the currently checked menu item and the text color), and stores the pointer using <I>SetWindowLong</I>.
+
+<p>When processing a WM_COMMAND message for changing the text colors (recall that these messages originate in the frame window procedure), <I>HelloWndProc</I> uses <I>GetWindowLong</I> to obtain the pointer to the memory block containing the HELLODATA structure. Using this structure, <I>HelloWndProc</I> unchecks the checked menu item, checks the selected menu item, and saves the new color.
+
+<p>A document window procedure receives the WM_MDIACTIVATE message whenever the window becomes active or inactive (indicated by whether or not <I>lParam</I> holds the window's handle). You'll recall that the MDIDEMO program has three different menus: MdiMenuInit for when no documents are present, MdiMenuHello for when a Hello document window is active, and MdiMenuRect for when a Rect document window is active.
+
+<p>The WM_MDIACTIVATE message provides an opportunity for the document window to change the menu. If <I>lParam</I> contains the window's handle (meaning the window is becoming active), <I>HelloWndProc</I> changes the menu to MdiMenuHello. If <I>lParam</I> holds the handle of another window, <I>HelloWndProc</I> changes the menu to MdiMenuInit.
+
+<p><I>HelloWndProc</I> changes the menu by sending a WM_MDISETMENU message to the client window. The client window processes this message by removing the document list from the current menu and appending it to the new menu. This is how the document list is transferred from the MdiMenuInit menu (which is in effect when the first document is created) to the MdiMenuHello menu. Do not use the <I>SetMenu</I> function to change a menu in an MDI application.
+
+<p>Another little chore involves the check marks on the Color submenu. Program options such as this should be unique to each document. For example, you should be able to set black text in one window and red text in another. The menu check marks should reflect the option chosen in the active window. For this reason, <I>HelloWndProc</I> unchecks the selected menu item when the window is becoming inactive and checks the appropriate item when the window is becoming active.
+
+<p>The <I>wParam</I> and <I>lParam</I> values of the WM_MDIACTIVATE message are the handles of the windows being deactivated and activated, respectively. The window procedure gets the first WM_MDIACTIVATE message with <I>lParam</I> set to the window's handle. The window procedure gets the last message with <I>lParam</I> set to another value when the window is destroyed. When the user switches from one document to another, the first document window receives a WM_MDIACTIVATE message with <I>lParam</I> set to the handle of the first window, at which time the window procedure sets the menu to MdiMenuInit. The second document window receives a WM_MDIACTIVATE message with <I>lParam</I> set to the handle of the second window, at which time the window procedure sets the menu to MdiMenuHello or MdiMenuRect as appropriate. If all the windows are closed, the menu is left as MdiMenuInit.
+
+<p>You'll recall that <I>FrameWndProc</I> sends the child window a WM_QUERYENDSESSION message when the user selects Close or Close All from the menu. <I>HelloWndProc</I> processes the WM_QUERYENDSESSION and WM_CLOSE messages by displaying a message box and asking the user whether the window can be closed. (In a real program, this message box might ask whether a file needed to be saved.) If the user indicates that the window should not be closed, the window procedure returns 0.
+
+<p>During the WM_DESTROY message, <I>HelloWndProc</I> frees the memory block allocated during the WM_CREATE message.
+
+<p>All unprocessed messages must be passed on to <I>DefMDIChildProc</I> (not <I>DefWindowProc</I>) for default processing. Several messages must be passed to <I>DefMDIChildProc</I> whether or not the child window procedure does something with them. These are WM_CHILDACTIVATE, WM_GETMINMAXINFO, WM_MENUCHAR, WM_MOVE, WM_SETFOCUS, WM_SIZE, and WM_SYSCOMMAND.
+
+<p><I>RectWndProc</I> is fairly similar to <I>HelloWndProc</I> in much of the overhead involved, but it's a little simpler (that is, no menu options are involved and the window does not verify with the user whether it can be closed), so I needn't discuss it. But note that <I>RectWndProc</I> breaks after processing WM_SIZE, so the message is passed to <I>DefMDIChildProc</I>.
+
+<A NAME="708"><h2>Cleaning Up</h2></A>
+<p>In <I>WinMain</I>, MDIDEMO uses <I>LoadMenu</I> to load the three menus defined in the resource script. Normally Windows will destroy a menu at the time the window to which the menu is attached is destroyed. That takes care of the Init menu. However, menus that are not attached to a window should be destroyed explicitly. For this reason, MDIDEMO calls <I>DestroyMenu</I> twice at the end of <I>WinMain</I> to get rid of the Hello and Rect menus.
+
+</BODY>
+</HTML>
+
+
+
+
+
+

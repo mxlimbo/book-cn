@@ -1,0 +1,1256 @@
+<HTML>
+<HEAD>
+<TITLE>API Hooking: An Example</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch22i.htm">[Previous]</A> <A HREF="ch23a.htm">[Next]</A><P>
+
+<A NAME="297"><H1>API Hooking: An Example</H1></A>
+
+<p>Injecting a DLL into a process's address space is a wonderful
+way to determine what's going on within a process. However, simply
+injecting a DLL doesn't give you enough information. You'll
+often want to know exactly how threads in a particular process are
+calling various functions, and you might want to modify what a Windows
+function does.</p>
+ 
+<p>For example, I know of a company that produced a DLL that was loaded by
+a database product. The DLL's job was to enhance and extend the
+capabilities of the database product. When the database product was
+terminated, the DLL received a DLL_PROCESS_DETACH notification and only
+then executed all of its cleanup code. The DLL would call functions in
+other DLLs to close socket connections, files, and other resources, but
+by the time it received the DLL_PROCESS_DETACH notification, other DLLs
+in the process's address space had already gotten their
+DLL_PROCESS_DETACH notifications. So when the company's DLL tried
+to clean up, many of the functions it called would fail because the
+other DLLs had already uninitialized.</p>
+ 
+<p>The company hired me to help them solve this problem, and I suggested
+that we hook the <i>ExitProcess</i> function. As you know, calling <i>
+ExitProcess</i> causes the system to notify the DLLs with
+DLL_PROCESS_DETACH notifications. By hooking the <i>ExitProcess</i>
+function, we ensured that the company's DLL was notified when <i>
+ExitProcess</i> was called. This notification would come in before any
+DLLs got a DLL_PROCESS_DETACH notification; therefore, all of the DLLs
+in the process were still initialized and functioning properly. At this
+point, the company's DLL would know that the process was about to
+terminate and could perform all of its cleanup successfully. Then the
+operating system's <i>ExitProcess</i> function would be called,
+causing all of the DLLs to receive their DLL_PROCESS_DETACH notifications and clean up. The company's DLL would
+have no special cleanup to perform when it received this notification
+since it had already done what it needed to do.</p>
+ 
+<p>In this example, injecting the DLL came for free: the database
+application was already designed to allow this, and it loaded the
+company's DLL. When the company's DLL was loaded, it had to
+scan all the loaded executable and DLL modules for calls to <i>
+ExitProcess</i>. When it found calls to <i>ExitProcess</i>, the DLL had
+to modify the modules so that they would call a function in the
+company's DLL instead of the operating system's <i>
+ExitProcess</i> function. (This process is a lot simpler than it
+sounds.) Once the company's <i>ExitProcess</i> replacement function
+(or hook function, as it's more commonly called) executed its
+cleanup code, the operating system's <i>ExitProcess</i> function
+(in Kernel32.dll) was called.</p>
+ 
+<p>This example shows a typical use for API hooking. It solved a very real
+problem with very little code.</p>
+
+<A NAME="298"><H2>API Hooking by Overwriting Code</H2></A>
+
+<p>API hooking isn't new&#8212;developers have been using API
+hooking methods for years. When it comes to solving the problem I just
+described, the first &quot;solution&quot; that everyone comes to is to
+hook by overwriting code. Here's how this works:</p>
+
+<ol>
+<p><li> You locate the address of the function you want to hook in
+memory (say <i>ExitProcess</i> in Kernel32.dll).</li></p>
+
+<p><li> You save the first few bytes of this function in some memory of
+your own.</li></p>
+
+<p><li> You overwrite the first few bytes of this function with a JUMP
+CPU instruction that jumps to the memory address of your replacement
+function. Of course, your replacement function must have exactly the
+same signature as the function you're hooking: all the parameters
+must be the same, the return value must be the same, and the calling
+convention must be the same.</li></p>
+
+<p><li> Now, when a thread calls the hooked function, the JUMP
+instruction will actually jump to your replacement function. At this
+point, you can execute whatever code you'd like.</li></p>
+
+<p><li> You unhook the function by taking the saved bytes (from step 2)
+and placing them back at the beginning of the hooked function.</li></p>
+
+<p><li> You call the hooked function (which is no longer hooked), and
+the function performs its normal processing.</li></p>
+
+<p><li> When the original function returns, you execute steps 2 and 3
+again so that your replacement function will be called in the
+future.</li></p>
+</ol>
+
+<p>This method was heavily used by 16-bit Windows programmers and
+worked just fine in that environment. Today, this method has several
+serious shortcomings, and I strongly discourage its use. First, it is
+CPU-dependent: JUMP instructions on <i>x</i>86, Alpha, and other CPUs
+are different, and you must use hand-coded machine instructions to get
+this technique to work. Second, this method doesn't work at all in
+a preemptive, multithreaded environment. It takes time for a thread to
+overwrite the code at the beginning of a function. While the code is
+being overwritten, another thread might attempt to call the same
+function. The results are disastrous! So this method works only if you
+know that no more than one thread will attempt to call a particular
+function at any given time.</p>
+
+<p>
+<div class="note"><blockquote><b>Windows 98</b><hr>
+On Windows 98, the main Windows DLLs (Kernel32, AdvAPI32, User32, and
+GDI32) are protected in such a way that an application cannot overwrite
+their code pages. You can get around this by writing a virtual device
+driver (VxD).
+</blockquote></div>
+</p>
+
+<A NAME="299"><H2>API Hooking by Manipulating a Module's Import Section </H2></A>
+
+<p>As it turns out, another API hooking technique solves both of the
+problems I've mentioned. This technique is easy to implement and is
+quite robust. But to understand it, you must understand how dynamic
+linking works. In particular, you must understand what's contained
+in a module's imports section. While I haven't gone into the
+nitty-gritty details of data structures and the like, I did spend a
+good bit of <A HREF="ch19a.htm">Chapter 19</A> explaining how this section is generated and
+what's in it. You can refer back to that chapter as you read the
+information that follows.</p>
+ 
+<p>As you know, a module's import section contains the set of DLLs
+that the module requires in order to run. In addition, it contains the
+list of symbols that the module imports from each of the DLLs. When the
+module places a call to an imported function, the thread actually grabs
+the address of the desired imported function from the module's
+import section and then jumps to that address.</p>
+ 
+<p>So, to hook a particular function, all you do is change the address in
+the module's import section. That's it. No CPU-dependent stuff.
+And since you're not modifying the function's code in any way,
+you don't need to worry about any thread synchronization
+issues.</p>
+ 
+<p>The following function performs the magic. It looks in one module's
+import section for a reference to a symbol at a specific address. If
+such a reference exists, it changes the address of the symbol.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+void ReplaceIATEntryInOneMod(PCSTR pszCalleeModName, 
+   PROC pfnCurrent, PROC pfnNew, HMODULE hmodCaller) {
+
+   ULONG ulSize;
+   PIMAGE_IMPORT_DESCRIPTOR pImportDesc = (PIMAGE_IMPORT_DESCRIPTOR)
+      ImageDirectoryEntryToData(hmodCaller, TRUE, 
+      IMAGE_DIRECTORY_ENTRY_IMPORT, &amp;ulSize);
+
+   if (pImportDesc == NULL)
+      return;  // This module has no import section.
+
+   // Find the import descriptor containing references 
+   // to callee's functions.
+   for (; pImportDesc-&gt;Name; pImportDesc++) {
+      PSTR pszModName = (PSTR) 
+         ((PBYTE) hmodCaller + pImportDesc-&gt;Name);
+      if (lstrcmpiA(pszModName, pszCalleeModName) == 0) 
+         break;
+   }
+
+   if (pImportDesc-&gt;Name == 0)
+      // This module doesn't import any functions from this callee.
+      return; 
+
+   // Get caller's import address table (IAT) 
+   // for the callee's functions.
+   PIMAGE_THUNK_DATA pThunk = (PIMAGE_THUNK_DATA) 
+      ((PBYTE) hmodCaller + pImportDesc-&gt;FirstThunk);
+
+   // Replace current function address with new function address.
+   for (; pThunk-&gt;u1.Function; pThunk++) {
+
+      // Get the address of the function address.
+      PROC* ppfn = (PROC*) &amp;pThunk-&gt;u1.Function;
+
+      // Is this the function we're looking for?
+      BOOL fFound = (*ppfn == pfnCurrent);
+
+      // See the sample code for some tricky Windows 98 
+      // stuff that goes here.
+
+      if (fFound) {
+         // The addresses match; change the import section address.
+         WriteProcessMemory(GetCurrentProcess(), ppfn, &amp;pfnNew, 
+            sizeof(pfnNew), NULL);
+         return;  // We did it; get out.
+      }
+   }
+
+   // If we get to here, the function
+   // is not in the caller's import section.
+}
+
+</pre></td></tr></table></p>
+
+<p>To see how you call this function, let me first start by explaining
+a potential environment. Let's say that we have a module called
+DataBase.exe. The code in this module calls the <i>ExitProcess</i>
+function contained in Kernel32.dll, but we want it to call the <i>
+MyExitProcess</i> function contained in my DBExtend.dll module. To
+accomplish this, we call <i>ReplaceIATEntryInOneMod</i> as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+PROC pfnOrig = GetProcAddress(GetModuleHandle(&quot;Kernel32&quot;), 
+   &quot;ExitProcess&quot;);
+HMODULE hmodCaller = GetModuleHandle(&quot;DataBase.exe&quot;);
+
+void ReplaceIATEntryInOneMod(
+   &quot;Kernel32.dll&quot;, // Module containing the function (ANSI)
+   pfnOrig,        // Address of function in callee
+   MyExitProcess,  // Address of new function to be called 
+   hmodCaller);    // Handle of module that should call the new function
+</pre></td></tr></table></p>
+
+<p>The first thing that <i>ReplaceIATEntryInOneMod</i> does is locate
+the <i>hmodCaller</i> module's import section by calling <i>
+ImageDirectoryEntryToData</i>, passing it IMAGE_DIRECTORY_ENTRY_IMPORT.
+If this function returns NULL, the DataBase.exe module has no import
+section and there is nothing to do.</p>
+ 
+<p>If the DataBase.exe module has an import section, <i>
+ImageDirectoryEntryToData</i> returns the address of the import
+section, which is a pointer of type PIMAGE_IMPORT_DESCRIPTOR. We must
+now look in the module's import section for the DLL that contains
+the imported function that we want to change. In this example,
+we're looking for the symbols that are being imported from
+&quot;Kernel32.dll&quot; (the first parameter passed to the <i>
+ReplaceIATEntryInOneMod</i> function). The <i>for</i> loop scans for
+the DLL module's name. Notice that all strings in a module's
+import sections are written in ANSI (never Unicode). This is why I
+explicitly call the <i>lstrcmpiA</i> function instead of using the <i>
+lstrcmpi</i> macro.</p>
+ 
+<p>If the loop terminates without locating any references to symbols
+inside &quot;Kernel32.dll&quot;, the function returns and again does
+nothing. If the module's import section does reference symbols in
+&quot;Kernel32.dll&quot;, we get the address to an array of
+IMAGE_THUNK_DATA structures that contains information about the
+imported symbols. Then we iterate through all of the import symbols
+from &quot;Kernel32.dll&quot; looking for an address that matches the
+current address of the symbol. In our example, we're looking for an
+address that matches the address of the <i>ExitProcess</i>
+function. </p>
+
+<p>If no address matches what we're looking for, this module must not
+import the desired symbol, and <i>ReplaceIATEntryInOneMod</i> simply
+returns. If the address is found, <i>WriteProcessMemory</i> is called
+to change the address of the replacement function. I use <i>
+WriteProcessMemory</i> instead of <i>InterlockedExchangePointer</i>
+because <i>WriteProcessMemory</i> changes the bytes no matter what page
+protections exist on those bytes. For example, if the page has
+PAGE_READONLY protection, <i>InterlockedExchangePointer</i> raises an
+access violation; <i>WriteProcessMemory</i>, on the other hand, handles
+all of the page protection changes and just works. </p>
+
+<p>From now on, when any thread executes code inside DataBase.exe's
+module that calls <i>ExitProcess</i>, the thread calls our replacement
+function. From this function, we can easily get the address of the real
+<i>ExitProcess</i> function inside Kernel32.dll and call it when we
+want the normal <i>ExitProcess</i> processing. </p>
+
+<p>Note that the <i>ReplaceIATEntryInOneMod</i> function alters calls to
+functions made from code within a single module. But another DLL might
+be in the address space, and that DLL might have calls to <i>
+ExitProcess</i> as well. If a module other than DataBase.exe attempts
+to call <i>ExitProcess</i>, its call will succeed at calling the <i>
+ExitProcess</i> function in Kernel32.dll. </p>
+
+<p>If you want to trap all calls to <i>ExitProcess</i> from all modules,
+you must call <i>ReplaceIATEntryInOneMod</i> once for each module
+loaded in the process's address space. To this end, I've
+written another function called <i>ReplaceIATEntryInAllMods</i>. This
+function simply uses the toolhelp functions to enumerate all the
+modules loaded in the process's address space and then calls <i>
+ReplaceIATEntryInOneMod</i> for each module, passing it the appropriate
+module handle for the last parameter. </p>
+
+<p>Problems can occur in a few other places. For example, what if a thread
+calls <i>LoadLibrary</i> to load a new DLL after you call <i>
+ReplaceIATEntryInAllMods</i>? In this case, the newly loaded DLL might
+have calls to <i>ExitProcess</i> that you have not hooked. To solve
+this problem, you must hook the <i>LoadLibraryA</i>, <i>
+LoadLibraryW</i>, <i>LoadLibraryExA</i>, and <i>LoadLibraryExW</i>
+functions so that you can trap these calls and call <i>
+ReplaceIATEntryInOneMod</i> for the newly loaded module. </p>
+
+<p>The last problem has to do with <i>GetProcAddress</i>. Say a thread
+executes this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+typedef int (WINAPI *PFNEXITPROCESS)(UINT uExitCode);
+PFNEXITPROCESS pfnExitProcess = (PFNEXITPROCESS) GetProcAddress(
+   GetModuleHandle(&quot;Kernel32&quot;), &quot;ExitProcess&quot;); 
+pfnExitProcess(0);
+</pre></td></tr></table></p>
+
+<p>This code tells the system to get the real address of <i>
+ExitProcess</i> in Kernel32.dll and then call that address. If a thread
+executes this code, your replacement function is not called. To get
+around this problem, you must also hook the <i>GetProcAddress</i>
+function. If it is called and is about to return the address of a
+hooked function, you must return the address of the replacement
+function instead. </p>
+
+<p>The sample application presented in the next section shows how to do
+API hooking and solves all of the <i>LoadLibrary</i> and <i>
+GetProcAddress</i> problems as well.</p>
+
+<A NAME="300"><H2>The LastMsgBoxInfo Sample Application </H2></A>
+
+<p>The LastMsgBoxInfo application (&quot;22 LastMsgBoxInfo.exe&quot;),
+listed in Figure 22-5, demonstrates API hooking. It hooks all calls to
+the <i>MessageBox</i> function contained in User32.dll. To hook this
+function in all processes, the application performs DLL injection using
+the Windows hook technique. The source code and resource files for the
+application and DLL are in the 22-LastMsgBoxInfo and
+22-LastMsgBoxInfoLib directories on the companion CD-ROM. </p>
+
+<p>When you run the application, the following dialog box appears. </p>
+
+<p>
+<A HREF="javascript:fullSize('G22si05x.htm')"> <img src="images/G22si05.JPG" width=404 height=81 border=0 ALT="Click to view at full size."> </A>
+</p>
+
+<p>At this point, the application is waiting. Now run any application and
+cause it to display a message box. For testing purposes, I always run
+Notepad, enter some text, and then try to close Notepad without saving
+the text. This causes Notepad to display this message box. </p>
+
+<p>
+<img src="images/G22si06.JPG" width=266 height=126 border="0">
+</p>
+
+<p>When you dismiss this message box, the LastMsgBoxInfo dialog box looks
+like this. </p>
+
+<p>
+<A HREF="javascript:fullSize('G22si07x.htm')"> <img src="images/G22si07.JPG" width=404 height=81 border=0 ALT="Click to view at full size."> </A>
+</p>
+
+<p>As you can see, the LastMsgBoxInfo application can see exactly how
+other processes have called the <i>MessageBox</i> function. </p>
+
+<p>The code for displaying and managing the Last MessageBox Info dialog
+box is quite simple. The setting up of API hooking is where all of the
+hard work takes place. To make API hooking easier, I created a CAPIHook
+C++ class. The class definition is in APIHook.h and the class
+implementation is in APIHook.cpp. The class is easy to use since there
+are only a few public member functions: a constructor, a destructor,
+and a function that returns the address of the original function. </p>
+
+<p>
+To hook a function, you simply create an instance of this C++ class as
+follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+CAPIHook g_MessageBoxA(&quot;User32.dll&quot;, &quot;MessageBoxA&quot;,
+   (PROC) Hook_MessageBoxA, TRUE);
+
+CAPIHook g_MessageBoxW(&quot;User32.dll&quot;, &quot;MessageBoxW&quot;,
+   (PROC) Hook_MessageBoxW, TRUE); 
+</pre></td></tr></table></p>
+
+<p>Notice that I have to hook two functions: <i>MessageBoxA</i> and <i>
+MessageBoxW</i>. User32.dll contains both functions. When <i>
+MessageBoxA</i> is called, I want my <i>Hook_MessageBoxA</i> to be
+called instead; when <i>MessageBoxW</i> is called, I want my <i>
+Hook_MessageBoxW</i> function called instead. </p>
+
+<p>The constructor for my CAPIHook class simply remembers what API
+you've decided to hook and calls <i>ReplaceIATEntryInAllMods</i> to
+actually perform the hooking. </p>
+
+<p>The next public member function is the destructor. When a CAPIHook
+object goes out of scope, the destructor calls <i>
+ReplaceIATEntryInAllMods</i> to reset the symbol's address back to
+its original address in every module&#8212;the function is no longer
+hooked. </p>
+
+<p>The third public member returns the address of the original function.
+This member function is usually called from inside the replacement
+function in order to call the original function. Here is the code
+inside the <i>Hook_MessageBoxA</i> function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+int WINAPI Hook_MessageBoxA(HWND hWnd, PCSTR pszText, 
+   PCSTR pszCaption, UINT uType) {
+
+   int nResult = ((PFNMESSAGEBOXA)(PROC) g_MessageBoxA)
+      (hWnd, pszText, pszCaption, uType);
+   SendLastMsgBoxInfo(FALSE, (PVOID) pszCaption, (PVOID) pszText, nResult);
+   return(nResult);
+}
+</pre></td></tr></table></p>
+
+<p>This code refers to the global <i>g_MessageBoxA</i> CAPIHook object.
+Casting this object to a PROC data type causes the member function to
+return the address of the original <i>MessageBoxA</i> function inside
+User32.dll. </p>
+
+<p>
+If you use this C++ class, that's all there is to hooking and
+unhooking imported functions. If you examine the code toward the bottom
+of the CAPIHook.cpp file, you'll notice that the C++ class
+automatically instantiates CAPIHook objects to trap <i>
+LoadLibraryA</i>, <i>LoadLibraryW</i>, <i>LoadLibraryExA</i>, <i>
+LoadLibraryExW</i>, and <i>GetProcAddress</i>. In this way, the
+CAPIHook class automatically takes care of the problems mentioned
+earlier.</p>
+
+<p>
+<b>Figure 22-5.</b> <i>The LastMsgBoxInfo sample application</i>
+</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+
+<p><b>LastMsgBoxInfo.cpp</b></p>
+
+<PRE>
+/******************************************************************************
+Module:  LastMsgBoxInfo.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#include &quot;..\CmnHdr.h&quot;     /* See Appendix A. */
+#include &lt;windowsx.h&gt;
+#include &lt;tchar.h&gt;
+#include &quot;Resource.h&quot;
+#include &quot;..\22-LastMsgBoxInfoLib\LastMsgBoxInfoLib.h&quot;
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL Dlg_OnInitDialog(HWND hwnd, HWND hwndFocus, LPARAM lParam) {
+
+   chSETDLGICONS(hwnd, IDI_LASTMSGBOXINFO);
+   SetDlgItemText(hwnd, IDC_INFO, 
+      TEXT(&quot;Waiting for a Message Box to be dismissed&quot;));
+   return(TRUE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnSize(HWND hwnd, UINT state, int cx, int cy) {
+
+   SetWindowPos(GetDlgItem(hwnd, IDC_INFO), NULL, 
+      0, 0, cx, cy, SWP_NOZORDER);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify) {
+   switch (id) {
+      case IDCANCEL:
+         EndDialog(hwnd, id);
+         break;
+   }
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL Dlg_OnCopyData(HWND hwnd, HWND hwndFrom, PCOPYDATASTRUCT pcds) {
+
+   // Some hooked process sent us some message box info, display it
+   SetDlgItemTextA(hwnd, IDC_INFO, (PCSTR) pcds-&gt;lpData);
+   return(TRUE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+INT_PTR WINAPI Dlg_Proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+
+   switch (uMsg) {
+      chHANDLE_DLGMSG(hwnd, WM_INITDIALOG, Dlg_OnInitDialog);
+      chHANDLE_DLGMSG(hwnd, WM_SIZE,       Dlg_OnSize);
+      chHANDLE_DLGMSG(hwnd, WM_COMMAND,    Dlg_OnCommand);
+      chHANDLE_DLGMSG(hwnd, WM_COPYDATA,   Dlg_OnCopyData);
+   }
+   return(FALSE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+int WINAPI _tWinMain(HINSTANCE hinstExe, HINSTANCE, PTSTR pszCmdLine, int) {
+
+   DWORD dwThreadId = 0;
+#ifdef _DEBUG
+   HWND hwnd = FindWindow(NULL, TEXT(&quot;Untitled - Paint&quot;));
+   dwThreadId = GetWindowThreadProcessId(hwnd, NULL);
+#endif
+
+   LastMsgBoxInfo_HookAllApps(TRUE, dwThreadId);
+   DialogBox(hinstExe, MAKEINTRESOURCE(IDD_LASTMSGBOXINFO), NULL, Dlg_Proc);
+   LastMsgBoxInfo_HookAllApps(FALSE, 0);
+   return(0);
+}
+
+//////////////////////////////// End of File //////////////////////////////////
+</pre>
+</td></tr></table></p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+
+<p><b>LastMsgBoxInfo.rc</b></p>
+
+<PRE>
+//Microsoft Developer Studio generated resource script.
+//
+#include &quot;resource.h&quot;
+
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+/////////////////////////////////////////////////////////////////////////////
+// English (U.S.) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+#ifdef _WIN32
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(1252)
+#endif //_WIN32
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
+
+IDD_LASTMSGBOXINFO DIALOG DISCARDABLE  0, 0, 379, 55
+STYLE DS_CENTER | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_VISIBLE | WS_CAPTION | 
+    WS_SYSMENU | WS_THICKFRAME
+CAPTION &quot;Last MessageBox Info&quot;
+FONT 8, &quot;MS Sans Serif&quot;
+BEGIN
+    EDITTEXT        IDC_INFO,0,0,376,52,ES_MULTILINE | ES_AUTOVSCROLL | 
+                    ES_AUTOHSCROLL | ES_READONLY | WS_VSCROLL | WS_HSCROLL
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// DESIGNINFO
+//
+
+#ifdef APSTUDIO_INVOKED
+GUIDELINES DESIGNINFO DISCARDABLE 
+BEGIN
+    IDD_LASTMSGBOXINFO, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 372
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 48
+    END
+END
+#endif    // APSTUDIO_INVOKED
+
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// TEXTINCLUDE
+//
+
+1 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;resource.h\0&quot;
+END
+
+2 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;#include &quot;&quot;afxres.h&quot;&quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+3 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+#endif    // APSTUDIO_INVOKED
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+// Icon with lowest ID value placed first to ensure application icon
+// remains consistent on all systems.
+IDI_LASTMSGBOXINFO      ICON    DISCARDABLE     &quot;LastMsgBoxInfo.ico&quot;
+#endif    // English (U.S.) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 3 resource.
+//
+
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED
+</pre>
+</td></tr></table>
+</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+
+<p><b>LastMsgBoxInfoLib.cpp</b></p>
+
+<PRE>
+/******************************************************************************
+Module:  LastMsgBoxInfoLib.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#define WINVER       0x0500
+#include &quot;..\CmnHdr.h&quot;
+#include &lt;WindowsX.h&gt;
+#include &lt;tchar.h&gt;
+#include &lt;stdio.h&gt;
+#include &quot;APIHook.h&quot;
+
+#define LASTMSGBOXINFOLIBAPI extern &quot;C&quot; _ _declspec(dllexport)
+#include &quot;LastMsgBoxInfoLib.h&quot;
+
+///////////////////////////////////////////////////////////////////////////////
+
+// Prototypes for the hooked functions
+typedef int (WINAPI *PFNMESSAGEBOXA)(HWND hWnd, PCSTR pszText, 
+   PCSTR pszCaption, UINT uType);
+
+typedef int (WINAPI *PFNMESSAGEBOXW)(HWND hWnd, PCWSTR pszText, 
+   PCWSTR pszCaption, UINT uType);
+
+
+// We need to reference these variables before we create them.
+extern CAPIHook g_MessageBoxA;
+extern CAPIHook g_MessageBoxW;
+
+///////////////////////////////////////////////////////////////////////////////
+
+// This function sends the MessageBox info to our main dialog box
+void SendLastMsgBoxInfo(BOOL fUnicode, 
+   PVOID pvCaption, PVOID pvText, int nResult) {
+
+   // Get the pathname of the process displaying the message box
+   char szProcessPathname[MAX_PATH];
+   GetModuleFileNameA(NULL, szProcessPathname, MAX_PATH);
+
+   // Convert the return value into a human-readable string
+   PCSTR pszResult = &quot;(Unknown)&quot;;
+   switch (nResult) {
+      case IDOK:       pszResult = &quot;Ok&quot;;        break;
+      case IDCANCEL:   pszResult = &quot;Cancel&quot;;    break;
+      case IDABORT:    pszResult = &quot;Abort&quot;;     break;
+      case IDRETRY:    pszResult = &quot;Retry&quot;;     break;
+      case IDIGNORE:   pszResult = &quot;Ignore&quot;;    break;
+      case IDYES:      pszResult = &quot;Yes&quot;;       break;
+      case IDNO:       pszResult = &quot;No&quot;;        break;
+      case IDCLOSE:    pszResult = &quot;Close&quot;;     break;
+      case IDHELP:     pszResult = &quot;Help&quot;;      break;
+      case IDTRYAGAIN: pszResult = &quot;Try Again&quot;; break;
+      case IDCONTINUE: pszResult = &quot;Continue&quot;;  break;
+   }
+
+   // Construct the string to send to the main dialog box
+   char sz[2048];
+   wsprintfA(sz, fUnicode 
+      ? &quot;Process: (%d) %s\r\nCaption: %S\r\nMessage: %S\r\nResult: %s&quot;
+      : &quot;Process: (%d) %s\r\nCaption: %s\r\nMessage: %s\r\nResult: %s&quot;,
+      GetCurrentProcessId(), szProcessPathname,
+      pvCaption, pvText, pszResult);
+
+   // Send the string to the main dialog box
+   COPYDATASTRUCT cds = { 0, lstrlenA(sz) + 1, sz };
+   FORWARD_WM_COPYDATA(FindWindow(NULL, TEXT(&quot;Last MessageBox Info&quot;)), 
+      NULL, &amp;cds, SendMessage);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+// This is the MessageBoxW replacement function
+int WINAPI Hook_MessageBoxW(HWND hWnd, PCWSTR pszText, LPCWSTR pszCaption, 
+   UINT uType) {
+
+   // Call the original MessageBoxW function
+   int nResult = ((PFNMESSAGEBOXW)(PROC) g_MessageBoxW)
+      (hWnd, pszText, pszCaption, uType);
+
+   // Send the information to the main dialog box
+   SendLastMsgBoxInfo(TRUE, (PVOID) pszCaption, (PVOID) pszText, nResult);
+
+   // Return the result back to the caller
+   return(nResult);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+// This is the MessageBoxA replacement function
+int WINAPI Hook_MessageBoxA(HWND hWnd, PCSTR pszText, PCSTR pszCaption, 
+   UINT uType) {
+
+   // Call the original MessageBoxA function
+   int nResult = ((PFNMESSAGEBOXA)(PROC) g_MessageBoxA)
+      (hWnd, pszText, pszCaption, uType);
+
+   // Send the information to the main dialog box
+   SendLastMsgBoxInfo(FALSE, (PVOID) pszCaption, (PVOID) pszText, nResult);
+
+   // Return the result back to the caller
+   return(nResult);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+// Hook the MessageBoxA and MessageBoxW functions
+CAPIHook g_MessageBoxA(&quot;User32.dll&quot;, &quot;MessageBoxA&quot;, 
+   (PROC) Hook_MessageBoxA, TRUE);
+
+CAPIHook g_MessageBoxW(&quot;User32.dll&quot;, &quot;MessageBoxW&quot;, 
+   (PROC) Hook_MessageBoxW, TRUE);
+
+
+// Since we do DLL injection with Windows' hooks, we need to save the hook
+// handle in a shared memory block (Windows 2000 actually doesn't need this)
+#pragma data_seg(&quot;Shared&quot;)
+HHOOK g_hhook = NULL;
+#pragma data_seg()
+#pragma comment(linker, &quot;/Section:Shared, rws&quot;)
+
+///////////////////////////////////////////////////////////////////////////////
+
+static LRESULT WINAPI GetMsgProc(int code, WPARAM wParam, LPARAM lParam) {
+
+   // NOTE: On Windows 2000, the 1st parameter to CallNextHookEx can 
+   // be NULL.  On Windows 98, it must be the hook handle.
+   return(CallNextHookEx(g_hhook, code, wParam, lParam));
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+// Returns the HMODULE that contains the specified memory address
+static HMODULE ModuleFromAddress(PVOID pv) {
+
+   MEMORY_BASIC_INFORMATION mbi;
+   return((VirtualQuery(pv, &amp;mbi, sizeof(mbi)) != 0) 
+      ? (HMODULE) mbi.AllocationBase : NULL);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL WINAPI LastMsgBoxInfo_HookAllApps(BOOL fInstall, DWORD dwThreadId) {
+
+   BOOL fOk;
+
+   if (fInstall) {
+
+      chASSERT(g_hhook == NULL); // Illegal to install twice in a row
+
+      // Install the Windows' hook
+      g_hhook = SetWindowsHookEx(WH_GETMESSAGE, GetMsgProc, 
+         ModuleFromAddress(LastMsgBoxInfo_HookAllApps), dwThreadId);
+
+      fOk = (g_hhook != NULL);
+   } else {
+
+      chASSERT(g_hhook != NULL); // Can't uninstall if not installed
+      fOk = UnhookWindowsHookEx(g_hhook);
+      g_hhook = NULL;
+   }
+
+   return(fOk);
+}
+
+//////////////////////////////// End of File //////////////////////////////////
+</pre>
+</td></tr></table>
+</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+
+<p><b>LastMsgBoxInfoLib.h</b></p>
+
+<PRE>
+/******************************************************************************
+Module:  LastMsgBoxInfoLib.h
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#ifndef LASTMSGBOXINFOLIBAPI 
+#define LASTMSGBOXINFOLIBAPI extern &quot;C&quot; _ _declspec(dllimport)
+#endif
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+LASTMSGBOXINFOLIBAPI BOOL WINAPI LastMsgBoxInfo_HookAllApps(BOOL fInstall, 
+   DWORD dwThreadId);
+
+//////////////////////////////// End of File //////////////////////////////////
+</pre>
+</td></tr></table>
+</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+
+<p><b>APIHook.cpp</b></p>
+
+<PRE>
+/******************************************************************************
+Module:  APIHook.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#include &quot;..\CmnHdr.h&quot;
+#include &lt;ImageHlp.h&gt;
+#pragma comment(lib, &quot;ImageHlp&quot;)
+
+#include &quot;APIHook.h&quot;
+#include &quot;..\04-ProcessInfo\Toolhelp.h&quot;
+
+///////////////////////////////////////////////////////////////////////////////
+
+// When an application runs on Windows 98 under a debugger, the debugger
+// makes the module's import section point to a stub that calls the desired 
+// function. To account for this, the code in this module must do some crazy 
+// stuff. These variables are needed to help with the crazy stuff.
+
+
+// The highest private memory address (used for Windows 98 only)
+PVOID CAPIHook::sm_pvMaxAppAddr = NULL;
+const BYTE cPushOpCode = 0x68;   // The PUSH opcode on x86 platforms
+
+///////////////////////////////////////////////////////////////////////////////
+
+// The head of the linked-list of CAPIHook objects
+CAPIHook* CAPIHook::sm_pHead = NULL;
+
+///////////////////////////////////////////////////////////////////////////////
+
+CAPIHook::CAPIHook(PSTR pszCalleeModName, PSTR pszFuncName, PROC pfnHook, 
+   BOOL fExcludeAPIHookMod) {
+
+   if (sm_pvMaxAppAddr == NULL) {
+      // Functions with address above lpMaximumApplicationAddress require
+      // special processing (Windows 98 only)
+      SYSTEM_INFO si;
+      GetSystemInfo(&amp;si);
+      sm_pvMaxAppAddr = si.lpMaximumApplicationAddress;
+   }
+
+   m_pNext  = sm_pHead;    // The next node was at the head
+   sm_pHead = this;        // This node is now at the head
+
+   // Save information about this hooked function
+   m_pszCalleeModName   = pszCalleeModName;
+   m_pszFuncName        = pszFuncName;
+   m_pfnHook            = pfnHook;
+   m_fExcludeAPIHookMod = fExcludeAPIHookMod;
+   m_pfnOrig            = GetProcAddressRaw(
+      GetModuleHandleA(pszCalleeModName), m_pszFuncName);
+   chASSERT(m_pfnOrig != NULL);  // Function doesn't exist
+
+   if (m_pfnOrig &gt; sm_pvMaxAppAddr) {
+      // The address is in a shared DLL; the address needs fixing up 
+      PBYTE pb = (PBYTE) m_pfnOrig;
+      if (pb[0] == cPushOpCode) {
+         // Skip over the PUSH op code and grab the real address
+         PVOID pv = * (PVOID*) &amp;pb[1];
+         m_pfnOrig = (PROC) pv;
+      }
+   }
+
+   // Hook this function in all currently loaded modules
+   ReplaceIATEntryInAllMods(m_pszCalleeModName, m_pfnOrig, m_pfnHook, 
+      m_fExcludeAPIHookMod);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+CAPIHook::~CAPIHook() {
+
+   // Unhook this function from all modules
+   ReplaceIATEntryInAllMods(m_pszCalleeModName, m_pfnHook, m_pfnOrig, 
+      m_fExcludeAPIHookMod);
+
+   // Remove this object from the linked list
+   CAPIHook* p = sm_pHead; 
+   if (p == this) {     // Removing the head node
+      sm_pHead = p-&gt;m_pNext; 
+   } else {
+
+      BOOL fFound = FALSE;
+
+      // Walk list from head and fix pointers
+      for (; !fFound &amp;&amp; (p-&gt;m_pNext != NULL); p = p-&gt;m_pNext) {
+         if (p-&gt;m_pNext == this) { 
+            // Make the node that points to us point to the our next node
+            p-&gt;m_pNext = p-&gt;m_pNext-&gt;m_pNext; 
+            break; 
+         }
+      }
+      chASSERT(fFound);
+   }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+// NOTE: This function must NOT be inlined
+FARPROC CAPIHook::GetProcAddressRaw(HMODULE hmod, PCSTR pszProcName) {
+
+   return(::GetProcAddress(hmod, pszProcName));
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+// Returns the HMODULE that contains the specified memory address
+static HMODULE ModuleFromAddress(PVOID pv) {
+
+   MEMORY_BASIC_INFORMATION mbi;
+   return((VirtualQuery(pv, &amp;mbi, sizeof(mbi)) != 0) 
+      ? (HMODULE) mbi.AllocationBase : NULL);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+void CAPIHook::ReplaceIATEntryInAllMods(PCSTR pszCalleeModName, 
+   PROC pfnCurrent, PROC pfnNew, BOOL fExcludeAPIHookMod) {
+
+   HMODULE hmodThisMod = fExcludeAPIHookMod 
+      ? ModuleFromAddress(ReplaceIATEntryInAllMods) : NULL;
+
+   // Get the list of modules in this process
+   CToolhelp th(TH32CS_SNAPMODULE, GetCurrentProcessId());
+
+   MODULEENTRY32 me = { sizeof(me) };
+   for (BOOL fOk = th.ModuleFirst(&amp;me); fOk; fOk = th.ModuleNext(&amp;me)) {
+
+      // NOTE: We don't hook functions in our own module
+      if (me.hModule != hmodThisMod) {
+
+         // Hook this function in this module
+         ReplaceIATEntryInOneMod(
+            pszCalleeModName, pfnCurrent, pfnNew, me.hModule);
+      }
+   }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+void CAPIHook::ReplaceIATEntryInOneMod(PCSTR pszCalleeModName, 
+   PROC pfnCurrent, PROC pfnNew, HMODULE hmodCaller) {
+
+   // Get the address of the module's import section
+   ULONG ulSize;
+   PIMAGE_IMPORT_DESCRIPTOR pImportDesc = (PIMAGE_IMPORT_DESCRIPTOR)
+      ImageDirectoryEntryToData(hmodCaller, TRUE, 
+      IMAGE_DIRECTORY_ENTRY_IMPORT, &amp;ulSize);
+
+   if (pImportDesc == NULL)
+      return;  // This module has no import section
+
+
+   // Find the import descriptor containing references to callee's functions
+   for (; pImportDesc-&gt;Name; pImportDesc++) {
+      PSTR pszModName = (PSTR) ((PBYTE) hmodCaller + pImportDesc-&gt;Name);
+      if (lstrcmpiA(pszModName, pszCalleeModName) == 0) 
+         break;   // Found
+   }
+
+   if (pImportDesc-&gt;Name == 0)
+      return;  // This module doesn't import any functions from this callee
+
+   // Get caller's import address table (IAT) for the callee's functions
+   PIMAGE_THUNK_DATA pThunk = (PIMAGE_THUNK_DATA) 
+      ((PBYTE) hmodCaller + pImportDesc-&gt;FirstThunk);
+
+   // Replace current function address with new function address
+   for (; pThunk-&gt;u1.Function; pThunk++) {
+
+      // Get the address of the function address
+      PROC* ppfn = (PROC*) &amp;pThunk-&gt;u1.Function;
+
+      // Is this the function we're looking for?
+      BOOL fFound = (*ppfn == pfnCurrent);
+
+      if (!fFound &amp;&amp; (*ppfn &gt; sm_pvMaxAppAddr)) {
+
+         // If this is not the function and the address is in a shared DLL, 
+         // then maybe we're running under a debugger on Windows 98. In this 
+         // case, this address points to an instruction that may have the 
+         // correct address.
+
+         PBYTE pbInFunc = (PBYTE) *ppfn;
+         if (pbInFunc[0] == cPushOpCode) {
+            // We see the PUSH instruction, the real function address follows
+            ppfn = (PROC*) &amp;pbInFunc[1];
+
+            // Is this the function we're looking for?
+            fFound = (*ppfn == pfnCurrent);
+         }
+      }
+
+      if (fFound) {
+         // The addresses match, change the import section address
+         WriteProcessMemory(GetCurrentProcess(), ppfn, &amp;pfnNew, 
+            sizeof(pfnNew), NULL);
+         return;  // We did it, get out
+      }
+   }
+
+   // If we get to here, the function is not in the caller's import section
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+// Hook LoadLibrary functions and GetProcAddress so that hooked functions
+// are handled correctly if these functions are called.
+
+CAPIHook CAPIHook::sm_LoadLibraryA  (&quot;Kernel32.dll&quot;, &quot;LoadLibraryA&quot;,   
+   (PROC) CAPIHook::LoadLibraryA, TRUE);
+
+CAPIHook CAPIHook::sm_LoadLibraryW  (&quot;Kernel32.dll&quot;, &quot;LoadLibraryW&quot;,   
+   (PROC) CAPIHook::LoadLibraryW, TRUE);
+
+CAPIHook CAPIHook::sm_LoadLibraryExA(&quot;Kernel32.dll&quot;, &quot;LoadLibraryExA&quot;, 
+   (PROC) CAPIHook::LoadLibraryExA, TRUE);
+
+CAPIHook CAPIHook::sm_LoadLibraryExW(&quot;Kernel32.dll&quot;, &quot;LoadLibraryExW&quot;, 
+   (PROC) CAPIHook::LoadLibraryExW, TRUE);
+
+CAPIHook CAPIHook::sm_GetProcAddress(&quot;Kernel32.dll&quot;, &quot;GetProcAddress&quot;, 
+   (PROC) CAPIHook::GetProcAddress, TRUE);
+
+///////////////////////////////////////////////////////////////////////////////
+
+void CAPIHook::FixupNewlyLoadedModule(HMODULE hmod, DWORD dwFlags) {
+
+   // If a new module is loaded, hook the hooked functions
+   if ((hmod != NULL) &amp;&amp; ((dwFlags &amp; LOAD_LIBRARY_AS_DATAFILE) == 0)) {
+
+      for (CAPIHook* p = sm_pHead; p != NULL; p = p-&gt;m_pNext) {
+         ReplaceIATEntryInOneMod(p-&gt;m_pszCalleeModName, 
+            p-&gt;m_pfnOrig, p-&gt;m_pfnHook, hmod);
+      }
+   }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+HMODULE WINAPI CAPIHook::LoadLibraryA(PCSTR pszModulePath) {
+
+   HMODULE hmod = ::LoadLibraryA(pszModulePath);
+   FixupNewlyLoadedModule(hmod, 0);
+   return(hmod);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+HMODULE WINAPI CAPIHook::LoadLibraryW(PCWSTR pszModulePath) {
+
+   HMODULE hmod = ::LoadLibraryW(pszModulePath);
+   FixupNewlyLoadedModule(hmod, 0);
+   return(hmod);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+HMODULE WINAPI CAPIHook::LoadLibraryExA(PCSTR pszModulePath, 
+   HANDLE hFile, DWORD dwFlags) {
+
+   HMODULE hmod = ::LoadLibraryExA(pszModulePath, hFile, dwFlags);
+   FixupNewlyLoadedModule(hmod, dwFlags);
+   return(hmod);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+HMODULE WINAPI CAPIHook::LoadLibraryExW(PCWSTR pszModulePath, 
+   HANDLE hFile, DWORD dwFlags) {
+
+   HMODULE hmod = ::LoadLibraryExW(pszModulePath, hFile, dwFlags);
+   FixupNewlyLoadedModule(hmod, dwFlags);
+   return(hmod);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+FARPROC WINAPI CAPIHook::GetProcAddress(HMODULE hmod, PCSTR pszProcName) {
+
+   // Get the true address of the function
+   FARPROC pfn = GetProcAddressRaw(hmod, pszProcName);
+
+   // Is it one of the functions that we want hooked?
+   CAPIHook* p = sm_pHead;
+   for (; (pfn != NULL) &amp;&amp; (p != NULL); p = p-&gt;m_pNext) {
+
+      if (pfn == p-&gt;m_pfnOrig) {
+
+         // The address to return matches an address we want to hook
+         // Return the hook function address instead
+         pfn = p-&gt;m_pfnHook;
+         break;
+      }
+   }
+
+   return(pfn);
+}
+
+//////////////////////////////// End of File //////////////////////////////////
+</pre>
+</td></tr></table>
+</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+
+<p><b>APIHook.h</b></p>
+
+<PRE>
+/******************************************************************************
+Module:  APIHook.h
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#pragma once
+
+///////////////////////////////////////////////////////////////////////////////
+
+class CAPIHook {
+public:
+   // Hook a function in all modules
+   CAPIHook(PSTR pszCalleeModName, PSTR pszFuncName, PROC pfnHook, 
+      BOOL fExcludeAPIHookMod);
+
+   // Unhook a function from all modules
+   ~CAPIHook();
+
+   // Returns the original address of the hooked function
+   operator PROC() { return(m_pfnOrig); }
+
+public:
+   // Calls the real GetProcAddress 
+   static FARPROC WINAPI GetProcAddressRaw(HMODULE hmod, PCSTR pszProcName);
+
+private:
+   static PVOID sm_pvMaxAppAddr; // Maximum private memory address
+   static CAPIHook* sm_pHead;    // Address of first object
+   CAPIHook* m_pNext;            // Address of next object
+
+   PCSTR m_pszCalleeModName;     // Module containing the function (ANSI)
+   PCSTR m_pszFuncName;          // Function name in callee (ANSI)
+   PROC  m_pfnOrig;              // Original function address in callee
+   PROC  m_pfnHook;              // Hook function address
+   BOOL  m_fExcludeAPIHookMod;   // Hook module w/CAPIHook implementation?
+
+private:
+   // Replaces a symbol's address in a module's import section
+   static void WINAPI ReplaceIATEntryInAllMods(PCSTR pszCalleeModName, 
+      PROC pfnOrig, PROC pfnHook, BOOL fExcludeAPIHookMod);
+
+   // Replaces a symbol's address in all module's import sections
+   static void WINAPI ReplaceIATEntryInOneMod(PCSTR pszCalleeModName, 
+      PROC pfnOrig, PROC pfnHook, HMODULE hmodCaller);
+
+private:
+   // Used when a DLL is newly loaded after hooking a function
+   static void    WINAPI FixupNewlyLoadedModule(HMODULE hmod, DWORD dwFlags);
+
+   // Used to trap when DLLs are newly loaded
+   static HMODULE WINAPI LoadLibraryA(PCSTR  pszModulePath);
+   static HMODULE WINAPI LoadLibraryW(PCWSTR pszModulePath);
+   static HMODULE WINAPI LoadLibraryExA(PCSTR  pszModulePath, 
+      HANDLE hFile, DWORD dwFlags);
+   static HMODULE WINAPI LoadLibraryExW(PCWSTR pszModulePath, 
+      HANDLE hFile, DWORD dwFlags);
+
+   // Returns address of replacement function if hooked function is requested
+   static FARPROC WINAPI GetProcAddress(HMODULE hmod, PCSTR pszProcName);
+
+private:
+   // Instantiates hooks on these functions
+   static CAPIHook sm_LoadLibraryA;
+   static CAPIHook sm_LoadLibraryW;
+   static CAPIHook sm_LoadLibraryExA;
+   static CAPIHook sm_LoadLibraryExW;
+   static CAPIHook sm_GetProcAddress;
+};
+
+//////////////////////////////// End of File //////////////////////////////////
+</pre>
+</td></tr></table></p>
+
+
+</body>
+
+</html>
+
+
+
+
+
+
+

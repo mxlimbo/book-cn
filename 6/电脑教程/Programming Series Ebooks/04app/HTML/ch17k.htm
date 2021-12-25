@@ -1,0 +1,802 @@
+<HTML>
+<HEAD>
+<TITLE>Sparsely Committed Memory-Mapped Files</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch17j.htm">[Previous]</A> <A HREF="ch18a.htm">[Next]</A><P>
+
+<A NAME="232"><H1>Sparsely Committed Memory-Mapped Files</H1></A>
+
+<p>In all the discussion of memory-mapped files so far, we see that the
+system requires that all storage for the memory-mapped file be
+committed either in the data file on disk or in the paging file. This
+means that we can't use storage as efficiently as we might like.
+Let's return to the discussion of the spreadsheet from the section
+&quot;<A HREF="ch15e.htm#195">When to Commit Physical Storage</A>&quot; in <A HREF="ch15a.htm">Chapter 15</A>. Let's
+say that you want to share the entire spreadsheet with another process.
+If we were to use memory-mapped files, we would need to commit the
+physical storage for the entire spreadsheet:</p>
+
+<p><table cellpadding="5"><tr><td>
+<pre>
+CELLDATA CellData[200][256];
+</pre></td></tr></table></p>
+
+<p>If a CELLDATA structure is 128 bytes, this array requires 6,553,600
+(200 &times; 256 &times; 128) bytes of physical storage. As I said in
+<A HREF="ch15a.htm">Chapter 15</A>, &quot;That's a lot of physical storage to allocate from
+the paging file right up front for a spreadsheet, especially when you
+consider that most users put information into only a few spreadsheet
+cells, leaving the majority unused.&quot;</p>
+
+<p>It should be obvious that we would prefer to share the spreadsheet as a
+file-mapping object without having to commit all of the physical
+storage up front. <i>CreateFileMapping</i> offers a way to do this by
+specifying either the SEC_RESERVE or the SEC_COMMIT flag in the <i>fdwProtect</i>
+parameter.</p>
+
+<p>These flags are meaningful only if you're creating a file-mapping
+object that is backed by the system's paging file. The SEC_COMMIT
+flag causes <i>CreateFileMapping</i> to commit storage from the
+system's paging file. This is also the result if you specify
+neither flag.</p>
+
+<p>When you call <i>CreateFileMapping</i> and pass the SEC_RESERVE flag,
+the system does not commit physical storage from the system's
+paging file; it just returns a handle to the file-mapping object. You
+can now call <i>MapViewOfFile</i> or <i>MapViewOfFileEx</i> to create a
+view of this file-mapping object. <i>MapViewOfFile</i> and <i>
+MapViewOfFileEx</i> will reserve a region of address space and will not
+commit any physical storage to back the region. Any attempts to access
+a memory address in the reserved region will cause the thread to raise
+an access violation.</p>
+
+<p>What we have here is a region of reserved address space and a handle
+to a file-mapping object that identifies the region. Other processes
+can use the same file-mapping object to map a view of the same region
+of address space. Physical storage is still not committed to the
+region, and if threads in other processes attempt to access a memory
+address of the view in their regions, these threads will raise access
+violations.</p>
+
+<p>Now here is where things get exciting. To commit physical storage to
+the shared region, all a thread has to do is call <i>
+VirtualAlloc</i>:</p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<pre>
+PVOID VirtualAlloc(
+   PVOID pvAddress, 
+   SIZE_T dwSize,
+   DWORD fdwAllocationType, 
+   DWORD fdwProtect);
+</pre></td></tr></table></p>
+
+<p>We already discussed this function in great detail in <A HREF="ch15a.htm">Chapter 15</A>.
+Calling <i>VirtualAlloc</i> to commit physical storage to the
+memory-mapped view region is just like calling <i>VirtualAlloc</i> to
+commit storage to a region initially reserved by a simple call to <i>
+VirtualAlloc</i> using the MEM_RESERVE flag. And just as you can commit
+storage sparsely in a region reserved with <i>VirtualAlloc</i>, you can
+also commit storage sparsely within a region reserved by <i>
+MapViewOfFile</i> or <i>MapViewOfFileEx</i>. However, when you commit
+storage to a region reserved by <i>MapViewOfFile</i> or <i>
+MapViewOfFileEx</i>, all the processes that have mapped a view of the
+same file-mapping object can now successfully access the committed
+pages.</p>
+
+<p>Using the SEC_RESERVE flag and <i>VirtualAlloc</i>, we can
+successfully share the spreadsheet application's <i>CellData</i>
+matrix with other processes&#8212;and use physical storage quite
+efficiently.</p>
+
+<p><div class="note"><blockquote><b>Windows 98</b><hr>
+Normally, <i>VirtualAlloc</i> will fail when you pass it a memory
+address outside 0x00400000 through 0x7FFFFFFF. However, when committing
+physical storage to a memory-mapped file created using the SEC_RESERVE
+flag, you have to call <i>VirtualAlloc</i>, passing a memory address
+that is between 0x80000000 and 0xBFFFFFFF. Windows 98 knows that you
+are committing storage to a reserved memory-mapped file and allows the
+call to succeed.</blockquote></div></p>
+
+<p><div class="note"><blockquote><b>NOTE</b><hr>
+Under Windows 2000, you cannot use the <i>VirtualFree</i> function
+to decommit storage from a memory-mapped file that was reserved with
+the SEC_RESERVE flag. However, Windows 98 does allow you to call <i>
+VirtualFree</i> to decommit storage in this case.</blockquote></div></p>
+
+<p>The NT File System (NTFS 5) offers support for sparse files. This is
+a terrific new feature. Using this new sparse file feature, you can
+easily create and work with sparse memory-mapped files in which the
+storage is contained in a normal disk file rather than in the
+system's paging file.</p>
+
+<p>Here is an example of how you could use this: Let's say that you
+want to create an MMF to store recorded audio data. As the user speaks,
+you want to write the digital audio data into a memory buffer and have
+that buffer be backed by a file on the disk. A sparse MMF would
+certainly be the easiest and most efficient way to implement this in
+your code. The problem is that you don't know how long the user
+will speak before clicking on the Stop button. You might need a file
+large enough for five minutes of data or five hours&#8212;a pretty big
+difference! When using a sparse MMF, however, size really doesn't
+matter.</p>
+
+<A NAME="233"><H2>The Sparse Memory-Mapped File Sample Application</H2></A>
+
+<p>The MMFSparse application (&quot;17 MMFSparse.exe&quot;), listed in
+Figure 17-4, demonstrates how to create a memory-mapped file backed by
+an NTFS 5 sparse file. The source code and resource files for the
+application are in the 17MMFSparse directory on the companion CD-ROM.
+When you start the program, the following window appears.</p>
+
+<p>
+<img src="images/g17si09.JPG" width=264 height=345 border=0>
+</p>
+
+<p>When you click on the Create a 1MB (1024 KB) Sparse MMF button, the
+program attempts to create a sparse file called
+&quot;C:\MMFSparse&quot;. If your C drive is not an NTFS 5 volume, this
+will fail and the process will terminate. If your NTFS 5 volume is on
+another drive letter, you'll have to modify the source code and
+rebuild it to see how the application works.</p>
+
+<p>Once the sparse file is created, it is mapped into the process's
+address space. The Allocated Ranges edit control at the bottom shows
+which parts of the file are actually backed by disk storage. Initially,
+the file will have no storage in it and the edit control will contain
+the text &quot;No allocated ranges in the file.&quot;</p>
+
+<p>To read a byte, simply enter a number into the Offset edit box and
+click on the Read Byte button. The number you enter is multiplied by
+1024 (1 KB), and the byte at that location is read and placed in the
+Byte edit box. If you read from any portion that has no backing
+storage, you will always read a zero byte. If you read from a portion
+of the file that does have backing storage, you will read whatever byte
+is there.</p>
+
+<p>To write a byte, simply enter a number into the Offset edit box and
+also enter a byte value (0-255) into the Byte edit box. Then, when you
+click on the Write Byte button, the offset number is multiplied by 1024
+and the byte at that location is changed to reflect the specified byte
+value. This write can cause the file system to commit backing storage
+for a portion of the file. After any read or write operation, the
+Allocated Ranges edit control is always updated to show you which
+portions of the file are actually backed by storage. The window on the
+following page shows what the dialog box looks like after writing just
+a single byte at offset 1,024,000 (1000 * 1024).</p>
+
+<p>
+<img src="images/g17si10.JPG" width=264 height=345 border=0>
+</p>
+
+<p>In this figure, notice that there is just one allocated range starting
+at logical offset 983,040 bytes into the file and that 65,536 bytes of
+backing storage have been allocated. You can also use Explorer to
+locate the file C:\MMFSparse and display its property page, as shown
+here.</p>
+
+<p>
+<img src="images/G17si11.JPG" width=367 height=443 border=0>
+</p>
+
+<p>Notice that the property page indicates that the file's size is 1
+MB (this is the virtual size of the file), but the file actually
+occupies only 64 KB of disk space.</p>
+
+<p>The last button, Free All Allocated Regions, causes the program to free
+all of the storage for the file; this feature frees up disk space and
+makes all the bytes in the file appear as zeros.</p>
+
+<p>Let's talk about how the program works. To make things easier, I
+created a <i>CSparseStream</i> C++ class (implemented in the
+SparseStream.h file). This class encapsulates the tasks that you can
+perform with a sparse file or stream. Then, in the MMFSparse.cpp file,
+I created another C++ class, <i>CMMFSparse</i>, that is derived from
+the <i>CSparseStream</i> class. So a <i>CMMFSparse</i> object will have
+all of the features of a <i>CSparseStream</i> plus a few more that are
+specific to using a sparse stream as a memory-mapped file. The process
+has a single, global instance of a <i>CMMFSparse</i> object called <i>
+g_mmf.</i> The application references this global variable throughout
+its code in order to manipulate the sparse memory-mapped file.</p>
+
+<p>When the user clicks on the Create a 1MB (1024 KB) Sparse MMF button,
+<i>CreateFile</i> is called to create a new file on the NTFS 5 disk
+partition. This is a normal, ordinary file. But then I use my global
+<i>g_mmf</i> object and call its <i>Initialize</i> method, passing the
+handle of this file and the maximum size of the file (1 MB).
+Internally, the <i>Initialize</i> method calls <i>CreateFileMapping</i>
+to create the file-mapping kernel object using the specified size and
+then calls <i>MapViewOfFile</i> to make the sparse file visible in the
+process's address space.</p>
+
+<p>When the <i>Initialize</i> method returns, the <i>
+Dlg_ShowAllocatedRanges</i> function is called. This function
+internally calls Windows functions that enumerate the logical ranges of
+the sparse files that have storage actually allocated to them. The
+starting offset and length of each allocated range is shown in the edit
+control at the bottom of the dialog box. When the <i>g_mmf</i> object
+is first initialized, the file on the disk actually has 0 bytes of
+physical storage allocated for it; the edit control will reflect
+this.</p>
+
+<p>At this point, the user can attempt to read from or write to bytes
+within the sparse memory-mapped file. For an attempted write, the
+user's offset and byte values are obtained from their respective
+edit controls, and the memory address within the <i>g_mmf</i> object is
+written to. Writing to <i>g_mmf</i> can cause the file system to
+allocate storage to this logical portion of the file, but the
+allocation is transparent to the application.</p>
+
+<p>If the user attempts to read a byte from the <i>g_mmf</i> object, the
+read might attempt to read a logical byte within the file where storage
+has been allocated or the byte might identify a byte where storage has
+not been allocated. If the byte does not have storage allocated,
+reading the byte returns 0. Again, this is transparent to the
+application. If storage does exist for the byte being read, the actual
+value is of course returned.</p>
+
+<p>The last thing that the application demonstrates is how to reset the
+file so that all of its allocated ranges are freed and the file
+doesn't actually require any disk storage. The user frees all the
+allocated ranges by clicking on the Free All Allocated Regions button.
+Windows cannot free all the allocated ranges for a file that is
+memory-mapped, so the first thing that the application does is call the
+<i>g_mmf</i> object's <i>ForceClose</i> method. Internally, the <i>
+ForceClose</i> method calls <i>UnmapViewOfFile</i> and then calls <i>
+CloseHandle,</i> passing the handle of the file-mapping kernel
+object.</p>
+
+<p>Next the <i>DecommitPortionOfStream</i> method is called, freeing all
+storage allocated for logical bytes 0 through 1 MB in the file. Finally
+the <i>Initialize</i> method is called again on the <i>g_mmf</i>
+object, which reinitializes the memory-mapped file into the
+process's address space. To prove that the file has had all its
+allocated storage freed, the <i>Dlg_ShowAllocatedRanges</i> function is
+called, which will display the &quot;No allocated ranges in the
+file&quot; string in the edit control.</p>
+
+<p>One last thing: If you are using a sparse memory-mapped file in a
+real-life application, you might want to truncate the logical size of
+the file when you close it. Trimming the end of a sparse file that
+contains zero bytes doesn't actually affect the disk space, but
+it's still a nice thing to do&#8212;Explorer and the command
+shell's DIR command can report a more accurate file size to the
+user. To set the end of a file marker for a file, you can call the <i>
+SetFilePointer</i> and <i>SetEndOfFile</i> functions after calling the
+<i>ForceClose</i> method.</p>
+
+<p><b>Figure 17-4.</b> <i>The MMFSparse application</i></p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<p><b>MMfFSparse.cpp</b></p>
+<pre>
+/******************************************************************************
+Module:  MMFSparse.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#include &quot;..\CmnHdr.h&quot;     /* See Appendix A. */
+#include &lt;tchar.h&gt;
+#include &lt;WindowsX.h&gt;
+#include &lt;WinIoCtl.h&gt;
+#include &quot;SparseStream.h&quot;
+#include &quot;Resource.h&quot;
+
+
+//////////////////////////////////////////////////////////////////////////////
+
+
+// This class makes it easy to work with memory-mapped sparse files.
+class CMMFSparse : public CSparseStream {
+private:
+   HANDLE m_hfilemap;      // File-mapping object
+   PVOID  m_pvFile;        // Address to start of mapped file
+
+public:
+   // Creates a Sparse MMF and maps it in the process's address space.
+   CMMFSparse(HANDLE hstream = NULL, SIZE_T dwStreamSizeMax = 0);
+
+   // Closes a Sparse MMF.
+   virtual ~CMMFSparse() { ForceClose(); }
+
+   // Creates a sparse MMF and maps it in the process's address space.
+   BOOL Initialize(HANDLE hstream, SIZE_T dwStreamSizeMax);
+
+   // MMF to BYTE cast operator returns address of first byte 
+   // in the memory-mapped sparse file. 
+   operator PBYTE() const { return((PBYTE) m_pvFile); }
+
+   // Allows you to explicitly close the MMF without having
+   // to wait for the destructor to be called.
+   VOID ForceClose();
+};
+
+
+//////////////////////////////////////////////////////////////////////////////
+
+
+CMMFSparse::CMMFSparse(HANDLE hstream, SIZE_T dwStreamSizeMax) {
+
+   Initialize(hstream, dwStreamSizeMax);
+}
+
+
+//////////////////////////////////////////////////////////////////////////////
+
+
+BOOL CMMFSparse::Initialize(HANDLE hstream, SIZE_T dwStreamSizeMax) {
+
+   if (m_hfilemap != NULL) 
+      ForceClose();
+
+   // Initialize to NULL in case something goes wrong.
+   m_hfilemap = m_pvFile = NULL;
+
+   BOOL fOk = TRUE;  // Assume success.
+
+   if (hstream != NULL) {
+      if (dwStreamSizeMax == 0) {
+         DebugBreak();  // Illegal stream size
+      }
+
+      CSparseStream::Initialize(hstream);
+      fOk = MakeSparse();  // Make the stream sparse.
+      if (fOk) {
+         // Create a file-mapping object
+         m_hfilemap = ::CreateFileMapping(hstream, NULL, PAGE_READWRITE, 
+            (DWORD) (dwStreamSizeMax &gt;&gt; 32i64), (DWORD) dwStreamSizeMax, NULL);
+
+         if (m_hfilemap != NULL) {
+            // Map the stream into the process's address space.
+            m_pvFile = ::MapViewOfFile(m_hfilemap, 
+               FILE_MAP_WRITE | FILE_MAP_READ, 0, 0, 0);
+         } else {
+            // Failed to map the file; clean up
+            CSparseStream::Initialize(NULL);
+            ForceClose();
+            fOk = FALSE;
+         }
+      }
+   }
+   return(fOk);
+}
+
+
+//////////////////////////////////////////////////////////////////////////////
+
+
+VOID CMMFSparse::ForceClose() {
+
+   // Clean up everything that was done successfully
+   if (m_pvFile != NULL) { 
+      ::UnmapViewOfFile(m_pvFile); 
+      m_pvFile = NULL; 
+   }
+   if (m_hfilemap != NULL) { 
+      ::CloseHandle(m_hfilemap);   
+      m_hfilemap = NULL; 
+   }
+}
+
+
+//////////////////////////////////////////////////////////////////////////////
+
+
+#define STREAMSIZE      (1 * 1024 * 1024)    // 1 MB (1024 KB)
+TCHAR szPathname[] = TEXT(&quot;C:\\MMFSparse.&quot;);
+HANDLE g_hstream = INVALID_HANDLE_VALUE;
+CMMFSparse g_mmf;
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL Dlg_OnInitDialog(HWND hwnd, HWND hwndFocus, LPARAM lParam) {
+
+   chSETDLGICONS(hwnd, IDI_MMFSPARSE);
+
+   // Initialize the dialog box controls.
+   EnableWindow(GetDlgItem(hwnd, IDC_OFFSET), FALSE);
+   Edit_LimitText(GetDlgItem(hwnd, IDC_OFFSET), 4);
+   SetDlgItemInt(hwnd, IDC_OFFSET, 1000, FALSE);
+
+   EnableWindow(GetDlgItem(hwnd, IDC_BYTE), FALSE);
+   Edit_LimitText(GetDlgItem(hwnd, IDC_BYTE), 3);
+   SetDlgItemInt(hwnd, IDC_BYTE, 5, FALSE);
+
+   EnableWindow(GetDlgItem(hwnd, IDC_WRITEBYTE), FALSE);
+   EnableWindow(GetDlgItem(hwnd, IDC_READBYTE),  FALSE);
+   EnableWindow(GetDlgItem(hwnd, IDC_FREEALLOCATEDREGIONS), FALSE);
+
+   return(TRUE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_ShowAllocatedRanges(HWND hwnd) {
+
+   // Fill in the Allocated Ranges edit control
+   DWORD dwNumEntries;
+   FILE_ALLOCATED_RANGE_BUFFER* pfarb = 
+      g_mmf.QueryAllocatedRanges(&amp;dwNumEntries);
+
+   if (dwNumEntries == 0) {
+      SetDlgItemText(hwnd, IDC_FILESTATUS, 
+         TEXT(&quot;No allocated ranges in the file&quot;));
+   } else {
+      TCHAR sz[4096] = { 0 };
+      for (DWORD dwEntry = 0; dwEntry &lt; dwNumEntries; dwEntry++) {
+         wsprintf(_tcschr(sz, 0), TEXT(&quot;Offset: %7.7u, Length: %7.7u\r\n&quot;), 
+            pfarb[dwEntry].FileOffset.LowPart, pfarb[dwEntry].Length.LowPart);
+      }
+      SetDlgItemText(hwnd, IDC_FILESTATUS, sz);
+   }
+   g_mmf.FreeAllocatedRanges(pfarb);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify) {
+   
+   switch (id) {
+      case IDCANCEL:
+         if (g_hstream != INVALID_HANDLE_VALUE) 
+            CloseHandle(g_hstream);
+         EndDialog(hwnd, id);
+         break;
+
+      case IDC_CREATEMMF:
+         // Create the file
+         g_hstream = CreateFile(szPathname, GENERIC_READ | GENERIC_WRITE, 
+            0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+         if (g_hstream == INVALID_HANDLE_VALUE) {
+            chFAIL(&quot;Failed to create file.&quot;);
+         }
+
+         // Create a 1 MB (1024 KB) MMF using the file
+         if (!g_mmf.Initialize(g_hstream, STREAMSIZE)) {
+            chFAIL(&quot;Failed to initialize Sparse MMF.&quot;);
+         }
+         Dlg_ShowAllocatedRanges(hwnd);
+
+         // Enable/disable the other controls.
+         EnableWindow(GetDlgItem(hwnd, IDC_CREATEMMF), FALSE);
+         EnableWindow(GetDlgItem(hwnd, IDC_OFFSET),    TRUE);
+         EnableWindow(GetDlgItem(hwnd, IDC_BYTE),      TRUE);
+         EnableWindow(GetDlgItem(hwnd, IDC_WRITEBYTE), TRUE);
+         EnableWindow(GetDlgItem(hwnd, IDC_READBYTE),  TRUE);
+         EnableWindow(GetDlgItem(hwnd, IDC_FREEALLOCATEDREGIONS), TRUE);
+
+         // Force the Offset edit control to have the focus.
+         SetFocus(GetDlgItem(hwnd, IDC_OFFSET));
+         break;
+
+      case IDC_WRITEBYTE:
+         {
+         BOOL fTranslated;
+         DWORD dwOffset = GetDlgItemInt(hwnd, IDC_OFFSET, &amp;fTranslated, FALSE);
+         if (fTranslated) {
+            g_mmf[dwOffset * 1024] = (BYTE) 
+               GetDlgItemInt(hwnd, IDC_BYTE, NULL, FALSE);
+            Dlg_ShowAllocatedRanges(hwnd);
+         }
+         }
+         break;
+
+      case IDC_READBYTE:
+         {
+         BOOL fTranslated;
+         DWORD dwOffset = GetDlgItemInt(hwnd, IDC_OFFSET, &amp;fTranslated, FALSE);
+         if (fTranslated) {
+            SetDlgItemInt(hwnd, IDC_BYTE, g_mmf[dwOffset * 1024], FALSE);
+            Dlg_ShowAllocatedRanges(hwnd);
+         }
+         }
+         break;
+
+      case IDC_FREEALLOCATEDREGIONS:
+         // Normally the destructor causes the file-mapping to close.
+         // But, in this case, we wish to force it so that we can reset 
+         // a portion of the file back to all zeroes.
+         g_mmf.ForceClose();
+
+         // We call ForceClose above because attempting to zero a portion of 
+         // the file while it is mapped causes DeviceIoControl to fail with 
+         // error ERROR_USER_MAPPED_FILE (&quot;The requested operation cannot 
+         // be performed on a file with a user-mapped section open.&quot;)
+         g_mmf.DecommitPortionOfStream(0, STREAMSIZE);
+         g_mmf.Initialize(g_hstream, STREAMSIZE);
+         Dlg_ShowAllocatedRanges(hwnd);
+         break;
+   }
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+INT_PTR WINAPI Dlg_Proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+
+   switch (uMsg) {
+      chHANDLE_DLGMSG(hwnd, WM_INITDIALOG, Dlg_OnInitDialog);
+      chHANDLE_DLGMSG(hwnd, WM_COMMAND,    Dlg_OnCommand);
+   }
+   return(FALSE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+int WINAPI _tWinMain(HINSTANCE hinstExe, HINSTANCE, PTSTR pszCmdLine, int) {
+
+   chWindows2000Required();
+
+   DialogBox(hinstExe, MAKEINTRESOURCE(IDD_MMFSPARSE), NULL, Dlg_Proc);
+   return(0);
+}
+
+
+//////////////////////////////// End of File//////////////////////////////////
+</pre></td></tr></table></p>
+<p><table width="95%" cellpadding="5"><tr><td>
+<p><b>MMFSparse.rc</b></p>
+<pre>
+//Microsoft Developer Studio generated resource script.
+//
+#include &quot;Resource.h&quot;
+
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+/////////////////////////////////////////////////////////////////////////////
+// English (U.S.) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+#ifdef _WIN32
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(1252)
+#endif //_WIN32
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
+
+IDD_MMFSHARE DIALOG DISCARDABLE  38, 36, 186, 61
+STYLE WS_MINIMIZEBOX | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
+CAPTION &quot;Memory-Mapped File Sharing&quot;
+FONT 8, &quot;MS Sans Serif&quot;
+BEGIN
+    PUSHBUTTON      &quot;&amp;Create mapping of Data&quot;,IDC_CREATEFILE,4,4,84,14,
+                    WS_GROUP
+    PUSHBUTTON      &quot;&amp;Close mapping of Data&quot;,IDC_CLOSEFILE,96,4,84,14
+    LTEXT           &quot;&amp;Data:&quot;,IDC_STATIC,4,24,18,8
+    EDITTEXT        IDC_DATA,28,24,153,12
+    PUSHBUTTON      &quot;&amp;Open mapping and get Data&quot;,IDC_OPENFILE,40,44,104,14,
+                    WS_GROUP
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+// Icon with lowest ID value placed first to ensure application icon
+// remains consistent on all systems.
+IDI_MMFSHARE            ICON    DISCARDABLE     &quot;MMFShare.Ico&quot;
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// TEXTINCLUDE
+//
+
+1 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;Resource.h\0&quot;
+END
+
+2 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;#include &quot;&quot;afxres.h&quot;&quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+3 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+#endif    // APSTUDIO_INVOKED
+
+#endif    // English (U.S.) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 3 resource.
+//
+
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED
+</pre></td></tr></table></p>
+<p><table width="95%" cellpadding="5"><tr><td>
+<p><b>SparseStream.h</b></p>
+<pre>
+/******************************************************************************
+Module:  SparseStream.h
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#include &quot;..\CmnHdr.h&quot;     /* See Appendix A. */
+#include &lt;WinIoCtl.h&gt;
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+#pragma once
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+class CSparseStream {
+public:
+   static BOOL DoesFileSystemSupportSparseStreams(PCTSTR pszVolume);
+   static BOOL DoesFileContainAnySparseStreams(PCTSTR pszPathname);
+
+public:
+   CSparseStream(HANDLE hstream = INVALID_HANDLE_VALUE) { 
+      Initialize(hstream); 
+   }
+
+   virtual ~CSparseStream() { }
+
+   void Initialize(HANDLE hstream = INVALID_HANDLE_VALUE) { 
+      m_hstream = hstream; 
+   }
+
+public:
+   operator HANDLE() const { return(m_hstream); }
+
+public:
+   BOOL IsStreamSparse() const;
+   BOOL MakeSparse();
+   BOOL DecommitPortionOfStream(
+      _ _int64 qwFileOffsetStart, _ _int64 qwFileOffsetEnd);
+
+   FILE_ALLOCATED_RANGE_BUFFER* QueryAllocatedRanges(PDWORD pdwNumEntries);
+   BOOL FreeAllocatedRanges(FILE_ALLOCATED_RANGE_BUFFER* pfarb);
+
+private:
+   HANDLE m_hstream;
+
+private:
+   static BOOL AreFlagsSet(DWORD fdwFlagBits, DWORD fFlagsToCheck) {
+      return((fdwFlagBits &amp; fFlagsToCheck) == fFlagsToCheck);
+   }
+};
+
+///////////////////////////////////////////////////////////////////////////////
+
+inline BOOL CSparseStream::DoesFileSystemSupportSparseStreams(
+   PCTSTR pszVolume) {
+
+   DWORD dwFileSystemFlags = 0;
+   BOOL fOk = GetVolumeInformation(pszVolume, NULL, 0, NULL, NULL, 
+      &amp;dwFileSystemFlags, NULL, 0);
+   fOk = fOk &amp;&amp; AreFlagsSet(dwFileSystemFlags, FILE_SUPPORTS_SPARSE_FILES);
+   return(fOk);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+inline BOOL CSparseStream::IsStreamSparse() const {
+
+   BY_HANDLE_FILE_INFORMATION bhfi;
+   GetFileInformationByHandle(m_hstream, &amp;bhfi);
+   return(AreFlagsSet(bhfi.dwFileAttributes, FILE_ATTRIBUTE_SPARSE_FILE));
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+inline BOOL CSparseStream::MakeSparse() {
+
+   DWORD dw;
+   return(DeviceIoControl(m_hstream, FSCTL_SET_SPARSE, 
+      NULL, 0, NULL, 0, &amp;dw, NULL));
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+inline BOOL CSparseStream::DecommitPortionOfStream(
+   _ _int64 qwOffsetStart, _ _int64 qwOffsetEnd) {
+
+   // NOTE: This function does not work if this file is memory-mapped.
+   DWORD dw;
+   FILE_ZERO_DATA_INFORMATION fzdi;
+   fzdi.FileOffset.QuadPart = qwOffsetStart;
+   fzdi.BeyondFinalZero.QuadPart = qwOffsetEnd + 1;
+   return(DeviceIoControl(m_hstream, FSCTL_SET_ZERO_DATA, (LPVOID) &amp;fzdi, 
+      sizeof(fzdi), NULL, 0, &amp;dw, NULL));
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+inline BOOL CSparseStream::DoesFileContainAnySparseStreams(
+   PCTSTR pszPathname) {
+
+   DWORD dw = GetFileAttributes(pszPathname);
+   return((dw == 0xfffffff) 
+      ? FALSE : AreFlagsSet(dw, FILE_ATTRIBUTE_SPARSE_FILE));
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+inline FILE_ALLOCATED_RANGE_BUFFER* CSparseStream::QueryAllocatedRanges(
+   PDWORD pdwNumEntries) {
+
+   FILE_ALLOCATED_RANGE_BUFFER farb;
+   farb.FileOffset.QuadPart = 0;
+   farb.Length.LowPart = 
+      GetFileSize(m_hstream, (PDWORD) &amp;farb.Length.HighPart);
+
+   // There is no way to determine the correct memory block size prior to 
+   // attempting to collect this data, so I just picked 100 * sizeof(*pfarb)
+   DWORD cb = 100 * sizeof(farb);
+   FILE_ALLOCATED_RANGE_BUFFER* pfarb = (FILE_ALLOCATED_RANGE_BUFFER*) 
+      HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, cb);
+
+   DeviceIoControl(m_hstream, FSCTL_QUERY_ALLOCATED_RANGES,
+      &amp;farb, sizeof(farb), pfarb, cb, &amp;cb, NULL);
+   *pdwNumEntries = cb / sizeof(*pfarb);
+   return(pfarb);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+inline BOOL CSparseStream::FreeAllocatedRanges(
+   FILE_ALLOCATED_RANGE_BUFFER* pfarb) {
+
+   // Free the queue entry's allocated memory
+   return(HeapFree(GetProcessHeap(), 0, pfarb));
+}
+
+///////////////////////////////// End Of File /////////////////////////////////
+</pre></td></tr></table></p>
+</body>
+</html>
+
+
+
+
+
+
+

@@ -1,0 +1,174 @@
+<HTML>
+ <HEAD>
+	<LINK REL=StyleSheet HREF="prowice.css" TYPE="text/css">
+<TITLE>Processes</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="308"><H1>Processes</H1></A>
+
+<P>Windows CE treats processes differently than does Windows 98 or Windows NT. First and foremost, Windows CE has the aforementioned system limit of 32 processes being run at any one time. When the system starts, at least four processes are created: NK.EXE, which provides the kernel services; FILESYS.EXE, which provides file system services; GWES.EXE, which provides the GUI support; and DEVICE.EXE, which loads and maintains the device drivers for the system. On most systems, other processes are also started, such as the shell, EXPLORER.EXE, and, if the system is connected to a PC, REPLLOG.EXE and RAPISRV.EXE, which service the link between the PC and the Windows CE system. This leaves room for about 24 processes that the user or other applications that are running can start. While this sounds like a harsh limit, most systems don't need that many processes. A typical H/PC that's being used heavily might have 15 processes running at any one time.
+
+<P>Windows CE diverges from its desktop counterparts in other ways. Compared with processes under Windows 98 or Windows NT, Windows CE processes contain much less state information. Since Windows CE supports neither drives nor the concept of a current directory, the individual processes don't need to store that information. Windows CE also doesn't maintain a set of environment variables, so processes don't need to keep an environment block. Windows CE doesn't support handle inheritance, so there's no need to tell a process to enable handle inheritance. Because of all this, the parameter-heavy <I>CreateProcess</I> function is passed mainly NULLs and zeros, with just a few parameters actually used by Windows CE.
+
+<P>Many of the process and thread-related functions are simply not supported by Windows CE because the system doesn't support certain features supported by Windows 98 or Windows NT. Since Windows CE doesn't support an environment, all the Win32 functions dealing with the environment don't exist in Windows CE. While Windows CE supports threads, it doesn't support fibers, a lightweight version of a thread supported by Windows NT. So, the fiber API doesn't exist under Windows CE. Some functions aren't supported because there's an easy way to work around the lack of the function. For example, <I>GetCommandLine</I> doesn't exist in Windows CE, so an application needs to save a pointer to the command line passed to WinMain if it needs to access it later. Finally, <I>ExitProcess</I> doesn't exist under Windows CE. But, as you might expect, there's a workaround that allows a process to close.
+
+<P>Enough of what Windows CE doesn't do; let's look at what you can do with Windows CE.
+
+<A NAME="309"><H2>Creating a Process</H2></A>
+
+<P>The function for creating another process is
+
+<p><pre>
+BOOL CreateProcess (LPCTSTR lpApplicationName, 
+                    LPTSTR lpCommandLine,
+                    LPSECURITY_ATTRIBUTES lpProcessAttributes, 
+                    LPSECURITY_ATTRIBUTES lpThreadAttributes, 
+                    BOOL bInheritHandles, DWORD dwCreationFlags, 
+                    LPVOID lpEnvironment, 
+                    LPCTSTR lpCurrentDirectory,
+                    LPSTARTUPINFO lpStartupInfo, 
+                    LPPROCESS_INFORMATION lpProcessInformation);
+</pre>
+
+<P>While the list of parameters looks daunting, most of the parameters must be set to NULL or 0 because Windows CE doesn't support security or current directories, nor does it handle inheritance. This results in a function prototype that looks more like this:
+
+<p><pre>
+BOOL CreateProcess (LPCTSTR lpApplicationName, 
+                    LPTSTR lpCommandLine,  NULL, NULL, FALSE,
+                    DWORD dwCreationFlags, NULL, NULL, NULL,
+                    LPPROCESS_INFORMATION lpProcessInformation);
+</pre>
+
+<P>The parameters that remain start with a pointer to the name of the application to launch. Windows CE looks for the application in the following directories, in this order:
+
+<OL>
+<P><LI>The path, if any, specified in the <I>lpApplicationName</I>.
+<P><LI>For Windows CE 2.1 or later, the path specified in the <I>SystemPath </I>value in [HKEY_LOCAL_MACHINE]\Loader. For earlier versions, the root of any external storage devices, such as PC Cards.
+<P><LI>The windows directory, (\Windows).
+<P><LI>The root directory in the object store, (\).
+</OL>
+
+<P>This action is different from Windows NT, where <I>CreateProcess</I> searches for the executable only if <I>lpApplicationName</I> is set to NULL and the executable name is passed through the <I>lpCcommnadLine</I> parameter. In the case of Windows CE, the application name must be passed in the <I>lpApplicaitonName</I> parameter because Windows CE doesn't support the technique of passing a NULL in <I>lpApplicationName</I> with the application name as the first token in the <I>lpCommandLine</I> parameter.
+
+<P>The <I>lpCommandLine</I> parameter specifies the command line that will be passed to the new process. The only difference between Windows CE and Windows NT in this parameter is that under Windows CE the command line is always passed as a Unicode string. And, as I mentioned previously, you can't pass the name of the executable as the first token in <I>lpCommandLine</I>.
+
+<P>The <I>dwCreationFlags</I> parameter specifies the initial state of the process after it has been loaded. Windows CE limits the allowable flags to the following:
+
+<UL>
+<P><LI><I>0</I> Creates a standard process.
+<P><LI><I>CREATE_SUSPENDED</I> Creates the process, then suspends the primary thread.
+<P><LI><I>DEBUG_PROCESS</I> The process being created is treated as a process being debugged by the caller. The calling process receives debug information from the process being launched.
+<P><LI><I>DEBUG_ONLY_THIS_PROCESS</I> When combined with DEBUG_PROCESS, debugs a process but doesn't debug any child processes that are launched by the process being debugged.
+<P><LI><I>CREATE_NEW_CONSOLE</I> Forces a new console to be created. This is supported only in Windows CE 2.1 and later.
+</UL>
+
+<P>The only other parameter of <I>CreateProcess</I> used by Windows CE is <I>lpProcessInformation</I>. This parameter can be set to NULL, or it can point to a PROCESS_INFORMATION structure that's filled by <I>CreateProcess</I> with information about the new process. The PROCESS_INFORMATION structure is defined this way:
+
+<p><pre>
+typedef struct _PROCESS_INFORMATION { 
+    HANDLE hProcess;
+    HANDLE hThread; 
+    DWORD dwProcessId; 
+    DWORD dwThreadId; 
+} PROCESS_INFORMATION;
+</pre>
+
+<P>The first two fields in this structure are filled with the handles of the new process and the handle of the primary thread of the new process. These handles are useful for monitoring the newly created process, but with them comes some responsibility. When the system copies the handles for use in the PROCESS_INFORMATION structure, it increments the use count for the handles. This means that, if you don't have any use for the handles, the calling process must close them. Ideally, they should be closed immediately following a successful call to <I>CreateProcess</I>. I'll describe some good uses for these handles later in this chapter in the section, &quot;Synchronization.&quot;
+
+<P>The other two fields in the PROCESS_INFORMATION structure are filled with the process ID and primary thread ID of the new process. These ID values aren't handles but simply unique identifiers that can be passed to Windows functions to identify the target of the function. Be careful when using these IDs. If the new process terminates and another new one is created, the system can reuse the old ID values. You must take measures to assure that ID values for other processes are still identifying the process you're interested in before using them. For example, you can, by using synchronization objects, be notified when a process terminates. When the process terminated, you would then know not to use the ID values for that process.
+
+<P>Using the create process is simple, as you can see in the following code fragment:
+
+<p><pre>
+TCHAR szFileName[MAX_PATH];
+TCHAR szCmdLine[64];
+DWORD dwCreationFlags;
+PROCESS_INFORMATION pi;
+INT rc;
+
+lstrcpy (szFileName, TEXT (&quot;calc&quot;));
+lstrcpy (szCmdLine, TEXT (&quot;&quot;));
+dwCreationFlags = 0;
+
+rc = CreateProcess (szFileName, szCmdLine, NULL, NULL, FALSE, 
+                    dwCreationFlags, NULL, NULL, NULL, &amp;pi);
+if (rc) {
+    CloseHandle (pi.hThread);
+    CloseHandle (pi.hProcess);
+}
+</pre>
+
+<P>This code launches the standard Calculator applet found on Handheld PCs and Palm-size PCs. Since the file name doesn't specify a path, <I>CreateProcess</I> will, using the standard Windows CE search path, find calc.exe in the \Windows directory. Because I didn't pass a command line to <I>Calc</I>, I could have simply passed a NULL value in the <I>lpCmdLine</I> parameter. But I passed a null string in <I>szCmdLine</I> to differentiate the <I>lpCmdLine</I> parameter from the many other parameters in <I>CreateProcess</I> that aren't used. I used the same technique for <I>dwCreationFlags</I>. If the call to <I>CreateProcess</I> is successful, it returns a nonzero value. The code above checks for this, and if the call was successful, closes the process and thread handles returned in the PROCESS_INFORMATION structure. Remember that this must be done by all Win32 applications to prevent memory leaks.
+
+<A NAME="310"><H2>Terminating a Process</H2></A>
+
+<P>A process can terminate itself by simply returning from the <I>WinMain</I> procedure. For console applications, a simple return from <I>main</I> suffices. Windows CE doesn't support the <I>ExitProcess</I> function found in Windows 98 and Windows NT. Instead, you can have the primary thread of the process call <I>ExitThread</I>. Under Windows CE, if the primary thread terminates, the process is terminated as well, regardless of what other threads are currently active in the process. The exit code of the process will be the exit code provided by <I>ExitThread</I>. You can determine the exit code of a process by calling
+
+<p><pre>
+BOOL GetExitCodeProcess (HANDLE hProcess, LPDWORD lpExitCode);
+</pre>
+
+<P>The parameters are the handle to the process and a pointer to a DWORD that receives the exit code that was returned by the terminating process. If the process is still running, the return code is the constant STILL_ACTIVE.
+
+<P>You can terminate another process. But while it's possible to do that, you shouldn't be in the business of closing other processes. The user might not be expecting that process to be closed without his or her consent. If you need to terminate a process (or close a process, which is the same thing but much nicer a word), the following methods can be used.
+
+<P>If the process to be closed is one that you created, you can use some sort of interprocess communication to tell the process to terminate itself. This is the most advisable method because you've designed the target process to be closed by another party. Another method of closing a process is to send the main window of the process a WM_CLOSE message. This is especially effective on the Palm-size PC, where applications are designed to respond to WM_CLOSE messages by quietly saving their state and closing. Finally, if all else fails and you absolutely must close another process, you can use <I>TerminateProcess</I>.
+
+<P><I>TerminateProcess</I> is prototyped as
+
+<p><pre>
+BOOL TerminateProcess (HANDLE hProcess, DWORD uExitCode);
+</pre>
+
+<P>The two parameters are the handle of the process to terminate and the exit code the terminating process will return.
+
+<A NAME="311"><H2>Other Processes</H2></A>
+
+<P>Of course, to terminate another process, you've got to know the handle to that process. You might want to know the handle for a process for other reasons, as well. For example, you might want to know <I>when</I> the process terminates. Windows CE supports two additional functions that come in handy here (both of which are seldom discussed). The first function is <I>OpenProcess</I>, which returns the handle of an already running process. <I>OpenProcess</I> is prototyped as
+
+<p><pre>
+HANDLE OpenProcess (DWORD dwDesiredAccess, BOOL bInheritHandle, 
+                    DWORD dwProcessId);
+</pre>
+
+<P>Under Windows CE, the first parameter isn't used and should be set to 0. The <I>bInheritHandle</I> parameter must be set to FALSE because Windows CE doesn't support handle inheritance. The final parameter is the process ID value of the process you want to open. 
+
+<P>The other function useful in this circumstance is
+
+<p><pre>
+DWORD GetWindowThreadProcessId (HWND hWnd, LPDWORD lpdwProcessId);
+</pre>
+
+<P>This function takes a handle to a window and returns the process ID for the process that created the window. So, using these two functions, you can trace a window back to the process that created it.
+
+<P>Two other functions allow you to directly read from and write to the memory space of another process. These functions are
+
+<p><pre>
+BOOL ReadProcessMemory (HANDLE hProcess, LPCVOID lpBaseAddress, 
+                        LPVOID lpBuffer, DWORD nSize, 
+                        LPDWORD lpNumberOfBytesRead);
+</pre>
+
+<P>and
+
+<p><pre>
+BOOL WriteProcessMemory (HANDLE hProcess, LPVOID lpBaseAddress, 
+                         LPVOID lpBuffer, DWORD nSize, 
+                         LPDWORD lpNumberOfBytesWritten);
+</pre>
+
+<P>The parameters for these functions are fairly self-explanatory. The first parameter is the handle of the remote process. The second parameter is the base address in the other process's address space of the area to be read or written. The third and fourth parameters specify the name and the size of the local buffer in which the data is to be read from or written to. Finally, the last parameter specifies the bytes actually read or written. Both functions require that the entire area being read to or written from must be accessible. Typically, you use these functions for debugging but there's no requirement that this be their only use.
+
+
+
+</BODY>
+</HTML>
+
+
+
+

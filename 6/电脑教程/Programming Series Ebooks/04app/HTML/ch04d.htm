@@ -1,0 +1,213 @@
+<HTML>
+<HEAD>
+<TITLE>Terminating a Process</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch04c.htm">[Previous]</A> <A HREF="ch04e.htm">[Next]</A><P>
+
+<A NAME="57"><H1>Terminating a Process</H1></A>
+
+<p>A process can be terminated in four ways:</p>
+
+<ul>
+<p><li>The primary thread's entry-point function returns. (This is highly recommended.)</li></p>
+
+<p><li>One thread in the process calls the <i>ExitProcess</i> function. (Avoid this method.)</li></p>
+
+<p><li>A thread in another process calls the <i>TerminateProcess</i> function. (Avoid this method.)</li></p>
+
+<p><li>All the threads in the process just die on their own. (This hardly ever happens.)</li></p>
+</ul>
+
+<p>This section discusses all four methods and describes what actually happens when a process ends.</p>
+
+<A NAME="58"><H2>The Primary Thread's Entry-Point Function Returns</H2></A>
+
+<p>You should always design an application so that its process
+terminates only when your primary thread's entry-point function
+returns. This is the only way to guarantee that all your primary
+thread's resources are cleaned up properly.</p>
+
+<p>Having your primary thread's entry-point function return ensures the following:</p>
+
+<ul>
+<p><li>Any C++ objects created by this thread will be destroyed properly using their destructors.</li></p>
+
+<p><li>The operating system will properly free the memory used by the thread's stack.</li></p>
+
+<p><li>The system will set the process's exit code (maintained in
+the process kernel object) to your entry-point function's return
+value.</li></p>
+
+<p><li>The system will decrement the process kernel object's usage count.</li></p>
+</ul>
+
+<A NAME="59"><h2>The <i>ExitProcess</i> Function</h2></A>
+<p>A process terminates when one of the threads in the process calls <i>ExitProcess</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+VOID ExitProcess(UINT fuExitCode);
+</pre>
+</td></tr></table></p>
+
+<p>This function terminates the process and sets the exit code of the process to <i>fuExitCode</i>. <i>ExitProcess</i> doesn't return a value because the process has terminated. If you include any code following the call to <i>ExitProcess</i>, that code will never execute.</p>
+
+<p>When your primary thread's entry-point function (<i>WinMain,
+wWinMain, main,</i> or <i>wmain</i>) returns, it returns to the C/C++ run-time startup code, which properly cleans up all the C run-time resources used by the process. After the C run-time resources have been freed, the C run-time startup code explicitly calls <i>ExitProcess</i>, passing it the value returned from your entry-point function. This explains why simply returning from your primary thread's entry-point function terminates the entire process. Note that any other threads running in the process terminate along with the process.</p>
+
+<p>The Windows Platform SDK documentation states that a process does not terminate until all its threads terminate. As far as the operating system goes, this statement is true. However, the C/C++ run time imposes a different policy on an application: the C/C++ run-time startup code ensures that the process terminates when your application's primary thread returns from its entry-point
+function&#8212;whether or not other threads are running in the
+process&#8212;by calling <i>ExitProcess</i>. However, if you call <i>ExitThread</i> in your entry-point function instead of calling <i>ExitProcess</i> or simply returning, the primary thread for your application will stop executing but the process will not terminate if at least one other thread in the process is still running.</p>
+
+<p>Note that calling <i>ExitProcess</i> or <i>ExitThread</i> causes a process or thread to die while inside a function. As far the operating system is concerned, this is fine and all of the process's or thread's operating system resources will be cleaned up perfectly. However, a C/C++ application should avoid calling these functions because the C/C++ run time might not be able to clean up properly. Examine the following code:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+
+class CSomeObj {
+public:
+   CSomeObj()  { printf(&quot;Constructor\r\n&quot;); }
+   ~CSomeObj() { printf(&quot;Destructor\r\n&quot;); }
+};
+
+
+CSomeObj g_GlobalObj;
+
+
+void main () {
+   CSomeObj LocalObj;
+   ExitProcess(0);     // This shouldn't be here
+
+   // At the end of this function, the compiler automatically added
+   // the code necessary to call LocalObj's destructor.
+   // ExitProcess prevents it from executing.
+}
+</pre>
+</td></tr></table></p>
+
+<p>When the code above executes, you'll see:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Constructor
+Constructor
+</pre>
+</td></tr></table></p>
+
+<p>Two objects are being constructed: a global object and a local
+object. However, you'll never see the word <i>Destructor</i>
+appear. The C++ objects are not properly destructed because <i>
+ExitProcess</i> forces the process to die on the spot: the C/C++ run time is not given a chance to clean up.</p>
+
+<p>As I said, you should never call <i>ExitProcess</i> explicitly. If I remove the call to <i>ExitProcess</i> in the code above, running the program yields this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Constructor
+Constructor
+Destructor
+Destructor
+</pre>
+</td></tr></table></p>
+
+<p>By simply allowing the primary thread's entry point function to return, the C/C++ run time can perform its cleanup and properly destruct any and all C++ objects. By the way, this discussion does not apply only to C++ objects. The C/C++ run time does many things on behalf of your process; it is best to allow the run time to clean it up properly.</p>
+
+<p><div class="note"><blockquote>
+<b>NOTE</b><HR>
+Making explicit calls to <i>ExitProcess</i> and <i>ExitThread</i> is a common problem that causes an application to not clean itself up properly. In the case of <i>ExitThread</i>, the process continues to run but can leak memory or other resources.
+</blockquote></div></p>
+
+<A NAME="60"><h2>The <i>TerminateProcess</i> Function</h2></A>
+<p>A call to <i>TerminateProcess</i> also ends a process:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL TerminateProcess(
+   HANDLE hProcess, 
+   UINT fuExitCode);
+</pre>
+</td></tr></table></p>
+
+<p>This function is different from <i>ExitProcess</i> in one major way: any thread can call <i>TerminateProcess</i> to terminate another process or its own process. The <i>hProcess</i> parameter identifies the handle of the process to be terminated. When the process terminates, its exit code becomes the value you passed as the <i>fuExitCode</i> parameter.</p>
+
+<p>You should use <i>TerminateProcess</i> only if you can't force a process to exit by using another method. The process being terminated is given absolutely no notification that it is dying&#8212;the application cannot clean up properly and cannot prevent itself from being killed (except by normal security mechanisms). For example, the process cannot flush any information it might have in memory out to disk.</p>
+
+<p>While it is true that the process will not have a chance to do its own cleanup, the operating system does clean up completely after the process so that no operating system resources remain. This means that all memory used by the process is freed, any open files are closed, all kernel objects have their usage counts decremented, and all User and GDI objects are destroyed.</p>
+
+<p>Once a process terminates (no matter how), the system guarantees that the process will not leave any parts of itself behind. There is absolutely no way of knowing whether that process had ever run. <i>A process will leak absolutely nothing once it has terminated</i>. I hope that this is clear.</p>
+
+<p><div class="note"><blockquote>
+<b>NOTE</b><HR>
+The <i>TerminateProcess</i> function is asynchronous&#8212;that is, it tells the system that you want the process to terminate but the process is not guaranteed to be killed by the time the function returns. So you might want to call <i>WaitForSingleObject</i> (described in <A HREF="ch09a.htm">Chapter 9</A>) or a similar function, passing the handle of the process if you need to
+know for sure that the process has terminated.
+</blockquote></div></p>
+
+<A NAME="61"><H2>When All the Threads in the Process Die</H2></A>
+
+<p>If all the threads in a process die (either because they've all called <i>ExitThread</i> or because they've been terminated with <i>TerminateThread</i>), the operating system assumes that there is no reason to keep the process's address space around. This is a fair assumption, since there are no more threads executing any code in the address space. When the system detects that no threads are running any more, it terminates the process. When this happens, the process's exit code is set to the same exit code as the last thread that died.</p>
+
+<A NAME="62"><H2>When a Process Terminates</H2></A>
+
+<p>When a process terminates, the following actions are set in
+motion:</p>
+
+<ol>
+<P><LI>Any remaining threads in the process are terminated.</LI></P>
+
+<P><LI>All the User and GDI objects allocated by the process are freed,
+and all the kernel objects are closed. (These kernel objects are
+destroyed if no other process has open handles to them. However, the kernel objects are not destroyed if other processes do have open handles to them.)</LI></P>
+
+<P><LI>The process's exit code changes from STILL_ACTIVE to the
+code passed to <i>ExitProcess</i> or <i>TerminateProcess</i>.</LI></P>
+
+<P><LI>The process kernel object's status becomes signaled. (See <A HREF="ch09a.htm">Chapter 9</A> for more information about signaling.) Other threads in the system can suspend themselves until the process is terminated.</LI></P>
+
+<P><LI>The process kernel object's usage count is decremented by 1.</LI></P>
+</ol>
+
+<p>Note that a process's kernel object always lives at least as
+long as the process itself. However, the process kernel object might live well beyond its process. When a process terminates, the system automatically decrements the usage count of its kernel object. If the count goes to 0, no other process has an open handle to the object and the object is destroyed when the process is destroyed.</p>
+
+<p>However, the process kernel object's count will not go to 0 if
+another process in the system has an open handle to the dying
+process's kernel object. This usually happens when parent  processes forget to close their handle to a child process. This is a feature, not a bug. Remember that the process kernel object maintains statistical information about the process. This information can be useful even after the process has terminated. For example, you might want to know how much CPU time the process required. Or, more likely, you might want to obtain the now-defunct process's exit code by calling <i>GetExitCodeProcess</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL GetExitCodeProcess(
+   HANDLE hProcess, 
+   PDWORD pdwExitCode);
+</pre>
+</td></tr></table></p>
+
+<p>This function looks into the process kernel object (identified by the <i>hProcess</i> parameter) and extracts the member within the kernel object's data structure that identifies the process's
+exit code. The exit code value is returned in the DWORD pointed to by the <i>pdwExitCode</i> parameter.</p>
+
+<p>You can call this function at any time. If the process hasn't
+terminated when <i>GetExitCodeProcess</i> is called, the function fills the DWORD with the STILL_ACTIVE identifier (defined as 0x103). If the process has terminated, the actual exit code value is returned.</p>
+
+<p>You might think that you can write code to determine whether a
+process has terminated by calling <i>GetExitCodeProcess</i>
+periodically and checking the exit code. This would work in many
+situations, but it would be inefficient. I'll explain the proper
+way to determine when a process has terminated in the next section.</p>
+
+<p>Once again, let me remind you that you should tell the system when you are no longer interested in a process's statistical data by calling <i>CloseHandle</i>. If the process has already terminated, <i>CloseHandle</i> will decrement the count on the kernel object and free it.</p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

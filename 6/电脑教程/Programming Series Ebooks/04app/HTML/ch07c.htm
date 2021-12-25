@@ -1,0 +1,88 @@
+<HTML>
+<HEAD>
+<TITLE>Suspending and Resuming a Process</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch07b.htm">[Previous]</A> <A HREF="ch07d.htm">[Next]</A><P>
+
+<A NAME="98"><H1>Suspending and Resuming a Process</H1></A>
+
+<p>The concept of suspending or resuming a process doesn't exist
+for Windows since processes are never scheduled CPU time. However, I have been asked numerous times how to suspend all of the threads in a process. Windows does allow one process to suspend all the threads in another process, but the process doing the suspending must be a debugger. Specifically, the process must call functions such as <i>WaitForDebugEvent</i> and <i>ContinueDebugEvent</i>.</p>
+
+<p>Windows doesn't offer any other way to suspend all threads in a process because of race conditions. For example, while the threads are suspended, a new thread might be created. Somehow the system must suspend any new threads during this window of time. Microsoft has integrated this functionality into the debugging mechanism of the system.</p>
+
+<p>While you cannot create an absolutely perfect <i>SuspendProcess</i> function, you can create an implementation of this function that works well in many situations. Here is my implementation of a <i>SuspendProcess</i> function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+VOID SuspendProcess(DWORD dwProcessID, BOOL fSuspend) {
+
+   // Get the list of threads in the system. 
+   HANDLE hSnapshot = CreateToolhelp32Snapshot(
+      TH32CS_SNAPTHREAD, dwProcessID);
+
+   if (hSnapshot != INVALID_HANDLE_VALUE) {
+
+      // Walk the list of threads.
+      THREADENTRY32 te = { sizeof(te) };
+      BOOL fOk = Thread32First(hSnapshot, &amp;te);
+      for (; fOk; fOk = Thread32Next(hSnapshot, &amp;te)) {
+
+         // Is this thread in the desired process?
+         if (te.th32OwnerProcessID == dwProcessID) {
+
+            // Attempt to convert the thread ID into a handle.
+            HANDLE hThread = OpenThread(THREAD_SUSPEND_RESUME,
+               FALSE, te.th32ThreadID);
+
+            if (hThread != NULL) {
+
+               // Suspend or resume the thread.
+               if (fSuspend)
+                  SuspendThread(hThread);
+               else
+                  ResumeThread(hThread);
+            }
+            CloseHandle(hThread);
+         }
+      }
+      CloseHandle(hSnapshot);
+   }
+}
+</pre>
+</td></tr></table></p>
+
+<p>My <i>SuspendProcess</i> function uses the ToolHelp functions
+(discussed in <A HREF="ch04a.htm">Chapter 4</A>) to enumerate the list of threads in the
+system. As I locate threads that are part of the specified process, I call <i>OpenThread</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HANDLE OpenThread(
+   DWORD dwDesiredAccess, 
+   BOOL bInheritHandle, 
+   DWORD dwThreadID); 
+</pre>
+</td></tr></table></p>
+
+<p>This new Windows 2000 function locates the thread kernel object with the matching thread ID, increments the kernel object's usage count, and returns a handle to the object. With this handle, I call <i>SuspendThread</i> (or <i>ResumeThread</i>). Because <i>OpenThread</i> is new in Windows 2000, my <i>SuspendProcess</i> function will not work on Windows 95 or Windows 98, or on Windows NT 4.0 or earlier.</p>
+
+<p>You probably understand why <i>SuspendProcess</i> does not work 100 percent of the time: while enumerating the set of threads, new threads can be created and destroyed. So after I call <i>CreateToolhelp32Snapshot</i>, a new thread might appear in the target process, which my function will not suspend. Later, when you call <i>SuspendProcess</i> to resume the threads, it will resume a thread that it never suspended. Even worse, while enumerating the thread IDs, an existing thread might be destroyed and a new thread might be created, and both of these threads might have the same ID. This would cause the function to suspend some arbitrary thread (probably in a process other than the target process).</p>
+
+<p>Of course, these situations are unlikely, and if you have intimate knowledge of how the target process operates, these issues might not be problems at all. I offer you this function to use at your own risk.</p>
+
+
+</BODY>
+</HTML>
+
+
+
+
+
+

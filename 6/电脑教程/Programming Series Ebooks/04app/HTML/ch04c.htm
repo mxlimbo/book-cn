@@ -1,0 +1,567 @@
+<HTML>
+<HEAD>
+<TITLE>The CreateProcess Function</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch04b.htm">[Previous]</A> <A HREF="ch04d.htm">[Next]</A><P>
+
+<A NAME="49"><h1>The <i>CreateProcess</i> Function</h1></A>
+<p>You create a process with the <i>CreateProcess</i> function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL CreateProcess(
+   PCTSTR pszApplicationName,
+   PTSTR pszCommandLine,
+   PSECURITY_ATTRIBUTES psaProcess,
+   PSECURITY_ATTRIBUTES psaThread,
+   BOOL bInheritHandles,
+   DWORD fdwCreate,
+   PVOID pvEnvironment,
+   PCTSTR pszCurDir,
+   PSTARTUPINFO psiStartInfo,
+   PPROCESS_INFORMATION ppiProcInfo);
+</pre>
+</td></tr></table></p>
+
+<p>When a thread calls <i>CreateProcess</i>, the system creates a
+process kernel object with an initial usage count of 1. This process kernel object is not the process itself but a small data structure that the operating system uses to manage the process&#8212;you can think of the process kernel object as a small data structure that consists of statistical information about the process. The system then creates a virtual address space for the new process and loads the code and data for the executable file and any required DLLs into the process's address space.</p>
+
+<p>The system then creates a thread kernel object (with a usage count of 1) for the new process's primary thread. Like the process kernel object, the thread kernel object is a small data structure that the operating system uses to manage the thread. This primary thread begins by executing the C/C++ run-time startup code, which eventually calls your <i>WinMain</i>, <i>wWinMain</i>, <i>main</i>, or <i>wmain</i> function. If the system successfully creates the new process and primary thread, <i>CreateProcess</i> returns TRUE.</p>
+
+<p><div class="note"><blockquote>
+<b>NOTE</b><HR>
+<i>CreateProcess</i> returns TRUE before the process has fully
+initialized. This means that the operating system loader has not
+attempted to locate all the required DLLs yet. If a DLL can't be
+located or fails to initialize correctly, the process is terminated. Since <i>CreateProcess</i> returned TRUE, the parent process is not aware of any initialization problems.
+</blockquote></div></p>
+
+<p>OK, that's the broad overview. The following sections dissect
+each of <i>CreateProcess</i>'s parameters.</p>
+
+<A NAME="50"><h2><i>pszApplicationName</i> and <i>pszCommandLine</i></h2></A>
+<p>The <i>pszApplicationName</i> and <i>pszCommandLine</i> parameters specify the name of the executable file the new  process will use and the command-line string that will be passed to the new process, respectively. Let's talk about the <i>pszCommandLine</i> parameter first.</p>
+
+<p><div class="note"><blockquote>
+<b>NOTE</b><HR>
+<p>Notice that the <i>pszCommandLine</i> parameter is prototyped as a PTSTR. This means that <i>CreateProcess</i> expects that you are passing the address of a non-constant string. Internally, <i>CreateProcess</i> actually does modify the command-line string that you pass to it. But before <i>CreateProcess</i> returns, it restores the string to its original form.</p>
+
+<p>This is important because an access violation will occur if your command-line string is contained in a read-only portion of your file image. For example, the following code causes an access violation because Visual C++ 6.0 places the &quot;NOTEPAD&quot; string in read-only memory:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+STARTUPINFO si = { sizeof(si) };
+PROCESS_INFORMATION pi;
+CreateProcess(NULL, TEXT(&quot;NOTEPAD&quot;), NULL, NULL, 
+   FALSE, 0, NULL, NULL, &amp;si, &amp;pi);
+</pre>
+</td></tr></table></p>
+
+<p>When <i>CreateProcess</i> attempts to modify the string, an
+access violation occurs. (Earlier versions of Visual C++ placed the string in read/write memory so calls to <i>CreateProcess</i> did not cause access violations.) </p>
+
+<p>The best way to solve this problem is to copy the constant string to a temporary buffer before calling <i>CreateProcess</i> as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+STARTUPINFO si = { sizeof(si) };
+PROCESS_INFORMATION pi;
+TCHAR szCommandLine[] = TEXT(&quot;NOTEPAD&quot;);
+CreateProcess(NULL, szCommandLine, NULL, NULL, 
+   FALSE, 0, NULL, NULL, &amp;si, &amp;pi);
+</pre>
+</td></tr></table></p>
+
+<p>You might also look into using Visual C++'s /Gf and /GF
+compiler switches, which control the elimination of duplicate strings and determine whether those strings are placed in a read-only section. (Also note that the /ZI switch, which allows the use of Visual Studio's Edit &amp; Continue debugging feature, implies the /GF switch.) The best thing you can do is to use the /GF compiler switch and a temporary buffer. The best thing Microsoft can do is fix <i>CreateProcess</i> so that it takes over the responsibility of making a temporary copy of the string so we don't have to do it. Maybe this will happen in a future version of Windows.</p> 
+
+<p>By the way, if you are calling the ANSI version of <i>CreateProcess</i> on Windows 2000, you will not get an access violation because a temporary copy of the command-line string is made. (For more information about this, see <A HREF="ch02a.htm">Chapter 2</A>.)</p>
+</blockquote></div></p>
+
+
+<p>You use the <i>pszCommandLine</i> parameter to specify a complete command line that <i>CreateProcess</i> uses to create the new process. When <i>CreateProcess</i> parses the <i>pszCommandLine</i> string, it examines the first token in the string and assumes that this token is the name of the executable file you want to run. If the executable file's name does not have an extension, an .exe extension is assumed. <i>CreateProcess</i> also searches for the executable in the following order:</p>
+
+<ol>
+<P><LI>The directory containing the .exe file of the calling process</LI></P>
+<P><LI>The current directory of the calling process</LI></P>
+<P><LI>The Windows system directory</LI></P>
+<P><LI>The Windows directory</LI></P>
+<P><LI>The directories listed in the PATH environment variable</LI></P>
+</ol>
+
+<p>Of course, if the filename includes a full path, the system looks for the executable using the full path and does not search the directories. If the system finds the executable file, it creates a new process and maps the executable's code and data into the new process's address space. The system then calls the C/C++ run-time startup routine. As noted earlier, the C/C++ run-time startup routine examines the process's command line and passes the address to the first argument after the executable file's name as <i>(w)WinMain</i>'s <i>pszCmdLine</i> parameter.</p>
+
+<p>All of this happens as long as the <i>pszApplicationName</i>
+parameter is NULL (which should be the case more than 99 percent of the time). Instead of passing NULL, you can pass the address to a string containing the name of the executable file you want to run in the <i>pszApplicationName</i> parameter. Note that you must specify the file's extension; the system will not automatically assume that the filename has an .exe extension. <i>CreateProcess</i> assumes that the file is in the current directory unless a path precedes the filename.
+If the file can't be found in the current directory, <i>
+CreateProcess</i> doesn't look for the file in any other
+directory&#8212;it simply fails.</p>
+
+<p>Even if you specify a filename in the <i>pszApplicationName</i> parameter, however, <i>CreateProcess</i> passes the contents of the <i>pszCommandLine</i> parameter to the new process as its command line. For example, say that you call <i>CreateProcess</i> like this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// Make sure that the path is in a read/write section of memory.
+TCHAR szPath[] = TEXT(&quot;WORDPAD README.TXT&quot;);
+
+// Spawn the new process.
+CreateProcess(TEXT(&quot;C:\\WINNT\\SYSTEM32\\NOTEPAD.EXE&quot;),szPath,...);
+</pre>
+</td></tr></table></p>
+
+<p>The system invokes the Notepad application, but Notepad's
+command line is WORDPAD README.TXT. This quirk is certainly a little strange, but that's how <i>CreateProcess</i> works. This capability provided by the <i>pszApplicationName</i> parameter was actually added to <i>CreateProcess</i> to support Windows 2000's POSIX subsystem.</p>
+
+<A NAME="51"><h2><i>psaProcess</i>, <i>psaThread</i>, and <i>bInheritHandles</i></h2></A>
+<p>To create a new process, the system must create a process kernel object and a thread kernel object (for the process's primary thread). Because these are kernel objects, the parent process gets the opportunity to associate security attributes with these two objects. You use the <i>psaProcess</i> and <i>psaThread</i> parameters to specify the desired security for the process object and the thread object, respectively. You can pass NULL for these parameters, in which case the system gives these objects default security descriptors. Or you can allocate and initialize two SECURITY_ATTRIBUTES structures to create and assign your own security privileges to the process and thread objects.</p>
+
+<p>Another reason to use SECURITY_ATTRIBUTES structures for the <i>psaProcess</i> and <i>psaThread</i> parameters is if you want either of these two object handles to be inheritable by any child processes spawned in the future by this parent process. (I discussed the theory behind kernel object handle inheritance in <A HREF="ch03a.htm">Chapter 3</A>.) </p>
+
+<p>Figure 4-2 is a short program that demonstrates kernel object handle inheritance. Let's say that Process A creates Process B by calling <i>CreateProcess</i> and passing the address of a SECURITY_ATTRIBUTES structure for the <i>psaProcess</i> parameter in which the <i>bInheritHandle</i> member is set to TRUE. In this same call, the <i>psaThread</i> parameter points to another SECURITY_ATTRIBUTES structure in which its <i>bInheritHandle</i> member is set to FALSE.</p>
+
+<p>When the system creates Process B, it allocates both a process kernel object and a thread kernel object and returns handles back to Process A in the structure pointed to by the <i>ppiProcInfo</i> parameter (discussed shortly). Process A can now manipulate the newly created process object and thread object by using these handles.</p>
+
+<p>Now let's say that Process A will call <i>CreateProcess</i> a
+second time to create Process C. Process A can decide whether to grant Process C the ability to manipulate some of the kernel objects that Process A has access to. The <i>bInheritHandles</i> parameter is used for this purpose. If <i>bInheritHandles</i> is set to TRUE, the system causes Process C to inherit any inheritable handles in Process A. In this case, the handle to Process B's process object is inheritable. The handle to Process B's primary thread object is not inherited no matter what the value of the <i>bInheritHandles</i> parameter to <i>CreateProcess</i> is. Also, if Process A calls <i>CreateProcess</i>, passing FALSE for the <i>bInheritHandles</i> parameter, Process C does not inherit any of the handles currently used by Process A.</p>
+
+
+
+<p><b>Figure 4-2.</b> <i>An example of kernel object handle inheritance</i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><b>Inherit.c</b></p>
+<PRE>
+/************************************************************
+Module name: Inherit.c
+Notices: Copyright (c) 2000 Jeffrey Richter
+************************************************************/
+
+
+#include &lt;Windows.h&gt;
+
+
+int WINAPI WinMain (HINSTANCE hinstExe, HINSTANCE,
+   PSTR pszCmdLine, int nCmdShow) {
+
+   // Prepare a STARTUPINFO structure for spawning processes.
+   STARTUPINFO si = { sizeof(si) };
+   SECURITY_ATTRIBUTES saProcess, saThread;
+   PROCESS_INFORMATION piProcessB, piProcessC;
+   TCHAR szPath[MAX_PATH];
+
+   // Prepare to spawn Process B from Process A.
+   // The handle identifying the new process 
+   // object should be inheritable.
+   saProcess.nLength = sizeof(saProcess);
+   saProcess.lpSecurityDescriptor = NULL;
+   saProcess.bInheritHandle = TRUE;
+
+   // The handle identifying the new thread 
+   // object should NOT be inheritable.
+   saThread.nLength = sizeof(saThread);
+   saThread.lpSecurityDescriptor = NULL;
+   saThread.bInheritHandle = FALSE;
+
+   // Spawn Process B.
+   lstrcpy(szPath, TEXT(&quot;ProcessB&quot;));
+   CreateProcess(NULL, szPath, &amp;saProcess, &amp;saThread,
+      FALSE, 0, NULL, NULL, &amp;si, &amp;piProcessB);
+
+   // The pi structure contains two handles 
+   // relative to Process A:
+   // hProcess, which identifies Process B's process 
+   // object and is inheritable; and hThread, which identifies 
+   // Process B's primary thread object and is NOT inheritable.
+
+   // Prepare to spawn Process C from Process A.
+   // Since NULL is passed for the psaProcess and psaThread
+   // parameters, the handles to Process C's process and 
+   // primary thread objects default to &quot;noninheritable.&quot;
+
+   // If Process A were to spawn another process, this new 
+   // process would NOT inherit handles to Process C's process 
+   // and thread objects.
+
+   // Because TRUE is passed for the bInheritHandles parameter,
+   // Process C will inherit the handle that identifies Process 
+   // B's process object but will not inherit a handle to 
+   // Process B's primary thread object.
+   lstrcpy(szPath, TEXT(&quot;ProcessC&quot;));
+   CreateProcess(NULL, szPath, NULL, NULL,
+      TRUE, 0, NULL, NULL, &amp;si, &amp;piProcessC);
+
+   return(0);
+}
+</pre>
+</td></tr></table></p>
+
+<A NAME="52"><h2><i>fdwCreate</i></h2></A>
+<p>The <i>fdwCreate</i> parameter identifies flags that affect how the new process is created. You can specify multiple flags if you combine them with the bitwise OR operator.</p>
+
+<ul>
+<p><li>The DEBUG_PROCESS flag tells the system that the parent process wants to debug the child process and any processes spawned by the child process in the future. This flag tells the system to notify the parent process (now the debugger) when certain events occur in any of the child processes (the debuggees).</li></p>
+
+<p><li>The DEBUG_ONLY_THIS_PROCESS flag is similar to DEBUG_PROCESS except that the debugger is notified only of special events occurring in the immediate child process. If the child process spawns any additional processes, the debugger is not notified of events in these processes.</li></p>
+
+<p><li>The CREATE_SUSPENDED flag causes the new process to be created, but its primary thread is suspended. This allows the parent process to modify memory in the child process's address space, alter the child process's primary thread's priority, or add the process to a job before the process has had a chance to execute any code. Once the parent process has modified the child process, the parent process allows the child process to execute code by calling the <i>ResumeThread</i> function (discussed in <A HREF="ch07a.htm">Chapter 7</A>).</li></p>
+
+<p><li>The DETACHED_PROCESS flag blocks a CUI-based process's access to its parent's console window and tells the system to send its output to a new console window. If a CUI-based process is created by another CUI-based process, the new process will, by default, use the parent's console window. (When you run the C compiler from the command shell, a new console window isn't created; the output is simply appended to the bottom of the existing console window.) By specifying this flag, the new process will send its output to a new console window.</li></p>
+
+<p><li>The CREATE_NEW_CONSOLE flag tells the system to create a new console window for the new process. Specifying both the
+CREATE_NEW_CONSOLE and DETACHED_PROCESS flags results in an error.</li></p>
+
+<p><li>The CREATE_NO_WINDOW flag tells the system not to create any console window for the application. You can use this flag to execute a console application without a user interface.</li></p>
+
+<p><li>The CREATE_NEW_PROCESS_GROUP flag modifies the list of processes that are notified when the user presses the Ctrl+C or Ctrl+Break keys. If you have several CUI-based processes running when the user presses one of these key combinations, the system notifies all the processes in a process group that the user wants to break out of the current operation. By specifying this flag when creating a new CUI-based process, you create a new process group. If the user presses Ctrl+C or Ctrl+Break while a process in this group is active, the system notifies only processes in this group of the user's request.</li></p>
+
+<p><li>The CREATE_DEFAULT_ERROR_MODE flag tells the system that the new process should not inherit the error mode used by the parent process. (See the <i>SetErrorMode</i> function discussion earlier in this chapter.)</li></p>
+
+<p><li>The CREATE_SEPARATE_WOW_VDM flag is useful only when you invoke a 16-bit Windows application on Windows 2000. It tells the system to create a separate Virtual DOS Machine (VDM) and run the 16-bit Windows application in this VDM. By default, all 16bit Windows applications execute in a single shared VDM. The advantage of running an application in a separate VDM is that if the application crashes, it kills only the single VDM; any other programs running in distinct VDMs continue to function normally. Also, 16bit Windows applications that run in separate VDMs have separate input queues. This means that if one application hangs momentarily, applications in separate VDMs continue to receive input. The disadvantage of running multiple VDMs is that each VDM consumes a significant amount of physical storage. Windows 98
+runs all 16-bit Windows applications in a single virtual machine&#8212;you cannot override this.</li></p>
+
+<p><li>The CREATE_SHARED_WOW_VDM flag is useful only when you invoke a 16-bit Windows application on Windows 2000. By default, all 16-bit Windows applications run in a single VDM unless the
+CREATE_SEPARATE_WOW_VDM flag is specified. However, you can override this default behavior by setting the DefaultSeparate VDM value in the registry under HKEY_LOCAL_MACHINE\System\CurrentControlSet\Control\WOW
+to yes. The CREATE_SHARED_WOW_VDM flag then runs the 16-bit Windows application in the system's shared VDM. (You must reboot after changing this registry setting.)</li></p>
+
+<p><li>The CREATE_UNICODE_ENVIRONMENT flag tells the system that the child process's environment block should contain Unicode
+characters. By default, a process's environment block contains ANSI strings.</li></p>
+
+<p><li>The CREATE_FORCEDOS flag forces the system to run the MSDOS application that is embedded inside a 16-bit OS/2 application.</li></p>
+
+<p><li>The CREATE_BREAKAWAY_FROM_JOB flag allows a process in a job to spawn a new process that is disassociated from the job. (See <A HREF="ch05a.htm">Chapter 5</A> for more information.)</li></p>
+</ul>
+
+<p>The <i>fdwCreate</i> parameter also allows you to specify a priority class. However, you don't have to do this, and for most
+applications you shouldn't&#8212;the system will assign a default
+priority class to the new process. The following table shows the
+possible priority classes.</p>
+
+<p><table width="95%" cellpadding="5">
+<tr>
+<th>Priority Class</th>
+<th>Flag Identifier</th>
+</tr>
+<tr>
+<td valign="TOP">Idle</td>
+<td valign="TOP">IDLE_PRIORITY_CLASS</td>
+</tr>
+<tr>
+<td valign="TOP">Below normal</td>
+<td valign="TOP">BELOW_NORMAL_PRIORITY_CLASS</td>
+</tr>
+<tr>
+<td valign="TOP">Normal</td>
+<td valign="TOP">NORMAL_PRIORITY_CLASS</td>
+</tr>
+<tr>
+<td valign="TOP">Above normal</td>
+<td valign="TOP">ABOVE_NORMAL_PRIORITY_CLASS</td>
+</tr>
+<tr>
+<td valign="TOP">High</td>
+<td valign="TOP">HIGH_PRIORITY_CLASS</td>
+</tr>
+<tr>
+<td valign="TOP">Realtime</td>
+<td valign="TOP">REALTIME_PRIORITY_CLASS</td>
+</tr>
+</table></p>
+
+<p>These priority classes affect how the threads contained within the process are scheduled with respect to other processes' threads. See the section titled &quot;<A HREF="ch07i.htm#104">An Abstract View of Priorities</A>&quot; in Chapter 7 for more information.</p>
+
+<p><div class="note"><blockquote>
+<b>NOTE</b><HR>
+The BELOW_NORMAL_PRIORITY_CLASS and ABOVE_NORMAL_PRIORITY_CLASS priority classes are new in Windows 2000; they are not supported on Windows NT 4 (or earlier), Windows 95, or Windows 98.
+</blockquote></div></p>
+
+<A NAME="53"><h2><i>pvEnvironment</i></h2></A>
+<p>The <i>pvEnvironment</i> parameter points to a block of memory that contains environment strings that the new process will use. Most of the time, NULL is passed for this parameter, causing the child process to inherit the set of environment strings that its parent is using. Alternatively, you can use the <i>GetEnvironmentStrings</i> function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+PVOID GetEnvironmentStrings();
+</pre>
+</td></tr></table></p>
+
+<p>This function gets the address of the environment string data block that the calling process is using. You can use the address returned by this function as the <i>pvEnvironment</i> parameter of <i>CreateProcess</i>. This is exactly what <i>CreateProcess</i> does if you pass NULL for the <i>pvEnvironment</i> parameter. When you no longer need this block of memory, you should free it by calling <i>FreeEnvironmentStrings</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL FreeEnvironmentStrings(PTSTR pszEnvironmentBlock);
+</pre>
+</td></tr></table></p>
+
+<A NAME="54"><h2><i>pszCurDir</i></h2></A>
+<p>The <i>pszCurDir</i> parameter allows the parent process to set the child process's current drive and directory. If this parameter is NULL, the new process's working directory will be the same as that of the application spawning the new process. If this parameter is not NULL, <i>pszCurDir</i> must point to a zero-terminated string containing the desired working drive and directory. Notice that you must specify a drive letter in the path.</p>
+
+<A NAME="55"><h2><i>psiStartInfo</i></h2></A>
+<p>The <i>psiStartInfo</i> parameter points to a STARTUPINFO
+structure:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+typedef struct _STARTUPINFO {
+   DWORD cb;
+   PSTR lpReserved;
+   PSTR lpDesktop;
+   PSTR lpTitle;
+   DWORD dwX;
+   DWORD dwY;
+   DWORD dwXSize;
+   DWORD dwYSize;
+   DWORD dwXCountChars;
+   DWORD dwYCountChars;
+   DWORD dwFillAttribute;
+   DWORD dwFlags;
+   WORD wShowWindow;
+   WORD cbReserved2;
+   PBYTE lpReserved2;
+   HANDLE hStdInput;
+   HANDLE hStdOutput;
+   HANDLE hStdError;
+} STARTUPINFO, *LPSTARTUPINFO;
+</pre>
+</td></tr></table></p>
+
+<p>Windows uses the members of this structure when it creates the new process. Most applications will want the spawned application simply to use default values. At a minimum, you should initialize all the members in this structure to zero and then set the <i>cb</i> member to the size of the structure:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+STARTUPINFO si = { sizeof(si) };
+CreateProcess(..., &amp;si, ...);
+</pre>
+</td></tr></table></p>
+
+<p>If you fail to zero the contents of the structure, the members will contain whatever garbage is on the calling thread's stack. Passing this garbage to <i>CreateProcess</i> means that sometimes the new process will be created and sometimes it won't, depending on the garbage. It is important to set the unused members of this structure to zero so that <i>CreateProcess</i> will work consistently. Failing to do so is one of the most common mistakes I see developers make.</p>
+
+<p>Now, if you want to initialize some of the members of the structure, you simply do so before the call to <i>CreateProcess</i>. We'll discuss each member in turn. Some members are meaningful only if the child application creates an overlapped window; others are meaningful only if the child performs CUI-based input and output. Table 4-3 describes the usefulness of each member.</p>
+
+<p><b>Table 4-3.</b> <i>The members of the STARTUPINFO structure</i></p>
+
+<p><table width="95%" cellpadding="5">
+<tr>
+<th>Member</th>
+<th>Window, Console, or Both</th>
+<th>Purpose</th>
+</tr>
+<tr>
+<td valign="TOP"><i>cb</i></td>
+<td valign="TOP">Both</td>
+<td valign="TOP">Contains the number of bytes in the STARTUPINFO structure. Acts as a version control in case Microsoft expands this structure in the future. Your application must initialize <i>cb</i> to
+<i>sizeof(STARTUPINFO)</i>.</td>
+</tr>
+<tr>
+<td valign="TOP"><i>lpReserved</i></td>
+<td valign="TOP">Both</td>
+<td valign="TOP">Reserved. Must be initialized to NULL.</td>
+</tr>
+<tr>
+<td valign="TOP"><i>lpDesktop</i></td>
+<td valign="TOP">Both</td>
+<td valign="TOP">Identifies the name of the desktop on which to start the application. If the desktop exists, the new process is associated with the specified desktop. If the desktop does not exist, a desktop with default attributes is created with the specified name for the new process. If <i>lpDesktop</i> is NULL (which is most common), the process is associated with the current desktop.</td>
+</tr>
+<tr>
+<td valign="TOP"><i>lpTitle</i></td>
+<td valign="TOP">Console</td>
+<td valign="TOP">Specifies the window title for a console window. If <i>lpTitle</i> is NULL, the name of the executable file is used as the window title.</td>
+</tr>
+<tr>
+<td valign="TOP"><i>dwX</i><br>
+<i>dwY</i> </td>
+<td valign="TOP">Both</td>
+<td valign="TOP">Specify the <i>x</i> and <i>y</i> coordinates (in pixels) of the location where the application's window should be placed on the screen. These coordinates are used only if the child process creates its first overlapped window with CW_USEDEFAULT as the <i>x</i> parameter of <i>CreateWindow</i>. For applications that create console windows, these members indicate the upper left corner of the console window.</td>
+</tr>
+<tr>
+<td valign="TOP"><i>dwXSize</i></td>
+<td valign="TOP">Both</td>
+<td valign="TOP">Specify the width and height (in pixels) of an <i>dwYSize</i> application's window. These values are used only if the child process creates its first overlapped window with CW_USEDEFAULT as
+the <i>nWidth</i> parameter of <i>CreateWindow</i>. For applications that create console windows, these members indicate the width and height of the console window.</td>
+</tr>
+<tr>
+<td valign="TOP"><i>dwXCountChars</i><br>
+<i>dwYCountChars</i> </td>
+<td valign="TOP">Console</td>
+<td valign="TOP">Specify the width and height (in characters) of a child's console windows.</td>
+</tr>
+<tr>
+<td valign="TOP"><i>dwFillAttribute</i></td>
+<td valign="TOP">Console</td>
+<td valign="TOP">Specifies the text and background colors used by a child's console window.</td>
+</tr>
+<tr>
+<td valign="TOP"><i>dwFlags</i></td>
+<td valign="TOP">Both</td>
+<td valign="TOP">See the following section and the table below.</td>
+</tr>
+<tr>
+<td valign="TOP"><i>wShowWindow</i></td>
+<td valign="TOP">Window</td>
+<td valign="TOP">Specifies how the child's first overlapped window should appear if the application's first call to <i>ShowWindow</i> passes SW_SHOWDEFAULT as the <i>nCmdShow</i> parameter. This member can be any of the SW_* identifiers normally used with the <i>ShowWindow</i> function.</td>
+</tr>
+<tr>
+<td valign="TOP"><i>cbReserved2</i></td>
+<td valign="TOP">Both</td>
+<td valign="TOP">Reserved. Must be initialized to 0.</td>
+</tr>
+<tr>
+<td valign="TOP"><i>lpReserved2</i></td>
+<td valign="TOP">Both</td>
+<td valign="TOP">Reserved. Must be initialized to NULL.</td>
+</tr>
+<tr>
+<td valign="TOP"><i>hStdInput</i><br>
+<i>hStdOutput</i><br>
+<i>hStdError</i></td>
+<td valign="TOP">Console</td>
+<td valign="TOP">Specify handles to buffers for console input and output. By default, the <i>hStdInput</i> identifies a keyboard buffer; <i>hStdError hStdOutput</i> and identify a console window's buffer.</td>
+</tr>
+</table></p>
+
+<p>Now, as promised, I'll discuss the <i>dwFlags</i> member. This
+member contains a set of flags that modify how the child process is to be created. Most of the flags simply tell <i>CreateProcess</i> whether other members of the STARTUPINFO structure contain useful information or whether some of the members should be ignored. The following table shows the list of possible flags and their meanings.</p>
+
+<p><table width="95%" cellpadding="5">
+<tr>
+<th>Flag</th>
+<th>Meaning</th>
+</tr>
+<tr>
+<td valign="TOP">STARTF_USESIZE</td>
+<td valign="TOP">Use the <i>dwXSize</i> and <i>dwYSize</i> members.</td>
+</tr>
+<tr>
+<td valign="TOP">STARTF_USESHOWWINDOW</td>
+<td valign="TOP">Use the <i>wShowWindow</i> member.</td>
+</tr>
+<tr>
+<td valign="TOP">STARTF_USEPOSITION</td>
+<td valign="TOP">Use the <i>dwX</i> and <i>dwY</i> members.</td>
+</tr>
+<tr>
+<td valign="TOP">STARTF_USECOUNTCHARS</td>
+<td valign="TOP">Use the <i>dwXCountChars</i> and <i>dwYCountChars</i> members.</td>
+</tr>
+<tr>
+<td valign="TOP">STARTF_USEFILLATTRIBUTE</td>
+<td valign="TOP">Use the <i>dwFillAttribute</i> member.</td>
+</tr>
+<tr>
+<td valign="TOP">STARTF_USESTDHANDLES</td>
+<td valign="TOP">Use the <i>hStdInput</i>, <i>hStdOutput</i>, and <i>hStdError</i> members.</td>
+</tr>
+<tr>
+<td valign="TOP">STARTF_RUN_FULLSCREEN</td>
+<td valign="TOP">Forces a console application running on an <i>x</i>86 computer to start in full-screen mode.</td>
+</tr>
+</table></p>
+
+<p>Two additional flags, STARTF_FORCEONFEEDBACK and STARTF_FORCEOFFFEEDBACK, give you control over the mouse cursor when you invoke a new process. Because Windows supports true preemptive multitasking, you can invoke an application and, while the process is initializing, use another program. To give visual feedback to the user, <i>CreateProcess</i> temporarily changes the system's arrow cursor to a new cursor called a start glass:</p>
+
+<p>
+<img src="images/G04si02.JPG" width=37 height=33 border="0">
+</p>
+
+<p>This cursor indicates that you can wait for something to happen or you can continue to use the system. The <i>CreateProcess</i> function gives you more control over the cursor when invoking another process. When you specify the STARTF_FORCEOFFFEEDBACK flag, <i>CreateProcess</i> does not change the cursor into the start glass.</p>
+
+<p>STARTF_FORCEONFEEDBACK causes <i>CreateProcess</i> to monitor the new process's initialization and to alter the cursor based on the result. When <i>CreateProcess</i> is called with this flag, the cursor changes into the start glass. If, after two seconds, the new process does not make a GUI call, <i>CreateProcess</i> resets the cursor to an arrow.</p>
+
+<p>If the process makes a GUI call within two seconds, <i>
+CreateProcess</i> waits for the application to show a window. This must occur within five seconds after the process makes the GUI call. If a window is not displayed, <i>CreateProcess</i> resets the cursor. If a window is displayed, <i>CreateProcess</i> keeps the start glass cursor on for another five seconds. If at any time the application calls the <i>GetMessage</i> function, indicating that it is finished initializing, <i>CreateProcess</i> immediately resets the cursor and stops monitoring the new process.</p>
+
+<p>Before concluding this section, I'd like to mention
+STARTUPINFO's <i>wShowWindow</i> member. You initialize this member to the value that is passed to <i>(w)WinMain</i>'s last parameter, <i>nCmdShow</i>. This member indicates the value you want passed to the new process's <i>(w)WinMain</i> function's last parameter, <i>nCmdShow</i>. It is one of the identifiers that can be passed to the <i>ShowWindow</i> function. Usually, <i>nCmdShow</i>'s value is either SW_SHOWNORMAL or SW_SHOWMINNOACTIVE. However, it can sometimes be SW_SHOWDEFAULT.</p>
+
+<p>When you invoke an application from the Explorer, the
+application's <i>(w)WinMain</i> function is called with
+SW_SHOWNORMAL passed as the <i>nCmdShow</i> parameter. If you create a shortcut for the application, you can use the shortcut's property page to tell the system how the application's window should first appear. Figure 4-3 shows the property page for a shortcut that runs Notepad. Notice that the Run option's combo box allows you to specify how Notepad's window is displayed.</p>
+
+<p>
+<img src="images/F04si03.JPG" width=367 height=443 border="0">
+</p><p>
+<!-- CAPTION --><b>Figure 4-3.</b> <i>The property page for a shortcut that runs Notepad</i><!-- /CAPTION -->
+</p>
+
+<p>When you use Explorer to invoke this shortcut, Explorer prepares the
+STARTUPINFO structure properly and calls <i>CreateProcess</i>. Notepad
+executes and its <i>(w)WinMain</i> function is passed
+SW_SHOWMINNOACTIVE for the <i>nCmdShow</i> parameter.</p>
+
+<p>In this way, the user can easily start an application with its main window showing in the normal state, minimized state, or maximized state.</p>
+
+<p>Finally, an application can call the following function to obtain a copy of the STARTUPINFO structure that was initialized by the parent process. The child process can examine this structure and alter its behavior based on the values of the structure's members.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+VOID GetStartupInfo(LPSTARTUPINFO pStartupInfo);
+</pre>
+</td></tr></table></p>
+
+<p><div class="note"><blockquote>
+<b>NOTE</b><HR>
+Although the Windows documentation does not explicitly say so, you must initialize the <i>cb</i> member of the structure before calling <i>GetStartupInfo</i> as follows:
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+STARTUPINFO si = { sizeof(si) };
+GetStartupInfo(&amp;si);
+
+<img src="images/grayvellip.JPG" width=3 height=13 border="0">
+</pre>
+</td></tr></table></p>
+</blockquote></div></p>
+
+<A NAME="56"><h2><i>ppiProcInfo</i></h2></A>
+<p>The <i>ppiProcInfo</i> parameter points to a PROCESS_INFORMATION structure that you must allocate; <i>CreateProcess</i> initializes the members of this structure before it returns. The structure appears as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+typedef struct _PROCESS_INFORMATION {
+   HANDLE hProcess;
+   HANDLE hThread;
+   DWORD  dwProcessId;
+   DWORD  dwThreadId;
+} PROCESS_INFORMATION;
+</pre>
+</td></tr></table></p>
+
+<p>As already mentioned, creating a new process causes the system to create a process kernel object and a thread kernel object. At creation time, the system gives each object an initial usage count of 1. Then, just before <i>CreateProcess</i> returns, the function opens the process object and the thread object and places the process-relative handles for each in the <i>hProcess</i> and <i>hThread</i> members of the PROCESS_INFORMATION structure. When <i>CreateProcess</i> opens
+these objects internally, the usage count for each becomes 2.</p>
+
+<p>This means that before the system can free the process object, the process must terminate (decrementing the usage count by 1) and the parent process must call <i>CloseHandle</i> (decrementing the usage count again by 1 making it 0). Similarly, to free the thread object, the thread must terminate and the parent process must close the handle to the thread object. (See the &quot;<A HREF="ch04e.htm#63">Child Processes</A>&quot; section at the end of this chapter for more information about freeing thread objects.)</p>
+
+<p><div class="note"><blockquote>
+<b>NOTE</b><HR>
+<p>You must close the handles to the child process and its primary thread to avoid resource leaks while your application is running. Of course, the system will clean up these leaks automatically when your process terminates, but well-written software explicitly closes these handles (by calling the <i>CloseHandle</i> function) when the process no longer needs to access the child process and its primary thread. Failure to close these handles is one of the most common mistakes developers make.</p>
+
+<p>For some reason, many developers believe that closing the handle to a process or thread forces the system to kill that process or thread. This is absolutely not true. Closing the handle simply tells the system that you are not interested in the process or thread's statistical data. The process or thread will continue to execute until it terminates on its own.</p>
+</blockquote></div></p>
+
+<p>When a process kernel object is created, the system assigns the object a unique identifier; no other process kernel object in the system will have the same ID number. The same is true for thread kernel objects. When a thread kernel object is created, the object is assigned a unique, system-wide ID number. Process IDs and thread IDs share the same number pool. This means that it is impossible for a process and a thread to have the same ID. In addition, an object is never assigned an ID of 0. Before <i>CreateProcess</i> returns, it fills the <i>dwProcessId</i> and <i>dwThreadId</i> members of the PROCESS_INFORMATION structure with these IDs. IDs simply make it easy for you to identify the processes and threads in the system. IDs are mostly used by utility applications (such as the Task Manager) and rarely by productivity applications. For this reason, most applications
+ignore IDs altogether.</p>
+
+<p>If your application uses IDs to track processes and threads, you must be aware that the system reuses process and thread IDs
+immediately. For example, let's say that when a process is created, the system allocates a process object and assigns it the ID value 122. If a new process object is created, the system doesn't assign the same ID number. However, if the first process object is freed, the system might assign 122 to the next process object created. Keep this in mind so you avoid writing code that references an incorrect process object or thread. It's easy to acquire a process ID and save the ID; but the next thing you know, the process identified by the ID is freed and a new process is created and given the same ID. When you use the saved process ID, you end up manipulating the new process, not the process whose ID you originally acquired.</p>
+
+<p>Occasionally, you'll work on an application that wants to determine its parent process. The first thing you should know is that a parent-child relationship exists between processes only at the time when the child is spawned. Just before the child process begins executing code, Windows does not consider a parent-child relationship to exist anymore. Earlier versions of Windows didn't offer functions that allowed a process to query its parent process. The ToolHelp functions now make this possible via the PROCESSENTRY32 structure. Inside this structure is a <i>th32ParentProcessID</i> member that the documentation claims will return the ID of the process's parent.</p>
+
+<p>The system does remember the ID of each process's parent process, but since IDs are immediately reused, by the time you get your parent process's ID, that ID might identify a completely different process running in the system. Your parent process will probably have terminated. If your application needs to communicate with its &quot;creator,&quot; you are better off not using IDs; instead, you should define a more persistent mechanism to communicate&#8212;kernel objects, window handles, and so forth.</p>
+
+<p>The only way to guarantee that a process or thread ID isn't
+reused is to make sure that the process or thread kernel object
+doesn't get destroyed. If you have just created a new process or
+thread, you can do this simply by not closing the handles to these objects. Then, once your application has finished using the ID, call <i>CloseHandle</i> to release the kernel object(s) and remember that it is no longer safe for you to use or rely on the process ID. If you are the child process, you can do nothing to ensure the validity of your parent's process or thread IDs unless the parent process duplicates handles for its own process or thread objects and allows you, the child process, to inherit these handles.</p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

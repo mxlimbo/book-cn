@@ -1,0 +1,221 @@
+<HTML>
+<HEAD>
+<TITLE>A Process's Kernel Object Handle Table</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch03b.htm">[Previous]</A> <A HREF="ch03d.htm">[Next]</A><P>
+
+<A NAME="29"><H1>A Process's Kernel Object Handle Table</H1></A>
+
+<p>When a process is initialized, the system allocates a handle table
+for it. This handle table is used only for kernel objects, not for User
+objects or GDI objects. The details of how the handle table is
+structured and managed are undocumented. Normally I would refrain from
+discussing undocumented parts of the operating system. In this case,
+however, I'm making an exception because I believe that a competent
+Windows programmer must understand how a process's handle table is
+managed. Because this information is undocumented, I will not have all
+of the details completely correct, and the internal implementation is
+certainly different among Windows 2000, Windows 98, and Windows CE. So
+read the following discussion to improve your understanding, not to
+learn how the system really does it.</p>
+
+<p>Table 3-1 shows what a process's handle table looks like. As you
+can see, it is simply an array of data structures. Each structure
+contains a pointer to a kernel object, an access mask, and some
+flags.</p>
+
+<p><b>Table 3-1.</b> <i>The structure of a process's handle table</i></p>
+<table cellpadding=5 width="95%">
+<tr>
+<th>Index</th>
+
+<th>Pointer to Kernel Object Memory Block</th>
+
+<th>Access Mask (DWORD of Flag Bits)</th>
+
+<th>Flags (DWORD of Flag Bits)</th>
+</tr>
+    
+<tr><td vAlign=top>1</td> <td vAlign=top>0x????????</td> <td vAlign=top>0x????????</td> 
+<td vAlign=top>0x????????</td></tr>
+
+<tr><td vAlign=top>2</td><td vAlign=top>0x????????</td><td vAlign=top>0x????????</td> 
+<td vAlign=top>0x????????</td></tr>
+
+<tr><td vAlign=top>&#8230;</td><td vAlign=top>&#8230;</td><td vAlign=top>&#8230;</td><td vAlign=top>&#8230;</td></tr>
+</table>
+
+
+<A NAME="30"><H2>Creating a Kernel Object</H2></A>
+
+<p>When a process first initializes, its handle table is empty. Then
+when a thread in the process calls a function that creates a kernel
+object, such as <i>CreateFileMapping</i>, the kernel allocates a block
+of memory for the object and initializes it; the kernel then scans the
+process's handle table for an empty entry. Because the handle table
+in Table 3-1 is empty, the kernel finds the structure at index 1 and
+initializes it. The pointer member will be set to the internal memory
+address of the kernel object's data structure, the access mask will
+be set to full access, and the flags will be set. (We'll discuss
+the flags in the inheritance section later in this chapter.)</p>
+
+<p>Here are some of the functions that create kernel objects (this is
+in no way a complete list):</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HANDLE CreateThread(
+   PSECURITY_ATTRIBUTES psa, 
+   DWORD dwStackSize, 
+   LPTHREAD_START_ROUTINE pfnStartAddr, 
+   PVOID pvParam, 
+   DWORD dwCreationFlags, 
+   PDWORD pdwThreadId);
+
+HANDLE CreateFile(
+   PCTSTR pszFileName, 
+   DWORD dwDesiredAccess, 
+   DWORD dwShareMode, 
+   PSECURITY_ATTRIBUTES psa, 
+   DWORD dwCreationDistribution, 
+   DWORD dwFlagsAndAttributes, 
+   HANDLE hTemplateFile);
+
+HANDLE CreateFileMapping(
+   HANDLE hFile, 
+   PSECURITY_ATTRIBUTES psa, 
+   DWORD flProtect, 
+   DWORD dwMaximumSizeHigh, 
+   DWORD dwMaximumSizeLow, 
+   PCTSTR pszName);
+
+HANDLE CreateSemaphore(
+   PSECURITY_ATTRIBUTES psa, 
+   LONG lInitialCount, 
+   LONG lMaximumCount, 
+   PCTSTR pszName);
+</pre></td></tr></table></p>
+
+<p>All functions that create kernel objects return process-relative
+handles that can be used successfully by any and all threads that are
+running in the same process. This handle value is actually the index
+into the process's handle table that identifies where the kernel
+object's information is stored. So when you debug an application
+and examine the actual value of a kernel object handle, you'll see
+small values such as 1, 2, and so on. Remember that the meaning of the
+handle is undocumented and is subject to change. In fact, in Windows
+2000 the value returned identifies the number of bytes into the
+process's handle table for the object rather than the index number
+itself.</p>
+
+<p>Whenever you call a function that accepts a kernel object handle as an
+argument, you pass the value returned by one of the <i>Create*</i>
+functions. Internally, the function looks in your process's handle
+table to get the address of the kernel object you want to manipulate
+and then manipulates the object's data structure in a well-defined
+fashion.</p> 
+
+<p>If you pass an invalid index (handle), the function returns failure and
+<i>GetLastError</i> returns 6 (ERROR_INVALID_HANDLE). Because handle
+values are actually indexes into the process's handle table, these
+handles are process-relative and cannot be used successfully from other
+processes.</p>
+
+<p>If you call a function to create a kernel object and the call fails,
+the handle value returned is usually 0 (NULL). The system would have to
+be very low on memory or encountering a security problem for this to
+happen. Unfortunately, a few functions return a handle value of -1
+(INVALID_HANDLE_VALUE) when they fail. For example, if <i>
+CreateFile</i> fails to open the specified file, it returns
+INVALID_HANDLE_VALUE instead of NULL. You must be very careful when
+checking the return value of a function that creates a kernel object.
+Specifically, you can compare the value with INVALID_HANDLE_VALUE only
+when you call <i>CreateFile</i>. The following code is incorrect:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HANDLE hMutex = CreateMutex(&#8230;);
+if (hMutex == INVALID_HANDLE_VALUE) {
+   // We will never execute this code because 
+   // CreateMutex returns NULL if it fails.
+}
+</pre></td></tr></table></p>
+
+<p>Likewise, the following code is also incorrect:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HANDLE hFile = CreateFile(&#8230;);
+if (hFile == NULL) {
+   // We will never execute this code because CreateFile
+   // returns INVALID_HANDLE_VALUE(-1) if it fails.
+}
+</pre></td></tr></table></p>
+
+<A NAME="31"><H2>Closing a Kernel Object</H2></A>
+
+<p>Regardless of how you create a kernel object, you indicate to the
+system that you are done manipulating the object by calling <i>
+CloseHandle</i>:</p>
+
+<p><table cellpadding=5><tr><td>
+<PRE>
+BOOL CloseHandle(HANDLE hobj);
+</pre></td></tr></table></p>
+
+<p>This function first checks the calling process's handle table to
+ensure that the index (handle) passed to it identifies an object that
+the process does in fact have access to. If the index is valid, the
+system gets the address of the kernel object's data structure and
+decrements the usage count member in the structure; if the count is
+zero, the kernel destroys the kernel object from memory.</p>
+
+<p>If an invalid handle is passed to <i>CloseHandle,</i> one of two
+things might happen. If your process is running normally, <i>
+CloseHandle</i> returns FALSE and <i>GetLastError</i> returns
+ERROR_INVALID_HANDLE. Or, if your process is being debugged, the system
+notifies the debugger so that you can debug the error.</p>
+
+<p>Right before <i>CloseHandle</i> returns, it clears out the entry in
+the process's handle table&#8212;this handle is now invalid for your
+process and you should not attempt to use it. The clearing happens
+whether or not the kernel object has been destroyed! After you call <i>
+CloseHandle</i>, you will no longer have access to the kernel object;
+however, if the object's count did not decrement to zero, the
+object has not been destroyed. This is OK; it just means that one or
+more other processes are still using the object. When the other
+processes stop using the object (by calling <i>CloseHandle</i>), the
+object will be destroyed.</p>
+
+<p>Let's say that you forget to call <i>CloseHandle</i>&#8212;will
+there be a memory leak? Well, yes and no. It is possible for a process
+to leak resources (such as kernel objects) while the process runs.
+However, when the process terminates, the operating system ensures that
+any and all resources used by the process are freed&#8212;this is
+guaranteed. For kernel objects, the system performs the following
+actions: When your process terminates, the system automatically scans
+the process's handle table. If the table has any valid entries
+(objects that you didn't close before terminating), the system
+closes these object handles for you. If the usage count of any of these
+objects goes to zero, the kernel destroys the object.</p>
+
+<p>So, your application can leak kernel objects while it runs, but when
+your process terminates, the system guarantees that everything is
+cleaned up properly. By the way, this is true for <i>all</i> objects,
+resources, and memory blocks: when a process terminates, the system
+ensures that your process leaves nothing behind.</p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

@@ -1,0 +1,838 @@
+<HTML>
+<HEAD>
+<TITLE>Memory-Mapped Executables and DLLs</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch17a.htm">[Previous]</A> <A HREF="ch17c.htm">[Next]</A><P>
+
+<A NAME="209"><H1>Memory-Mapped Executables and DLLs</H1></A>
+
+<p>When a thread calls <i>CreateProcess</i>, the system performs the
+following steps:</p>
+
+<ol>
+<p><li>The system locates the .exe file specified in the call to <i>
+CreateProcess</i>. If the .exe file cannot be found, the process is not
+created and <i>CreateProcess</i> returns FALSE.</li></p>
+
+<p><li>The system creates a new process kernel object.</li></p>
+
+<p><li>The system creates a private address space for this new
+process.</li></p>
+
+<p><li>The system reserves a region of address space large enough to
+contain the .exe file. The desired location of this region is specified
+inside the .exe file itself. By default, an .exe file's base
+address is 0x00400000 (this address might be different for a 64-bit
+application running on 64-bit Windows 2000). However, you can override
+this when you create your application's .exe file by using the
+linker's /BASE option when you link your application.</li></p>
+
+<p><li>The system notes that the physical storage backing the reserved
+region is in the .exe file on disk instead of the system's paging
+file.</li></p>
+</ol>
+
+<p>After the .exe file has been mapped into the process's address
+space, the system accesses a section of the .exe file that lists the
+DLLs containing functions that the code in the .exe calls. The system
+then calls <i>LoadLibrary</i> for each of these DLLs, and if any of the
+DLLs require additional DLLs, the system calls <i>LoadLibrary</i> to
+load those DLLs as well. Every time <i>LoadLibrary</i> is called to
+load a DLL, the system performs steps similar to steps 4 and 5
+above:</p>
+
+<ol>
+<p><li>The system reserves a region of address space large enough to
+contain the DLL file. The desired location of this region is specified
+inside the DLL file itself. By default, Microsoft Visual C++ makes the
+DLL's base address 0x10000000 (this address might be different for
+a 64-bit DLL running on 64-bit Windows 2000). However, you can override
+this when you build your DLL by using the linker's /BASE option.
+All the standard system DLLs that ship with Windows have different base
+addresses so that they don't overlap if loaded into a single
+address space.</li></p>
+
+<p><li>If the system is unable to reserve a region at the DLL's
+preferred base address, either because the region is occupied by
+another DLL or .exe or because the region just isn't big enough,
+the system will then try to find another region of address space to
+reserve for the DLL. It is unfortunate when a DLL cannot load at its
+preferred base address for two reasons. First, the system might not be
+able to load the DLL if it does not have relocation information. (You
+can remove relocation information from a DLL when it is created by
+using the linker's /FIXED switch. This makes the DLL file smaller,
+but it also means that the DLL <i>must</i> load at its preferred
+address or it can't load at all.) Second, the system must perform
+some relocations within the DLL. In Windows 98, the system can apply
+the relocations as pages are swapped into RAM. In Windows 2000, these
+relocations require additional storage from the system's paging
+file; they also increase the amount of time needed to load the
+DLL.</li></p>
+
+<p><li>The system notes that the physical storage backing the reserved
+region is in the DLL file on disk instead of in the system's paging
+file. If Windows 2000 has to perform relocations because the DLL could
+not load at its preferred base address, the system also notes that some
+of the physical storage for the DLL is mapped to the paging file.</li></p>
+</ol>
+
+<p>If for some reason the system is unable to map the .exe and all the
+required DLLs, the system displays a message box to the user and frees
+the process's address space and the process object. <i>
+CreateProcess</i> will return FALSE to its caller; the caller can call
+<i>GetLastError</i> to get a better idea of why the process could not
+be created.</p>
+
+<p>After all the .exe and DLL files have been mapped into the
+process's address space, the system can begin executing the .exe
+file's startup code. After the .exe file has been mapped, the
+system takes care of all the paging, buffering, and caching. For
+example, if code in the .exe causes it to jump to the address of an
+instruction that isn't loaded into memory, a fault will occur. The
+system detects the fault and automatically loads the page of code from
+the file's image into a page of RAM. Then the system maps the page
+of RAM to the proper location in the process's address space and
+allows the thread to continue executing as though the page of code were
+loaded all along. Of course, all this is invisible to the application.
+This process is repeated each time any thread in the process attempts
+to access code or data that is not loaded into RAM.</p>
+
+<A NAME="210"><H2>Static Data Is Not Shared by Multiple Instances of an Executable or a DLL</H2></A>
+
+<p>When you create a new process for an application that is already
+running, the system simply opens another memory-mapped view of the
+file-mapping object that identifies the executable file's image and
+creates a new process object and a new thread object (for the primary
+thread). The system also assigns new process and thread IDs to these
+objects. By using memory-mapped files, multiple running instances of
+the same application can share the same code and data in RAM.</p>
+
+<p>Note one small problem here. Processes use a flat address space.
+When you compile and link your program, all the code and data are
+thrown together as one large entity. The data is separated from the
+code but only to the extent that it follows the code in the .exe
+file.<a href="footnotesa.htm#ch1701"><sup>1</sup></a> The following illustration shows a simplified view of
+how the code and data for an application are loaded into virtual memory
+and then mapped into an application's address space.</p>
+
+<p>
+<A HREF="javascript:fullSize('G17SI01x.htm')"> <img src="images/G17SI01.JPG" width=404 height=153 border=0 ALT="Click to view at full size."> </A>
+</p>
+
+<p>As an example, let's say that a second instance of an
+application is run. The system simply maps the pages of virtual memory
+containing the file's code and data into the second
+application's address space, as shown here.</p>
+
+<p>
+<A HREF="javascript:fullSize('G17SI02x.htm')"> <img src="images/G17SI02.JPG" width=404 height=152 border=0 ALT="Click to view at full size."> </A>
+</p>
+
+
+
+<p>If one instance of the application alters some global variables
+residing in a data page, the memory contents for all instances of the
+application change. This type of change could cause disastrous effects
+and must not be allowed.</p>
+
+<p>The system prohibits this by using the copy-on-write feature of the
+memory management system. Any time an application attempts to write to
+its memory-mapped file, the system catches the attempt, allocates a new
+block of memory for the page containing the memory the application is
+trying to write to, copies the contents of the page, and allows the
+application to write to this newly allocated memory block. As a result,
+no other instances of the same application are affected. The following
+illustration shows what happens when the first instance of an
+application attempts to change a global variable in data page 2.</p>
+
+<p>
+<A HREF="javascript:fullSize('G17SI03x.htm')"> <img src="images/G17SI03.JPG" width=404 height=172 border=0 ALT="Click to view at full size."> </A>
+</p>
+
+<p>The system allocated a new page of virtual memory and copied the
+contents of data page 2 into it. The first instance's address space
+is changed so that the new data page is mapped into the address space
+at the same location as the original address page. Now the system can
+let the process alter the global variable without fear of altering the
+data for another instance of the same application.</p>
+
+<p>A similar sequence of events occurs when an application is being
+debugged. Let's say that you're running multiple instances of
+an application and want to debug only one instance. You access your
+debugger and set a breakpoint in a line of source code. The debugger
+modifies your code by changing one of your assembly language
+instructions to an instruction that causes the debugger to activate
+itself. So you have the same problem again. When the debugger modifies
+the code, it causes all instances of the application to activate the
+debugger when the changed assembly instruction is executed. To fix this
+situation, the system again uses copy-on-write memory. When the system
+senses that the debugger is attempting to change the code, it allocates
+a new block of memory, copies the page containing the instruction into
+the new page, and allows the debugger to modify the code in the page
+copy.</p>
+
+<p><div class="note"><blockquote><b>Windows 98</b><hr>
+When a process is loaded, the system examines all the file image's pages.
+The system commits storage in the paging file immediately for those
+pages that would normally be protected with the copy-on-write
+attribute. These pages are simply committed; they are not touched in
+any way. When a page in the file image is accessed, the system loads
+the appropriate page. If that page is never modified, it can be
+discarded from memory and reloaded when necessary. If the file's
+page is modified, however, the system swaps the modified page to one of
+the previously committed pages in the paging file.
+
+<p>The only difference in behavior between Windows 2000 and
+Windows 98 occurs when you have two copies of a module loaded and the
+writable data hasn't been modified. In this case, processes running
+under Windows 2000 share the data, while under Windows 98 each process
+receives its own copy of the data. Windows 2000 and Windows 98 behave
+exactly the same if only one copy of the module is loaded or if the
+writable data has been modified (which is normally the
+case).</p></blockquote></div></p>
+
+<A NAME="211"><H2>Sharing Static Data Across Multiple Instances of an Executable or a DLL</H2></A>
+
+<p>The fact that global and static data is not shared by multiple
+mappings of the same .exe or DLL is a safe default. However, on some
+occasions it is useful and convenient for multiple mappings of an .exe
+to share a single instance of a variable. For example, Windows offers
+no easy way to determine whether the user is running multiple instances
+of an application. But if you could get all the instances to share a
+single global variable, this global variable could reflect the number
+of instances running. When the user invoked an instance of the
+application, the new instance's thread could simply check the value
+of the global variable (which had been updated by another instance),
+and if the count were greater than 1, the second instance could notify
+the user that only one instance of the application is allowed to run
+and the second instance would terminate.</p>
+
+<p>This section discusses a technique that allows you to share
+variables among all instances of an .exe or a DLL. But before we dive
+too deeply into the details, you'll need a little background
+information....</p>
+
+<p>Every .exe or DLL file image is composed of a collection of
+sections. By convention, each standard section name begins with a
+period. For example, when you compile your program, the compiler places
+all the code in a section called <i>.text</i>. The compiler also places
+all the uninitialized data in a <i>.bss</i> section and all the
+initialized data in a <i>.data</i> section.</p>
+
+<p>Each section has a combination of the following attributes
+associated with it, as shown in the following table.</p>
+
+<p><table width="95%" cellpadding="5">
+<tr><th>Attribute</th>
+<th>Meaning</th></tr>
+
+<tr><td valign="TOP">READ</td>
+<td valign="TOP">The bytes in the section can be read from.</td></tr>
+
+<tr><td valign="TOP">WRITE</td>
+<td valign="TOP">The bytes in the section can be written to.</td></tr>
+
+<tr><td valign="TOP">EXECUTE</td>
+<td valign="TOP">The bytes in the section can be executed.</td></tr>
+
+<tr><td valign="TOP">SHARED</td>
+<td valign="TOP">The bytes in the section are shared across multiple instances. (This attribute effectively turns off the copy-on-write mechanism.)</td></tr>
+</table></p>
+
+<p>Using Microsoft Visual Studio's DumpBin utility (with the
+/Headers switch), you can see the list of sections in an .exe or DLL
+image file. The following excerpt was generated by running DumpBin on
+an executable file:</p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<pre>
+SECTION HEADER #1
+   .text name
+   11A70 virtual size
+    1000 virtual address
+   12000 size of raw data
+    1000 file pointer to raw data
+       0 file pointer to relocation table
+       0 file pointer to line numbers
+       0 number of relocations
+       0 number of line numbers
+60000020 flags
+         Code
+         Execute Read
+
+SECTION HEADER #2
+  .rdata name
+     1F6 virtual size
+   13000 virtual address
+    1000 size of raw data
+   13000 file pointer to raw data
+       0 file pointer to relocation table
+       0 file pointer to line numbers
+       0 number of relocations
+       0 number of line numbers
+40000040 flags
+         Initialized Data
+         Read Only
+
+SECTION HEADER #3
+   .data name
+     560 virtual size
+   14000 virtual address
+    1000 size of raw data
+   14000 file pointer to raw data
+       0 file pointer to relocation table
+       0 file pointer to line numbers
+       0 number of relocations
+       0 number of line numbers
+C0000040 flags
+         Initialized Data
+         Read Write
+
+SECTION HEADER #4
+  .idata name
+     58D virtual size
+   15000 virtual address
+    1000 size of raw data
+   15000 file pointer to raw data
+       0 file pointer to relocation table
+       0 file pointer to line numbers
+       0 number of relocations
+       0 number of line numbers
+C0000040 flags
+         Initialized Data
+         Read Write
+
+SECTION HEADER #5
+  .didat name
+     7A2 virtual size
+   16000 virtual address
+    1000 size of raw data
+   16000 file pointer to raw data
+       0 file pointer to relocation table
+       0 file pointer to line numbers
+       0 number of relocations
+       0 number of line numbers
+C0000040 flags
+         Initialized Data
+         Read Write
+
+SECTION HEADER #6
+  .reloc name
+     26D virtual size
+   17000 virtual address
+    1000 size of raw data
+   17000 file pointer to raw data
+       0 file pointer to relocation table
+       0 file pointer to line numbers
+       0 number of relocations
+       0 number of line numbers
+42000040 flags
+         Initialized Data
+         Discardable
+         Read Only
+
+   Summary
+        1000 .data
+        1000 .didat
+        1000 .idata
+        1000 .rdata
+        1000 .reloc
+       12000 .text
+</pre></td></tr></table></p>
+
+<p>The following table shows some of the more common section names and
+explains each section's purpose.</p>
+
+<p><table width="95%" cellpadding="5">
+<tr><th>Section Name</th>
+<th>Purpose</th></tr>
+<tr><td valign="TOP">.bss</td>
+<td valign="TOP">Uninitialized data</td></tr>
+<tr><td valign="TOP">.CRT</td>
+<td valign="TOP">Read-only C run-time data</td></tr>
+<tr><td valign="TOP">.data</td>
+<td valign="TOP">Initialized data</td></tr>
+<tr><td valign="TOP">.debug</td>
+<td valign="TOP">Debugging information</td></tr>
+<tr><td valign="TOP">.didata</td>
+<td valign="TOP">Delay imported names table</td></tr>
+<tr><td valign="TOP">.edata</td>
+<td valign="TOP">Exported names table</td></tr>
+<tr><td valign="TOP">.idata</td>
+<td valign="TOP">Imported names table</td></tr>
+<tr><td valign="TOP">.rdata</td>
+<td valign="TOP">Read-only run-time data</td></tr>
+<tr><td valign="TOP">.reloc</td>
+<td valign="TOP">Relocation table information</td></tr>
+<tr><td valign="TOP">.rsrc</td>
+<td valign="TOP">Resources</td></tr>
+<tr><td valign="TOP">.text</td>
+<td valign="TOP">.exe's or DLL's code</td></tr>
+<tr><td valign="TOP">.tls</td>
+<td valign="TOP">Thread-local storage</td></tr>
+<tr><td valign="TOP">.xdata</td>
+<td valign="TOP">Exception handling table</td></tr>
+</table></p>
+
+<p>In addition to the standard sections created by the compiler and the
+linker, you can create your own sections when you compile using the
+following directive:</p>
+
+<p><table cellpadding="5"><tr><td>
+<pre>
+#pragma data_seg(&quot;sectionname&quot;)
+</pre></td></tr></table></p>
+
+<p>So, for example, I can create a section called &quot;Shared&quot;
+that contains a single LONG value, as follows:</p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<pre>
+#pragma data_seg(&quot;Shared&quot;)
+LONG g_lInstanceCount = 0;
+#pragma data_seg()
+</pre></td></tr></table></p>
+
+<p>When the compiler compiles this code, it creates a new section
+called Shared and places all the <i>initialized</i> data variables that
+it sees after the pragma in this new section. In the example above, the
+variable is placed in the Shared section. Following the variable, the
+<i>#pragma dataseg()</i> line tells the compiler to stop putting
+initialized variables in the Shared section and to start putting them
+back in the default data section. It is extremely important to remember
+that the compiler will store only initialized variables in the new
+section. For example, if I had removed the initialization from the
+previous code fragment (as shown in the following code), the compiler
+would have put this variable in a section other than the Shared
+section:</p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<pre>
+#pragma data_seg(&quot;Shared&quot;)
+LONG g_lInstanceCount;
+#pragma data_seg()
+</pre></td></tr></table></p>
+
+<p>The Microsoft Visual C++ 6.0 compiler offers an <i>allocate</i>
+declaration specifier, however, that does allow you to place
+uninitialized data in any section you desire. Take a look at the
+following code:</p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<pre>
+// Create Shared section &amp; have compiler place initialized data in it.
+#pragma data_seg(&quot;Shared&quot;)
+
+// Initialized, in Shared section
+int a = 0; 
+
+// Uninitialized, not in Shared section
+int b; 
+
+// Have compiler stop placing initialized data in Shared section.
+#pragma data_seg()
+
+// Initialized, in Shared section
+_ _declspec(allocate(&quot;Shared&quot;)) int c = 0; 
+
+// Uninitialized, in Shared section 
+_ _declspec(allocate(&quot;Shared&quot;)) int d; 
+
+// Initialized, not in Shared section
+int e = 0; 
+
+// Uninitialized, not in Shared section
+int f;        
+</pre></td></tr></table></p>
+
+<p>The comments above make it clear as to which section the specified
+variable will be placed in. For the <i>allocate</i> declaration
+specification to work properly, the section must first be created.
+Therefore, the code above would not compile if the first <i>#pragma
+data_seg</i> line in the preceding code were removed.</p>
+
+<p>Probably the most common reason to put variables in their own section
+is to share them among multiple mappings of an .exe or a DLL. By
+default, each mapping of an .exe or a DLL gets its very own set of
+variables. However, you can group into their own section any variables
+that you want to share among all mappings of that module. When you
+group variables, the system doesn't create new instances of the
+variables for every mapping of the .exe or the DLL.</p>
+
+<p>Simply telling the compiler to place certain variables in their own
+section is not enough to share those variables. You must also tell the
+linker that the variables in a particular section are to be shared. You
+can do this by using the /SECTION switch on the linker's command
+line:</p>
+
+<p><table cellpadding="5"><tr><td>
+<pre>
+/SECTION:<i>name</i>,<i>attributes</i>
+</pre></td></tr></table></p>
+
+<p>Following the colon, place the name of the section for which you
+want to alter attributes. In our example, we want to change the
+attributes of the Shared section. So we'd construct our linker
+switch as follows:</p>
+
+<p><table cellpadding="5"><tr><td>
+<pre>
+/SECTION:Shared,RWS
+</pre></td></tr></table></p>
+
+<p>After the comma, we specify the desired attributes: use <i>R</i> for
+READ, <i>W</i> for WRITE, <i>E</i> for EXECUTE, and <i>S</i> for
+SHARED. The switch above indicates that the data in the Shared section
+is readable, writable, and shared. If you want to change the attributes
+of more than one section, you must specify the /SECTION switch multiple
+times&#8212;once for each section for which you want to change
+attributes.</p>
+
+<p>You can also embed linker switches right inside your source code using
+this syntax:</p>
+
+<p><table cellpadding="5"><tr><td>
+<pre>
+#pragma comment(linker, &quot;/SECTION:Shared,RWS&quot;)
+</pre></td></tr></table></p>
+
+<p>This line tells the compiler to embed the above string inside a
+special section named &quot;.drectve&quot;. When the linker combines
+all the .obj modules together, the linker examines each .obj
+module's &quot;.drectve&quot; section and pretends that all the
+strings were passed to the linker as command-line arguments. I use this
+technique all the time because it is so convenient&#8212;if you move a
+source code file into a new project, you don't have to remember to
+set linker switches in Visual C++'s Project Settings dialog
+box.</p>
+
+<p>Although you can create shared sections, Microsoft discourages the use
+of shared sections for two reasons. First, sharing memory in this way
+can potentially violate security. Second, sharing variables means that
+an error in one application can affect the operation of another
+application because there is no way to protect a block of data from
+being randomly written to by an application.</p>
+
+<p>Imagine that you have written two applications, each requiring the user
+to enter a password. However, you decide to add a feature to your
+applications that makes things a little easier on the user: If the user
+is already running one of the applications when the second is started,
+the second application examines the contents of shared memory to get
+the password. This way, the user doesn't need to re-enter the
+password if one of the programs is already being used.</p>
+
+<p>This sounds innocent enough. After all, no other applications but your
+own load the DLL and know where to find the password contained within
+the shared section. However, hackers lurk about, and if they want to
+get your password, all they need to do is write a small program of
+their own to load your company's DLL and monitor the shared memory
+blocks. When the user enters a password, the hacker's program can
+learn the user's password.</p>
+
+<p>An industrious program such as the hacker's might also try to
+guess repeatedly at passwords and write them to the shared memory. Once
+the program guesses the correct password, it can send all kinds of
+commands to one of the two applications. Perhaps this problem could be
+solved if there were a way to grant access to only certain applications
+for loading a particular DLL. But currently this is not the
+case&#8212;any program can call <i>LoadLibrary</i> to explicitly load a
+DLL.</p>
+
+<A NAME="212"><H2>The AppInst Sample Application</H2></A>
+
+<p>The AppInst sample application (&quot;17 AppInst.exe&quot;), listed
+in Figure 17-1, shows how an application can know how many instances of
+itself are running at any one time. The source code and resource files
+for the application are in the 17-AppInst directory on this book's
+companion CD-ROM. When you run the AppInst program, its dialog box
+appears, indicating that one instance of the application is
+running.</p>
+
+<p>
+<img src="images/G17si04.JPG" width=216 height=59 border="0">
+</p>
+
+<p>If you run a second instance of the application, both instance's
+dialog boxes change to reflect that two instances are now running.</p>
+
+<p>
+<img src="images/G17si05.JPG" width=216 height=59 border="0">
+<img src="images/G17si05.JPG" width=216 height=59 border="0">  
+</p>
+
+<p>You can run and kill as many instances as you like&#8212;the number
+will always be accurately reflected in whichever instances remain.</p>
+
+<p>Near the top of AppInst.cpp, you'll see the following lines:</p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<pre>
+// Tell the compiler to put this initialized variable in its own Shared
+// section so it is shared by all instances of this application.
+#pragma data_seg(&quot;Shared&quot;)
+volatile LONG g_lApplicationInstances = 0;
+#pragma data_seg()
+
+// Tell the linker to make the Shared section 
+// readable, writable, and shared.
+#pragma comment(linker, &quot;/Section:Shared,RWS&quot;)
+</pre></td></tr></table></p>
+
+<p>These lines create a section called Shared that will have read,
+write, and shared protection. Within this section is one variable: <i>
+g_lApplicationInstances</i>. All instances of this application share
+this variable. Note that the variable is <i>volatile</i> so that the
+optimizer doesn't get too smart for our own good.</p>
+
+<p>When each instance's <i>_tWinMain</i> function executes, the <i>
+g_lApplicationInstances</i> variable is incremented by 1; and before
+<i>_tWinMain</i> exits, this variable is decremented by 1. I use <i>
+InterlockedExchangeAdd</i> to alter this variable since multiple
+threads will access this shared resource.</p>
+
+<p>When each instance's dialog box appears, the <i>
+Dlg_OnInitDialog</i> function is called. This function broadcasts to
+all top-level windows a registered window message (whose message ID is
+contained in the <i>g_aMsgAppInstCountUpdate</i> variable):</p>
+
+<p><table cellpadding="5"><tr><td>
+<pre>
+PostMessage(HWND_BROADCAST, g_aMsgAppInstCountUpdate, 0, 0);
+</pre></td></tr></table></p>
+
+<p>All the windows in the system will ignore this registered window
+message except for AppInst windows. When one of our windows receives
+this message, the code in <i>Dlg_Proc</i> simply updates the number in
+the dialog box to reflect the current number of instances (maintained
+in the shared <i>g_lApplicationInstances</i> variable).</p>
+
+<p><b>Figure 17-1.</b> <i>The AppInst sample application</i></p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<p><b>AppInst.cpp</b></p>
+<pre>
+/******************************************************************************
+Module:  AppInst.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#include &quot;..\CmnHdr.h&quot;     /* See Appendix A. */
+#include &lt;windowsx.h&gt;
+#include &lt;tchar.h&gt;
+#include &quot;Resource.h&quot;
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+// The system-wide unique window message
+UINT g_uMsgAppInstCountUpdate = INVALID_ATOM;
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+// Tell the compiler to put this initialized variable in its own Shared 
+// section so it is shared by all instances of this application.
+#pragma data_seg(&quot;Shared&quot;)
+volatile LONG g_lApplicationInstances = 0;
+#pragma data_seg()
+
+// Tell the linker to make the Shared section readable, writable, and shared.
+#pragma comment(linker, &quot;/Section:Shared,RWS&quot;)
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL Dlg_OnInitDialog(HWND hwnd, HWND hwndFocus, LPARAM lParam) {
+
+   chSETDLGICONS(hwnd, IDI_APPINST);
+
+   // Force the static control to be initialized correctly.
+   PostMessage(HWND_BROADCAST, g_uMsgAppInstCountUpdate, 0, 0);
+   return(TRUE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify) {
+
+   switch (id) {
+      case IDCANCEL:
+         EndDialog(hwnd, id);
+         break;
+   }
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+INT_PTR WINAPI Dlg_Proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+
+   if (uMsg == g_uMsgAppInstCountUpdate) {
+      SetDlgItemInt(hwnd, IDC_COUNT, g_lApplicationInstances, FALSE);
+   }
+
+   switch (uMsg) {
+      chHANDLE_DLGMSG(hwnd, WM_INITDIALOG, Dlg_OnInitDialog);
+      chHANDLE_DLGMSG(hwnd, WM_COMMAND,    Dlg_OnCommand);
+   }
+   return(FALSE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+int WINAPI _tWinMain(HINSTANCE hinstExe, HINSTANCE, LPTSTR pszCmdLine, int) {
+
+   // Get the numeric value of the systemwide window message used to notify 
+   // all top-level windows when the module's usage count has changed.
+   g_uMsgAppInstCountUpdate =
+      RegisterWindowMessage(TEXT(&quot;MsgAppInstCountUpdate&quot;));
+
+   // There is another instance of this application running.
+   InterlockedExchangeAdd((PLONG) &amp;g_lApplicationInstances, 1);
+
+   DialogBox(hinstExe, MAKEINTRESOURCE(IDD_APPINST), NULL, Dlg_Proc);
+
+   // This instance of the application is terminating.
+   InterlockedExchangeAdd((PLONG) &amp;g_lApplicationInstances, -1);
+
+   // Have all other instances update their display.
+   PostMessage(HWND_BROADCAST, g_uMsgAppInstCountUpdate, 0, 0);
+
+   return(0);
+}
+
+
+//////////////////////////////// End of File //////////////////////////////////
+</pre></td></tr></table></p>
+<p><table width="95%" cellpadding="5"><tr><td>
+<p><b>AppInst.rc</b></p>
+<pre>
+//Microsoft Developer Studio generated resource script.
+//
+#include &quot;Resource.h&quot;
+
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+/////////////////////////////////////////////////////////////////////////////
+// English (U.S.) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+#ifdef _WIN32
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(1252)
+#endif //_WIN32
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// TEXTINCLUDE
+//
+
+1 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;Resource.h\0&quot;
+END
+
+2 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;#include &quot;&quot;afxres.h&quot;&quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+3 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+#endif    // APSTUDIO_INVOKED
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
+
+IDD_APPINST DIALOG DISCARDABLE  0, 0, 140, 21
+STYLE WS_MINIMIZEBOX | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
+CAPTION &quot;Application Instances&quot;
+FONT 8, &quot;MS Sans Serif&quot;
+BEGIN
+    LTEXT           &quot;Number of instances running:&quot;,IDC_STATIC,12,4,93,8,
+                    SS_NOPREFIX
+    RTEXT           &quot;#&quot;,IDC_COUNT,112,4,16,12,SS_NOPREFIX
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+// Icon with lowest ID value placed first to ensure application icon
+// remains consistent on all systems.
+IDI_APPINST             ICON    DISCARDABLE     &quot;AppInst.Ico&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// DESIGNINFO
+//
+
+#ifdef APSTUDIO_INVOKED
+GUIDELINES DESIGNINFO DISCARDABLE 
+BEGIN
+    IDD_APPINST, DIALOG
+    BEGIN
+        RIGHTMARGIN, 76
+        BOTTOMMARGIN, 20
+    END
+END
+#endif    // APSTUDIO_INVOKED
+
+#endif    // English (U.S.) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 3 resource.
+//
+
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED
+</pre></td></tr></table></p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

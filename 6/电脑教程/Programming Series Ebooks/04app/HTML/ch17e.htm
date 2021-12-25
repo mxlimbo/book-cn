@@ -1,0 +1,104 @@
+<HTML>
+<HEAD>
+<TITLE>Processing a Big File Using Memory-Mapped Files</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch17d.htm">[Previous]</A> <A HREF="ch17f.htm">[Next]</A><P>
+
+<A NAME="225"><H1>Processing a Big File Using Memory-Mapped Files</H1></A>
+
+<p>In an earlier section, I said I would tell you how to map a 16-EB
+file into a small address space. Well, you can't. Instead, you must
+map a view of the file that contains only a small portion of the
+file's data. You should start by mapping a view of the very
+beginning of the file. When you've finished accessing the first
+view of the file, you can unmap it and then map a new view starting at
+an offset deeper within the file. You'll need to repeat this
+process until you access the complete file. This certainly makes
+dealing with large memory-mapped files less convenient, but fortunately
+most files are small enough that this problem doesn't usually come
+up.</p>
+
+<p>Let's look at an example using an 8-GB file and a 32-bit address
+space. Here is a routine that counts all the 0 bytes in a binary data
+file in several steps:</p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<pre>
+_ _int64 Count0s(void) {
+
+   // Views must always start on a multiple
+   // of the allocation granularity
+   SYSTEM_INFO sinf;
+   GetSystemInfo(&amp;sinf);
+
+   // Open the data file.
+   HANDLE hFile = CreateFile(&quot;C:\\HugeFile.Big&quot;, GENERIC_READ,
+      FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+
+   // Create the file-mapping object.
+   HANDLE hFileMapping = CreateFileMapping(hFile, NULL, 
+      PAGE_READONLY, 0, 0, NULL);
+
+   DWORD dwFileSizeHigh;
+   _ _int64 qwFileSize = GetFileSize(hFile, &amp;dwFileSizeHigh);
+   qwFileSize += (((_ _int64) dwFileSizeHigh) &lt;&lt; 32);
+
+   // We no longer need access to the file object's handle.
+   CloseHandle(hFile);
+
+   _ _int64 qwFileOffset = 0, qwNumOf0s = 0;
+
+   while (qwFileSize &gt; 0) {
+
+      // Determine the number of bytes to be mapped in this view
+      DWORD dwBytesInBlock = sinf.dwAllocationGranularity;
+      if (qwFileSize &lt; sinf.dwAllocationGranularity)
+         dwBytesInBlock = (DWORD) qwFileSize;
+
+      PBYTE pbFile = (PBYTE) MapViewOfFile(hFileMapping, FILE_MAP_READ,
+         (DWORD) (qwFileOffset &gt;&gt; 32),          // Starting byte
+         (DWORD) (qwFileOffset &amp; 0xFFFFFFFF),   // in file
+         dwBytesInBlock);                       // # of bytes to map
+
+      // Count the number of Js in this block.
+      for (DWORD dwByte = 0; dwByte &lt; dwBytesInBlock; dwByte++) {
+         if (pbFile[dwByte] == 0)
+         qwNumOf0s++;
+      }
+
+      // Unmap the view; we don't want multiple views
+      // in our address space.
+      UnmapViewOfFile(pbFile);
+
+      // Skip to the next set of bytes in the file.
+      qwFileOffset += dwBytesInBlock;
+      qwFileSize -= dwBytesInBlock;
+   }
+
+   CloseHandle(hFileMapping);
+   return(qwNumOf0s);
+}
+</pre></td></tr></table></p>
+
+<p>This algorithm maps views of 64 KB (the allocation granularity size)
+or less. Also, remember that <i>MapViewOfFile</i> requires that the
+file offset parameters be a multiple of the allocation granularity
+size. As each view is mapped into the address space, the scanning for
+zeros continues. After each 64-KB chunk of the file has been mapped and
+scanned, it's time to tidy up by closing the file-mapping
+object.</p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

@@ -1,0 +1,163 @@
+<HTML>
+<HEAD>
+<TITLE>Scenario 1: Call Functions Asynchronously</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch11a.htm">[Previous]</A> <A HREF="ch11c.htm">[Next]</A><P>
+
+<A NAME="153"><H1>Scenario 1: Call Functions Asynchronously</H1></A>
+
+<p>Let's say that you have a server process with a main thread that
+waits for a client's request. When the main thread receives this
+request, it spawns a separate thread for handling the request. This
+allows your application's main thread to cycle and wait for another
+client's request. This scenario is a typical implementation of a
+client/server application. It's already straightforward enough to
+implement, but you can also implement it using the new thread pool
+functions.</p>
+
+<p>When the server process's main thread receives the client's
+request, it can call this function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL QueueUserWorkItem(
+   PTHREAD_START_ROUTINE pfnCallback,
+   PVOID pvContext, 
+   ULONG dwFlags); 
+</pre></td></tr></table></p>
+
+<p>This function queues a &quot;work item&quot; to a thread in the
+thread pool and returns immediately. A work item is simply a function
+(identified by the <i>pfnCallback</i> parameter) that is called and
+passed a single parameter, <i>pvContext</i>. Eventually, some thread in
+the pool will process the work item, causing your function to be
+called. The callback function you write must have the following
+prototype:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+DWORD WINAPI WorkItemFunc(PVOID pvContext); 
+</pre></td></tr></table></p>
+
+<p>Even though you must prototype this function as returning a DWORD,
+the return value is actually ignored.</p>
+
+<p>Notice that you never call <i>CreateThread</i> yourself. A thread
+pool is automatically created for your process and a thread within the
+pool calls your function. Also, this thread is not immediately
+destroyed after it processes the client's request. It goes back
+into the thread pool so that it is ready to handle any other queued
+work items. Your application might become much more efficient because
+you are not creating and destroying threads for every single client
+request. Also, because the threads are bound to a completion port, the
+number of concurrently runnable threads is limited to twice the number
+of CPUs. This reduces thread context switches.</p>
+
+<p>What happens under the covers is that <i>QueueUserWorkItem</i>
+checks the number of threads in the non-I/O component and, depending on
+the load (number of queued work items), might add another thread to
+this component. <i>QueueUserWorkItem</i> then performs the equivalent
+of calling <i>PostQueuedCompletionStatus</i>, passing your work item
+information to an I/O completion port. Ultimately, a thread waiting on
+the completion port extracts your message (by calling <i>
+GetQueuedCompletionStatus</i>) and calls your function. When your
+function returns, the thread calls <i>GetQueuedCompletionStatus</i>
+again, waiting for another work item.</p>
+
+<p>The thread pool expects to frequently handle asynchronous I/O
+requests&#8212;whenever a thread queues an I/O request to a device
+driver. While the device driver performs the I/O, the thread that
+queued the request is not blocked and can continue executing other
+instructions. Asynchronous I/O is the secret to creating
+high-performance, scalable applications because it allows a single
+thread to handle requests from various clients as they come in; the
+thread doesn't have to handle the requests serially or block while
+waiting for I/O requests to complete.</p>
+
+<p>However, Windows places a restriction on asynchronous I/O requests:
+if a thread issues an asynchronous I/O request to a device driver and
+then terminates, the I/O request is lost and no thread is notified when
+the I/O request actually completes. In a well-designed thread pool, the
+number of threads expands and shrinks depending on the needs of its
+clients. So if a thread issues an asynchronous I/O request and then
+dies because the pool is shrinking, the I/O request dies too. This is
+usually not what you want, so you need a solution.</p>
+
+<p>If you want to queue a work item that issues an asynchronous I/O
+request, you cannot post the work item to the thread pool's non-I/O
+component. You must queue the work item to the I/O component of the
+thread pool. The I/O component consists of a set of threads that never
+die if they have a pending I/O request; therefore, you should use them
+only for executing code that issues asynchronous I/O requests.</p>
+
+<p>To queue a work item for the I/O component, you still call <i>
+QueueUserWorkItem</i>, but for the <i>dwFlags</i> parameter you pass
+WT_EXECUTEINIOTHREAD. Normally, you just pass WT_EXECUTEDEFAULT
+(defined as 0), which causes the work item to be posted to the non-I/O
+component's threads.</p>
+
+<p>Windows offers functions (such as <i>RegNotifyChangeKeyValue</i>)
+that perform non-I/O-related tasks asynchronously. These functions also
+require that the calling thread not terminate. If you want to call one
+of these functions using a persistent thread pool thread, you can use
+the WT_EXECUTEINPERSISTENTTHREAD flag, which causes the timer component's thread to
+execute the queued work item callback function. Since the timer
+component's thread never terminates, the asynchronous operation is
+guaranteed to eventually occur. You should make sure that the callback
+function does not block and that it executes quickly so that the timer
+component's thread is not adversely affected.</p>
+
+<p>A well-designed thread pool must also try to keep threads available
+to handle requests. If a pool contains 4 threads and 100 work items are
+queued, only 4 work items can be handled at a time. This might not be a
+problem if a work item takes only a few milliseconds to execute, but if
+your work items require much more time, you won't be able to handle
+requests in a timely fashion.</p>
+
+<p>Certainly, the system isn't smart enough to anticipate what your
+work item functions will do, but if you know that a work item might
+take a long time to execute, you should call <i>QueueUserWorkItem</i>,
+passing it the WT_EXECUTELONGFUNCTION flag. This flag helps the thread
+pool decide whether to add a new thread to the pool; it forces the
+thread pool to create a new thread if all of the threads in the pool
+are busy. So if you queue 10,000 work items (with the
+WT_EXECUTELONGFUNCTION flag) at the same time, 10,000 threads are added
+to the thread pool. If you don't want 10,000 threads created, you
+must space out the calls to <i>QueueUserWorkItem</i> so that some work
+items get a chance to complete.</p>
+
+<p>The thread pool can't place an upper limit on the number of
+threads in the pool, or starvation or deadlock might occur. Imagine
+queuing 10,000 work items that all block on an event that is signaled
+by the 10,001st item. If you've set a maximum of 10,000 threads,
+the 10,001st work item won't be executed and all 10,000 threads
+will be blocked forever.</p>
+
+<p>When you use thread pool functions, you should look for potential
+deadlock situations. Of course, you must be careful if your work item
+functions block on critical sections, semaphores, mutexes, and so
+on&#8212;this makes deadlocks more likely. Always be aware of which
+component's (I/O, non-I/O, wait, or timer) thread is executing your
+code. Also be careful if your work item functions are in DLLs that
+might be dynamically unloaded. A thread that calls a function in an
+unloaded DLL generates an access violation. To ensure that you do not
+unload a DLL with queued work items, you must reference-count your
+queued work items: you increment a counter before you call <i>
+QueueUserWorkItem</i> and decrement the counter as your work item
+function completes. Only if the reference count is 0 is it safe to
+unload the DLL.</p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

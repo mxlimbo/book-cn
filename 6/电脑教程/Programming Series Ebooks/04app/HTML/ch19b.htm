@@ -1,0 +1,148 @@
+<HTML>
+<HEAD>
+<TITLE>DLLs and a Process's Address Space</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch19a.htm">[Previous]</A> <A HREF="ch19c.htm">[Next]</A><P>
+
+<A NAME="251"><H1>DLLs and a Process's Address Space</H1></A>
+
+<p>It is often easier to create a DLL than to create an
+application because a DLL usually consists of a set of autonomous
+functions that any application can use. There is usually no support
+code for processing message loops or creating windows within DLLs. A
+DLL is simply a set of source code modules, with each module containing
+a set of functions that an application (executable file) or another DLL
+will call. After all the source code files have been compiled, they are
+linked by the linker just as an application's executable file would
+be. However, for a DLL you must specify the /DLL switch to the linker.
+This switch causes the linker to emit slightly different information
+into the resulting DLL file image so that the operating system loader
+recognizes the file image as a DLL rather than an
+application.</p>
+
+<p>Before an application (or another DLL) can call functions in a DLL,
+the DLL's file image must be mapped into the calling process's
+address space. You can do this using one of two methods: implicit
+load-time linking or explicit run-time linking. Implicit linking is
+discussed later in this chapter; explicit linking is discussed in
+<A HREF="ch20a.htm">Chapter 20</A>.</p>
+
+<p>Once a DLL's file image is mapped into the calling process's
+address space, the DLL's functions are available to all the threads
+running within the process. In fact, the DLL loses almost all of its
+identity as a DLL: To the threads in the process, the DLL's code
+and data simply look like additional code and data that happen to be in
+the process's address space. When a thread calls a DLL function,
+the DLL function looks at the thread's stack to retrieve its passed
+parameters and uses the thread's stack for any local variables that
+it needs. In addition, any objects created by code in the DLL's
+functions are owned by the calling thread or process&#8212;a DLL never
+owns anything.</p>
+
+<p>For example, if <i>VirtualAlloc</i> is called by a function in a
+DLL, the region of address space is reserved from the address space of
+the calling thread's process. If the DLL is later unmapped from the
+process's address space, the address space region remains reserved
+because the system does not keep track of the fact that a function in
+the DLL reserved the region. The reserved region is owned by the
+process and is freed only if a thread somehow calls the <i>
+VirtualFree</i> function or if the process terminates.</p>
+
+<p>As you know, the global and static variables of an executable file
+are not shared between multiple running instances of the same
+executable. Windows 98 ensures this by allocating storage for the
+executable file's global and static variables when the executable
+file is mapped into the process's address space; Windows 2000
+ensures this by using the copy-on-write mechanism discussed in <a href="ch13a.htm">Chapter
+13</a>. Global and static variables in a DLL are handled in exactly the
+same way. When one process maps a DLL image file into its address
+space, the system creates instances of the global and static data
+variables as well.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+It is important to realize that a single address space consists of one
+executable module and several DLL modules. Some of these modules can
+link to a static version of the C/C++ run-time library, some of these
+modules might link to a DLL version of the C/C++ run-time library, and
+some of these modules (if not written in C/C++) might not require the
+C/C++ run-time library at all. Many developers make a common mistake
+because they forget that several C/C++ run-time libraries can be
+present in a single address space. Examine the following code:
+
+
+<p>
+<table cellpadding=5><tr><td><pre>
+VOID EXEFunc() { 
+   PVOID pv = DLLFunc(); 
+   // Access the storage pointed to by pv... 
+   // Assumes that pv is in EXE's C/C++ run-time heap 
+   free(pv);          
+} 
+ 
+PVOID DLLFunc() { 
+   // Allocate block from DLL's C/C++ run-time heap 
+   return(malloc(100)); 
+} 
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>So, what do you think? Does the code above work correctly? Is the
+block allocated by the DLL's function freed by the EXE's
+function? The answer is: maybe. The code shown does not give you enough
+information. If both the EXE and the DLL link to the DLL C/C++ run-time
+library, the code above works just fine. However, if one or both of the
+modules link to the static C/C++ run-time library, the call to 
+<i>free</i> fails. I have seen developers write code similar to this too
+many times, and it has burned them all.</p>
+
+<p>There is an easy fix for this problem. When a module offers a
+function that allocates memory, the module must also offer a function
+that frees memory. Let me rewrite the code above:</p>
+
+<p>
+<table cellpadding=5><tr><td><pre>
+VOID EXEFunc() { 
+   PVOID pv = DLLFunc(); 
+   // Access the storage pointed to by pv... 
+   // Makes no assumptions about C/C++ run-time heap    
+   DLLFreeFunc(pv); 
+} 
+ 
+PVOID DLLFunc() { 
+   // Allocate block from DLL's C/C++ run-time heap 
+   PVOID pv = malloc(100);    
+   return(pv); 
+} 
+ 
+BOOL DLLFreeFunc(PVOID pv) { 
+   // Free block from DLL's C/C++ run-time heap 
+   return(free(pv));       
+}
+</pre>
+</td></tr>
+</table>
+</p>
+
+
+<p>This code is correct and will always work. When you write a module, don't forget that functions in other modules might not even be written in C/C++ and therefore might not use <i>malloc</i> and <i>free</i> for memory allocations. Be careful not to make these assumptions in your code. By the way, this same argument holds true for the C++ <i>new</i> and <i>delete</i> operators while calling <i>malloc</i> and <i>free</i> internally.</p>
+</blockquote></div>
+</p>
+
+
+</BODY>
+</HTML>
+
+
+
+
+
+

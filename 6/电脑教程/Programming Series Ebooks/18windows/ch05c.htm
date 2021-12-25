@@ -1,0 +1,640 @@
+<HTML>
+<HEAD>
+	<LINK REL=StyleSheet HREF="petzoldi.css" TYPE="text/css">
+<title>The Device Context</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="100"><h1>The Device Context</h1></A>
+<p>Before we begin drawing, let's examine the device context with more rigor than we did in <a href="ch04a.htm#62">Chapter 4</a>.
+
+<p>When you want to draw on a graphics output device such as the screen or printer, you must first obtain a handle to a device context (or DC). In giving your program this handle, Windows is giving you permission to use the device. You then include the handle as an argument to the GDI functions to identify to Windows the device on which you wish to draw.
+
+<p>The device context contains many &quot;attributes&quot; that determine how the GDI functions work on the device. These attributes allow GDI functions to have just a few arguments, such as starting coordinates. The GDI functions do not need arguments for everything else that Windows needs to display the object on the device. For example, when you call <I>TextOut</I>, you need specify in the function only the device context handle, the starting coordinates, the text, and the length of the text. You don't need to specify the font, the color of the text, the color of the background behind the text, or the intercharacter spacing. These are all attributes that are part of the device context. When you want to change one of these attributes, you call a function that does so. Subsequent <I>TextOut</I> calls to that device context use the new attribute.
+
+
+<A NAME="101"><h2>Getting a Device Context Handle</h2></A>
+<p>Windows provides several methods for obtaining a device context handle. If you obtain a video display device context handle while processing a message, you should release it before exiting the window procedure. After you release the handle, it is no longer valid. For a printer device context handle, the rules are not as strict. Again, we'll look at printing in <a href="ch13a.htm#401">Chapter 13</a>.
+
+<p>The most common method for obtaining a device context handle and then releasing it involves using the <I>BeginPaint</I> and <I>EndPaint</I> calls when processing the WM_PAINT message:
+
+<p><pre>
+hdc = BeginPaint (hwnd, &amp;ps) ;
+<I>[other program lines]</I>
+EndPaint (hwnd, &amp;ps) ;
+</pre>
+
+<p>The variable <I>ps</I> is a structure of type PAINTSTRUCT. The <I>hdc</I> field of this structure is the same handle to the device context that <I>BeginPaint</I> returns. The PAINSTRUCT structure also contains a RECT (rectangle) structure named <I>rcPaint</I> that defines a rectangle encompassing the invalid region of the window's client area. With the device context handle obtained from <I>BeginPaint</I> you can draw only within this region. The <I>BeginPaint</I> call also validates this region.
+
+<p>Windows programs can also obtain a handle to a device context while processing messages other than WM_PAINT:
+
+<p><pre>
+hdc = GetDC (hwnd) ;
+<I>[other program lines]</I>
+ReleaseDC (hwnd, hdc) ;
+</pre>
+
+<p>This device context applies to the client area of the window whose handle is <I>hwnd</I>. The primary difference between the use of these calls and the use of the <I>BeginPaint</I> and <I>EndPaint</I> combination is that you can draw on your entire client area with the handle returned from <I>GetDC</I>. However, <I>GetDC</I> and <I>ReleaseDC</I> don't validate any possibly invalid regions of the client area.
+
+<p>A Windows program can also obtain a handle to a device context that applies to the entire window and not only to the window's client area:
+
+<p><pre>
+hdc = GetWindowDC (hwnd) ;
+<I>[other program lines]</I>
+ReleaseDC (hwnd, hdc) ;
+</pre>
+
+<p>This device context includes the window title bar, menu, scroll bars, and frame in addition to the client area. Applications programs rarely use the <I>GetWindowDC</I> function. If you want to experiment with it, you should also trap the WM_NCPAINT (&quot;nonclient paint&quot;) message, which is the message Windows uses to draw on the nonclient areas of the window.
+
+<p>The <I>BeginPaint</I>, <I>GetDC</I>, and <I>GetWindowDC</I> calls obtain a device context associated with a particular window on the video display. A much more general function for obtaining a handle to a device context is <I>CreateDC</I>:
+
+<p><pre>
+hdc = CreateDC (pszDriver, pszDevice, pszOutput, pData) ;
+<I>[other program lines]</I>
+DeleteDC (hdc) ;
+</pre>
+
+<p>For example, you can obtain a device context handle for the entire display by calling
+
+<p><pre>
+hdc = CreateDC (TEXT (&quot;DISPLAY&quot;), NULL, NULL, NULL) ;
+</pre>
+
+<p>Writing outside your window is generally impolite, but it's convenient for some unusual applications. (Although this fact is not documented, you can also retrieve a device context for the entire screen by calling <I>GetDC</I> with a NULL argument.) In <a href="ch13a.htm#401">Chapter 13</a>, we'll use the <I>CreateDC</I> function to obtain a handle to a printer device context.
+
+<p>Sometimes you need only to obtain some information about a device context and not do any drawing. In these cases, you can obtain a handle to an &quot;information context&quot; by using <I>CreateIC</I>. The arguments are the same as for the <I>CreateDC</I> function. For example,
+
+<p><pre>
+hdc = CreateIC (TEXT (&quot;DISPLAY&quot;), NULL, NULL, NULL) ;
+</pre>
+
+<p>You can't write to the device by using this information context handle.
+
+<p>When working with bitmaps, it can sometimes be useful to obtain a &quot;memory device context&quot;:
+
+<p><pre>
+hdcMem = CreateCompatibleDC (hdc) ;
+<I>[other program lines]</I>
+DeleteDC (hdcMem) ;
+</pre>
+
+<p>You can select a bitmap into the memory device context and use GDI functions to draw on the bitmap. I'll discuss these techniques in <a href="ch14a.htm#426">Chapter 14</a>.
+
+<p>I mentioned earlier that a metafile is a collection of GDI function calls encoded in binary form. You can create a metafile by obtaining a metafile device context:
+
+<p><pre>
+hdcMeta = CreateMetaFile (pszFilename) ;
+<I>[other program lines]</I>
+hmf = CloseMetaFile (hdcMeta) ;
+</pre>
+
+<p>During the time the metafile device context is valid, any GDI calls you make using <I>hdcMeta</I> are not displayed but become part of the metafile. When you call <I>CloseMetaFile</I>, the device context handle becomes invalid. The function returns a handle to the metafile (<I>hmf</I>). I'll discuss metafiles in <a href="ch18a.htm#659">Chapter 18</a>.
+
+<A NAME="102"><h2>Getting Device Context Information</h2></A>
+<p>A device context usually refers to a physical display device such as a video display or a printer. Often, you need to obtain information about this device, including the size of the display, in terms of both pixels and physical dimensions, and its color capabilities. You can get this information by calling the <I>GetDeviceCap</I> (&quot;get device capabilities&quot;) function:
+
+<p><pre>
+iValue = GetDeviceCaps (hdc, iIndex) ;
+</pre>
+
+<p>The <I>iIndex</I> argument is one of 29 identifiers defined in the WINGDI.H header file. For example, the <I>iIndex</I> value of HORZRES causes <I>GetDeviceCaps</I> to return the width of the device in pixels; a VERTRES argument returns the height of the device in pixels. If <I>hdc</I> is a handle to a screen device context, that's the same information you can get from <I>GetSystemMetrics</I>. If <I>hdc</I> is a handle to a printer device context, <I>GetDeviceCaps</I> returns the height and width of the printer display area in pixels.
+
+<p>You can also use <I>GetDeviceCaps</I> to determine the device's capabilities of processing various types of graphics. This is usually not important for dealing with the video display, but it becomes more important with working with printers. For example, most pen plotters can't draw bitmapped images and <I>GetDeviceCaps</I> can tell you that.
+
+<A NAME="103"><h2>The DEVCAPS1 Program</h2></A>
+<p>The DEVCAPS1 program, shown in Figure 5-1, displays some (but not all) of the information available from the <I>GetDeviceCaps</I> function using a device context for the video display. In <a href="ch13a.htm#401">Chapter 13</a>, I'll present a second, expanded version of this program, called DEVCAPS2, that gets information for the printer.
+
+<p><B>Figure 5-1.</B> <I>The DEVCAPS1 program.</I>
+
+<table width="95%" cellpadding="5" valign="TOP"><tr><td valign=top>
+<A NAME="104"><h3>DEVCAPS1.C</h3></A>
+
+<p><pre>
+/*---------------------------------------------------------
+   DEVCAPS1.C -- Device Capabilities Display Program No. 1
+                 (c) Charles Petzold, 1998
+  ---------------------------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+#define NUMLINES ((int) (sizeof devcaps / sizeof devcaps [0]))
+
+struct
+{
+     int     iIndex ;
+     TCHAR * szLabel ;
+     TCHAR * szDesc ;
+}
+devcaps [] =
+{
+     HORZSIZE,      TEXT (&quot;HORZSIZE&quot;),     TEXT (&quot;Width in millimeters:&quot;),
+     VERTSIZE,      TEXT (&quot;VERTSIZE&quot;),     TEXT (&quot;Height in millimeters:&quot;),
+     HORZRES,       TEXT (&quot;HORZRES&quot;),      TEXT (&quot;Width in pixels:&quot;),
+     VERTRES,       TEXT (&quot;VERTRES&quot;),      TEXT (&quot;Height in raster lines:&quot;),
+     BITSPIXEL,     TEXT (&quot;BITSPIXEL&quot;),    TEXT (&quot;Color bits per pixel:&quot;),
+     PLANES,        TEXT (&quot;PLANES&quot;),       TEXT (&quot;Number of color planes:&quot;),
+     NUMBRUSHES,    TEXT (&quot;NUMBRUSHES&quot;),   TEXT (&quot;Number of device brushes:&quot;),
+     NUMPENS,       TEXT (&quot;NUMPENS&quot;),      TEXT (&quot;Number of device pens:&quot;),
+     NUMMARKERS,    TEXT (&quot;NUMMARKERS&quot;),   TEXT (&quot;Number of device markers:&quot;),
+     NUMFONTS,      TEXT (&quot;NUMFONTS&quot;),     TEXT (&quot;Number of device fonts:&quot;),
+     NUMCOLORS,     TEXT (&quot;NUMCOLORS&quot;),    TEXT (&quot;Number of device colors:&quot;),
+     PDEVICESIZE,   TEXT (&quot;PDEVICESIZE&quot;),  TEXT (&quot;Size of device structure:&quot;),
+     ASPECTX,       TEXT (&quot;ASPECTX&quot;),      TEXT (&quot;Relative width of pixel:&quot;),
+     ASPECTY,       TEXT (&quot;ASPECTY&quot;),      TEXT (&quot;Relative height of pixel:&quot;),
+     ASPECTXY,      TEXT (&quot;ASPECTXY&quot;),     TEXT (&quot;Relative diagonal of pixel:&quot;),
+     LOGPIXELSX,    TEXT (&quot;LOGPIXELSX&quot;),   TEXT (&quot;Horizontal dots per inch:&quot;),
+     LOGPIXELSY,    TEXT (&quot;LOGPIXELSY&quot;),   TEXT (&quot;Vertical dots per inch:&quot;),
+     SIZEPALETTE,   TEXT (&quot;SIZEPALETTE&quot;),  TEXT (&quot;Number of palette entries:&quot;),
+     NUMRESERVED,   TEXT (&quot;NUMRESERVED&quot;),  TEXT (&quot;Reserved palette entries:&quot;),
+     COLORRES,      TEXT (&quot;COLORRES&quot;),     TEXT (&quot;Actual color resolution:&quot;)
+} ;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName[] = TEXT (&quot;DevCaps1&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+     
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Device Capabilities&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static int  cxChar, cxCaps, cyChar ;
+     TCHAR       szBuffer[10] ;
+     HDC         hdc ;
+     int         i ;
+     PAINTSTRUCT ps ;
+     TEXTMETRIC  tm ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+          hdc = GetDC (hwnd) ;
+          
+          GetTextMetrics (hdc, &amp;tm) ;
+          cxChar = tm.tmAveCharWidth ;
+          cxCaps = (tm.tmPitchAndFamily &amp; 1 ? 3 : 2) * cxChar / 2 ;
+          cyChar = tm.tmHeight + tm.tmExternalLeading ;
+          
+          ReleaseDC (hwnd, hdc) ;
+          return 0 ;
+          
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+          
+          for (i = 0 ; i &lt; NUMLINES ; i++)
+          {
+               TextOut (hdc, 0, cyChar * i,
+                        devcaps[i].szLabel,
+                        lstrlen (devcaps[i].szLabel)) ;
+               
+               TextOut (hdc, 14 * cxCaps, cyChar * i,
+                        devcaps[i].szDesc,
+                        lstrlen (devcaps[i].szDesc)) ;
+               
+               SetTextAlign (hdc, TA_RIGHT | TA_TOP) ;
+               TextOut (hdc, 14 * cxCaps + 35 * cxChar, cyChar * i, szBuffer,
+                        wsprintf (szBuffer, TEXT (&quot;%5d&quot;),
+                             GetDeviceCaps (hdc, devcaps[i].iIndex))) ;
+               
+               SetTextAlign (hdc, TA_LEFT | TA_TOP) ;
+          }
+          
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+          
+     case WM_DESTROY:
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</PRE></td></tr></table>
+
+<p>As you can see, this program is quite similar to the SYSMETS1 program shown in <a href="ch04a.htm#62">Chapter 4</a>. To keep the code short, I didn't include scroll bars because I knew the information would fit on one screen. The results for a 256-color, 640-by-480 VGA are shown in Figure 5-2.
+
+<p><img src="F05zg02.JPG" width=404 height=284 ALIGN="BOTTOM">
+
+<p><!-- caption --><B>Figure 5-2.</B> <I>The DEVCAPS1 display for a 256-color, 640-by-480 VGA.</I><!-- /caption -->
+
+
+<A NAME="105"><h2>The Size of the Device</h2></A>
+<p>Suppose you want to draw a square with sides that are 1 inch in length. To do this, either you (the programmer) or Windows (the operating system) would need to know how many pixels corresponded to 1 inch on the video display. The <I>GetDeviceCaps</I> function helps you obtain information regarding the physical size of the output device, be it the video display or printer.
+
+<p>Video displays and printers are two very different devices. But perhaps the least obvious difference is how the word &quot;resolution&quot; is used in connection with the device. With printers, we often indicate a resolution in dots per inch. For example, most laser printers have a resolution of 300 or 600 dots per inch. However, the resolution of a video display is given as the total number of pixels horizontally and vertically, for example, 1024 by 768. Most people couldn't tell you the total number of pixels their printers display horizontally and vertically on a sheet of paper or the number of pixels per inch on their video displays.
+
+<p>In this book I'm going to use the word &quot;resolution&quot; in the strict sense of a number of pixels per metrical unit, generally an inch. I'll use the phrase &quot;pixel size&quot; or &quot;pixel dimension&quot; to indicate the total number of pixels that the device displays horizontally or vertically. The &quot;metrical size&quot; or &quot;metrical dimension&quot; is the size of the display area of the device in inches or millimeters. (For a printer page, this is not the whole size of the paper but only the printable area.) Dividing the pixel size by the metrical size gives you a resolution.
+
+<p>Most video displays used with Windows these days have screens that are 33 percent wider than they are high. This represents an aspect ratio of 1.33:1 or (as it's more commonly written) 4:3. Historically, this aspect ratio goes way back to when Thomas Edison was making movies. It remained the standard aspect ratio for motion pictures until various types of widescreen projection started to be used beginning in 1953. Television sets also have an aspect ratio of 4:3.
+
+<p>However, your Windows applications should not assume that the video display has a 4:3 aspect ratio. People who do mostly word processing sometimes prefer a video display that resembles the height and width of a sheet of paper. The most common alternative to a 4:3 display is a 3:4 display&#8212;essentially a standard display turned on its side.
+
+<p>If the horizontal resolution of a device equals the vertical resolution, the device is said to have &quot;square pixels.&quot; Nowadays all video displays in common use with Windows have square pixels, but this was not always the case. (Nor should your applications assume that the video display always has square pixels.) When Windows was first introduced, the standard video adapter boards were the IBM Color Graphics Adapter (CGA), which had a pixel dimension area of 640 by 200 pixels; the Enhanced Graphics Adapter (EGA), which had a pixel dimension of 640 by 350 pixels; and the Hercules Graphics Card, which had a pixel dimension of 720 by 348 pixels. All these video boards used a display that had a 4:3 aspect ratio, but the number of pixels horizontally and vertically was not in the ratio 4:3.
+
+<p>It's quite easy for a user running Windows to determine the pixel dimensions of a video display. Run the Display applet in Control Panel, and select the Settings tab. In the area labeled Screen Area, you'll probably see one of these pixel dimensions:
+
+<p><ul>
+
+<p><li>640 by 480 pixels
+
+<p><li>800 by 600 pixels
+
+<p><li>1024 by 768 pixels
+
+<p><li>1280 by 1024 pixels
+
+<p><li>1600 by 1200 pixels
+</ul>
+
+<p>All of these are in the ratio 4:3. (Well, all except the 1280 by 1024 pixel size. This should probably be considered an annoying anomaly rather than anything more significant. As we'll see, all these pixel dimensions when combined with a 4:3 monitor are considered to yield square pixels.)
+
+<p>A Windows application can obtain the pixel dimensions of the display from <I>GetSystemMetrics</I> with the SM_CXSCREEN and SM_CYSCREEN arguments. As you'll note from the DEVCAPS1 program, a program can obtain the same values from <I>GetDeviceCaps</I> with the HORZRES (&quot;horizontal resolution&quot;) and VERTRES arguments. This is a use of the word &quot;resolution&quot; that means the pixel size rather than the pixels per metrical unit.
+
+<p>That's the simple part of the device size. Now the confusion begins.
+
+<p>The first two device capabilities, HORZSIZE and VERTSIZE, are documented as &quot;Width, in millimeters, of the physical screen&quot; and &quot;Height, in millimeters, of the physical screen&quot; (in <I>/Platform SDK/Graphics and Multimedia Services/GDI/Device Contexts/Device Context Reference/Device Context Functions/GetDeviceCaps</I>). These seem like straightforward definitions until one begins to think through their implications. For example, given the nature of the interface between video display adapters and monitors, how can Windows really know the monitor size? And what if you have a laptop (in which the video driver conceivably <I>could</I> know the exact physical dimensions of the screen) and you attach an external monitor to it? And what if you attach a video projector to your PC?
+
+<p>In the 16-bit versions of Windows (and in Windows NT), Windows uses a &quot;standard&quot; display size for the HORZSIZE and VERTSIZE values. Beginning with Windows 95, however, the HORZSIZE and VERTSIZE values are derived from the HORZRES, VERTRES, LOGPIXELSX, and LOGPIXELSY values. Here's how it works.
+
+<p>When you use the Display applet of the Control Panel to select a pixel size of the display, you can also select a size of your system font. The reason for this option is that the font used for the 640 by 480 display may be too small to read when you go up to 1024 by 768 or beyond. Instead, you'll want a larger system font. These system font sizes are referred to on the Settings tab of the Display applet as Small Fonts and Large Fonts.
+
+<p>In traditional typography, the size of the characters in a font is indicated by a &quot;point size.&quot; A point is approximately 1/72 inch and in computer typography is often assumed to be exactly 1/72 inch.
+
+<p>In theory, the point size of a font is the distance from the top of the tallest character in the font to the bottom of descenders in characters such as j, p, q, and y, excluding accent marks. For example, in a 10-point font this distance would be 10/72 inch. In terms of the TEXTMETRIC structure, the point size of the font is equivalent to the <I>tmHeight</I> field minus the <I>tmInternalLeading</I> field, as shown in Figure 5-3. (This figure is the same as Figure 4-3 in the last chapter.)
+
+<p><img src="F05zg03.JPG" width=404 height=248 ALIGN="BOTTOM">
+
+<p><!-- caption --><B>Figure 5-3.</B> <I>The small font and the TEXTMETRIC fields.</I><!-- /caption -->
+
+<p>In real-life typography, the point size of a font is not so precisely related to the actual size of the font characters. The designer of the font might make the actual characters a bit larger or smaller than the point size would indicate. After all, font design is an art rather than a science.
+
+<p>The <I>tmHeight</I> field of the TEXTMETRIC structure indicates how successive lines of text should be spaced on the screen or printer. This can also be measured in points. For example, a 12-point line spacing indicates the baselines of successive lines of text should be 12/72 (or 1/6) inch apart. You don't want to use 10-point line spacing for a 10-point font because the successive lines of text could actually touch each other.
+
+<p>This book is printed with a 10-point font and 13-point line spacing. A 10-point font is considered comfortable for reading. Anything much smaller than 10 points would be difficult to read for long periods of time.
+
+<p>The Windows system font&#8212;regardless of whether it is the &quot;small font&quot; or the &quot;large font&quot; and regardless of what video pixel dimension you've selected&#8212;is assumed to be a 10-point font with a 12-point line spacing. I know this sounds odd. Why call the system fonts &quot;small font&quot; and &quot;large font&quot; if they're both 10-point fonts?
+
+<p>Here's the key: <I>When you select the small font or the large font in the Display applet of the Control Panel, you are actually selecting an assumed video display resolution in dots per inch.</I> When you select the small font, you are saying that you want Windows to assume that the video display resolution is 96 dots per inch. When you select the large font, you want Windows to assume that the video display resolution is 120 dots per inch.
+
+<p>Look at Figure 5-3 again. That's the small font, which is based on a display resolution of 96 dots per inch. I said it's a 10-point font. Ten points is 10/72 inch, which if you multiply by 96 dots per inch yields a result of (approximately) 13 pixels. That's <I>tmHeight</I> minus <I>tmInternalLeading</I>. The line spacing is 12 points, or 12/72 inch, which multiplied by 96 dots per inch yields 16 pixels. That's <I>tmHeight</I>.
+
+<p>Figure 5-4 shows the large font. This is based on a resolution of 120 dots per inch. Again, it's a 10-point font, and 10/72 times 120 dots per inch equals 16 pixels (if you round down), which is <I>tmHeight</I> minus <I>tmInternalLeading</I>. The 12-point line spacing is equivalent to 20 pixels, which is <I>tmHeight</I>. (As in <a href="ch04a.htm#62">Chapter 4</a>, let me emphasize again that I'm showing you actual metrics so that you can understand how this works. Do not code these numbers in your programs.)
+
+<p><A HREF="javascript:fullSize('F05zg04x.htm')"><img src="F05zg04.JPG" width=404 height=289 ALIGN="BOTTOM" border=0 ALT="Click to view at full size."></a>
+
+<p><!-- caption --><B>Figure 5-4.</B> <I>The large font and the FONTMETRIC fields.</I><!-- /caption -->
+
+
+<p>Within a Windows program you can use the <I>GetDeviceCaps</I> function to obtain the assumed resolution in dots per inch that the user selected in the Display applet of the Control Panel. To get these values&#8212;which in theory could be different if the video display doesn't have square pixels&#8212;you use the indices LOGPIXELSX and LOGPIXELSY. The name LOGPIXELS stands for &quot;logical pixels,&quot; which basically means &quot;not the <I>actual</I> resolution in pixels per inch.&quot;
+
+<p>The device capabilities that you obtain from <I>GetDeviceCaps</I> with the HORZSIZE and VERTSIZE indices are documented (as I indicated earlier) as &quot;Width, in millimeters, of the physical screen&quot; and &quot;Height, in millimeters, of the physical screen.&quot; These should be documented as a &quot;logical width&quot; and a &quot;logical height,&quot; because the values are derived from the HORZRES, VERTRES, LOGPIXELSX, and LOGPIXELSY values. The formulas are
+
+<p><I>Horizontal Size (mm) = 25.4 &#215;
+Horizontal Resolution (pixels)/
+Logical Pixels X (dots per inch)</I> 
+<p>
+<I> Vertical Size (mm) = 25.4 &#215;
+
+Vertical Resolution (pixels)/
+Logical Pixels Y (dots per inch)</I> 
+
+<p>The 25.4 constant is necessary to convert from inches to millimeters.
+
+<p>This may seem backward and illogical. After all, your video display has a size in millimeters that you can actually measure with a ruler (at least approximately). But Windows 98 doesn't care about that size. Instead it calculates a display size in millimeters based on the pixel size of the display the user selects and also the resolution the user selects for sizing the system font. Change the pixel size of your display and according to <I>GetDeviceCaps</I> the metrical size changes. How much sense does that make?
+
+<p>It makes more sense than you might suspect. Let's suppose you have a 17-inch monitor. The actual display size will probably be about 12 inches by 9 inches. Suppose you were running Windows with the minimum required pixel dimensions of 640 by 480. This means that the actual resolution is 53 dots per inch. A 10-point font&#8212;perfectly readable on paper&#8212;on the screen would be only 7 pixels in height from the top of the A to the bottom of the q. Such a font would be ugly and just about unreadable. (Ask people who ran Windows on the old Color Graphics Adapter.)
+
+<p>Now hook up a video projector to your PC. Let's say the projected video display is a 4 feet wide and 3 feet high. That same 640 by 480 pixel dimension now implies a resolution of about 13 dots per inch. It would be ridiculous to try displaying a 10-point font under such conditions.
+
+<p>A 10-point font should be readable on the video display because it is surely readable when printed. The 10-point font thus becomes an important frame of reference. When a Windows application is guaranteed that a 10-point screen font is of average size, it can then display smaller (but still readable) text using an 8-point font and larger text using fonts of point sizes greater than 10. Thus, it makes sense that the video resolution (in dots per inch) be implied by the pixel size of that 10-point font.
+
+<p>In Windows NT, however, an older approach is used in defining the HORZSIZE and VERTSIZE values. This approach is consistent with 16-bit versions of Windows. The HORZRES and VERTRES values still indicate the number of pixels horizontally and vertically (of course), and LOGPIXELSX and LOGPIXELSY are still related to the font that you choose when setting the video resolution in the Display applet of the Control Panel. As with Windows 98, typical values of LOGPIXELSX and LOGPIXELSY are 96 and 120 dots per inch, depending on whether you select a small font or large font.
+
+<p>The difference in Windows NT is that the HORZSIZE and VERTSIZE values are fixed to indicate a standard monitor size. For common adapters, the values of HORZSIZE and VERTSIZE you'll obtain are 320 and 240 millimeters, respectively. These values are the same regardless of what pixel dimension you choose. Therefore, these values are <I>inconsistent</I> with the values you obtain from <I>GetDeviceCaps</I> with the HORZRES, VERTRES, LOGPIXELSX, and LOGPIXELSY indices. However, you can always calculate HORZSIZE and VERTSIZE values like those you'd obtain under Windows 98 by using the formulas shown earlier.
+
+<p>What if your program needs the actual physical dimensions of the video display? Probably the best solution is to actually request them of the user with a dialog box.
+
+<p>Finally, three other values from <I>GetDeviceCaps</I> are related to the video dimensions. The ASPECTX, ASPECTY, and ASPECTXY values are the <I>relative</I> width, height, and diagonal size of each pixel, rounded to the nearest integer. For square pixels, the ASPECTX and ASPECTY values will be the same. Regardless, the ASPECTXY value equals the square root of the sum of the squares of the ASPECTX and ASPECTY values, as you'll recall from Pythagoras.
+
+<A NAME="106"><h2>Finding Out About Color</h2></A>
+<p>A video display capable of displaying only black pixels and white pixels requires only one bit of memory per pixel. Color displays require multiple bits per pixels. The more bits, the more colors; or more specifically, the number of unique simultaneous colors is equal to 2 to the number of bits per pixel.
+
+<p>A &quot;full color&quot; video display resolution has 24 bits per pixel&#8212;8 bits for red, 8 bits for green, and 8 bits for blue. Red, green, and blue are known as the &quot;additive primaries.&quot; Mixes of these three primary colors can create many other colors, as you can verify by peering at your color video display through a magnifying glass.
+
+<p>A &quot;high color&quot; display resolution has 16 bits per pixel, generally 5 bits for red, 6 bits for green, and 5 bits for blue. More bits are used for the green primary because the human eye is more sensitive to variations in green than to the other two primaries.
+
+<p>A video adapter that displays 256 colors requires 8 bits per pixel. However, these 8-bit values are generally indices into a palette table that defines the actual colors. I'll discuss this more in <a href="ch16a.htm#520">Chapter 16</a>.
+
+<p>Finally, a video board that displays 16 colors requires 4 bits per pixel. These 16 colors are generally fixed as dark and light versions of red, green, blue, cyan, magenta, yellow, two shades of gray, black, and white. These 16 colors date back to the old IBM CGA.
+
+<p>Only in some odd programming jobs is it necessary to know how memory is organized on the video adapter board, but <I>GetDeviceCaps</I> will help you determine that. Video memory can be organized either with consecutive color bits for each pixel or with each color bit in a separate plane of memory. This call returns the number of color planes:
+
+
+<p><pre>
+iPlanes = GetDeviceCaps (hdc, PLANES) ;
+</pre>
+
+<p>and this call returns the number of color bits per pixel:
+
+<p><pre>
+iBitsPixel = GetDeviceCaps (hdc, BITSPIXEL) ;
+</pre>
+
+<p>One of these calls will return a value of 1. The number of colors that can be simultaneously rendered on the video adapter can be calculated by the formula
+
+<p><pre>
+iColors = 1 &lt;&lt; (iPlanes * iBitsPixel) ;
+</pre>
+
+<p>This value may or may not be the same as the number of colors obtainable with the NUMCOLORS argument:
+
+<p><pre>
+iColors = GetDeviceCaps (hdc, NUMCOLORS) ;
+</pre>
+
+<p>I mentioned that 256-color video adapters use color palettes. In that case, <I>GetDeviceCaps</I> with the NUMCOLORS index returns the number of colors reserved by Windows, which will be 20. The remaining 236 colors can be set by a Windows program using the palette manager. For high-color and full-color display resolutions, <I>GetDeviceCaps</I> with the NUMCOLORS index often returns -1, making it a generally unreliable function for determining this information. Instead, use the <I>iColors</I> formula shown earlier that uses the PLANES and BITSPIXEL values.
+
+<p>In most GDI function calls, you use a COLORREF value (which is simply a 32-bit unsigned long integer) to refer to a particular color. The COLORREF value specifies a color in terms of red, green, and blue intensities and is often called an &quot;RGB color.&quot; The 32 bits of the COLORREF value are set as shown in Figure 5-5.
+
+<p><img src="F05zg05.GIF" width=395 height=76 border="0">
+
+<p><!-- caption --><B>Figure 5-5.</B> <I>The 32-bit COLORREF value.</I><!-- /caption -->
+
+<p>Notice that the most-significant 8 bits are zero, and that each primary is specified as an 8-bit value. In theory, a COLORREF value can refer to 2<SUP>24</SUP> or about 16 million colors.
+
+<p>The Windows header file WINGDI.H provides several macros for working with RGB color values. The <I>RGB</I> macro takes three arguments representing red, green, and blue values and combines them into an unsigned long:
+
+<p><pre>
+#define RGB(r,g,b) ((COLORREF)(((BYTE)(r) | \
+                   ((WORD)((BYTE)(g)) &lt;&lt; 8)) | \
+                   (((DWORD)(BYTE)(b)) &lt;&lt; 16)))
+</pre>
+
+<p>Notice that the order of the three arguments is red, green, and blue. Thus, the value
+
+<p>RGB (255, 255, 0)
+
+<p>is 0x0000FFFF or yellow&#8212;the combination of red and green. When all three arguments are set to 0, the color is black; when all the arguments are set to 255, the color is white. The <I>GetRValue</I>, <I>GetGValue</I>, and <I>GetBValue</I> macros extract the primary color values from a COLORREF value. These macros are sometimes handy when you're using a Windows function that returns RGB color values to your program.
+
+<p>On 16-color or 256-color video adapters, Windows can use &quot;dithering&quot; to simulate more colors than the device can display. Dithering involves a small pattern that combines pixels of different colors. You can determine the closest pure nondithered color of a particular color value by calling <I>GetNearestColor</I>:
+
+<p><pre>
+crPureColor = GetNearestColor (hdc, crColor) ;
+</pre>
+
+<A NAME="107"><h2>The Device Context Attributes</h2></A>
+<p>As I noted above, Windows uses the device context to store &quot;attributes&quot; that govern how the GDI functions operate on the display. For instance, when you display some text using the <I>TextOut</I> function, you don't have to specify the color of the text or the font. Windows uses the device context to obtain this information.
+
+<p>When a program obtains a handle to a device context, Windows sets all the attributes to default values. (However, see the next section for how to override this behavior.) The following table shows many of the device context attributes supported under Windows 98, along with the default values and the functions to change or obtain their values.
+<p>
+<table width="95%" cellpadding="5" valign="TOP">
+<tr>
+	<td valign=top><b>Device Context Attribute</b></td>
+	<td valign=top><b>Default</b></td>
+	<td valign=top><b>Function(s) to Change</b></td>
+	<td valign=top><b>Function to Obtain</b></td>
+</tr>
+<tr>
+	<td valign=top>Mapping Mode</td>
+	<td valign=top>MM_TEXT </td>
+	<td valign=top><I>SetMapMode</I></td>     
+	<td valign=top><I>GetMapMode</I></td>
+</tr>
+<tr>
+	<td valign=top>Window Origin </td>
+	<td valign=top>(0, 0)</td>
+	<td valign=top><I>SetWindowOrgEx<p>OffsetWindowOrgEx</I></td>
+	<td valign=top><i>GetWindowOrgEx</i></td>
+</tr>    
+<tr>
+	<td valign=top>Viewport Origin</td>
+	<td valign=top>(0, 0)</td>
+	<td valign=top><I>SetViewportOrgEx
+		<p>OffsetViewportOrgEx</I></td>
+	<td valign=top><I>GetViewportOrgEx</I></td>
+</tr>
+<tr>	
+	<td valign=top>Window Extents</td>
+	<td valign=top>(1, 1)</td>
+	<td valign=top>
+		<p><i>SetWindowExtEx</i>
+		<p><I>SetMapMode</I>
+		<p><I>ScaleWindowExtEx</I>
+	</td>
+	<td valign=top>
+		<i>GetWindowExtEx</i>
+	</td>
+</tr>
+<tr>
+<td valign=top>Viewport Extents </td>
+<td valign=top>(1, 1)</td>
+<td valign=top><i>SetViewportExtEx</i>
+	<i>SetMapMode</i>
+	<i>ScaleViewportExtEx</i></td>
+<td valign=top><i>GetViewportExtEx</i></td>
+</tr>
+<tr>
+<td valign=top>Pen</td>
+<td valign=top>BLACK_PEN</td>
+<td valign=top><I>SelectObject</I></td>     
+<td valign=top><I>SelectObject</I></td>
+</tr>
+<tr>
+<td valign=top>Brush</td>
+<td valign=top>WHITE_BRUSH</td>
+<td valign=top><I>SelectObject</I></td>     
+<td valign=top><I>SelectObject</I></td>
+</tr>
+<tr>
+<td valign=top>Font</td>
+<td valign=top>SYSTEM_FONT</td>
+<td valign=top><I>SelectObject</I></td>     
+<td valign=top><I>SelectObject</I></td>
+</tr>
+<tr>
+<td valign=top>Bitmap </td>
+<td valign=top>None</td>
+<td valign=top><I>SelectObject</I></td>
+<td valign=top><I>SelectObject</I></td>
+</tr>
+<tr>
+<td valign=top>Current Position</td>
+<td valign=top>(0, 0)</td>
+<td valign=top><I>MoveToEx
+	<p>LineTo
+	<p>PolylineTo
+	<p>PolyBezierTo</I>
+</td>
+<td valign=top><i>GetCurrentPositionEx</i></td>
+</tr>
+<tr>
+<td valign=top>Background Mode</td>
+<td valign=top>OPAQUE</td>
+<td valign=top><I>SetBkMode</I></td>     
+<td valign=top><I>GetBkMode</I></td>
+</tr>
+<tr>
+<td valign=top>Background Color</td>
+<td valign=top>White</td>
+<td valign=top><I>SetBkColor</I></td>     
+<td valign=top><I>GetBkColor</I></td>
+</tr>
+<tr>
+<td valign=top>Text Color</td>
+<td valign=top>Black</td>
+<td valign=top><I>SetTextColor</I></td>     
+<td valign=top><I>GetTextColor</I></td>
+</tr>
+<tr>
+<td valign=top>Drawing Mode</td>
+<td valign=top>R2_COPYPEN</td>
+<td valign=top><I>SetROP2</I></td>     
+<td valign=top><I>GetROP2</I></td>
+</tr>
+<tr>
+<td valign=top>Stretching Mode</td>
+<td valign=top>BLACKONWHITE</td>     
+<td valign=top><I>SetStretchBltMode</I></td>
+<td valign=top><I>GetStretchBltMode</I></td>
+</tr>
+<tr>
+<td valign=top>Polygon Fill Mode</td>
+<td valign=top>ALTERNATE</td>     
+<td valign=top><I>SetPolyFillMode</I></td>
+<td valign=top><I>GetPolyFillMode</I></td>
+</tr>
+<tr>
+<td valign=top>Intercharacter Spacing</td>
+<td valign=top>0</td>     
+<td valign=top><I>SetTextCharacterExtra</I></td>
+<td valign=top><I>GetTextCharacterExtra</I></td>
+</tr>
+<tr>
+<td valign=top>Brush Origin</td>
+<td valign=top>(0, 0)</td>     
+<td valign=top><I>SetBrushOrgEx</I></td>
+<td valign=top><I>GetBrushOrgEx</I></td>
+</tr>
+<tr>
+<td valign=top>Clipping Region</td>
+<td valign=top>None</td>
+<td valign=top>
+<I><p>SelectObject     
+<p>SelectClipRgn
+<p>IntersectClipRgn
+<p>OffsetClipRgn
+<p>ExcludeClipRect
+<p>SelectClipPath</I>
+</td>
+<td valign=top><i>GetClipBox</i></td>
+</tr>
+</table>
+
+
+<A NAME="108"><h2>Saving Device Contexts</h2></A>
+<p>Normally when you call <I>GetDC</I> or <I>BeginPaint</I>, Windows gives you a device context with default values for all the attributes. Any changes you make to the attributes are lost when the device context is released with the <I>ReleaseDC</I> or <I>EndPaint</I> call. If your program needs to use nondefault device context attributes, you'll have to initialize the device context every time you obtain a new device context handle:
+
+<p><pre>
+case WM_PAINT:
+     hdc = BeginPaint (hwnd, &amp;ps) ;
+<I>     [initialize device context attributes]
+     [paint client area of window]</I>
+	      EndPaint (hwnd, &amp;ps) ;
+		       return 0 ;
+</pre>
+
+<p>Although this approach is generally satisfactory, you might prefer that changes you make to the attributes be saved when you release the device context so that they will be in effect the next time you call <I>GetDC</I> or <I>BeginPaint</I>. You can accomplish this by including the CS_OWNDC flag as part of the window class style when you register the window class:
+
+<p><pre>
+wndclass.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC ;
+</pre>
+
+<p>Now each window that you create based on this window class will have its own private device context that continues to exist when the window is destroyed. When you use the CS_OWNDC style, you need to initialize the device context attributes only once, perhaps while processing the WM_CREATE message:
+
+<p><pre>
+case WM_CREATE:
+     hdc = GetDC (hwnd) ;
+<I>     [initialize device context attributes]</I>
+     ReleaseDC (hwnd, hdc) ;
+</pre>
+
+<p>The attributes continue to be valid until you change them.
+
+<p>The CS_OWNDC style affects only the device contexts retrieved from <I>GetDC</I> and <I>BeginPaint</I> and not device contexts obtained from the other functions (such as <I>GetWindowDC</I>). Employing CS_OWNDC was once discouraged because it required some memory overhead; nowadays it can improve performance in some graphics-intensive Windows NT applications. Even if you use CS_OWNDC, you should still release the device context handle before exiting the window procedure.
+
+<p>In some cases you might want to change certain device context attributes, do some painting using the changed attributes, and then revert to the original device context. To simplify this process, you save the state of a device context by calling
+
+<p><pre>
+idSaved = SaveDC (hdc) ;
+</pre>
+
+<p>Now you can change some attributes. When you want to return to the device context as it existed before the <I>SaveDC</I> call, you use
+
+<p><pre>
+RestoreDC (hdc, idSaved) ;
+</pre>
+
+<p>You can call <I>SaveDC</I> any number of times before you call <I>RestoreDC</I>.
+
+<p>Most programmers use <I>SaveDC</I> and <I>RestoreDC</I> in a different manner, however, much like PUSH and POP instructions in assembly language. When you call <I>SaveDC</I>, you don't need to save the return value:
+
+<p><pre>
+SaveDC (hdc) ;
+</pre>
+
+<p>You can then change some attributes and call <I>SaveDC</I> again. To restore the device context to a saved state, call
+
+<p><pre>
+RestoreDC (hdc, -1) ;
+</pre>
+
+<p>This restores the device context to the state saved by the most recent <I>SaveDC</I> function.
+
+</BODY>
+</HTML>
+
+
+
+
+

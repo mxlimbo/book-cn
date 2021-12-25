@@ -1,0 +1,938 @@
+<HTML>
+<HEAD>
+<TITLE>Injecting a DLL Using Remote Threads</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch22d.htm">[Previous]</A> <A HREF="ch22f.htm">[Next]</A><P>
+
+<A NAME="290"><H1>Injecting a DLL Using Remote Threads</H1></A>
+
+<p>The third method of injecting a DLL, using remote threads, offers
+the greatest flexibility. It requires that you understand several
+Windows features: processes, threads, thread synchronization, virtual
+memory management, DLLs, and Unicode. (If you're unclear about any
+of these features, please refer to their respective chapters in this
+book.) Most Windows functions allow a process to manipulate only
+itself. This is good because it prevents one process from corrupting
+another process. However, a handful of functions do allow one process
+to manipulate another. Most of these functions were originally designed
+for debuggers and other tools. However, any application can call these
+functions.</p>
+ 
+<p>Basically, this DLL injection technique requires that a thread in the
+target process call <i>LoadLibrary</i> to load the desired DLL. Since
+we can't easily control the threads in a process other than our
+own, this solution requires that we create a new thread in the target
+process. Since we create this thread ourselves, we can control what
+code it executes. Fortunately, Windows offers a function called <i>
+CreateRemoteThread</i> that makes it easy to create a thread in another
+process:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+
+<PRE>
+HANDLE CreateRemoteThread(
+   HANDLE hProcess, 
+   PSECURITY_ATTRIBUTES psa, 
+   DWORD dwStackSize,
+   PTHREAD_START_ROUTINE pfnStartAddr, 
+   PVOID pvParam,
+   DWORD fdwCreate, 
+   PDWORD pdwThreadId);
+</pre></td></tr></table></p>
+
+<p><i>CreateRemoteThread</i> is identical to <i>CreateThread</i> except
+that it has one additional parameter, <i>hProcess</i>. This parameter
+identifies the process that will own the newly created thread. The <i>
+pfnStartAddr</i> parameter identifies the memory address of the thread
+function. This memory address is, of course, relative to the remote
+process&#8212;the thread function's code cannot be in your own
+process's address space.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+In Windows 2000, the more commonly used <i>CreateThread</i> function is
+implemented internally as follows:
+
+<p><table cellpadding=5><tr><td>
+
+<PRE>
+HANDLE CreateThread(PSECURITY_ATTRIBUTES psa, DWORD dwStackSize,
+   PTHREAD_START_ROUTINE pfnStartAddr, PVOID pvParam,
+   DWORD fdwCreate, PDWORD pdwThreadID) {
+
+   return(CreateRemoteThread(GetCurrentProcess(), psa, dwStackSize,
+      pfnStartAddr, pvParam, fdwCreate, pdwThreadID));
+}
+</pre></td></tr></table></p>
+</blockquote></div>
+</p>
+
+<p>
+<div class="note"><blockquote><b>Windows 98</b><hr>
+In Windows 98, the <i>CreateRemoteThread</i> function has no useful
+implementation and simply returns NULL; calling <i>GetLastError</i>
+returns ERROR_CALL_NOT_IMPLEMENTED. (The <i>CreateThread</i> function
+contains the complete implementation of the code that creates a thread
+in the calling process.) Because <i>CreateRemoteThread</i> is not
+implemented, you cannot use this technique to inject a DLL under
+Windows 98.
+</blockquote></div>
+</p>
+
+<p>OK, so now you know how to create a thread in another process, but
+how do we get that thread to load our DLL? The answer is simple: we
+need the thread to call the <i>LoadLibrary</i> function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HINSTANCE LoadLibrary(PCTSTR pszLibFile);
+</pre></td></tr></table></p>
+
+<p>If you look up <i>LoadLibrary</i> in the WinBase.h header file,
+you'll find the following:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HINSTANCE WINAPI LoadLibraryA(LPCSTR  pszLibFileName);
+HINSTANCE WINAPI LoadLibraryW(LPCWSTR pszLibFileName);
+#ifdef UNICODE
+#define LoadLibrary  LoadLibraryW
+#else
+#define LoadLibrary  LoadLibraryA
+#endif // !UNICODE
+</pre></td></tr></table></p>
+
+<p>There are actually two <i>LoadLibrary</i> functions: <i>
+LoadLibraryA</i> and <i>LoadLibraryW</i>. The only difference between
+them is the type of parameter that you pass to the function. If you
+have the library's filename stored as an ANSI string, you must call
+<i>LoadLibraryA</i>. (The <i>A</i> stands for ANSI.) If the filename is
+stored as a Unicode string, you must call <i>LoadLibraryW</i>. (The <i>
+W</i> stands for wide characters.) No single <i>LoadLibrary</i>
+function exists&#8212;only <i>LoadLibraryA</i> and <i>LoadLibraryW</i>.
+For most applications, the <i>LoadLibrary</i> macro expands to <i>
+LoadLibraryA</i>.</p>
+ 
+<p>Fortunately, the prototype for the <i>LoadLibrary</i> functions and the
+prototype for a thread function are identical. Here is a thread
+function's prototype:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+DWORD WINAPI ThreadFunc(PVOID pvParam);
+</pre></td></tr></table></p>
+
+<p>OK, the function prototypes are not exactly identical, but they are
+close enough. Both functions accept a single parameter and both return
+a value. Also, both use the same calling convention, WINAPI. This is
+extremely fortunate because all we have to do is create a new thread
+and have the thread function address be the address of the <i>
+LoadLibraryA</i> or <i>LoadLibraryW</i> function. Basically, all we
+need to do is execute a line of code that looks like this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HANDLE hThread = CreateRemoteThread(hProcessRemote, NULL, 0,
+   LoadLibraryA, &quot;C:\\MyLib.dll&quot;, 0, NULL);
+</pre></td></tr></table></p>
+
+<p>Or, if you prefer Unicode, the line looks like this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HANDLE hThread = CreateRemoteThread(hProcessRemote, NULL, 0,
+   LoadLibraryW, L&quot;C:\\MyLib.dll&quot;, 0, NULL);
+</pre></td></tr></table></p>
+
+<p>When the new thread is created in the remote process, the thread
+immediately calls the <i>LoadLibraryA</i> (or <i>LoadLibraryW</i>)
+function, passing to it the address of the DLL's pathname. This is
+easy. But there are two other problems.</p>
+ 
+<p>The first problem is that you can't simply pass <i>LoadLibraryA</i>
+or <i>LoadLibraryW</i> as the fourth parameter to <i>
+CreateRemoteThread</i>, as I've shown above. The reason is quite
+subtle. When you compile and link a program, the resulting binary
+contains an import section (described in <A HREF="ch19a.htm">Chapter 19</A>). This section
+consists of a series of thunks to imported functions. So when your code
+calls a function such as <i>LoadLibraryA</i>, the linker generates a
+call to a thunk in your module's import section. The thunk in turn
+jumps to the actual function.</p>
+ 
+<p>If you use a direct reference to <i>LoadLibraryA</i> in the call to <i>
+CreateRemoteThread</i>, this resolves to the address of the <i>
+LoadLibraryA</i> thunk in your module's import section. Passing the
+address of the thunk as the starting address of the remote thread
+causes the remote thread to begin executing who-knows-what. The result
+is most likely an access violation. To force a direct call to the <i>
+LoadLibraryA</i> function, bypassing the thunk, you must get the exact
+memory location of <i>LoadLibraryA</i> by calling <i>
+GetProcAddress</i>.</p>
+ 
+<p>The call to <i>CreateRemoteThread</i> assumes that Kernel32.dll is
+mapped to the same memory location in both the local and the remote
+processes' address spaces. Every application requires Kernel32.dll,
+and in my experience the system maps Kernel32.dll to the same address
+in every process. So we have to call <i>CreateRemoteThread</i> like
+this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// Get the real address of LoadLibraryA in Kernel32.dll.
+PTHREAD_START_ROUTINE pfnThreadRtn = (PTHREAD_START_ROUTINE)
+   GetProcAddress(GetModuleHandle(TEXT(&quot;Kernel32&quot;)), &quot;LoadLibraryA&quot;);
+
+HANDLE hThread = CreateRemoteThread(hProcessRemote, NULL, 0,
+   pfnThreadRtn, &quot;C:\\MyLib.dll&quot;, 0, NULL);
+</pre></td></tr></table></p>
+
+<p>Or, again, if you prefer Unicode, do this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// Get the real address of LoadLibraryW in Kernel32.dll.
+PTHREAD_START_ROUTINE pfnThreadRtn = (PTHREAD_START_ROUTINE)
+   GetProcAddress(GetModuleHandle(TEXT(&quot;Kernel32&quot;)), &quot;LoadLibraryW&quot;);
+
+HANDLE hThread = CreateRemoteThread(hProcessRemote, NULL, 0,
+   pfnThreadRtn, L&quot;C:\\MyLib.dll&quot;, 0, NULL);
+</pre></td></tr></table></p>
+
+<p>All right, this fixes one problem. But I said that there were two
+problems. The second problem has to do with the DLL pathname string.
+The string, &quot;C:\\MyLib.dll&quot;, is in the calling process's
+address space. The address of this string is given to the newly created
+remote thread, which passes it to <i>LoadLibraryA</i>. But when <i>
+LoadLibraryA</i> dereferences the memory address, the DLL pathname
+string is not there and the remote process's thread will probably
+raise an access violation; the unhandled exception message box is
+presented to the user, and the remote process is terminated. That's
+right, the remote process is terminated&#8212;not your process. You will
+have successfully crashed another process while your process continues
+to execute just fine!</p>
+ 
+<p>To fix this, we need to get the DLL's pathname string into the
+remote process's address space. Then, when <i>
+CreateRemoteThread</i> is called, we need to pass it the address
+(relative to the remote process) of where we placed the string. Again,
+Windows offers a function, <i>VirtualAllocEx</i>, that allows one
+process to allocate memory in another process's address space:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+PVOID VirtualAllocEx(
+   HANDLE hProcess, 
+   PVOID pvAddress, 
+   SIZE_T dwSize, 
+   DWORD flAllocationType, 
+   DWORD flProtect);
+</pre></td></tr></table></p>
+
+<p>Another function allows us to free this memory:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL VirtualFreeEx(
+   HANDLE hProcess, 
+   PVOID pvAddress, 
+   SIZE_T dwSize, 
+   DWORD dwFreeType);
+</pre></td></tr></table></p>
+
+<p>Both of these functions are similar to their non-<i>Ex</i> versions
+(which are discussed in <A HREF="ch15a.htm">Chapter 15</A>). The only difference is that these
+two functions require a handle to a process as their first argument.
+This handle indicates the process where the operation is to be
+performed.</p>
+ 
+<p>Once we allocate memory for the string, we also need a way to copy the
+string from our process's address space over to the remote
+process's address space. Windows offers functions that allow one
+process to read and write from/to another process's address
+space:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL ReadProcessMemory(
+   HANDLE hProcess, 
+   PVOID pvAddressRemote,
+   PVOID pvBufferLocal, 
+   DWORD dwSize, 
+   PDWORD pdwNumBytesRead);
+
+BOOL WriteProcessMemory(
+   HANDLE hProcess, 
+   PVOID pvAddressRemote,
+   PVOID pvBufferLocal, 
+   DWORD dwSize, 
+   PDWORD pdwNumBytesWritten);
+</pre></td></tr></table></p>
+
+<p>The remote process is identified by the <i>hProcess</i> parameter.
+The <i>pvAddressRemote</i> parameters indicate the address in the
+remote process, <i>pvBufferLocal</i> is the address of memory in the
+local process, <i>dwSize</i> is the requested number of bytes to
+transfer, and <i>pdwNumBytesRead</i> and <i>pdwNumBytesWritten</i>
+indicate the number of bytes actually transferred and can be examined
+when the function returns.</p>
+ 
+<p>Now that you understand all that I'm trying to do, let me summarize
+the steps you must take:</p>
+
+<ol>
+<p><li> Use the <i>VirtualAllocEx</i> function to allocate memory in the
+remote process's address space.</li></p>
+
+<p><li> Use the <i>WriteProcessMemory</i> function to copy the DLL's
+pathname to the memory allocated in step 1.</li></p>
+
+<p><li> Use the <i>GetProcAddress</i> function to get the real address
+(inside Kernel32.dll) of the <i>LoadLibraryA</i> or <i>LoadLibraryW</i>
+function.</li></p>
+
+<p><li> Use the <i>CreateRemoteThread</i> function to create a thread in
+the remote process that calls the proper <i>LoadLibrary</i> function,
+passing it the address of the memory allocated in step 1.</li></p>
+</ol>
+
+<p>At this point, the DLL has been injected into the remote
+process's address space, and the DLL's <i>DllMain</i> function
+receives a DLL_PROCESS_ATTACH notification and can execute the desired
+code. When <i>DllMain</i> returns, the remote thread returns from its
+call to <i>LoadLibrary</i> back to the <i>BaseThreadStart</i> function
+(discussed in <A HREF="ch06a.htm">Chapter 6</A>). <i>BaseThreadStart</i> then calls <i>
+ExitThread</i>, causing the remote thread to die.</p>
+ 
+<p>Now the remote process has the block of storage allocated in step 1 and
+the DLL still stuck in its address space. To clean this stuff up,
+we'll need to execute the following steps after the remote thread
+exists:</p>
+
+<ol>
+<p><li value="5"> Use the <i>VirtualFreeEx</i> function to free the memory
+allocated in step 1.</li></p>
+
+<p><li> Use the <i>GetProcAddress</i> function to get the real address
+(inside Kernel32.dll) of the <i>FreeLibrary</i> function.</li></p>
+
+<p><li> Use the <i>CreateRemoteThread</i> function to create a thread in
+the remote process that calls <i>FreeLibrary</i> function, passing the
+remote DLL's HINSTANCE.</li></p>
+</ol>
+
+<p>That's basically it. The only downside to this DLL injection
+technique&#8212;the most versatile one we have discussed so far&#8212;is
+that Windows 98 doesn't support a lot of these functions. You can
+use this technique only on Windows 2000.</p>
+
+<A NAME="291"><H2>The Inject Library Sample Application </H2></A>
+
+<p>The InjLib.exe application, listed in Figure 22-3, injects a DLL
+using the <i>CreateRemoteThread</i> function. The source code and
+resource files for the application and DLL are in the 22-InjLib and
+22-ImgWalk directories on the companion CD-ROM. The program uses the
+following dialog box to accept the process ID of a running process. </p>
+
+<p>
+<img src="images/G22si03.JPG" width=243 height=64 border="0">
+</p>
+
+<p>You can obtain a process's ID by using the Task Manager that ships
+with Windows 2000. Using the ID, the program attempts to open a handle
+to this running process by calling <i>OpenProcess,</i> requesting the
+appropriate access rights:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+hProcess = OpenProcess(
+   PROCESS_CREATE_THREAD |  // For CreateRemoteThread
+   PROCESS_VM_OPERATION  |  // For VirtualAllocEx/VirtualFreeEx
+   PROCESS_VM_WRITE,        // For WriteProcessMemory
+   FALSE, dwProcessId);
+</pre></td></tr></table></p>
+
+<p>If <i>OpenProcess</i> returns NULL, the application is not running
+under a security context that allows it to open a handle to the target
+process. Some processes&#8212;such as WinLogon, SvcHost, and
+Csrss&#8212;run under the local system account, which the logged-on user
+cannot alter. You might be able to open a handle to these processes if
+you are granted and enable the debug security privilege. The
+ProcessInfo sample in <A HREF="ch04a.htm">Chapter 4</A> demonstrates how to do this. </p>
+
+<p>If <i>OpenProcess</i> is successful, a buffer is initialized with the
+full pathname of the DLL that is to be injected. Then <i>InjectLib</i>
+is called, passing it the handle of the desired remote process and the
+pathname of the DLL to inject into it. Finally, when <i>InjectLib</i>
+returns, the program displays a message box indicating whether the DLL
+successfully loaded in the remote process; it then closes the handle to
+the process. That's all there is to it. </p>
+
+<p>You might notice in the code that I make a special check to see whether
+the process ID passed is 0. If so, I set the process ID to
+InjLib.exe's own process ID by calling <i>GetCurrentProcessId</i>.
+This way, when <i>InjectLib</i> is called, the DLL is injected into the
+process's own address space. This makes debugging easier. As you
+can imagine, when bugs popped up, it was sometimes difficult to
+determine whether the bugs were in the local process or in the remote
+process. Originally, I started debugging my code with two debuggers,
+one watching InjLib and the other watching the remote process. This
+turned out to be terribly inconvenient. It then dawned on me that
+InjLib can also inject a DLL into itself&#8212;that is, into the same
+address space as the caller. This made it much easier to debug my
+code. </p>
+
+<p>As you can see at the top of the source code module, <i>InjectLib</i>
+is really a symbol that expands to either <i>InjectLibA</i> or <i>
+InjectLibW</i> depending on how you're compiling the source code.
+The <i>InjectLibW</i> function is where all the magic happens. The
+comments speak for themselves, and I can't add much here. However,
+you'll notice that the <i>InjectLibA</i> function is short. It
+simply converts the ANSI DLL pathname to its Unicode equivalent and
+then calls the <i>InjectLibW</i> function to actually do the work. This
+approach is exactly what I recommended in <A HREF="ch02a.htm">Chapter 2</A>. It also means that
+I only had to get the injection code running once&#8212;a nice
+timesaver.</p>
+
+<p>
+<b>Figure 22-3.</b> <i>The InjLib sample application</i>
+</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+
+<p><b>InjLib.cpp</b></p>
+
+<PRE>
+/******************************************************************************
+Module:  InjLib.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#include &quot;..\CmnHdr.h&quot;     /* See Appendix A. */
+#include &lt;windowsx.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;tchar.h&gt;
+#include &lt;malloc.h&gt;        // For alloca
+#include &lt;TlHelp32.h&gt;
+#include &quot;Resource.h&quot;
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+#ifdef UNICODE
+#define InjectLib InjectLibW
+#define EjectLib  EjectLibW
+#else
+#define InjectLib InjectLibA
+#define EjectLib  EjectLibA
+#endif   // !UNICODE
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL WINAPI InjectLibW(DWORD dwProcessId, PCWSTR pszLibFile) {
+
+   BOOL fOk = FALSE; // Assume that the function fails
+   HANDLE hProcess = NULL, hThread = NULL;
+   PWSTR pszLibFileRemote = NULL;
+
+   _ _try {
+      // Get a handle for the target process.
+      hProcess = OpenProcess(
+         PROCESS_CREATE_THREAD     |   // For CreateRemoteThread
+         PROCESS_VM_OPERATION      |   // For VirtualAllocEx/VirtualFreeEx
+         PROCESS_VM_WRITE,             // For WriteProcessMemory
+         FALSE, dwProcessId);
+      if (hProcess == NULL) _ _leave;
+
+      // Calculate the number of bytes needed for the DLL's pathname
+      int cch = 1 + lstrlenW(pszLibFile);
+      int cb  = cch * sizeof(WCHAR);
+
+      // Allocate space in the remote process for the pathname
+      pszLibFileRemote = (PWSTR) 
+         VirtualAllocEx(hProcess, NULL, cb, MEM_COMMIT, PAGE_READWRITE);
+      if (pszLibFileRemote == NULL) _ _leave;
+
+      // Copy the DLL's pathname to the remote process's address space
+      if (!WriteProcessMemory(hProcess, pszLibFileRemote, 
+         (PVOID) pszLibFile, cb, NULL)) _ _leave;
+
+      // Get the real address of LoadLibraryW in Kernel32.dll
+      PTHREAD_START_ROUTINE pfnThreadRtn = (PTHREAD_START_ROUTINE)
+         GetProcAddress(GetModuleHandle(TEXT(&quot;Kernel32&quot;)), &quot;LoadLibraryW&quot;);
+      if (pfnThreadRtn == NULL) _ _leave;
+
+      // Create a remote thread that calls LoadLibraryW(DLLPathname)
+      hThread = CreateRemoteThread(hProcess, NULL, 0, 
+         pfnThreadRtn, pszLibFileRemote, 0, NULL);
+      if (hThread == NULL) _ _leave;
+
+      // Wait for the remote thread to terminate
+      WaitForSingleObject(hThread, INFINITE);
+
+      fOk = TRUE; // Everything executed successfully
+   }
+   _ _finally { // Now, we can clean everthing up
+
+      // Free the remote memory that contained the DLL's pathname
+      if (pszLibFileRemote != NULL) 
+         VirtualFreeEx(hProcess, pszLibFileRemote, 0, MEM_RELEASE);
+
+      if (hThread  != NULL) 
+         CloseHandle(hThread);
+
+      if (hProcess != NULL) 
+         CloseHandle(hProcess);
+   }
+
+   return(fOk);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL WINAPI InjectLibA(DWORD dwProcessId, PCSTR pszLibFile) {
+
+   // Allocate a (stack) buffer for the Unicode version of the pathname
+   PWSTR pszLibFileW = (PWSTR) 
+      _alloca((lstrlenA(pszLibFile) + 1) * sizeof(WCHAR));
+
+   // Convert the ANSI pathname to its Unicode equivalent
+   wsprintfW(pszLibFileW, L&quot;%S&quot;, pszLibFile);
+
+   // Call the Unicode version of the function to actually do the work.
+   return(InjectLibW(dwProcessId, pszLibFileW));
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL WINAPI EjectLibW(DWORD dwProcessId, PCWSTR pszLibFile) {
+
+   BOOL fOk = FALSE; // Assume that the function fails
+   HANDLE hthSnapshot = NULL;
+   HANDLE hProcess = NULL, hThread = NULL;
+
+   _ _try {
+      // Grab a new snapshot of the process
+      hthSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, dwProcessId);
+      if (hthSnapshot == NULL) _ _leave;
+
+      // Get the HMODULE of the desired library
+      MODULEENTRY32W me = { sizeof(me) };
+      BOOL fFound = FALSE;
+      BOOL fMoreMods = Module32FirstW(hthSnapshot, &amp;me);
+      for (; fMoreMods; fMoreMods = Module32NextW(hthSnapshot, &amp;me)) {
+         fFound = (lstrcmpiW(me.szModule,  pszLibFile) == 0) || 
+                  (lstrcmpiW(me.szExePath, pszLibFile) == 0);
+         if (fFound) break;
+      }
+      if (!fFound) _ _leave;
+
+      // Get a handle for the target process.
+      hProcess = OpenProcess(
+         PROCESS_CREATE_THREAD
+         | PROCESS_VM_OPERATION,  // For CreateRemoteThread
+         FALSE, dwProcessId);
+      if (hProcess == NULL) _ _leave;
+
+      // Get the real address of LoadLibraryW in Kernel32.dll
+      PTHREAD_START_ROUTINE pfnThreadRtn = (PTHREAD_START_ROUTINE)
+         GetProcAddress(GetModuleHandle(TEXT(&quot;Kernel32&quot;)), &quot;FreeLibrary&quot;);
+      if (pfnThreadRtn == NULL) _ _leave;
+
+      // Create a remote thread that calls LoadLibraryW(DLLPathname)
+      hThread = CreateRemoteThread(hProcess, NULL, 0, 
+         pfnThreadRtn, me.modBaseAddr, 0, NULL);
+      if (hThread == NULL) _ _leave;
+
+      // Wait for the remote thread to terminate
+      WaitForSingleObject(hThread, INFINITE);
+
+      fOk = TRUE; // Everything executed successfully
+   }
+   _ _finally { // Now we can clean everything up
+
+      if (hthSnapshot != NULL) 
+         CloseHandle(hthSnapshot);
+
+      if (hThread     != NULL) 
+         CloseHandle(hThread);
+
+      if (hProcess    != NULL) 
+         CloseHandle(hProcess);
+   }
+
+   return(fOk);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL WINAPI EjectLibA(DWORD dwProcessId, PCSTR pszLibFile) {
+
+   // Allocate a (stack) buffer for the Unicode version of the pathname
+   PWSTR pszLibFileW = (PWSTR) 
+      _alloca((lstrlenA(pszLibFile) + 1) * sizeof(WCHAR));
+
+   // Convert the ANSI pathname to its Unicode equivalent
+   wsprintfW(pszLibFileW, L&quot;%S&quot;, pszLibFile);
+
+   // Call the Unicode version of the function to actually do the work.
+   return(EjectLibW(dwProcessId, pszLibFileW));
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL Dlg_OnInitDialog(HWND hwnd, HWND hwndFocus, LPARAM lParam) {
+
+   chSETDLGICONS(hwnd, IDI_INJLIB);
+   return(TRUE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify) {
+   
+   switch (id) {
+      case IDCANCEL:
+         EndDialog(hwnd, id);
+         break;
+
+      case IDC_INJECT:
+         DWORD dwProcessId = GetDlgItemInt(hwnd, IDC_PROCESSID, NULL, FALSE);
+         if (dwProcessId == 0) {
+            // A process ID of 0 causes everything to take place in the 
+            // local process; this makes things easier for debugging.
+            dwProcessId = GetCurrentProcessId();
+         }
+
+         TCHAR szLibFile[MAX_PATH];
+         GetModuleFileName(NULL, szLibFile, sizeof(szLibFile));
+         _tcscpy(_tcsrchr(szLibFile, TEXT('\\')) + 1, TEXT(&quot;22 ImgWalk.DLL&quot;));
+         if (InjectLib(dwProcessId, szLibFile)) {
+            chVERIFY(EjectLib(dwProcessId, szLibFile));
+            chMB(&quot;DLL Injection/Ejection successful.&quot;);
+         } else {
+            chMB(&quot;DLL Injection/Ejection failed.&quot;);
+         }
+         break;
+   }
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+INT_PTR WINAPI Dlg_Proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+
+   switch (uMsg) {
+      chHANDLE_DLGMSG(hwnd, WM_INITDIALOG, Dlg_OnInitDialog);
+      chHANDLE_DLGMSG(hwnd, WM_COMMAND,    Dlg_OnCommand);
+   }
+   return(FALSE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+int WINAPI _tWinMain(HINSTANCE hinstExe, HINSTANCE, PTSTR pszCmdLine, int) {
+
+   chWindows9xNotAllowed();
+   DialogBox(hinstExe, MAKEINTRESOURCE(IDD_INJLIB), NULL, Dlg_Proc);
+   return(0);
+}
+
+
+//////////////////////////////// End of File //////////////////////////////////
+</pre>
+</td></tr></table>
+</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+
+<p><b>InjLib.rc</b></p>
+
+<PRE>
+//Microsoft Developer Studio generated resource script.
+//
+#include &quot;resource.h&quot;
+
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+/////////////////////////////////////////////////////////////////////////////
+// English (U.S.) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+#ifdef _WIN32
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(1252)
+#endif //_WIN32
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+// Icon with lowest ID value placed first to ensure application icon
+// remains consistent on all systems.
+IDI_INJLIB              ICON    DISCARDABLE     &quot;InjLib.ico&quot;
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// TEXTINCLUDE
+//
+
+1 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;resource.h\0&quot;
+END
+
+2 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;#include &quot;&quot;afxres.h&quot;&quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+3 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+#endif    // APSTUDIO_INVOKED
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
+
+IDD_INJLIB DIALOG DISCARDABLE  15, 24, 158, 24
+STYLE DS_3DLOOK | DS_CENTER | WS_MINIMIZEBOX | WS_VISIBLE | WS_CAPTION | 
+    WS_SYSMENU
+CAPTION &quot;Inject Library Tester&quot;
+FONT 8, &quot;MS Sans Serif&quot;
+BEGIN
+    LTEXT           &quot;&amp;Process Id (decimal):&quot;,-1,4,6,69,8
+    EDITTEXT        IDC_PROCESSID,78,4,36,12,ES_AUTOHSCROLL
+    DEFPUSHBUTTON   &quot;&amp;Inject&quot;,IDC_INJECT,120,4,36,12,WS_GROUP
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// DESIGNINFO
+//
+
+#ifdef APSTUDIO_INVOKED
+GUIDELINES DESIGNINFO DISCARDABLE 
+BEGIN
+    IDD_INJLIB, DIALOG
+    BEGIN
+        RIGHTMARGIN, 134
+        BOTTOMMARGIN, 20
+    END
+END
+#endif    // APSTUDIO_INVOKED
+
+#endif    // English (U.S.) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 3 resource.
+//
+
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED
+</pre>
+</td></tr></table></p>
+
+<A NAME="292"><H2>The Image Walk DLL</H2></A>
+
+<p>ImgWalk.dll, listed in Figure 22-4, is a DLL that, once injected
+into a process's address space, can report on all the DLLs that the
+process is using. (The source code and resource files for the DLL are
+in the 22-ImgWalk directory on the companion CD-ROM.) For example, if I
+first run Notepad and then run InjLib, passing it Notepad's process
+ID, InjLib injects ImgWalk.dll into Notepad's address space. Once
+there, ImgWalk determines which file images (executables and DLLs) are
+being used by Notepad and displays the following message box, which
+shows the results.</p>
+
+<p>
+<img src="images/G22si04.JPG" width=272 height=256 border="0">
+</p>
+
+<p>ImgWalk walks through a process's address space looking for mapped
+file images by repeatedly calling <i>VirtualQuery</i> to fill a
+MEMORY_BASIC_INFORMATION structure. With each iteration of the loop, ImgWalk checks
+for a file pathname to concatenate with a string. This string appears
+in the message box.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+char szBuf[MAX_PATH * 100] = { 0 };
+
+PBYTE pb = NULL;
+MEMORY_BASIC_INFORMATION mbi;
+while (VirtualQuery(pb, &amp;mbi, sizeof(mbi)) == sizeof(mbi)) {
+
+   int nLen;
+   char szModName[MAX_PATH];
+
+   if (mbi.State == MEM_FREE)
+      mbi.AllocationBase = mbi.BaseAddress;
+
+   if ((mbi.AllocationBase == hinstDll) ||
+       (mbi.AllocationBase != mbi.BaseAddress) ||
+       (mbi.AllocationBase == NULL)) {
+
+      // Do not add the module name to the list
+      // if any of the following is true:
+      // 1. This region contains this DLL.
+      // 2. This block is NOT the beginning of a region.
+      // 3. The address is NULL.
+      nLen = 0;
+   } else {
+      nLen = GetModuleFileNameA((HINSTANCE) mbi.AllocationBase, 
+         szModName, chDIMOF(szModName));
+   }
+
+   if (nLen &gt; 0) {
+      wsprintfA(strchr(szBuf, 0), &quot;\n%08X-%s&quot;, 
+         mbi.AllocationBase, szModName);
+   }
+
+   pb += mbi.RegionSize;
+}
+chMB(&amp;szBuf[1]);
+</pre></td></tr></table></p>
+
+<p>First, I check to see whether the region's base address matches
+the base address of the injected DLL. If it matches, I set <i>nLen</i>
+to 0 so that the injected library does not appear in the message box.
+If it doesn't match, I attempt to get the filename for the module
+loaded at the region's base address. If the <i>nLen</i> variable is
+greater than 0, the system recognizes that the address identifies a
+loaded module and the system fills the <i>szModName</i> buffer with the
+full pathname of the module. I then concatenate the module's
+HINSTANCE (base address) and its pathname with the <i>szBuf</i> string
+that will eventually be displayed in the message box. When the loop is
+finished, the DLL presents a message box with the final string as its
+contents.</p>
+
+<p>
+<b>Figure 22-4.</b> <i>Source code for ImgWalk.dll</i>
+</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+
+<p><b>ImgWalk.cpp</b></p>
+
+<PRE>
+/******************************************************************************
+Module:  ImgWalk.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#include &quot;..\CmnHdr.h&quot;     /* See Appendix A. */
+#include &lt;tchar.h&gt;
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL WINAPI DllMain(HINSTANCE hinstDll, DWORD fdwReason, PVOID fImpLoad) {
+
+   if (fdwReason == DLL_PROCESS_ATTACH) {
+      char szBuf[MAX_PATH * 100] = { 0 };
+
+      PBYTE pb = NULL;
+      MEMORY_BASIC_INFORMATION mbi;
+      while (VirtualQuery(pb, &amp;mbi, sizeof(mbi)) == sizeof(mbi)) {
+
+         int nLen;
+         char szModName[MAX_PATH];
+
+         if (mbi.State == MEM_FREE)
+            mbi.AllocationBase = mbi.BaseAddress;
+
+         if ((mbi.AllocationBase == hinstDll) ||
+             (mbi.AllocationBase != mbi.BaseAddress) ||
+             (mbi.AllocationBase == NULL)) {
+            // Do not add the module name to the list
+            // if any of the following is true:
+            // 1. If this region contains this DLL
+            // 2. If this block is NOT the beginning of a region
+            // 3. If the address is NULL
+            nLen = 0;
+         } else {
+            nLen = GetModuleFileNameA((HINSTANCE) mbi.AllocationBase, 
+               szModName, chDIMOF(szModName));
+         }
+
+        
+         if (nLen &gt; 0) {
+            wsprintfA(strchr(szBuf, 0), &quot;\n%p-%s&quot;, 
+               mbi.AllocationBase, szModName);
+         }
+
+         pb += mbi.RegionSize;
+      }
+
+      chMB(&amp;szBuf[1]);
+   }
+
+   return(TRUE);
+}
+
+
+//////////////////////////////// End of File //////////////////////////////////
+</pre>
+</td></tr></table></p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+
