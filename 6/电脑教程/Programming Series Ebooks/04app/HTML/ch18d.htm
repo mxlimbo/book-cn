@@ -1,0 +1,586 @@
+<HTML>
+<HEAD>
+<TITLE>How to Create an Additional Heap</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch18c.htm">[Previous]</A> <A HREF="ch18e.htm">[Next]</A><P>
+
+<A NAME="242"><H1>How to Create an Additional Heap</H1></A>
+
+<p>You can create additional heaps in your process by having a thread
+call <i>HeapCreate</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HANDLE HeapCreate(
+   DWORD fdwOptions, 
+   SIZE_T dwInitialSize,
+   SIZE_T dwMaximumSize);
+</pre></td></tr></table></p>
+
+<p>The first parameter, <i>fdwOptions</i>, modifies how operations are
+performed on the heap. You can specify 0, HEAP_NO_SERIALIZE,
+HEAP_GENERATE_EXCEPTIONS, or a combination of the two flags.</p>
+
+<p>By default, a heap will serialize access to itself so that multiple
+threads can allocate and free blocks from the heap without the danger
+of corrupting the heap. When an attempt is made to allocate a block of
+memory from the heap, the <i>HeapAlloc</i> function (discussed later)
+must do the following:</p>
+
+<ol>
+
+<p><li>Traverse the linked list of allocated and freed memory
+blocks</li></p>
+
+<p><li>Find the address of a free block</li></p>
+
+<p><li>Allocate the new block by marking the free block as
+allocated</li></p>
+
+<p><li>Add a new entry to the linked list of memory blocks</li></p>
+
+</ol>
+
+<p>Here's an example that illustrates why you should avoid using
+the HEAP_NO_SERIALIZE flag. Let's say that two threads attempt to allocate
+blocks of memory from the same heap at the same time. Thread 1 executes
+steps 1 and 2 above and gets the address of a free memory block.
+However, before Thread 1 can execute step 3, it is preempted and Thread
+2 gets a chance to execute steps 1 and 2. Because Thread 1 has not yet
+executed step 3, Thread 2 finds the address to the same free memory
+block.</p>
+
+<p>With both threads having found what they believe to be a free memory
+block in the heap, Thread 1 updates the linked list, marking the new
+block as allocated. Thread 2 then also updates the linked list, marking
+the <i>same</i> block as allocated. Neither thread has detected a
+problem so far, but both threads receive an address to the exact same
+block of memory.</p>
+
+<p>This type of bug can be very difficult to track down because it
+usually doesn't manifest itself immediately. Instead, the bug waits
+in the background until the most inopportune moment. Potential problems
+are</p>
+
+<ul>
+
+<p><li>The linked list of memory blocks has been corrupted. This problem
+will not be discovered until an attempt to allocate or free a block is
+made.</li></p>
+
+<p><li>Both threads are sharing the same memory block. Thread 1 and
+Thread 2 might both write information to the same block. When Thread 1
+examines the contents of the block, it will not recognize the data
+introduced by Thread 2.</li></p>
+
+<p><li>One thread might proceed to use the block and free it, causing
+the other thread to overwrite unallocated memory. This will corrupt the
+heap.</li></p>
+
+</ul>
+
+<p>The solution to these problems is to allow a single thread exclusive
+access to the heap and its linked list until the thread has performed
+all necessary operations on the heap. The absence of the
+HEAP_NO_SERIALIZE flag does exactly this. It is safe to use the
+HEAP_NO_SERIALIZE flag only if one or more of the following conditions
+are true for your process:</p>
+
+<ul>
+
+<p><li>Your process uses only a single thread.</li></p>
+
+<p><li>Your process uses multiple threads, but only a single thread
+accesses the heap.</li></p>
+
+<p><li>Your process uses multiple threads, but manages access to the
+heap itself by using other forms of mutual exclusion, such as critical
+sections, mutexes, and semaphores (as discussed in <A HREF="ch08a.htm">Chapters 8</a> and
+<A HREF="ch09a.htm">9</A>).</li></p>
+
+</ul>
+
+<p>If you're not sure whether to use the HEAP_NO_SERIALIZE flag,
+don't use it. Not using it will cause your threads to take a slight
+performance hit whenever a heap function is called, but you won't
+risk corrupting your heap and its data.</p>
+
+<p>The other flag, HEAP_GENERATE_EXCEPTIONS, causes the system to raise
+an exception whenever an attempt to allocate or reallocate a block of
+memory in the heap fails. An exception is just another way for the
+system to notify your application that an error has occurred. Sometimes
+it's easier to design your application to look for exceptions
+rather than to check for return values. Exceptions are discussed in
+<A HREF="ch23a.htm">Chapters 23</A>, <A HREF="ch24a.htm">24</A>, and <A HREF="ch25a.htm">25</A>.</p>
+
+<p>The second parameter of <i>HeapCreate</i>, <i>dwInitialSize</i>,
+indicates the number of bytes initially committed to the heap. If
+necessary, <i>HeapCreate</i> rounds this value up to a multiple of the
+CPU's page size. The final parameter, <i>dwMaximumSize</i>,
+indicates the maximum size to which the heap can expand (the maximum
+amount of address space the system can reserve for the heap). If <i>
+dwMaximumSize</i> is greater than 0, you are creating a heap that has a
+maximum size. If you attempt to allocate a block that would cause the
+heap to go over its maximum, the attempt to allocate the block
+fails.</p>
+
+<p>If <i>dwMaximumSize</i> is 0, you are creating a growable heap,
+which has no inherent limit. Allocating blocks from the heap simply
+makes the heap grow until physical storage is exhausted. If the heap is
+created successfully, <i>HeapCreate</i> returns a handle identifying
+the new heap. This handle is used by the other heap functions.</p>
+
+
+<A NAME="243"><H2>Allocating a Block of Memory from a Heap</H2></A>
+
+<p>Allocating a block of memory from a heap is simply a matter of
+calling <i>HeapAlloc</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+PVOID HeapAlloc(
+   HANDLE hHeap,
+   DWORD fdwFlags,
+   SIZE_T dwBytes);
+</pre></td></tr></table></p>
+
+<p>The first parameter, <i>hHeap</i>, identifies the handle of the heap
+from which an allocation should be made. The <i>dwBytes</i> parameter
+specifies the number of bytes that are to be allocated from the heap.
+The middle parameter, <i>fdwFlags</i>, allows you to specify flags that 
+affect the allocation. Currently only three flags are supported: 
+HEAP_ZERO_MEMORY, HEAP_GENERATE_EXCEPTIONS, and HEAP_NO_SERIALIZE.</p>
+
+<p>The purpose of the HEAP_ZERO_MEMORY flag should be fairly obvious.
+This flag causes the contents of the block to be filled with zeros
+before <i>HeapAlloc</i> returns. The second flag,
+HEAP_GENERATE_EXCEPTIONS, causes the <i>HeapAlloc</i> function to raise
+a software exception if insufficient memory is available in the heap to
+satisfy the request. When creating a heap with <i>HeapCreate</i>, you
+can specify the HEAP_GENERATE_EXCEPTIONS flag, which tells the heap
+that an exception should be raised when a block cannot be allocated. If
+you specify this flag when calling <i>HeapCreate</i>, you don't
+need to specify it when calling <i>HeapAlloc</i>. On the other hand,
+you might want to create the heap without using this flag. In this
+case, specifying this flag to <i>HeapAlloc</i> affects only the single
+call to <i>HeapAlloc,</i> not every call to this function.</p>
+
+<p>If <i>HeapAlloc</i> fails and then raises an exception, the
+exception raised will be one of the two shown in the following
+table.</p>
+
+<P>
+	<TABLE CELLPADDING=5 WIDTH="95%">
+	
+		<TR>
+			<TH>Identifier</TH>
+			<TH>Meaning</TH>
+		</TR>
+
+		<TR>
+			<TD VALIGN="TOP">STATUS_NO_MEMORY</TD>
+			<TD VALIGN="TOP">The allocation attempt failed because of
+insufficient memory.</TD>
+		</TR>		
+
+		<TR>
+			<TD VALIGN="TOP">STATUS_ACCESS_VIOLATION</TD>
+			<TD VALIGN="TOP">The allocation attempt failed because of
+heap corruption or improper function parameters.</TD>
+		</TR>
+
+	</TABLE>
+</P>
+
+<p>If the block has been successfully allocated, <i>HeapAlloc</i>
+returns the address of the block. If the memory could not be allocated
+and HEAP_GENERATE_EXCEPTIONS was not specified, <i>HeapAlloc</i> returns
+NULL.</p>
+
+<p>The last flag, HEAP_NO_SERIALIZE, allows you to force this
+individual call to <i>HeapAlloc</i> to not be serialized with other
+threads that are accessing the same heap. You should use this flag with
+extreme caution because the heap could become corrupted if other
+threads are manipulating the heap at the same time. Never use this flag
+when making an allocation from your process's default heap, as data
+could become corrupted: Other threads in your process could access the
+default heap at the same time.</p>
+
+<P><DIV CLASS="NOTE"><BLOCKQUOTE>
+<B>Windows 98</B><HR>
+Calling <i>HeapAlloc</i> and requesting a block larger than 256 MB is
+considered by Windows 98 an error&#8212;the call fails. Note that in
+this case, the function always returns NULL and will not raise an
+exception, even if you used the HEAP_GENERATE_EXCEPTIONS flag when
+creating the heap or when attempting to allocate the block.
+</BLOCKQUOTE></DIV>
+</P>
+
+<P><DIV CLASS="NOTE"><BLOCKQUOTE>
+<B>NOTE</B><HR>
+It is recommended that you use <i>VirtualAlloc</i> when allocating large
+blocks (around 1 MB or more). Avoid using the heap functions for such
+large allocations.
+</BLOCKQUOTE></DIV>
+</P>
+
+
+<A NAME="244"><H2>Changing the Size of a Block</H2></A>
+
+<p>Often it's necessary to alter the size of a memory block. Some
+applications initially allocate a larger than necessary block and then,
+after all the data has been placed into the block, reduce the size of
+the block. Some applications begin by allocating a small block of
+memory and then attempting to enlarge the block when more data needs to
+be copied into it. Resizing a memory block is accomplished by calling
+the <i>HeapReAlloc</i> function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+PVOID HeapReAlloc(
+   HANDLE hHeap, 
+   DWORD fdwFlags,
+   PVOID pvMem, 
+   SIZE_T dwBytes);
+</pre></td></tr></table></p>
+
+<p>As always, the <i>hHeap</i> parameter indicates the heap containing
+the block you want to resize. The <i>fdwFlags</i> parameter specifies
+the flags that <i>HeapReAlloc</i> should use when attempting to resize
+the block. Only the following four flags are available:
+HEAP_GENERATE_EXCEPTIONS, HEAP_NO_SERIALIZE, HEAP_ZERO_MEMORY, and
+HEAP_REALLOC_IN_PLACE_ONLY.</p>
+
+<p>The first two flags have the same meaning as when they are used with
+<i>HeapAlloc</i>. The HEAP_ZERO_MEMORY flag is useful only when you are
+resizing a block to make it larger. In this case, the additional bytes
+in the block will be zeroed. This flag has no effect if the block is
+being reduced.</p>
+
+<p>The HEAP_REALLOC_IN_PLACE_ONLY flag tells <i>HeapReAlloc</i> that it
+is not allowed to move the memory block within the heap, which 
+<i>HeapReAlloc</i> might attempt to do if the memory block were growing.
+If <i>HeapReAlloc</i> is able to enlarge the memory block without
+moving it, it will do so and return the original address of the memory
+block. On the other hand, if <i>HeapReAlloc</i> must move the contents
+of the block, the address of the new, larger block is returned. If the
+block is made smaller, <i>HeapReAlloc</i> returns the original address
+of the memory block. You would want to specify the 
+HEAP_REALLOC_IN_PLACE_ONLY flag if the block were part of a linked list or
+tree. In this case, other nodes in the list or tree might have pointers
+to this node, and relocating the node in the heap would corrupt the
+integrity of the linked list.</p>
+
+<p>The remaining two parameters, <i>pvMem</i> and <i>dwBytes</i>,
+specify the current address of the block that you want to resize and
+the new size&#8212;in bytes&#8212;of the block. <i>HeapReAlloc</i> returns 
+either the address of the new, resized block or NULL if the block cannot 
+be resized.</p>
+
+
+<A NAME="245"><H2>Obtaining the Size of a Block</H2></A>
+
+<p>After a memory block has been allocated, the <i>HeapSize</i>
+function can be called to retrieve the actual size of the block:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+SIZE_T HeapSize(
+   HANDLE hHeap,
+   DWORD fdwFlags, 
+   LPCVOID pvMem);
+</pre></td></tr></table></p>
+
+<p>The <i>hHeap</i> parameter identifies the heap, and the <i>pvMem</i>
+parameter indicates the address of the block. The <i>fdwFlags</i>
+parameter can be either 0 or HEAP_NO_SERIALIZE.</p>
+
+
+<A NAME="246"><H2>Freeing a Block</H2></A>
+
+<p>When you no longer need the memory block, you can free it by calling
+<i>HeapFree</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL HeapFree(
+   HANDLE hHeap,
+   DWORD fdwFlags, 
+   PVOID pvMem);
+</pre></td></tr></table></p>
+
+<p><i>HeapFree</i> frees the memory block and returns TRUE if
+successful. The <i>fdwFlags</i> parameter can be either 0 or
+HEAP_NO_SERIALIZE. Calling this function might cause the heap manager
+to decommit some physical storage, but there are no guarantees.</p>
+
+
+<A NAME="247"><H2>Destroying a Heap</H2></A>
+
+<p>If your application no longer needs a heap that it created, you can
+destroy the heap by calling <i>HeapDestroy</i>:</p>
+
+<p><table cellpadding=5><tr><td>
+<PRE>
+BOOL HeapDestroy(HANDLE hHeap);
+</pre></td></tr></table></p>
+
+<p>Calling <i>HeapDestroy</i> causes all the memory blocks contained
+within the heap to be freed and also causes the physical storage and
+reserved address space region occupied by the heap to be released back
+to the system. If the function is successful, <i>HeapDestroy</i>
+returns TRUE. If you don't explicitly destroy the heap before your
+process terminates, the system will destroy it for you. However, a heap
+is destroyed only when a process terminates. If a thread creates a
+heap, the heap won't be destroyed when the thread terminates.</p>
+
+<p>The system will not allow the process's default heap to be
+destroyed until the process completely terminates. If you pass the
+handle to the process's default heap to <i>HeapDestroy</i>, the
+system simply ignores the call.</p>
+
+
+<A NAME="248"><H2>Using Heaps with C++</H2></A>
+
+<p>One of the best ways to take advantage of heaps is to incorporate
+them into existing C++ programs. In C++, calling the <i>new</i>
+operator&#8212;instead of the normal C run-time routine 
+<i>malloc&#8212;</i>performs class-object allocation. Then, when we no
+longer need the class object, the <i>delete</i> operator is called
+instead of the normal C run-time routine <i>free</i>. For example,
+let's say we have a class called CSomeClass and we want to allocate
+an instance of this class. To do this, we would use syntax similar to
+the following:</p>
+
+<p><table cellpadding=5><tr><td>
+<PRE>
+CSomeClass* pSomeClass = new CSomeClass;
+</pre></td></tr></table></p>
+
+<p>When the C++ compiler examines this line, it first checks whether
+the CSomeClass class contains a member function for the <i>new</i>
+operator; if it does, the compiler generates code to call this
+function. If the compiler doesn't find a function overloading the
+<i>new</i> operator, the compiler generates code to call the standard
+C++ <i>new</i> operator function.</p>
+
+<p>After you're done using the allocated object, you can destroy it
+by calling the <i>delete</i> operator:</p>
+
+<p><table cellpadding=5><tr><td>
+<PRE>
+delete pSomeClass;
+</pre></td></tr></table></p>
+
+<p>By overloading the <i>new</i> and <i>delete</i> operators for our
+C++ class, we can easily take advantage of the heap functions. To do
+this, let's define our CSomeClass class in a header file like
+this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+class CSomeClass {
+private:
+
+   static HANDLE s_hHeap;
+   static UINT s_uNumAllocsInHeap;
+
+   // Other private data and member functions
+
+   <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+
+public:
+   void* operator new (size_t size);
+   void operator delete (void* p);
+   // Other public data and member functions
+
+   <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+
+};
+</pre></td></tr></table></p>
+
+<p>In this code fragment, I've declared two member variables, 
+<i>s_hHeap</i> and <i>s_uNumAllocsInHeap</i>, as static variables. Because
+they are static, C++ will make all instances of CSomeClass share the
+same variables; that is, C++ will <i>not</i> allocate separate 
+<i>s_hHeap</i> and <i>s_uNumAllocsInHeap</i> variables for each instance
+of the class that is created. This fact is important to us because we
+want all of our instances of CSomeClass to be allocated within the same
+heap.</p>
+
+<p>The <i>s_hHeap</i> variable will contain the handle to the heap
+within which CSomeClass objects should be allocated. The 
+<i>s_uNumAllocsInHeap</i> variable is simply a counter of how many
+CSomeClass objects have been allocated within the heap. Every time a
+new CSomeClass object is allocated in the heap, 
+<i>s_uNumAllocsInHeap</i> is incremented, and every time a CSomeClass
+object is destroyed, <i>s_uNumAllocsInHeap</i> is decremented. When 
+<i>s_uNumAllocsInHeap</i> reaches 0, the heap is no longer necessary and
+is freed. The code to manipulate the heap should be included in a .cpp
+file that looks like this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HANDLE CSomeClass::s_hHeap = NULL;
+UINT CSomeClass::s_uNumAllocsInHeap = 0;
+
+void* CSomeClass::operator new (size_t size) {
+   if (s_hHeap == NULL) {
+      // Heap does not exist; create it.
+      s_hHeap = HeapCreate(HEAP_NO_SERIALIZE, 0, 0);
+
+      if (s_hHeap == NULL)
+         return(NULL);
+   }
+   // The heap exists for CSomeClass objects.
+   void* p = HeapAlloc(s_hHeap, 0, size);
+
+   if (p != NULL) {
+      // Memory was allocated successfully; increment
+      // the count of CSomeClass objects in the heap.
+      s_uNumAllocsInHeap++;
+   }
+
+   // Return the address of the allocated CSomeClass object.
+   return(p);
+}
+</pre></td></tr></table></p>
+
+<p>Notice that I first defined the two static member variables, 
+<i>s_hHeap</i> and <i>s_uNumAllocsInHeap</i>, at the top and initialized
+them as NULL and 0, respectively.</p>
+
+<p>The C++ <i>new</i> operator receives one parameter&#8212;<i>size</i>.
+This parameter indicates the number of bytes required to hold a
+CSomeClass object. The first task for our <i>new</i> operator function
+is to create a heap if one hasn't been created already. This is
+simply a matter of checking the <i>s_hHeap</i> variable to see whether
+it is NULL. If it is, a new heap is created by calling <i>
+HeapCreate</i>, and the handle that <i>HeapCreate</i> returns is saved
+in <i>s_hHeap</i> so that the next call to the <i>new</i> operator will
+not create another heap but rather will use the heap we have just
+created.</p>
+
+<p>When I called the <i>HeapCreate</i> function above, I used the
+HEAP_NO_SERIALIZE flag because the remainder of the sample code is not
+multithread-safe. The other two parameters in the call to 
+<i>HeapCreate</i> indicate the initial size and the maximum size of the
+heap, respectively. I chose 0 and 0 here. The first 0 means that the
+heap has no initial size; the second 0 means that the heap expands as
+needed. Depending on your needs, you might want to change either or
+both of these values.</p>
+
+<p>You might think it would be worthwhile to pass the <i>size</i>
+parameter to the <i>new</i> operator function as the second parameter
+to <i>HeapCreate</i>. In this way, you could initialize the heap so
+that it is large enough to contain one instance of the class. Then, the
+first time that <i>HeapAlloc</i> is called, it would execute faster
+because the heap wouldn't have to resize itself to hold the class
+instance. Unfortunately, things don't always work the way you want
+them to. Because each allocated memory block within the heap has an
+associated overhead, the call to <i>HeapAlloc</i> will still have to
+resize the heap so that it is large enough to contain the one class
+instance and its associated overhead.</p>
+
+<p>Once the heap has been created, new CSomeClass objects can be allocated
+from it using <i>HeapAlloc</i>. The first parameter is the handle to
+the heap, and the second parameter is the size of the CSomeClass
+object. <i>HeapAlloc</i> returns the address to the allocated
+block.</p>
+
+<p>When the allocation is performed successfully, I increment the <i>
+s_uNumAllocsInHeap</i> variable so that I know there is one more
+allocation in the heap. The last thing the <i>new</i> operator does is
+return the address of the newly allocated CSomeClass object.</p>
+
+<p>Well, that's it for creating a new CSomeClass object. Let's
+turn our attention to destroying a CSomeClass object when our
+application no longer needs it. This is the responsibility of the <i>
+delete</i> operator function, coded as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+void CSomeClass::operator delete (void* p) {
+   if (HeapFree(s_hHeap, 0, p)) {
+      // Object was deleted successfully.
+      s_uNumAllocsInHeap--;
+   }
+
+   if (s_uNumAllocsInHeap == 0) {
+      // If there are no more objects in the heap,
+      // destroy the heap.
+      if (HeapDestroy(s_hHeap)) {
+         // Set the heap handle to NULL so that the new operator
+         // will know to create a new heap if a new CSomeClass
+         // object is created.
+         s_hHeap = NULL;
+      }
+   }
+}
+</pre></td></tr></table></p>
+
+<p>The <i>delete</i> operator function receives only one parameter: the
+address of the object being deleted. The first thing the function does
+is call <i>HeapFree</i>, passing it the handle of the heap and the
+address of the object to be freed. If the object is freed successfully,
+<i>s_uNumAllocsInHeap</i> is decremented, indicating that one fewer
+CSomeClass object is in the heap. Next the function checks whether 
+<i>s_uNumAllocsInHeap</i> is 0. If it is, the function calls 
+<i>HeapDestroy</i>, passing it the heap handle. If the heap is destroyed
+successfully, <i>s_hHeap</i> is set to NULL. This is extremely
+important because our program might attempt to allocate another
+CSomeClass object sometime in the future. When it does, the <i>new</i>
+operator will be called and will examine the <i>s_hHeap</i> variable to
+determine whether it should use an existing heap or create a new
+one.</p>
+
+<p>This example demonstrates a convenient scheme for using multiple heaps.
+The example is easy to set up and can be incorporated into several of
+your classes. You will probably want to give some thought to
+inheritance, however. If you derive a new class using CSomeClass as a
+base class, the new class will inherit CSomeClass's <i>new</i> and
+<i>delete</i> operators. The new class will also inherit
+CSomeClass's heap, which means that when the <i>new</i> operator is
+applied to the derived class, the memory for the derived class object
+will be allocated from the same heap that CSomeClass is using.
+Depending on your situation, this might or might not be what you want.
+If the objects are very different in size, you might be setting
+yourself up for a situation in which the heap could fragment badly. You
+might also be making it harder to track down bugs in your code, as
+mentioned in the sections &quot;<A HREF="ch18c.htm#237">Component Protection</A>&quot; and
+&quot;<A HREF="ch18c.htm#238">More Efficient Memory Management</A>&quot; earlier in this
+chapter.</p>
+
+<p>If you want to use a separate heap for derived classes, simply
+duplicate what I did in the CSomeClass class. More specifically,
+include another set of <i>s_hHeap</i> and <i>s_uNumAllocsInHeap</i>
+variables, and copy the code over for the <i>new</i> and <i>delete</i>
+operators. When you compile, the compiler will see that you have
+overloaded the <i>new</i> and <i>delete</i> operators for the derived
+class and will make calls to those functions instead of to the ones in
+the base class.</p>
+
+<p>The only advantage to not creating a heap for each class is that you
+won't need to devote overhead and memory to each heap. However, the
+amount of overhead and memory the heaps tie up is not great and is
+probably worth the potential gains. The compromise might be to have
+each class use its own heap and to let derived classes share the base
+class's heap when your application has been well tested and is
+close to shipping. But be aware that fragmentation might still be a
+problem.</p>
+
+
+</BODY>
+</HTML>
+
+
+
+
+
+

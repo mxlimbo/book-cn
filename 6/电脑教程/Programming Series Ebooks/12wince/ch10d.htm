@@ -1,0 +1,179 @@
+<HTML>
+ <HEAD>
+	<LINK REL=StyleSheet HREF="prowice.css" TYPE="text/css">
+<TITLE>TCP/IP Pinging</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="396"><H1>TCP/IP Pinging</H1></A>
+
+<P>On a TCP/IP network, there's no more basic diagnostic than to <I>ping</I> a site. Pinging is the process of sending a request to a TCP/IP server to respond with an acknowledgment back to the sender. If you look at the source code for a ping utility, you'll see that pinging is simply the process of sending a specific type of IP packet to the requested server and waiting for a reply.
+
+<P>The format of these packets is defined by <I>ICMP</I>. ICMP stands for <I>Internet Control Message Protocol</I>. This a protocol used by routers and servers on TCP/IP networks to report errors and status information. While most of this work goes unseen by applications because it's handled at the IP layer of the network stack, ping requests take place at this level.
+
+<P>Under most systems, an application would have to open a raw socket. While Windows CE's version of WinSock doesn't expose a way of opening raw sockets, Windows CE gives you a few functions that encapsulate the process of pinging another server.
+
+<P>Windows CE supports three functions that allow Windows CE applications to ping Internet addresses. Essentially, a Windows CE application opens a handle, sends the ICMP request as many times as you want, and closes the handle. While the functions are documented in the Windows CE SDK, the <I>include</I> files that define these prototypes aren't in all versions of the Windows CE SDK. The file ICMPAPI.H contains the function prototypes while IPEXPORTS.H contains the definitions for the packet structures and constants used at the IP layer. These two include files are on the CD-ROM included with this book.
+
+<P>To start the process, you must open an ICMP handle using this function:
+
+<p><pre>
+HANDLE IcmpCreateFile (VOID);
+</PRE>
+
+<P>The function takes no arguments and returns a handle that will be used in the other ICMP functions. If the function fails, the return value will be INVALID_HANDLE_VALUE.
+
+<P>To actually send a ping request, you use this function:
+
+<p><pre>
+DWORD WINAPI IcmpSendEcho (HANDLE IcmpHandle, IPAddr DestinationAddress,
+                           LPVOID RequestData, WORD RequestSize,
+                           PIP_OPTION_INFORMATION RequestOptions,
+                           LPVOID ReplyBuffer, DWORD ReplySize,
+                           DWORD Timeout);
+</PRE>
+
+<P>The first parameter is the handle returned by the <I>ICMPCreateFile</I> function. The second parameter is the destination address that will be sent to the IP packet. The data type for this address, <I>IPAddr</I>, is essentially an unsigned long value with the four bytes of the IP address packed inside. The <I>RequestData</I> parameter is a pointer to a buffer containing the data to be sent while the <I>RequestSize</I> parameter should specify the size of the data. You can define any data you want in the buffer pointed to by <I>RequestData</I> although you generally don't want to exceed the 8-KB packet size limit found on some TCP/IP systems. What you do <I>not </I>get to do is directly define the ICMP packet that's sent. That packet is automatically formed by <I>IcmpSendEcho</I> and sent along with the data specified in the <I>RequestData</I> buffer.
+
+<P>The RequestOptions parameter should point to an IP_OPTION_INFORMATION structure that's defined as
+
+<p><pre>
+Typedef struct ip_option_information {
+    unsigned char      Ttl;
+    unsigned char      Tos;
+    unsigned char      Flags;
+    unsigned char      OptionsSize;
+    unsigned char FAR *OptionsData;
+
+} IP_OPTION_INFORMATION;
+</PRE>
+
+<P>The data in this structure will be used by the function to fill in some of the IP packet header that you use when sending an ICMP packet. The structure is a subset of the IP packet structure since Windows CE takes care of things like computing checksums and the like. The formal definitions of these fields are best left to texts that explain the IP protocol in detail. What follows is a quick overview.
+
+<P>The first field, <I>Ttl</I>, is the &quot;Time to Live&quot; for the packet. If the packet isn't received in this amount of time, it will be dropped. The <I>Tos</I> field defines the type of service for the IP packet. The <I>Flags</I> field contains the flags for the IP header. Finally, the <I>OptionsData</I> and <I>OptionsSize</I> fields specify the IP packet options. The options are defined as bytes in the buffer pointed to by <I>OptionsData</I>. The <I>OptionsSize</I> field should contain the number of bytes in the <I>OptionsData</I> buffer. The format of the options buffer is defined by the IP protocol.
+
+<P>The next two parameters in <I>IcmpSendEcho</I> are the pointer to the buffer that receives the reply and the size of that buffer. The receiving buffer must be large enough to hold an ICMP_ECHO_REPLY structure plus the size of the data you specified in the <I>RequestData</I> buffer. At a minimum, you must specify the buffer to be the size of ICMP_ECHO_REPLY plus 8 bytes. The 8-byte allowance is the size of an ICMP error message.
+
+<P>The final parameter is <I>Timeout</I>, which is the time, in milliseconds, that <I>IcmpSendEcho</I> waits for returning packets before giving up.
+
+<P><I>IcmpSendEcho</I> returns the number of reply packets received in response to the ping request. If the return value is 0, an error occurred. In this case, you should call <I>GetLastError</I> to receive the error code.
+
+<P>The data received by <I>IcmpSendEcho</I> is in the form of an array of ICMP_ECHO_REPLY structures, one from each router or server that replied to the original packet. Following the array will be the data sent out by <I>IcmpSendEcho</I> that returns with each of the packets. The ICMP_ECHO_REPLY structure is defined as
+
+<p><pre>
+struct icmp_echo_reply {
+    IPAddr          Address;         // Replying address
+    unsigned long   Status;          // Reply IP_STATUS
+    unsigned long   RoundTripTime;   // RTT in milliseconds
+    unsigned short  DataSize;        // Reply data size in bytes
+    unsigned short  Reserved;        // Reserved for system use
+    void FAR        Data;            // Pointer to the reply data
+    struct IP_OPTION_INFORMATION Options;         // Reply options
+}; /* icmp_echo_reply */
+</PRE>
+
+<P>The <I>Address</I> field is the TCP/IP address of the responding router or server. The address is in <I>IPAddr</I> format. The <I>Status</I> field contains the status returned by the responding server. If the ping was successful, this field will contain IP_SUCCESS. Other values indicate errors and are defined in IPEXPORT.H. The <I>RoundTripTime</I> field contains the elapsed time, in milliseconds, from when the original packet was sent until the packet from this server was received. The <I>DataSize</I> field contains the size of the data returned by the server. This value should match the size of the data originally sent. The <I>Data</I> field contains a pointer to the data returned by the server. This data should match the data originally sent. Finally, the <I>Options</I> field is an IP_OPTION_INFORMATION structure that defines the details of the responding packet.
+
+<P>Generally, you'll call <I>IcmpSendEcho</I> a number of times to ping a site and then clean up with a call to <I>IcmpCloseHandle</I>. This function is prototyped as
+
+<p><pre>
+BOOL WINAPI IcmpCloseHandle (HANDLE IcmpHandle);
+</PRE>
+
+<P>The only parameter is the handle that was received with <I>IcmpCreateFile</I>.
+
+<P>The routine below implements a very basic ping. The routine calls <I>IcmpOpen</I> and then fills in the IP packet data and calls <I>IcmpSendEcho</I> five times. The address passed to <I>PingAddress</I> is a Unicode string in Internet <I>dot</I> format, as in 123.45.56.78. The <I>inet_addr</I> function translates this into a DWORD value used by <I>IcmpSendEcho</I>. Notice that the address string passed to <I>PingAddress</I> is first translated into ASCII before the call is made to <I>inet_addr</I>.
+
+<p><pre>
+//----------------------------------------------------------------------
+// PingAddress - Ping a TCP/IP address.
+//
+INT PingAddress (HWND hWnd, LPTSTR lpszPingAddr, LPTSTR lpszOut) {
+    HANDLE hPing;
+    BYTE bOut[32];
+    BYTE bIn[1024];
+    char cOptions[12];
+    char szdbAddr[32];
+    IP_OPTION_INFORMATION ipoi;
+    PICMP_ECHO_REPLY pEr;
+    struct in_addr Address;
+    INT i, j, rc;
+    DWORD adr;
+
+    // Convert xx.xx.xx.xx string to a DWORD. First, convert the string
+    // to ascii.
+    wcstombs (szdbAddr, lpszPingAddr, 31);
+    if ((adr = inet_addr(szdbAddr)) == -1L)
+        return -1;
+
+    // Open icmp handle.
+    hPing = IcmpCreateFile ();
+    if (hPing == INVALID_HANDLE_VALUE)
+        return -2;
+
+    wsprintf (lpszOut, TEXT (&quot;Pinging: %s\n\n&quot;), lpszPingAddr);
+    lpszOut += lstrlen (lpszOut) + 1;
+
+    // Ping loop
+    for (j = 0; j &lt; 5; j++) {
+
+        // Initialize the send data buffer.
+        memset (&amp;bOut, 0, sizeof (bOut));
+
+        // Initialize the IP structure.
+        memset (&amp;ipoi, 0, sizeof (ipoi));
+        ipoi.Ttl = 32;
+        ipoi.Tos = 0;
+        ipoi.Flags = IP_FLAG_DF;
+        memset (cOptions, 0, sizeof (cOptions));
+
+        // Ping!
+        rc = IcmpSendEcho (hPing, adr, bOut, sizeof (bOut), &amp;ipoi,
+                           bIn, sizeof (bIn), 1000);
+        if (rc) {
+            // Loop through replies.
+            pEr = (PICMP_ECHO_REPLY)bIn;
+            for (i = 0; i &lt; rc; i++) {
+
+                Address.S_un.S_addr = (IPAddr)pEr-&gt;Address;
+                // Format output string
+                wsprintf (lpszOut,
+                          TEXT (&quot;Reply from %hs: bytes:%d time&quot;),
+                          inet_ntoa (Address), pEr-&gt;DataSize);
+
+                // Append round-trip time.
+                if (pEr-&gt;RoundTripTime &lt; 10)
+                    lstrcat (lpszOut, TEXT (&quot;&lt;10mS\n&quot;));
+                else
+                    wsprintf (&amp;lpszOut[lstrlen(lpszOut)],
+                              TEXT (&quot;%dmS\n&quot;), pEr-&gt;RoundTripTime);
+
+                lpszOut += lstrlen (lpszOut) + 1;
+                pEr++;
+            }
+        } else {
+            lstrcpy (lpszOut, TEXT (&quot;Request timed out.&quot;));
+            lpszOut += lstrlen (lpszOut) + 1;
+        }
+    }
+    IcmpCloseHandle (hPing);
+
+    *lpszOut = TEXT (`\0');               // Add final terminating zero.
+    return 0;
+}
+</PRE>
+
+<P>The response packet from <I>IcmpSendEcho</I> is interpreted by looping through the array of ICMP_ECHO_REPLY structures. Within each of these structures is enough data to provide the very basic ping information. The routine could be extended in a number of ways. For example, the reply packets could be dissected to determine the route of the packets.
+
+<P>This chapter has given you a basic introduction to some of the networking features of Windows CE. Next on our plate is networking from a different angle. In <A HREF="ch11a.htm">Chapter 11</a>, we look at the Windows CE device from the perspective of its companion PC. The link between the Windows CE device and a PC is based on some of the same networking infrastructure that we touched upon here. Let's take a look.
+
+</BODY>
+</HTML>
+
+
+
+

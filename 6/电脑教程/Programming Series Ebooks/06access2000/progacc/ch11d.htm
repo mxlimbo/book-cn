@@ -1,0 +1,709 @@
+<HTML>
+<HEAD>
+	<link rel="STYLESHEET" type="text/css" href="Library.css">
+<TITLE>JRO Development Techniques</TITLE>
+
+
+</HEAD>
+<BODY BGCOLOR="#FFFFFF" TEXT="#000000">
+<SCRIPT LANGUAGE="JavaScript">
+<!--
+
+function fullSize(sURL){
+	window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+
+function LibraryHeaderNav(sBackward, sForward, sImgLeftOff, sImgLeftOn, sImgRightOff, sImgRightOn, iH, iW, sImgLeftStyle, sImgRightStyle, sImgRuleStyle, sRuleColor, sRuleSize){
+	var tableStr;
+	//validate questionable args for defs
+	tableStr = "<TABLE BORDER=0 CELLPADDING=0 CELLSPACING=0 border=0 width=100%>";
+	tableStr += "<TR VALIGN=top ALIGN=right>";
+
+	tableStr += "<TD align=right class=" + sImgRuleStyle + ">&nbsp;</TD>";	
+	
+	tableStr += "<TD width=34 align=right class=" + sImgLeftStyle + ">";
+	tableStr += "<A href='" + sBackward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgLeftOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgLeftOff + '\'\"';
+	tableStr += " SRC='" + sImgLeftOff + "' vspace=0 hspace=0></a></TD>";
+	
+	tableStr += "<TD width=34 align=left class=" + sImgRightStyle + ">";
+	tableStr += "<A href='" + sForward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgRightOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgRightOff + '\'\"';
+	tableStr += " SRC='" + sImgRightOff + "' vspace=0 hspace=0></a></TD></TR>";
+
+	tableStr += "<TR VALIGN=top>";
+	tableStr += "<TD height=3 align=center colspan=3 class=" + sImgRuleStyle + ">";
+	tableStr += "<HR color=" + sRuleColor + " size=" + sRuleSize + "></TD></TR></TABLE>";
+	//alert(tableStr);
+	document.write(tableStr);
+}
+
+ 																						     //purple is: #aa22aa   orange is: #ff9900
+LibraryHeaderNav("ch11c.htm", "ch12a.htm", "images/unit_o_a1.gif", "images/unit_o_a2.gif", "images/unit_o_b1.gif", "images/unit_o_b2.gif", 18, 34, "unit01", "unit02", "headerrule", "#ff9900", "2");
+//--></SCRIPT>
+
+<A NAME="365"><H1>JRO Development Techniques</H1></A>
+
+<P>This section presents JRO development techniques for working with 
+replication, including making a database replicable, creating full and partial replicas, 
+compacting databases, synchronizing databases, and documenting replica properties.</P>
+
+<A NAME="366"><H2>Making a Database Replicable</H2></A>
+
+<P>You use the <I>MakeReplicable </I>method of a <I>Replica </I>object to make a database replicable. This process results in the new replica becoming a design master with a global <I>Visibility </I>property setting. Converting a standard Access database to a replicable database adds the special fields and tables discussed previously. These additional fields and tables can increase the size of a database substantially, so you might want to make a backup copy of your database before making it replicable.</P>
+
+<P>The syntax for the <I>MakeReplicable </I>method is</P>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Replica.MakeReplicable ConnectionString, ColumnTracking
+</PRE></td></tr>
+</table></P>
+<P>The connection string points at the database that you want to convert 
+to a replicable format. You can set the <I>Replica</I>object's <I>ActiveConnection </I>property before invoking the <I>MakeReplicable </I>method. However, the connection string argument for the method overrides the <I>ActiveConnection </I>property for a replica. The <I>ColumnTracking 
+</I>argument for the method is a Boolean variable. Its default value is <I>True</I>. Recall that this can potentially help to reduce synchronization conflicts. If conflicts are unlikely (for example, because all the editing will take place with one replica), you should consider setting the value to <I>False</I>. Synchronization conflict tracking then falls back to the traditional row-level tracking. This eliminates a performance hit associated with column-level tracking.</P>
+
+<P>The following routines apply the <I>MakeReplicable </I>method to the Northwind database as the database performs backup and error-trapping functions. The <I>callMakeDesignMaster </I>procedure assigns values to its <I>path </I>and <I>replicaName </I>arguments before calling the <I>makeDesignMaster </I>procedure. The sample concatenates <I>path </I>and <I>replicaName </I>variables as it calls the second procedure. The second procedure invokes the <I>MakeReplicable </I>method for the values passed to it.</P>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Sub callMakeDesignMaster()
+    path = &quot;C:\Program Files\Microsoft Office\&quot; &amp; _
+        &quot;Office\Samples\&quot;
+    replicaName = &quot;Northwind.mdb&quot;
+'Set the second parameter to True to invoke
+'column-level tracking of resolution conflicts.
+    makeDesignMaster path &amp; replicaName, True
+End Sub
+
+
+Sub makeDesignMaster(newReplica As String, _
+    Optional ColumnTracking As Boolean)
+On Error GoTo DMTrap
+Dim repMaster As New JRO.Replica
+
+'Offer to copy database for restoring it after
+'making the database replicable.
+    If MsgBox(&quot;Do you want to make a backup copy&quot;, _
+        vbYesNo, &quot;Programming Microsoft Access 2000&quot;) = vbYes Then
+        Set fs = _
+            CreateObject(&quot;Scripting.FileSystemObject&quot;)
+        fs.Copyfile newReplica, &quot;c:\My Documents\DMBackup.mdb&quot;
+    End If
+    
+'Optionally make the newReplica database replicable.
+    If ColumnTracking = True Then
+        repMaster.MakeReplicable newReplica
+    Else
+        repMaster.MakeReplicable newReplica, False
+    End If
+
+'Clear reference to Design master.
+    Set repMaster = Nothing
+
+DMExit:
+    Exit Sub
+    
+DMTrap:
+    If Err.Number = -2147467259 And _
+        Left(Err.Description, 5) = &quot;Could&quot; Then
+        MsgBox &quot;Can not create replica because file does &quot; &amp; _
+            &quot;not exist. Fix path/file name and try again.&quot;, _
+            vbCritical, &quot;Programming Microsoft Access 2000&quot;
+        Resume DMExit
+    ElseIf Err.Number = -2147467259 And _
+        Left(Err.Description, 8) = &quot;Database&quot; Then
+        MsgBox &quot;Database is already replicable. Use the &quot; &amp; _
+        &quot;CreateReplica method to base a new replica &quot; &amp; _
+        &quot;on it.&quot;, vbCritical, &quot;Programming Microsoft Access 2000&quot;
+        Resume DMExit
+    ElseIf Err.Number = 53 Then
+        MsgBox &quot;Original file not found for backup copy. &quot; &amp; _
+            &quot;Correct file name and try again.&quot;, vbCritical, _
+            &quot;Programming Microsoft Access 2000&quot;
+        Resume DMExit
+    Else
+        Debug.Print Err.Number; Err.Description
+    End If
+        
+End Sub
+</PRE>
+</td></tr></table></P>
+
+<P>Before invoking the <I>MakeReplicable </I>method, the <I>makeDesignMaster </I>procedure asks whether the user wants to make a backup copy. If the user responds Yes, the procedure creates an instance of the <I>FileSystemObject</I>. Then it invokes the <I>Copyfile </I>method to back up the file. This makes it easy to return to a version of the database without the special replication fields and tables.</P> 
+
+<p>The <I>makeDesignMaster </I>procedure accepts up to two arguments. The first argument is the concatenation of <I>path </I>and <I>replicaName</I>. The design master for the new replica set is a file named by the value for <I>replicaName</I>. The second procedure optionally accepts a second argument. If present, this Boolean variable specifies whether to invoke column-level tracking of synchronization conflicts. The sample passes a value of <I>True</I>. The sample's design requires the user to specify <I>True</I> for the second argument to obtain column-level tracking. Failure to specify the second argument causes the Boolean variable to assume its 
+default value of <I>False</I>. Since the <I>MakeReplicable </I>method creates replicas with column-level tracking by default, the procedure does not actually have to specify <I>True</I> to create a replica with this feature.</P>
+
+
+<p><div class="note"><blockquote>
+<b>NOTE</b><hr>
+There is no column-level tracking property. Therefore, you 
+must manually track the status of this variable for all your replicas.
+</blockquote></div></P>
+
+
+<P>The procedure explicitly traps three distinct errors. One is for the operation of the <I>FileSystemObject</I>, and other two are from Jet. Notice that the replication component in Jet passes back the same <I>Err</I> number (-2147467259) for two distinctly different errors. Happily, these errors have different descriptions. The sample above uses this feature to distinguish between the two. (A production system would use a longer description segment to identify the error type definitely or use a more advanced technique for parsing errors.)</P>
+
+<p><div class="note"><blockquote><b>NOTE</b><hr>
+You can differentiate native errors from Jet errors without relying on the <I>Err Description </I>property. However, this property is potentially meaningful to more developers. The other technique involves enumerating the <I>Errors </I>collection of the <I>Connection </I>object. It returns distinct error numbers from the native database engine.
+</blockquote></div></P>
+
+<A NAME="367"><H2>Creating Additional Full Replicas</H2></A>
+
+<P>You apply the <I>CreateReplica </I>method to a new instance of a <I>Replica </I>object to transform the instance into a new member of a replica set. Before invoking the method, you assign the <I>ActiveConnection </I>property for the new instance so that it points at the design master or another replica from the target replica set. This method fails if the <I>ActiveConnection </I>setting inadvertently denotes a database with a <I>ReplicaType </I>property of <I>jrRepTypeNotReplicable</I>. In general, this method returns a new replica of the same type and visibility as the model. However, since there should be only one design master, modeling a new replica on a design master returns another global replica subject to the parameters for the method. The general syntax for the application of the method is:</P>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Replica.CreateReplica ReplicaName, Description, ReplicaType, _
+Visibility, Priority, Updatability
+</PRE>
+</td></tr></table></P>
+
+<P>The <I>ReplicaName </I>parameter specifies the path and filename of the 
+new replica. It can be up to 255 characters long. <I>Description </I>is an optional field that helps identify members in a replica set. The default <I>ReplicaType </I>value is <I>jrRepTypeFull </I>for a full replica. You can specify <I>jrRepTypePartial</I> instead. The <I>Visibility </I>parameter can have a value of <I>jrRepVisibilityGlobal</I> (the default), 
+<I>jrRepVisibilityLocal</I>, or <I>jrRepVisibilityAnon</I>. If you do not specify a value for <I>Priority</I>, it uses its default rules; the maximum range is 0 through 100. A full replica has 90 percent of its parent's <I>Priority </I>value by default. The <I>Updatability </I>parameter can designate either a read-only replica (<I>jrRepUpdReadOnly</I>) or a read-write replica (<I>jrRepUpdFull</I>).</P>
+
+<P>The following sample creates a replica based on the Northwind design master from the preceding sample. The <I>ActiveConnection </I>setting establishes this replica. The new replica is a full one with global visibility. The path for the replica is c:\My Documents\foo.mdb. In accordance with the parameter settings for the new replica, its description is &quot;foo full replica.&quot;</P>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+Sub makeFullReplica()
+Dim repMaster As New JRO.Replica
+
+'Point repMaster at a design master mdb.
+    repMaster.ActiveConnection = _
+    &quot;C:\Program Files\Microsoft Office\&quot; &amp; _
+        &quot;Office\Samples\Northwind.mdb&quot;
+        
+'Make sure foo.mdb is deleted before running the next line.
+    repMaster.CreateReplica &quot;c:\My Documents\foo.mdb&quot;, _
+        &quot;foo full replica&quot;, jrRepTypeFull, _
+        jrRepVisibilityGlobal, , jrRepUpdFull
+
+End Sub
+</pre>
+</td></tr></table></P>
+
+<P>You need not create a backup in this case because the command creates a new replica that must be based on an existing replica. However, the procedure can fail if the replica already exists or if the model for the replica does not exist (that is, if the file is missing). These are simple error-trapping issues. The initial sample took one approach to this kind of task while creating a replica. You might want to assume that the new version makes any existing version 
+with the same name obsolete. The second sample implements that logic by deleting the old replica, which eliminates the source of one error before it arises.</P>
+
+<A NAME="368"><H2>Creating Partial Replicas and Filters</H2></A>
+
+<P>A partial replica is a replica with less than all of the data for a full replica. Recall that this type of replica is useful for branch offices and mobile workers 
+who need access to a subset of the data maintained at headquarters. Using partial replicas limits the amount of data that the users of a replica can view, and 
+it reduces the amount of updating necessary to synchronize a replica.</P>
+
+
+<p>After you make a blank partial replica with the <I>CreateReplica </I>method, you must populate the partial replica with data. Each partial replica has a <I>Filters </I>collection. Each <I>Filter </I>object within the <I>Filters </I>collection specifies a different 
+slice of data that the partial replica contains. In order for a partial replica to contain data initially, you must specify one or more filters for it, append these to the replica's <I>Filters </I>collection, and then invoke the <I>PopulatePartial</I> method.</P>
+
+<p>You can base a filter on the WHERE clause of a SQL statement (without the WHERE keyword) or on a relationship. You add and specify filters to a partial replica with the <I>Filters </I>collection's <I>Append </I>method. This method takes three arguments: The <I>TableName </I>property designates the table for which the filter specifies the content, the <I>FilterType 
+</I> property denotes with a constant whether a SQL criteria statement <I>(jrFilterTypeTable)</I> or a relationship<I> (jrFilterType</i> <i>(Relationship)</I> filters entries for the table, and the <I>FilterCriteria </I>property includes the relationship name or the WHERE phrase from a SQL statement that delimits the records for a table.</P>
+
+<p>The <I>PopulatePartial </I>method for a replica clears all records in a partial replica and repopulates the replica based on its current filters. It does this by synchronizing the partial replica with a full replica. The method takes two arguments. The first one is an object variable that points to the partial replica to repopulate. The second is a string variable that designates the path and filename for the full replica with which the partial replica synchronizes. You should generally use the <I>PopulatePartial </I>method for a partial replica when you initialize the replica or change its filters. To use the <I>PopulatePartial </I>method with a partial replica, you must first open the replica with exclusive access because the method removes all records from the replica as the first step to repopulating the replica with records.
+</P>
+
+<P>The following four procedures illustrate one approach to defining two partial replicas by using <I>Filter </I>collections and the <I>PopulatePartial </I>method. The <I>callMakePartialFilter </I>procedure calls <I>makePartialFilter </I>twice with two 
+different sets of arguments. First, it launches the process to create a partial replica 
+named &quot;Partial of Northwind.mdb&quot;. Then it repeats the process for another 
+replica named &quot;Partial of foo.mdb&quot;.</P>
+
+<p>
+<table cellpadding=5 width="95%">
+<tr><td>
+<pre>Sub callMakePartialFilter()
+    makePartialFilter &quot;Partial of Northwind.mdb&quot;, _
+        &quot;Northwind.mdb&quot;, &quot;C:\Program Files\&quot; &amp; _
+        &quot;Microsoft Office\Office\Samples\&quot;
+    makePartialFilter &quot;Partial of foo.mdb&quot;, _
+        &quot;foo.mdb&quot;, &quot;C:\My Documents\&quot;
+End Sub
+
+
+Sub makePartialFilter(replicaName As String, _
+    sourceName As String, path As String)
+Dim rep As New JRO.Replica
+Dim flt1 As JRO.Filter
+ 
+'Delete old partial.
+    strfile = path &amp; replicaName
+    deleteFile (strfile)
+    
+'Make partial.
+    makePartial path, replicaName, sourceName
+    
+'Open connection to partial and append filter.
+    rep.ActiveConnection = _
+        &quot;Provider=Microsoft.Jet.OLEDB.4.0;Data Source=&quot; &amp; _
+        path &amp; replicaName &amp; &quot;;Mode=Share Exclusive&quot;
+    rep.Filters.Append &quot;Employees&quot;, jrFilterTypeTable, _
+        &quot;Title='Sales Representative'&quot;
+    rep.Filters.Append &quot;Customers&quot;, jrFilterTypeTable, _
+        &quot;Country='Spain' AND City='Madrid'&quot;
+    
+'Populate partial from source.
+    rep.PopulatePartial path &amp; sourceName
+    
+End Sub
+
+
+Sub deleteFile(strfile)
+On Error GoTo deleteTrap
+Dim cnn1 As New ADODB.Connection
+
+'Prepare to delete file.
+    Set fs = _
+        CreateObject(&quot;Scripting.FileSystemObject&quot;)
+    fs.deleteFile strfile
+    
+deleteExit:
+    Exit Sub
+
+deleteTrap:
+    If Err.Number = 70 Or Err.Number = 75 Then
+        MsgBox &quot;Partial is unavailable to system. &quot; &amp; _
+            &quot;Close it so that the system can create a &quot; &amp; _
+            &quot;new one.&quot;, vbCritical, &quot;Programming Microsoft Access 2000&quot;
+    ElseIf Err.Number = 53 Then
+        Resume Next
+    Else
+        Debug.Print Err.Number; Err.Description
+    End If
+    Resume deleteExit
+    
+End Sub
+
+
+Sub makePartial(path As String, replicaName As String, _
+    sourceName As String)
+Dim rep As New JRO.Replica
+    
+    rep.ActiveConnection = path &amp; sourceName
+    rep.CreateReplica path &amp; replicaName, _
+        replicaName, jrRepTypePartial, _
+        jrRepVisibilityGlobal, , jrRepUpdFull
+   
+End Sub
+</pre></td></tr>
+</table></P>
+
+
+<P>The <I>makePartialFilter </I>procedure accepts arguments from 
+the procedure  <I>callMakePartialFilter </I>that specify the name of the partial replica to create and the full replica data source for the partial replica. The <I>makePartialFilter</I> procedure also defines and appends the <I>Filter </I>objects for a partial replica, and 
+it invokes the <I>PopulatePartial </I>method to apply the filters.</P>
+
+<p>The procedure first deletes the name of any existing partial replica with the same name and location as the one it wants to create. It does this by defining a string variable based on the <I>path </I>and <I>replicaName </I>variables it receives from the calling routine. Then it passes that new string variable to the <I>deleteFile </I>procedure. Barring an unanticipated error, <I>deleteFile </I>performs one of three tasks: It deletes the old file for the replica, it reminds a user to close a replica so that the application can delete it, or it ignores an error caused by the fact that the file does not exist (error number 53).</P>
+
+<p>After attempting to delete the existing file, the procedure creates a new partial replica by calling the <I>makePartial </I>procedure. The call passes three arguments: <I>path</I>, <I>replicaName</I>, and <I>sourceName</I>. The <I>makePartial </I>procedure is nearly identical in design to the <I>makeFullReplica </I>procedure. Both invoke the <I>CreateReplica </I>method for a new instance of a <I>Replica </I>object. Aside from using variables to denote the path and filename, the key difference is that the <I>make Partial </I>procedure specifies <I>jrRepTypePartial </I>as the <I>ReplicaType </I>property while <I>makeFullReplica </I>uses <I>jrRepTypeFull </I>as its <I>ReplicaType </I>argument. Notice that <I>makePartial </I>specifies the new replica's name as the concatenation of the <I>path</I> and <I>replicaName </I>variables. The <I>ActiveConnection </I>property for the new replica instance specifies the full replica source for the partial replica. The procedure specifies this source as the concatenation of the <I>path </I>and <I>sourceName </I>variables. It requires that the full and new partial replica both reside in the same path. It is easy to remove this constraint; the chapter's final sample shows how to do this.</P>
+
+<p>After the <I>makePartial </I>procedure returns control to the procedure 
+<I>make PartialFilter</I>, the new partial replica exists but has no data, so 
+<I>makePartialFilter </I>populates it with data. First, it sets the <I>ActiveConnection </I>of a replica instance to the new partial replica and it opens the replica in exclusive mode. Recall 
+that this is necessary for the application of the <I>PopulatePartial </I>method. Next, it defines and appends a couple of <I>Filter </I>objects to the replica. The first 
+filter extracts sales representatives from the <I>Employees </I>tables. The second filter extracts customers from Madrid, Spain. Finally, the <I>PopulatePartial </I>method synchronizes the full replica denoted by the concatenation of <I>path </I>and <I>sourceName </I>with the new partial replica. Only two tables receive records. (You can add filters to populate more tables in the partial replica.)</P>
+
+<A NAME="369"><H2>Synchronizing Replicas</H2></A>
+
+<P>The following two procedures synchronize replicas in typical replication scenarios. Both use basic ADO procedures. The <I>synchNorthwindFooToAdd </I>procedure adds a new record to the <I>Employees </I>table in the Northwind.mdb replica. This is the design master for a replica set that includes foo.mdb. The procedure then synchronizes Northwind with foo to propagate the new record to foo.mdb. The second procedure, <I>synchFooNorthwindToDelete</I>, deletes the new 
+employee record from foo and then synchronizes foo with Northwind to remove the record from the Northwind replica as well.</P>
+
+<p>
+<table cellpadding=5 width="95%">
+<tr><td>
+<pre>
+Sub synchNorthwindFooToAdd()
+Dim rep1 As JRO.Replica
+Dim cnn1 As New ADODB.Connection
+Dim rst1 As ADODB.Recordset
+
+'Open connection to Northwind and
+'set reference for Northwind as a replica.
+    cnn1.Open &quot;Provider=Microsoft.Jet.OLEDB.4.0;&quot; &amp; _
+        &quot;Data Source=c:\Program Files\Microsoft Office\&quot; &amp; _
+        &quot;Office\Samples\Northwind.mdb&quot;
+    Set rep1 = New JRO.Replica
+    rep1.ActiveConnection = cnn1
+    
+'Add a new employee to Northwind.
+    Set rst1 = New ADODB.Recordset
+    rst1.Open &quot;Employees&quot;, cnn1, adOpenKeyset, adLockOptimistic, _
+        adCmdTable
+    rst1.AddNew
+        rst1.Fields(&quot;FirstName&quot;) = &quot;Rick&quot;
+        rst1.Fields(&quot;LastName&quot;) = &quot;Dobson&quot;
+        rst1.Fields(&quot;BirthDate&quot;) = Date - 1
+'When it comes to learning about computers and my faith
+'in the Lord, I am always newly born.
+    rst1.Update
+
+'Synchronize Northwind with its full replica (foo.mdb).
+    rep1.Synchronize &quot;c:\My Documents\foo.mdb&quot;, _
+        jrSyncTypeImpExp, jrSyncModeDirect
+ 
+End Sub
+
+
+Sub synchFooNorthwindToDelete()
+Dim rep1 As JRO.Replica
+Dim cnn1 As New ADODB.Connection, cmd1 As ADODB.Command
+
+'Open connection to foo and
+'set reference to foo as a replica.
+    cnn1.Open &quot;Provider=Microsoft.Jet.OLEDB.4.0;&quot; &amp; _
+        &quot;Data Source=c:\My Documents\foo.mdb&quot;
+    Set rep1 = New JRO.Replica
+    rep1.ActiveConnection = cnn1
+    
+'Execute command to remove an employee from foo.mdb.
+    Set cmd1 = New ADODB.Command
+    With cmd1
+        .ActiveConnection = cnn1
+        .CommandText = &quot;DELETE Employees.* FROM Employees&quot; &amp; _
+            &quot; WHERE LastName='Dobson'&quot;
+        .CommandType = adCmdText
+        .Execute
+    End With
+
+'Synchronize foo with its design master (Northwind.mdb).
+    rep1.Synchronize &quot;c:\Program Files\Microsoft Office\&quot; &amp; _
+        &quot;Office\Samples\Northwind.mdb&quot;, jrSyncTypeImpExp, _
+        jrSyncModeDirect
+
+End Sub
+</pre>
+</td></tr>
+</table></P>
+
+<P>The <I>synchNorthwindFooToAdd </I>procedure uses ADO to add a record 
+to a table in one replica and then propagate that record to a corresponding 
+table in another replica. It starts by declaring <I>Replica</I>, <I>Connection</I>, and 
+<I>Recordset </I>objects. Then it opens a connection to the Northwind database and sets 
+the <I>ActiveConnection </I>property of the replica with the connection. It creates an instance of a <I>Recordset </I>object on the same connection as the replica. Then it adds an employee named Rick Dobson. The procedure closes by applying the <I>Synchronize </I>method to the Northwind replica and naming foo as the replica with which to exchange updates. This final step passes the new employee record from Northwind to foo.</P>
+
+<p>The <I>synchFooNorthwindToDelete </I>procedure removes the new record from foo. It also restores Northwind by synchronizing with it. This procedure uses a <I>Command </I>object to drop an employee with a last name of Dobson from the <I>Employees </I>table in foo. After executing the command, it applies the <I>Synchronize </I>method to the foo replica to propagate the delete to Northwind.</P>
+
+<A NAME="370"><H2>Working with Prevent Deletes Replicas</H2></A>
+
+<P>A Prevent Deletes replica is easy to create, but you must create it from the 
+user interface. Choose Tools-Replication-Create Replica and select the Prevent 
+Deletes check box in the dialog box that opens. This type of replica allows an 
+application to distribute a replica that does not support direct deletes to its 
+contents. While you can achieve this result using Access security settings, it is a lot 
+easier to just select the check box. While the user of a Prevent Deletes replica 
+cannot directly delete records, the replica can accept delete updates from other 
+replicas. One use for this type of replica is to enable an administrator to make sure 
+that records are not deleted until they are properly archived.</P>
+
+<p>The following three procedures manipulate Prevent Deletes replicas with ADO. <I>SynchAddToFoo2 </I>adds a new employee to the foo2.mdb replica from the foo.mdb replica. The employee's name is Rick Dobson. The second procedure, <I>TryToDeleteFromFoo2</I>, attempts to delete the same record directly from the foo2.mdb replica. The error message in Figure 11-3 below shows how Access responds to the Execute command in the procedure. If you need 
+to restrict additions as well as deletions, you can set the <I>Updatability </I>argument in the <I>CreateReplica </I>method to <I>jrRepUpdReadOnly</I>. You do not need the 
+user interface to do this. The third procedure, <I>synchFooFoo2ToDelete</I>, removes Rick Dobson from the foo.mdb replica and then propagates that deletion to the foo2.mdb replica. Although users cannot delete a record directly from a Prevent Deletes replica, an administrator can propagate a deletion using synchronization.</P>
+
+<p>
+<table cellpadding=5 width="95%">
+<tr><td>
+<pre>
+Sub SynchAddToFoo2()
+Dim rep1 As JRO.Replica
+Dim cnn1 As New ADODB.Connection
+Dim rst1 As ADODB.Recordset
+
+'Open connection to foo and
+'set reference to foo as a replica.
+    cnn1.Open &quot;Provider=Microsoft.Jet.OLEDB.4.0;&quot; &amp; _
+        &quot;Data Source=c:\My Documents\foo.mdb&quot;
+    Set rep1 = New JRO.Replica
+    rep1.ActiveConnection = cnn1
+    
+'Add a new employee to foo.
+    Set rst1 = New ADODB.Recordset
+    rst1.Open &quot;Employees&quot;, cnn1, adOpenKeyset, adLockOptimistic, _
+        adCmdTable
+    rst1.AddNew
+        rst1.Fields(&quot;FirstName&quot;) = &quot;Rick&quot;
+        rst1.Fields(&quot;LastName&quot;) = &quot;Dobson&quot;
+        rst1.Fields(&quot;BirthDate&quot;) = Date - 1
+    rst1.Update
+    
+'Synchronize foo with foo2.mdb.
+    rep1.Synchronize &quot;c:\My Documents\foo2.mdb&quot;, _
+        jrSyncTypeImpExp, jrSyncModeDirect
+
+End Sub
+
+
+Sub TryToDeleteFromFoo2()
+Dim rep As JRO.Replica
+Dim cnn1 As New ADODB.Connection, cmd1 As ADODB.Command
+
+'Open connection to foo2 and
+'set a reference to it as a replica.
+    cnn1.Open &quot;Provider=Microsoft.Jet.OLEDB.4.0;&quot; &amp; _
+        &quot;Data Source=c:\My Documents\foo2.mdb&quot;
+    Set rep1 = New JRO.Replica
+    rep1.ActiveConnection = cnn1
+
+'Execute command to remove employee from foo2.mdb;
+'it fails because Foo2 is a Prevent Deletes replica.
+    Set cmd1 = New ADODB.Command
+    With cmd1
+        .ActiveConnection = cnn1
+        .CommandText = &quot;DELETE Employees.* FROM Employees&quot; &amp; _
+            &quot; WHERE LastName='Dobson'&quot;
+        .CommandType = adCmdText
+        .Execute
+    End With
+
+End Sub
+
+
+Sub synchFooFoo2ToDelete()
+Dim rep1 As JRO.Replica
+Dim cnn1 As New ADODB.Connection, cmd1 As ADODB.Command
+
+'Open connection to foo and
+'set reference to foo as a replica.
+    cnn1.Open &quot;Provider=Microsoft.Jet.OLEDB.4.0;&quot; &amp; _
+        &quot;Data Source=c:\My Documents\foo.mdb&quot;
+    Set rep1 = New JRO.Replica
+    rep1.ActiveConnection = cnn1
+    
+'Execute command to remove an employee from foo.mdb.
+    Set cmd1 = New ADODB.Command
+    With cmd1
+        .ActiveConnection = cnn1
+        .CommandText = &quot;DELETE Employees.* FROM Employees&quot; &amp; _
+            &quot; WHERE LastName='Dobson'&quot;
+        .CommandType = adCmdText
+        .Execute
+    End With
+
+'Synchronize foo with its design master (Northwind.mdb).
+    rep1.Synchronize &quot;c:\My Documents\foo2.mdb&quot;, _
+        jrSyncTypeImpExp, jrSyncModeDirect
+
+End Sub
+</pre>
+</td></tr>
+</table></P>
+<P><img src="Images/F11QH03.GIF" width=371 height=201  border="0">
+</P><P><!-- CAPTION --><b>Figure 11-3.</B> <I>A Prevent Deletes replica returns an error message like this one when you try to delete one of its records.</I><!-- /CAPTION -->
+</P>
+
+<A NAME="371"><H2>Working with Replica Properties</H2></A>
+
+<P>By examining replica properties, you can understand the behavior of a replica set. For example, if you know a replica's type, you know whether it will share schema changes with other replicas. A replica's <I>Priority </I>property indicates which replica wins when two replicas conflict with one another. In general, the replica with the higher priority value wins. The three procedures below print replica properties and expose property values in the process.</P>
+
+<p>Since there is no <I>Replicas </I>collection, you are likely to list sequentially 
+a number of replicas when you want to process them&#8212;especially if the 
+replicas belong to different replica sets. The <I>callPrintTypePriority 
+</I>procedure sets <I>path</I> and <I>replicaName </I>variables for each replica it wants to examine, and then it calls two subroutines. One subroutine (<I>printReplicaType</I>) returns information about the type of replica, and the other (<I>printPriority</I>) returns the <I>Priority </I>property value for a replica. In addition to <I>path </I>and <I>replicaName</I>, the set of procedures exchanges values with an argument named <I>Exist</I>. This Boolean variable tracks whether a file exists in a path. If a file does not exist, it obviously has no priority value.</P>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>Sub callPrintTypePriority()
+On Error GoTo TypeTrap
+Dim repMaster As New JRO.Replica
+Dim path As String, replicaName As String
+Dim Exist As Boolean
+
+'Assign Boolean for file existing.
+    Exist = True
+
+'Assign path and replica names, then
+'call procedures for printing type and priority.
+    path = &quot;C:\Program Files\Microsoft Office\&quot; &amp; _
+        &quot;Office\Samples\&quot;
+    replicaName = &quot;Northwind.mdb&quot;
+'If file does not exist, the next line catches it.
+    repMaster.ActiveConnection = path &amp; replicaName
+    printReplicaType replicaName, repMaster.ReplicaType, Exist
+    printPriority replicaName, path, Exist
+    
+    replicaName = &quot;Copy of Northwind.mdb&quot;
+    repMaster.ActiveConnection = path &amp; replicaName
+    printReplicaType replicaName, repMaster.ReplicaType, Exist
+    printPriority replicaName, path, Exist
+
+    replicaName = &quot;Northwind2.mdb&quot;
+    repMaster.ActiveConnection = path &amp; replicaName
+    printReplicaType replicaName, repMaster.ReplicaType, Exist
+    printPriority replicaName, path, Exist
+
+    path = &quot;C:\My Documents\&quot;
+    replicaName = &quot;foo.mdb&quot;
+    repMaster.ActiveConnection = path &amp; replicaName
+    printReplicaType replicaName, repMaster.ReplicaType, Exist
+    printPriority replicaName, path, Exist
+        
+    path = &quot;C:\Program Files\Microsoft Office\&quot; &amp; _
+        &quot;Office\Samples\&quot;
+    replicaName = &quot;Partial of Northwind.mdb&quot;
+    repMaster.ActiveConnection = path &amp; replicaName
+    printReplicaType replicaName, repMaster.ReplicaType, Exist
+    printPriority replicaName, path, Exist
+
+    path = &quot;C:\My Documents\&quot;
+    replicaName = &quot;Partial of foo.mdb&quot;
+    repMaster.ActiveConnection = path &amp; replicaName
+    printReplicaType replicaName, repMaster.ReplicaType, Exist
+    printPriority replicaName, path, Exist
+    
+    replicaName = &quot;DMBackup.mdb&quot;
+    repMaster.ActiveConnection = path &amp; replicaName
+    printReplicaType replicaName, repMaster.ReplicaType, Exist
+    printPriority replicaName, path, Exist
+    
+    path = &quot;C:\My Documents\&quot;
+    replicaName = &quot;foo2.mdb&quot;
+    repMaster.ActiveConnection = path &amp; replicaName
+    printReplicaType replicaName, repMaster.ReplicaType, Exist
+    printPriority replicaName, path, Exist
+
+TypeExit:
+    Exit Sub
+    
+TypeTrap:
+    If Err.Number = -2147467259 And _
+        Left(Err.Description, 19) = _
+        &quot;Could not find file&quot; Then
+        Exist = False
+        Resume Next
+    Else
+        Debug.Print Err.Number, Err.Description
+        Resume TypeExit
+    End If
+
+End Sub
+
+
+Sub printReplicaType(repName As String, _
+    typeNumber As Integer, Exist As Boolean)
+  
+    If Exist Then
+'Decode replica type enumeration constants or...
+        Select Case typeNumber
+            Case jrRepTypeNotReplicable
+                Debug.Print repName &amp; &quot; is not replicable.&quot;
+            Case jrRepTypeDesignMaster
+                Debug.Print repName &amp; &quot; is a Design Master.&quot;
+            Case jrRepTypeFull
+                Debug.Print repName &amp; &quot; is a Full Replica.&quot;
+            Case jrRepTypePartial
+                Debug.Print repName &amp; &quot; is a Partial Replica.&quot;
+        End Select
+    Else
+'print that file does not exist.
+        Debug.Print repName &amp; &quot; does not exist.&quot;
+    End If
+        
+End Sub
+
+
+Sub printPriority(replicaName As String, path As String, _
+    Exist)
+Dim repMasterP As New JRO.Replica
+
+'Print priorty and reset Exist.
+    If Exist = True Then
+'Assign connection for replica.
+        repMasterP.ActiveConnection = path &amp; replicaName
+       
+        If repMasterP.ReplicaType &lt;&gt; jrRepTypeNotReplicable Then
+'Print priority for replicas.
+            Debug.Print &quot;It's priority is &quot; &amp; repMasterP.Priority &amp; &quot;.&quot;
+        Else
+'Print message for no replica.
+            Debug.Print &quot;Therefore, it has no priority.&quot;
+        End If
+    Else
+'Print message for file does not exist.
+        Debug.Print &quot;Therefore, it has no priority.&quot;
+    End If
+    Debug.Print
+    
+    Exist = True
+        
+End Sub
+</pre>
+</td></tr>
+</table></P>
+
+
+<P>The <I>callPrintTypePriority </I>procedure uses error trapping to 
+determine whether a file exists and to respond appropriately if it does not. When it tries 
+to set the <I>ActiveConnection </I>property of a replica instance to a file that does not 
+exist, the Jet replication component returns its standard 
+<I>Err </I>number (-2147467259) with a descriptive phrase. The error trap checks for the phrase with the Jet replication <I>Err </I>number. If the error-trap logic determines that the file does not exist, the trap sets <I>Exist </I>to <I>False</I> and resumes. The two subroutines, 
+<I>printReplicaType </I>and <I>printPriority</I>, interpret the <I>False</I> value for <I>Exist </I>and respond appropriately.</P>
+
+<P>The <I>callPrintTypePriority </I>procedure sends the <I>ReplicaType </I>property value for a replica when it calls the <I>printReplicaType </I>procedure. The <I>printReplicaType </I>procedure checks the value of <I>Exist </I>before trying to decipher the value of 
+the <I>ReplicaType </I>property. If <I>Exist </I>is <I>False</I>, the procedure simply prints a 
+message to the Immediate window that the file does not exist. If <I>Exist </I>is <I>True</I>, a <I>Select Case</I> statement decodes the <I>ReplicaType </I>property.</P>
+
+<p><div class="note"><blockquote><b>NOTE</b><hr>
+The <I>printReplicaType </I>procedure represents <I>ReplicaType </I>values 
+with the JRO <I>ReplicaTypeEnum </I>constant names. You can view 
+these with the Object Browser. Enter <I>ReplicaType </I>in the Search text box and click the Search button. Select from the return set the <I>ReplicaTypeEnum </I>class for the JRO library. (Be careful: The DAO library has a different <I>ReplicaTypeEnum </I>class.) This selection lists the constant names and their <I>ReplicaType </I>values.
+</blockquote></div>
+</P>
+
+<P>The design of the <I>printPriority </I>procedure is slightly different from that 
+of the <I>printReplicaType </I>procedure. The <I>printPriority </I>procedure creates a replica instance within it. Then it derives a property value for the replica. In addition to checking the value of the <I>Exist </I>function, it checks the <I>ReplicaType </I>property of the replica instance. If the property shows that the file is not replicable by returning a value of 
+<I>jrRepTypeNotReplicable</I>, the procedure prints that there is no priority for the file. Otherwise, the procedure prints the value returned by the <I>Priority </I>property of its replica instance. Before returning control to the <I>callPrintTypePriority </I>procedure, <I>printPriority </I>resets the value of <I>Exist </I>to <I>True</I> for processing the next replica.</P>
+
+<A NAME="372"><H2>Compacting and Encrypting Replicas</H2></A>
+
+<P>The JRO library supports more than just replication. For example, you can compact and encrypt files and you can refresh the memory cache. The following two procedures make a backup of a replica by compacting it and encrypting 
+the compacted copy. This approach is particularly appropriate when you send a file with sensitive information over the Internet. The sample compacts 
+the Northwind.mdb file to Northwind2.mdb. You can optionally specify separate paths for Northwind and Northwind2.</P>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+Sub callCompactADB()
+    compactADB &quot;Northwind.mdb&quot;, &quot;Northwind2.mdb&quot;, _
+        &quot;C:\Program Files\Microsoft Office\Office\Samples\&quot;
+End Sub
+
+Sub compactADB(oName As String, cName As String, _
+    opath As String, Optional cpath As String)
+Dim je As New JRO.JetEngine
+Dim strIn As String, strOut As String
+    
+'Is optional path specified?
+    If cpath = &quot;&quot; Then
+        cpath = opath
+    End If
+    
+    strIn = opath &amp; oName
+    strOut = cpath &amp; cName
+
+    deleteFile strOut
+    
+    je.CompactDatabase _
+    &quot;Provider=Microsoft.Jet.OLEDB.4.0;&quot; &amp; _
+        &quot;Data Source=&quot; &amp; strIn, _
+    &quot;Provider=Microsoft.Jet.OLEDB.4.0;&quot; &amp; _
+        &quot;Data Source=&quot; &amp; strOut &amp; &quot;;&quot; &amp; _
+    &quot;Jet OLEDB:Encrypt Database=True&quot;
+
+End Sub
+</pre>
+</td></tr>
+</table></P>
+
+</BODY>
+</HTML>
+
+
+
+

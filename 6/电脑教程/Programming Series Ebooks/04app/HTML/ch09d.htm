@@ -1,0 +1,649 @@
+<HTML>
+<HEAD>
+<TITLE>Event Kernel Objects</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch09c.htm">[Previous]</A> <A HREF="ch09e.htm">[Next]</A><P>
+
+<A NAME="126"><H1>Event Kernel Objects</H1></A>
+
+<p>Of all the kernel objects, events are by far the most primitive.
+They contain a usage count (as all kernel objects do), a Boolean value
+indicating whether the event is an auto-reset or manual-reset event,
+and another Boolean value indicating whether the event is signaled or
+nonsignaled.</p>
+
+<p>Events signal that an operation has completed. There are two
+different types of event objects: manual-reset events and auto-reset
+events. When a manual-reset event is signaled, all threads waiting on
+the event become schedulable. When an auto-reset event is signaled,
+only one of the threads waiting on the event becomes schedulable.</p>
+
+<p>Events are most commonly used when one thread performs
+initialization work and then signals another thread to perform the
+remaining work. The event is initialized as nonsignaled, and then after
+the thread completes its initial work, it sets the event to signaled.
+At this point, another thread, which has been waiting on the event,
+sees that the event is signaled and becomes schedulable. This second
+thread knows that the first thread has completed its work.</p>
+
+<p>Here is the <i>CreateEvent</i> function, which creates an event
+kernel object:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HANDLE CreateEvent(
+   PSECURITY_ATTRIBUTES psa,
+   BOOL fManualReset, 
+   BOOL fInitialState, 
+   PCTSTR pszName);
+</pre></td></tr></table></p>
+
+<p>In <A HREF="ch03a.htm">Chapter 3</A>, we discussed the mechanics of kernel objects&#8212;how
+to set their security, how usage counting is done, how their handles
+can be inheritable, and how objects can be shared by name. Since all of
+this should be familiar to you by now, I won't discuss the first
+and last parameters of this function.</p>
+
+<p>The <i>fManualReset</i> parameter is a Boolean value that tells the
+system whether to create a manual-reset event (TRUE) or an auto-reset
+event (FALSE). The <i>fInitialState</i> parameter indicates whether the
+event should be initialized to signaled (TRUE) or nonsignaled (FALSE).
+After the system creates the event object, <i>CreateEvent</i> returns
+the process-relative handle to the event object. Threads in other
+processes can gain access to the object by calling <i>CreateEvent</i>
+using the same value passed in the <i>pszName</i> parameter; by using
+inheritance; by using the <i>DuplicateHandle</i> function; or by
+calling <i>OpenEvent</i>, specifying a name in the <i>pszName</i>
+parameter that matches the name specified in the call to <i>
+CreateEvent</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HANDLE OpenEvent(
+   DWORD fdwAccess, 
+   BOOL fInherit, 
+   PCTSTR pszName);
+</pre></td></tr></table></p>
+
+<p>As always, you should call the <i>CloseHandle</i> function when you
+no longer require the event kernel object.</p>
+
+<p>Once an event is created, you control its state directly. When you
+call <i>SetEvent</i>, you change the event to the signaled state:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL SetEvent(HANDLE hEvent);
+</pre></td></tr></table></p>
+
+<p>When you call <i>ResetEvent</i>, you change the event to the
+nonsignaled state:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL ResetEvent(HANDLE hEvent);
+</pre></td></tr></table></p>
+
+<p>It's that easy.</p>
+
+<p>Microsoft has defined a successful wait side effect rule for an
+auto-reset event: an auto-reset event is automatically reset to the
+nonsignaled state when a thread successfully waits on the object. This
+is how auto-reset events got their name. It is usually unnecessary to
+call <i>ResetEvent</i> for an auto-reset event because the system
+automatically resets the event. In contrast, Microsoft has not defined
+a successful wait side effect for manual-reset events.</p>
+
+<p>Let's run through a quick example of how you can use event
+kernel objects to synchronize threads. Here's the setup:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// Create a global handle to a manual-reset, nonsignaled event.
+HANDLE g_hEvent;
+
+int WINAPI WinMain(...) {
+
+   // Create the manual-reset, nonsignaled event.
+   g_hEvent = CreateEve\nt(NULL, TRUE, FALSE, NULL);
+
+   // Spawn 3 new threads.
+   HANDLE hThread[3];
+   DWORD dwThreadID;
+   hThread[0] = _beginthreadex(NULL, 0, WordCount, NULL, 0, &amp;dwThreadID);
+   hThread[1] = _beginthreadex(NULL, 0, SpellCheck, NULL, 0, &amp;dwThreadID);
+   hThread[2] = _beginthreadex(NULL, 0, GrammarCheck, NULL, 0, &amp;dwThreadID);
+
+
+   OpenFileAndReadContentsIntoMemory(...);
+
+   // Allow all 3 threads to access the memory.
+   SetEvent(g_hEvent);
+   ...
+}
+
+DWORD WINAPI WordCount(PVOID pvParam) {
+
+   // Wait until the file's data is in memory.
+   WaitForSingleObject(g_hEvent, INFINITE);
+
+   // Access the memory block.
+   ...
+   return(0);
+}
+
+DWORD WINAPI SpellCheck (PVOID pvParam) {
+
+   // Wait until the file's data is in memory.
+   WaitForSingleObject(g_hEvent, INFINITE);
+
+   // Access the memory block.
+   ...
+   return(0);
+}
+
+DWORD WINAPI GrammarCheck (PVOID pvParam) {
+
+   // Wait until the file's data is in memory.
+   WaitForSingleObject(g_hEvent, INFINITE);
+
+   // Access the memory block.
+   ...
+   return(0);
+}
+</pre></td></tr></table></p>
+
+<p>When this process starts, it creates a manual-reset, nonsignaled
+event and saves the handle in a global variable. This makes it easy for
+other threads in this process to access the same event object. Now
+three threads are spawned. These threads wait until a file's
+contents are read into memory, and then each thread accesses the data:
+one thread does a word count, another runs the spelling checker, and
+the third runs the grammar checker. The code for these three thread
+functions starts out identically: each thread calls <i>
+WaitForSingleObject</i>, which suspends the thread until the file's
+contents have been read into memory by the primary thread.</p>
+
+<p>Once the primary thread has the data ready, it calls <i>SetEvent,</i>
+which signals the event. At this point, the system makes all three
+secondary threads schedulable&#8212;they all get CPU time and access the
+memory block. Notice that all three threads will access the memory in a
+read-only fashion. This is the only reason why all three threads can
+run simultaneously. Also note that if the machine has multiple CPUs on
+it, all of these threads can truly execute simultaneously, getting a
+lot of work done in a short amount of time.</p>
+
+<p>If you use an auto-reset event instead of a manual-reset event, the
+application behaves quite differently. The system allows only one
+secondary thread to become schedulable after the primary thread calls
+<i>SetEvent</i>. Again, there is no guarantee as to which thread the
+system will make schedulable. The remaining two secondary threads will
+continue to wait.</p>
+
+<p>The thread that becomes schedulable has exclusive access to the memory
+block. Let's rewrite the thread functions so that each function
+calls <i>SetEvent</i> (just like the <i>WinMain</i> function does) just
+before returning. The thread functions now look like this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+DWORD WINAPI WordCount(PVOID pvParam) {
+
+   // Wait until the file's data is in memory.
+   WaitForSingleObject(g_hEvent, INFINITE);
+
+   // Access the memory block.
+   ...
+   SetEvent(g_hEvent);
+   return(0);
+}
+
+DWORD WINAPI SpellCheck (PVOID pvParam) {
+
+   // Wait until the file's data is in memory.
+   WaitForSingleObject(g_hEvent, INFINITE);
+
+   // Access the memory block.
+   ...
+   SetEvent(g_hEvent);
+   return(0);
+}
+
+DWORD WINAPI GrammarCheck (PVOID pvParam) {
+
+   // Wait until the file's data is in memory.
+   WaitForSingleObject(g_hEvent, INFINITE);
+
+   // Access the memory block.
+   ...
+   SetEvent(g_hEvent);
+   return(0);
+}
+</pre></td></tr></table></p>
+
+<p>When a thread has finished its exclusive pass over the data, it
+calls <i>SetEvent,</i> which allows the system to make one of the two
+waiting threads schedulable. Again, we don't know which thread the
+system will choose, but this thread will have its own exclusive pass
+over the memory block. When this thread is done, it will call <i>
+SetEvent</i> as well, causing the third and last thread to get its
+exclusive pass over the memory block. Note that when you use an
+auto-reset event, there is no problem if each secondary thread accesses
+the memory block in a read/write fashion; the threads are no longer
+required to consider the data readonly. This example clearly
+demonstrates the difference between using a manual-reset event and an
+auto-reset event.</p>
+
+<p>For the sake of completeness, I'll mention one more function that
+you can use with events:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL PulseEvent(HANDLE hEvent);
+</pre></td></tr></table></p>
+
+<p><i>PulseEvent</i> makes an event signaled and then immediately
+nonsignaled; it's just like calling <i>SetEvent</i> immediately
+followed by <i>ResetEvent</i>. If you call <i>PulseEvent</i> on a
+manual-reset event, any and all threads waiting on the event when it is
+pulsed are schedulable. If you call <i>PulseEvent</i> on an auto-reset
+event, only one waiting thread becomes schedulable. If no threads are
+waiting on the event when it is pulsed, there is no effect.</p>
+
+<p><i>PulseEvent</i> is not very useful. In fact, I've never used it
+in any practical application because you have no idea what threads, if
+any, will see the pulse and become schedulable. Since you can't
+know the state of any threads when you call <i>PulseEvent</i>, the
+function is just not that useful. That said, I'm sure that in some
+scenarios <i>PulseEvent</i> might come in handy&#8212;but none spring to
+mind. See the discussion of the <i>SignalObjectAndWait</i> function
+later in this chapter for a little more information on <i>
+PulseEvent</i>.</p>
+
+
+<A NAME="127"><H2>The Handshake Sample Application</H2></A>
+
+<p>The Handshake (&quot;09 Handshake.exe&quot;) application, listed in
+Figure 9-1, demonstrates the use of auto-reset events. The source code
+files and resource files for the application are in the 09-Handshake
+directory on the companion CDROM. When you run Handshake, the following
+dialog box appears.</p>
+
+<p>
+<img src="images/G09si03.JPG" width=390 height=157 border="0">
+</p>
+
+<p>Handshake accepts a request string, reverses all the characters in the
+string, and places the result in the Result field. What makes Handshake
+exciting is the way it accomplishes this heroic task.</p>
+
+<p>Handshake solves a common programming problem. You have a client and a
+server that want to talk to each other. Initially, the server has
+nothing to do, so it enters a wait state. When the client is ready to
+submit a request to the server, it places the request into a shared
+memory buffer and then signals an event so that the server thread knows
+to examine the data buffer and process the client's request. While
+the server thread is busy processing the request, the client's
+thread needs to enter a wait state until the server has the
+request's result ready. So the client enters a wait state until the
+server signals a different event that indicates that the result is
+ready to be processed by the client. When the client wakes up again, it
+knows that the result is in the shared data buffer and can present the
+result to the user.</p>
+
+<p>When the application starts, it immediately creates two nonsignaled,
+autoreset event objects. One event, <i>g_hevtRequestSubmitted</i>,
+indicates when a request is ready for the server. This event is waited
+on by the server thread and is signaled by the client thread. The
+second event, <i>g_hevtResultReturned</i>, indicates when the result is
+ready for the client. The client thread waits on this event and the
+server thread is responsible for signaling it.</p>
+
+<p>After the events are created, the server thread is spawned and executes
+the <i>ServerThread</i> function. This function immediately has the
+server wait for a client's request. Meanwhile, the primary thread,
+which is also the client thread, calls <i>DialogBox</i>, which displays
+the application's user interface. You can enter some text in the
+Request field, and then, when you click the Submit Request To Server
+button, the request string is placed in a buffer that is shared between
+the client and the server threads and the <i>g_hevtRequestSubmitted</i>
+event is signaled. The client thread then waits for the server's
+result by waiting on the <i>g_hevtResultReturned</i> event.</p>
+
+<p>The server wakes, reverses the string in the shared memory buffer, and
+then signals the <i>g_hevtResultReturned</i> event. The server's
+thread loops back around, waiting for another client request. Notice
+that this application never calls <i>ResetEvent</i> because it is
+unnecessary: auto-reset events are automatically reset to the
+nonsignaled state after a successful wait. Meanwhile, the client thread
+detects that the <i>g_hevtResultReturned</i> event has becomes
+signaled. It wakes and copies the string from the shared memory buffer
+into the Result field of the user interface.</p>
+
+<p>Perhaps this application's only remaining notable feature is how it
+shuts down. To shut down the application, you simply close the dialog
+box. This causes the call to <i>DialogBox</i> in <i>_tWinMain</i> to
+return. At this point, the primary thread copies a special string into
+the shared buffer and wakes the server's thread to process this
+special request. The primary thread waits for the server thread to
+acknowledge receipt of the request and for the server thread to
+terminate. When the server thread detects this special client request
+string, it exits its loop and the thread just terminates.</p>
+
+<p>I chose to have the primary thread wait for the server thread to die by
+calling <i>WaitForMultipleObjects</i> so that you would see how this
+function is used. In reality, I could have just called <i>
+WaitForSingleObject</i>, passing in the server thread's handle, and
+everything would have worked exactly the same.</p>
+
+<p>Once the primary thread knows that the server thread has stopped
+executing, I call <i>CloseHandle</i> three times to properly destroy
+all the kernel objects that the application was using. Of course, the
+system would do this for me automatically, but it just feels better to
+me when I do it myself. I like being in control of my code at all
+times.</p>
+
+<p>
+<b>Figure 9-1.</b> <i>The Handshake sample application</i>
+</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><b>Handshake.cpp</b></p>
+<PRE>
+/******************************************************************************
+Module:  Handshake.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#include &quot;..\CmnHdr.h&quot;     /* See Appendix A. */
+#include &lt;windowsx.h&gt;
+#include &lt;tchar.h&gt;
+#include &lt;process.h&gt;       // For beginthreadex
+#include &quot;Resource.h&quot;
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+// This event is signaled when the client has a request for the server
+HANDLE g_hevtRequestSubmitted;
+
+// This event is signaled when the server has a result for the client
+HANDLE g_hevtResultReturned;
+
+// The buffer shared between the client and server threads
+TCHAR  g_szSharedRequestAndResultBuffer[1024];
+
+// The special value sent from the client that causes the 
+// server thread to terminate cleanly.
+TCHAR  g_szServerShutdown[] = TEXT(&quot;Server Shutdown&quot;);
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+// This is the code executed by the server thread
+DWORD WINAPI ServerThread(PVOID pvParam) {
+
+   // Assume that the server thread is to run forever
+   BOOL fShutdown = FALSE;
+
+   while (!fShutdown) {
+
+      // Wait for the client to submit a request
+      WaitForSingleObject(g_hevtRequestSubmitted, INFINITE);
+
+      // Check to see if the client wants the server to terminate
+      fShutdown = 
+         (lstrcmpi(g_szSharedRequestAndResultBuffer, g_szServerShutdown) == 0);
+
+      if (!fShutdown) {
+         // Process the client's request (reverse the string)
+         _tcsrev(g_szSharedRequestAndResultBuffer);
+      }
+
+      // Let the client process the request's result
+      SetEvent(g_hevtResultReturned);
+   }
+
+   // The client wants us to shutdown, exit
+   return(0);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL Dlg_OnInitDialog(HWND hwnd, HWND hwndFocus, LPARAM lParam) {
+
+   chSETDLGICONS(hwnd, IDI_HANDSHAKE);
+
+   // Initialize the edit control with some test data request
+   Edit_SetText(GetDlgItem(hwnd, IDC_REQUEST), TEXT(&quot;Some test data&quot;));
+
+   return(TRUE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify) {
+
+   switch (id) {
+
+      case IDCANCEL:
+         EndDialog(hwnd, id);
+         break;
+
+      case IDC_SUBMIT:  // Submit a request to the server thread
+      
+         // Copy the request string into the shared data buffer
+         Edit_GetText(GetDlgItem(hwnd, IDC_REQUEST), 
+            g_szSharedRequestAndResultBuffer, 
+            chDIMOF(g_szSharedRequestAndResultBuffer));
+
+         // Let the server thread know that a request is ready in the buffer
+         SetEvent(g_hevtRequestSubmitted);
+
+         // Wait for the server to process the request and give us the result
+         WaitForSingleObject(g_hevtResultReturned, INFINITE);
+
+         // Let the user know the result
+         Edit_SetText(GetDlgItem(hwnd, IDC_RESULT), 
+            g_szSharedRequestAndResultBuffer);
+
+         break;
+   }
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+INT_PTR WINAPI Dlg_Proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+   
+   switch (uMsg) {
+      chHANDLE_DLGMSG(hwnd, WM_INITDIALOG, Dlg_OnInitDialog);
+      chHANDLE_DLGMSG(hwnd, WM_COMMAND,    Dlg_OnCommand);
+   }
+
+   return(FALSE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+int WINAPI _tWinMain(HINSTANCE hinstExe, HINSTANCE, PTSTR pszCmdLine, int) {
+
+   // Create &amp; initialize the 2 nonsignaled, auto-reset events
+   g_hevtRequestSubmitted = CreateEvent(NULL, FALSE, FALSE, NULL);
+   g_hevtResultReturned   = CreateEvent(NULL, FALSE, FALSE, NULL);
+
+   // Spawn the server thread
+   DWORD dwThreadID;
+   HANDLE hThreadServer = chBEGINTHREADEX(NULL, 0, ServerThread, NULL, 
+      0, &amp;dwThreadID);
+
+   // Execute the client thread's user-interface
+   DialogBox(hinstExe, MAKEINTRESOURCE(IDD_HANDSHAKE), NULL, Dlg_Proc);
+
+   // The client's UI is closing, have the server thread shutdown
+   lstrcpy(g_szSharedRequestAndResultBuffer, g_szServerShutdown);
+   SetEvent(g_hevtRequestSubmitted);
+
+   // Wait for the server thread to acknowledge the shutdown AND
+   // wait for the server thread to fully terminate
+   HANDLE h[2];
+   h[0] = g_hevtResultReturned;
+   h[1] = hThreadServer;
+   WaitForMultipleObjects(2, h, TRUE, INFINITE);
+
+   // Properly clean up everything
+   CloseHandle(hThreadServer);      
+   CloseHandle(g_hevtRequestSubmitted);      
+   CloseHandle(g_hevtResultReturned);      
+
+   // The client thread terminates with the whole process
+   return(0);
+}
+
+
+//////////////////////////////// End of File //////////////////////////////////
+</PRE>
+</TD></TR></TABLE>
+</P>
+
+<P>
+<TABLE CELLPADDING=5 WIDTH ="95%">
+<TR><TD>
+<p><b>Handshake.rc</b></p>
+<PRE>
+//Microsoft Developer Studio generated resource script.
+//
+#include &quot;resource.h&quot;
+
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+/////////////////////////////////////////////////////////////////////////////
+// English (U.S.) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+#ifdef _WIN32
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(1252)
+#endif //_WIN32
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
+
+IDD_HANDSHAKE DIALOG DISCARDABLE  0, 0, 256, 81
+STYLE DS_CENTER | WS_MINIMIZEBOX | WS_CAPTION | WS_SYSMENU
+CAPTION &quot;Handshake&quot;
+FONT 8, &quot;MS Sans Serif&quot;
+BEGIN
+    GROUPBOX        &quot;Client side&quot;,IDC_STATIC,4,4,248,72
+    LTEXT           &quot;&amp;Request:&quot;,IDC_STATIC,12,18,30,8
+    EDITTEXT        IDC_REQUEST,48,16,196,14,ES_AUTOHSCROLL
+    DEFPUSHBUTTON   &quot;&amp;Submit Request to Server&quot;,IDC_SUBMIT,80,36,96,14
+    LTEXT           &quot;Result:&quot;,IDC_STATIC,12,58,23,8
+    EDITTEXT        IDC_RESULT,48,56,196,16,ES_AUTOHSCROLL | ES_READONLY
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// DESIGNINFO
+//
+
+#ifdef APSTUDIO_INVOKED
+GUIDELINES DESIGNINFO DISCARDABLE 
+BEGIN
+    IDD_HANDSHAKE, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 249
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 74
+    END
+END
+#endif    // APSTUDIO_INVOKED
+
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// TEXTINCLUDE
+//
+
+1 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;resource.h\0&quot;
+END
+
+2 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;#include &quot;&quot;afxres.h&quot;&quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+3 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+#endif    // APSTUDIO_INVOKED
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+// Icon with lowest ID value placed first to ensure application icon
+// remains consistent on all systems.
+IDI_HANDSHAKE           ICON    DISCARDABLE     &quot;Handshake.ico&quot;
+#endif    // English (U.S.) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 3 resource.
+//
+
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED
+</pre></td></tr></table></p>
+
+
+</BODY>
+</HTML>
+
+
+
+
+
+

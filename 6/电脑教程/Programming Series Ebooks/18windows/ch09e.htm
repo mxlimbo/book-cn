@@ -1,0 +1,491 @@
+<HTML>
+<HEAD>
+	<LINK REL=StyleSheet HREF="petzoldi.css" TYPE="text/css">
+<title>The Scroll Bar Class</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="254"><h1>The Scroll Bar Class</h1></A>
+<p>When the subject of scroll bars first came up in <a href="ch04a.htm#62">Chapter 4</a>, I discussed some of the differences between &quot;window scroll bars&quot; and &quot;scroll bar controls.&quot; The SYSMETS programs use window scroll bars, which appear at the right and bottom of the window. You add window scroll bars to a window by including the identifier WS_VSCROLL or WS_HSCROLL or both in the window style when creating the window. Now we're ready to make some scroll bar controls, which are child windows that can appear anywhere in the client area of the parent window. You create child window scroll bar controls by using the predefined window class &quot;scrollbar&quot; and one of the two scroll bar styles SBS_VERT and SBS_HORZ.
+
+<p>Unlike the button controls (and the edit and list box controls to be discussed later), scroll bar controls do not send WM_COMMAND messages to the parent window. Instead, they send WM_VSCROLL and WM_HSCROLL messages, just like window scroll bars. When processing the scroll bar messages, you can differentiate between window scroll bars and scroll bar controls by the <I>lParam</I> parameter. It will be 0 for window scroll bars and the scroll bar window handle for scroll bar controls. The high and low words of the <I>wParam</I> parameter have the same meaning for window scroll bars and scroll bar controls.
+
+<p>Although window scroll bars have a fixed width, Windows uses the full rectangle dimensions given in the <I>CreateWindow</I> call (or later in the <I>MoveWindow</I> call) to size the scroll bar controls. You can make long, thin scroll bar controls or short, pudgy scroll bar controls.
+
+
+<p>If you want to create scroll bar controls that have the same dimensions as window scroll bars, you can use <I>GetSystemMetrics</I> to obtain the height of a horizontal scroll bar:
+
+<p><pre>
+GetSystemMetrics (SM_CYHSCROLL) ;
+</PRE>
+
+<p>or the width of a vertical scroll bar:
+
+<p><pre>
+GetSystemMetrics (SM_CXVSCROLL) ;
+</PRE>
+
+<p>The scroll bar window style identifiers SBS_LEFTALIGN, SBS_RIGHTALIGN, SBS_TOP ALIGN, and SBS_BOTTOMALIGN are documented to give standard dimensions to scroll bars. However, these styles work only for scroll bars in dialog boxes.
+
+<p>You can set the range and position of a scroll bar control with the same calls used for window scroll bars:
+
+<p><pre>
+SetScrollRange (hwndScroll, SB_CTL, iMin, iMax, bRedraw) ;
+SetScrollPos (hwndScroll, SB_CTL, iPos, bRedraw) ;
+SetScrollInfo (hwndScroll, SB_CTL, &amp;si, bRedraw) ;
+</PRE>
+
+<p>The difference is that window scroll bars use a handle to the main window as the first parameter and SB_VERT or SB_HORZ as the second parameter.
+
+<p>Amazingly enough, the system color named COLOR_SCROLLBAR is no longer used for scroll bars. The end buttons and thumb are based on COLOR_BTNFACE, COLOR_BTNHILIGHT, COLOR_BTNSHADOW, COLOR_BTNTEXT (for the little arrows), COLOR_DKSHADOW, and COLOR_BTNLIGHT. The large area between the two end buttons is based on a combination of COLOR_BTNFACE and COLOR_BTNHIGHLIGHT.
+
+<p>If you trap WM_CTLCOLORSCROLLBAR messages, you can return a brush from the message to override the color used for this area. Let's do it.
+
+<A NAME="255"><h2>The COLORS1 Program</h2></A>
+<p>To see some uses of scroll bars and static child windows&#8212;and also to explore color in more depth&#8212;we'll use the COLORS1 program, shown in Figure 9-5. COLORS1 displays three scroll bars in the left half of the client area labeled &quot;Red,&quot; &quot;Green,&quot; and &quot;Blue.&quot; As you scroll the scroll bars, the right half of the client area changes to the composite color indicated by the mix of the three primary colors. The numeric values of the three primary colors are displayed under the three scroll bars.
+
+
+
+<p><B>Figure 9-5.</B> <I>The COLORS1 program.</I>
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="256"><H3>COLORS1.C</H3></A>
+<p><pre>
+/*----------------------------------------
+   COLORS1.C -- Colors Using Scroll Bars
+                (c) Charles Petzold, 1998
+  ----------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+LRESULT CALLBACK WndProc    (HWND, UINT, WPARAM, LPARAM) ;
+LRESULT CALLBACK ScrollProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int     idFocus ;
+WNDPROC OldScroll[3] ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName[] = TEXT (&quot;Colors1&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+     
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = CreateSolidBrush (0) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Color Scroll&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage  (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static COLORREF crPrim[3] = { RGB (255, 0, 0), RGB (0, 255, 0),
+                                   RGB (0, 0, 255) } ;
+     static HBRUSH  hBrush[3], hBrushStatic ;
+     static HWND    hwndScroll[3], hwndLabel[3], hwndValue[3], hwndRect ;
+     static int     color[3], cyChar ;
+     static RECT    rcColor ;
+     static TCHAR * szColorLabel[] = { TEXT (&quot;Red&quot;), TEXT (&quot;Green&quot;), 
+                                       TEXT (&quot;Blue&quot;) } ;
+     HINSTANCE      hInstance ;
+     int            i, cxClient, cyClient ;
+     TCHAR          szBuffer[10] ;
+     
+     switch (message)
+     {
+     case WM_CREATE :
+          hInstance = (HINSTANCE) GetWindowLong (hwnd, GWL_HINSTANCE) ;
+          
+               // Create the white-rectangle window against which the 
+               // scroll bars will be positioned. The child window ID is 9.
+          
+          hwndRect = CreateWindow (TEXT (&quot;static&quot;), NULL,
+                                   WS_CHILD | WS_VISIBLE | SS_WHITERECT,
+                                   0, 0, 0, 0,
+                                   hwnd, (HMENU) 9, hInstance, NULL) ;
+          
+          for (i = 0 ; i &lt; 3 ; i++)
+          {
+                    // The three scroll bars have IDs 0, 1, and 2, with
+                    // scroll bar ranges from 0 through 255.
+               
+               hwndScroll[i] = CreateWindow (TEXT (&quot;scrollbar&quot;), NULL,
+                                             WS_CHILD | WS_VISIBLE | 
+                                             WS_TABSTOP | SBS_VERT,
+                                             0, 0, 0, 0, 
+                                             hwnd, (HMENU) i, hInstance, NULL) ;
+               
+               SetScrollRange (hwndScroll[i], SB_CTL, 0, 255, FALSE) ;
+               SetScrollPos   (hwndScroll[i], SB_CTL, 0, FALSE) ;
+               
+                    // The three color-name labels have IDs 3, 4, and 5, 
+                    // and text strings &quot;Red&quot;, &quot;Green&quot;, and &quot;Blue&quot;.
+               
+               hwndLabel [i] = CreateWindow (TEXT (&quot;static&quot;), szColorLabel[i],
+                                             WS_CHILD | WS_VISIBLE | SS_CENTER,
+                                             0, 0, 0, 0, 
+                                             hwnd, (HMENU) (i + 3), 
+                                             hInstance, NULL) ;
+               
+                    // The three color-value text fields have IDs 6, 7, 
+                    // and 8, and initial text strings of &quot;0&quot;.
+               
+               hwndValue [i] = CreateWindow (TEXT (&quot;static&quot;), TEXT (&quot;0&quot;),
+                                             WS_CHILD | WS_VISIBLE | SS_CENTER,
+                                             0, 0, 0, 0,
+                                             hwnd, (HMENU) (i + 6), 
+                                             hInstance, NULL) ;
+               
+               OldScroll[i] = (WNDPROC) SetWindowLong (hwndScroll[i], 
+                                             GWL_WNDPROC, (LONG) ScrollProc) ;
+               
+               hBrush[i] = CreateSolidBrush (crPrim[i]) ;
+          }
+          
+          hBrushStatic = CreateSolidBrush (
+                              GetSysColor (COLOR_BTNHIGHLIGHT)) ;
+          
+          cyChar = HIWORD (GetDialogBaseUnits ()) ;
+          return 0 ;
+          
+     case WM_SIZE :
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+
+          SetRect (&amp;rcColor, cxClient / 2, 0, cxClient, cyClient) ;
+          
+          MoveWindow (hwndRect, 0, 0, cxClient / 2, cyClient, TRUE) ;
+          
+          for (i = 0 ; i &lt; 3 ; i++)
+          {
+               MoveWindow (hwndScroll[i],
+                           (2 * i + 1) * cxClient / 14, 2 * cyChar,
+                           cxClient / 14, cyClient - 4 * cyChar, TRUE) ;
+               
+               MoveWindow (hwndLabel[i],
+                           (4 * i + 1) * cxClient / 28, cyChar / 2,
+                           cxClient / 7, cyChar, TRUE) ;
+               
+               MoveWindow (hwndValue[i],
+                           (4 * i + 1) * cxClient / 28, 
+                           cyClient - 3 * cyChar / 2,
+                           cxClient / 7, cyChar, TRUE) ;
+          }
+          SetFocus (hwnd) ;
+          return 0 ;
+          
+     case WM_SETFOCUS :
+          SetFocus (hwndScroll[idFocus]) ;
+          return 0 ;
+          
+     case WM_VSCROLL :
+          i = GetWindowLong ((HWND) lParam, GWL_ID) ;
+          
+          switch (LOWORD (wParam))
+          {
+          case SB_PAGEDOWN :
+               color[i] += 15 ;
+                                             // fall through
+          case SB_LINEDOWN :
+               color[i] = min (255, color[i] + 1) ;
+               break ;
+               
+          case SB_PAGEUP :
+               color[i] -= 15 ;
+                                             // fall through
+          case SB_LINEUP :
+               color[i] = max (0, color[i] - 1) ;
+               break ;
+               
+          case SB_TOP :
+               color[i] = 0 ;
+               break ;
+               
+          case SB_BOTTOM :
+               color[i] = 255 ;
+               break ;
+               
+          case SB_THUMBPOSITION :
+          case SB_THUMBTRACK :
+               color[i] = HIWORD (wParam) ;
+               break ;
+               
+          default :
+               break ;
+          }
+          SetScrollPos  (hwndScroll[i], SB_CTL, color[i], TRUE) ;
+          wsprintf (szBuffer, TEXT (&quot;%i&quot;), color[i]) ;
+          SetWindowText (hwndValue[i], szBuffer) ;
+          
+          DeleteObject ((HBRUSH) 
+               SetClassLong (hwnd, GCL_HBRBACKGROUND, (LONG) 
+                    CreateSolidBrush (RGB (color[0], color[1], color[2])))) ;
+          
+          InvalidateRect (hwnd, &amp;rcColor, TRUE) ;
+          return 0 ;
+          
+     case WM_CTLCOLORSCROLLBAR :
+          i = GetWindowLong ((HWND) lParam, GWL_ID) ;
+          return (LRESULT) hBrush[i] ;
+               
+     case WM_CTLCOLORSTATIC :
+          i = GetWindowLong ((HWND) lParam, GWL_ID) ;
+               
+          if (i &gt;= 3 &amp;&amp; i &lt;= 8)    // static text controls
+          {
+               SetTextColor ((HDC) wParam, crPrim[i % 3]) ;
+               SetBkColor ((HDC) wParam, GetSysColor (COLOR_BTNHIGHLIGHT));
+               return (LRESULT) hBrushStatic ;
+          }
+          break ;
+               
+     case WM_SYSCOLORCHANGE :
+          DeleteObject (hBrushStatic) ;
+          hBrushStatic = CreateSolidBrush (GetSysColor (COLOR_BTNHIGHLIGHT)) ;
+          return 0 ;
+
+     case WM_DESTROY :
+          DeleteObject ((HBRUSH)
+               SetClassLong (hwnd, GCL_HBRBACKGROUND, (LONG) 
+                    GetStockObject (WHITE_BRUSH))) ;
+               
+          for (i = 0 ; i &lt; 3 ; i++)
+               DeleteObject (hBrush[i]) ;
+               
+          DeleteObject (hBrushStatic) ;
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+     
+LRESULT CALLBACK ScrollProc (HWND hwnd, UINT message, 
+                             WPARAM wParam, LPARAM lParam)
+{
+     int id = GetWindowLong (hwnd, GWL_ID) ;
+          
+     switch (message)
+     {
+     case WM_KEYDOWN :
+          if (wParam == VK_TAB)
+               SetFocus (GetDlgItem (GetParent (hwnd), 
+                    (id + (GetKeyState (VK_SHIFT) &lt; 0 ? 2 : 1)) % 3)) ;
+          break ;
+               
+     case WM_SETFOCUS :
+          idFocus = id ;
+          break ;
+     }
+     return CallWindowProc (OldScroll[id], hwnd, message, wParam, lParam) ;
+}
+</pre>
+</TD></TR></TABLE>
+
+<p>COLORS1 puts its children to work. The program uses 10 child window controls: 3 scroll bars, 6 windows of static text, and 1 static rectangle. COLORS1 traps WM_CTLCOLORSCROLLBAR messages to color the interior sections of the three scroll bars red, green, and blue and traps WM_CTLCOLORSTATIC messages to color the static text.
+
+<p>You can scroll the scroll bars using either the mouse or the keyboard. You can use COLORS1 as a development tool in experimenting with color and choosing attractive (or, if you prefer, ugly) colors for your own Windows programs. The COLORS1 display is shown in Figure 9-6, unfortunately reduced to gray shades for the printed page.
+
+<p><A HREF="javascript:fullSize('F09zg06x.htm')"> <img src="F09zg06.JPG" width=404 height=284 border=0 ALT="Click to view at full size."> </A>
+
+<p><!-- caption --><B>Figure 9-6.</B> <I>The COLORS1 display.</I><!-- /caption -->
+
+<p>COLORS1 doesn't process WM_PAINT messages. Virtually all of the work in COLORS1 is done by the child windows.
+
+<p>The color shown in the right half of the client area is actually the window's background color. A static child window with style SS_WHITERECT blocks out the left half of the client area. The three scroll bars are child window controls with the style SBS_VERT. These scroll bars are positioned on top of the SS_WHITERECT child. Six more static child windows of style SS_CENTER (centered text) provide the labels and the color values. COLORS1 creates its normal overlapped window and the 10 child windows within the <I>WinMain</I> function using <I>CreateWindow</I>. The SS_WHITERECT and SS_CENTER static windows use the window class &quot;static&quot;; the three scroll bars use the window class &quot;scrollbar.&quot;
+
+<p>The <I>x</I> position, <I>y</I> position, width, and height parameters of the <I>CreateWindow</I> calls are initially set to 0 because the position and sizing depend on the size of the client area, which is not yet known. COLORS1's window procedure resizes all 10 child windows using <I>MoveWindow</I> when it receives a WM_SIZE message. So whenever you resize the COLORS1 window, the size of the scroll bars changes proportionally.
+
+<p>When the <I>WndProc</I> window procedure receives a WM_VSCROLL message, the high word of the <I>lParam</I> parameter is the handle to the child window. We can use <I>GetWindowWord</I> to get the window ID number:
+
+<p><pre>
+i = GetWindowLong ((HWND) lParam, GWL_ID) ;
+</PRE>
+
+<p>For the three scroll bars, we have conveniently set the ID numbers to 0, 1, and 2, so <I>WndProc</I> can tell which scroll bar is generating the message.
+
+<p>Because the handles to the child windows were saved in arrays when the windows were created, <I>WndProc</I> can process the scroll bar message and set the new value of the appropriate scroll bar using the <I>SetScrollPos</I> call:
+
+<p><pre>
+SetScrollPos (hwndScroll[i], SB_CTL, color[i], TRUE) ;
+</PRE>
+
+<p><I>WndProc</I> also changes the text of the child window at the bottom of the scroll bar:
+
+<p><pre>
+wsprintf (szBuffer, TEXT (&quot;%i&quot;), color[I]) ;
+SetWindowText (hwndValue[i], szBuffer) ;
+</PRE>
+
+<A NAME="257"><h2>The Automatic Keyboard Interface</h2></A>
+<p>Scroll bar controls can also process keystrokes, but only if they have the input focus. The following table shows how keyboard cursor keys translate into scroll bar messages:
+
+<P>
+<table CELLPADDING="5" WIDTH="95%">
+<tr><td valign="top"><B><I>Cursor Key</I></B></td>
+<td valign="top"><B><I>Scroll Bar Message </I>wParam<I> Value</I></B></td></tr>
+<tr><td VALIGN="top">Home</td>
+<td VALIGN="top">SB_TOP</td></tr>
+<tr><td VALIGN="top">End</td>
+<td VALIGN="top">SB_BOTTOM</td></tr>
+
+<tr><td VALIGN="top">Page Up</td>
+<td VALIGN="top">SB_PAGEUP</td></tr>
+<tr><td VALIGN="top">Page Down</td>
+<td VALIGN="top">SB_PAGEDOWN</td></tr>
+<tr><td VALIGN="top">Left or Up</td>
+<td VALIGN="top">SB_LINEUP</td></tr>
+<tr><td VALIGN="top">Right or Down</td>
+<td VALIGN="top">SB_LINEDOWN</td></tr>
+</table> 
+
+<p>In fact, the SB_TOP and SB_BOTTOM scroll bar messages can be generated only by using the keyboard. If you want a scroll bar control to obtain the input focus when the scroll bar is clicked with the mouse, you must include the WS_TABSTOP identifier in the window class parameter of the <I>CreateWindow</I> call. When a scroll bar has the input focus, a blinking gray block is displayed on the scroll bar thumb.
+
+<p>To provide a full keyboard interface to the scroll bars, however, more work is necessary. First the <I>WndProc</I> window procedure must specifically give a scroll bar the input focus. It does this by processing the WM_SETFOCUS message, which the parent window receives when it obtains the input focus. <I>WndProc</I> simply sets the input focus to one of the scroll bars:
+
+<p><pre>
+SetFocus (hwndScroll[idFocus]) ;
+</PRE>
+
+<p>where <I>idFocus</I> is a global variable.
+
+<p>But you also need some way to get from one scroll bar to another by using the keyboard, preferably by using the Tab key. This is more difficult, because once a scroll bar has the input focus it processes all keystrokes. But the scroll bar cares only about the cursor keys; it ignores the Tab key. The way out of this dilemma lies in a technique called &quot;window subclassing.&quot; We'll use it to add a facility to COLORS1 to jump from one scroll bar to another using the Tab key.
+
+<A NAME="258"><h2>Window Subclassing</h2></A>
+<p>The window procedure for the scroll bar controls is somewhere inside Windows. However, you can obtain the address of this window procedure by a call to <I>GetWindowLong</I> using the GWL_WNDPROC identifier as a parameter. Moreover, you can set a new window procedure for the scroll bars by calling <I>SetWindowLong</I>. This technique, which is called &quot;window subclassing,&quot; is very powerful. It lets you hook into existing window procedures, process some messages within your own program, and pass all other messages to the old window procedure.
+
+<p>The window procedure that does preliminary scroll bar message processing in COLORS1 is named <I>ScrollProc</I>; it is toward the end of the COLORS1.C listing. Because <I>ScrollProc</I> is a function within COLORS1 that is called by Windows, it must be defined as a CALLBACK.
+
+<p>For each of the three scroll bars, COLORS1 uses <I>SetWindowLong</I> to set the address of the new scroll bar window procedure and also obtain the address of the existing scroll bar window procedure:
+
+<p><pre>
+OldScroll[i] = (WNDPROC) SetWindowLong (hwndScroll[i], GWL_WNDPROC,
+                                       (LONG) ScrollProc)) ;
+</PRE>
+
+<p>Now the function <I>ScrollProc</I> gets all messages that Windows sends to the scroll bar window procedure for the three scroll bars in COLORS1 (but not, of course, for scroll bars in other programs). The <I>ScrollProc</I> window procedure simply changes the input focus to the next (or previous) scroll bar when it receives a Tab or Shift-Tab keystroke. It calls the old scroll bar window procedure using <I>CallWindowProc</I>.
+
+
+
+<A NAME="259"><h2>Coloring the Background</h2></A>
+<p>When COLORS1 defines its window class, it gives the background of its client area a solid black brush:
+
+<p><pre>
+wndclass.hbrBackground = CreateSolidBrush (0) ;
+</PRE>
+
+<p>When you change the settings of COLORS1's scroll bars, the program must create a new brush and put the new brush handle in the window class structure. Just as we were able to get and set the scroll bar window procedure using <I>GetWindowLong</I> and <I>SetWindowLong</I>, we can get and set the handle to this brush using <I>GetClassWord</I> and <I>SetClassWord</I>.
+
+<p>You can create the new brush and insert the handle in the window class structure and then delete the old brush:
+
+<p><pre>
+DeleteObject ((HBRUSH)
+     SetClassLong (hwnd, GCL_HBRBACKGROUND, (LONG)
+          CreateSolidBrush (RGB (color[0], color[1], color[2])))) ;
+</PRE>
+
+<p>The next time Windows recolors the background of the window, Windows will use this new brush. To force Windows to erase the background, we invalidate the right half of the client area:
+
+<p><pre>
+InvalidateRect (hwnd, &amp;rcColor, TRUE) ;
+</PRE>
+
+<p>The TRUE (nonzero) value as the third parameter indicates that we want the background erased before repainting.
+
+<p><I>InvalidateRect</I> causes Windows to put a WM_PAINT message in the message queue of the window procedure. Because WM_PAINT messages are low priority, this message will not be processed immediately if you are still moving the scroll bar with the mouse or the cursor keys. Alternatively, if you want the window to be updated immediately after the color is changed, you can add the statement
+
+<p><pre>
+UpdateWindow (hwnd) ;
+</PRE>
+
+<p>after the <I>InvalidateRect</I> call. But this might slow down keyboard and mouse processing.
+
+<p>COLORS1's <I>WndProc</I> function doesn't process the WM_PAINT message but passes it to <I>DefWindowProc</I>. Windows' default processing of WM_PAINT messages simply involves calling <I>BeginPaint</I> and <I>EndPaint</I> to validate the window. Because we specified in the <I>InvalidateRect</I> call that the background should be erased, the <I>BeginPaint</I> call causes Windows to generate a WM_ERASEBKGND (erase background) message. <I>WndProc</I> ignores this message also. Windows processes it by erasing the background of the client area using the brush specified in the window class.
+
+<p>It's always a good idea to clean up before termination, so during processing of the WM_DESTROY message, <I>DeleteObject</I> is called once more:
+
+<p><pre>
+DeleteObject ((HBRUSH)
+     SetClassLong (hwnd, GCL_HBRBACKGROUND,
+          (LONG) GetStockObject (WHITE_BRUSH))) ;
+</PRE>
+
+
+
+<A NAME="260"><h2>Coloring the Scroll Bars and Static Text</h2></A>
+<p>In COLORS1, the interiors of the three scroll bars and the text in the six text fields are colored red, green, and blue. The coloring of the scroll bars is accomplished by processing WM_CTLCOLORSCROLLBAR messages.
+
+<p>In <I>WndProc</I> we define a static array of three handles to brushes:
+
+<p><pre>
+static HBRUSH hBrush [3] ;
+</PRE>
+
+<p>During processing of WM_CREATE, we create the three brushes:
+
+<p><pre>
+for (I = 0 ; I &lt; 3 ; I++)
+     hBrush[0] = CreateSolidBrush (crPrim [I]) ;
+</PRE>
+
+<p>where the <I>crPrim</I> array contains the RGB values of the three primary colors. During the WM_CTLCOLORSCROLLBAR processing, the window procedure returns one of these three brushes:
+
+<p><pre>
+case WM_CTLCOLORSCROLLBAR:
+     i = GetWindowLong ((HWND) lParam, GWL_ID) ;
+     return (LRESULT) hBrush [i] ;
+</PRE>
+
+<p>These brushes must be destroyed during processing of the WM_DESTROY message:
+
+<p><pre>
+for (i = 0 ; i &lt; 3 ; i++)
+     DeleteObject (hBrush [i])) ;
+</PRE>
+
+<p>The text in the static text fields is colored similarly by processing the WM_CTLCOLORSTATIC message and calling <I>SetTextColor</I>. The text background is set using <I>SetBkColor</I> with the system color COLOR_BTNHIGHLIGHT. This causes the text background to be the same color as the static rectangle control behind the scrollbars and text displays. For static text controls, this text background color applies only to the rectangle behind each character in the string and not to the entire width of the control window. To accomplish this, the window procedure must also return a handle to a brush of the COLOR_BTNHIGHLIGHT color. This brush is named <I>hBrushStatic</I>; it is created during the WM_CREATE message and destroyed during the WM_DESTROY message.
+
+<p>By creating a brush based on the COLOR_BTNHIGHLIGHT color during the WM_CREATE message and using it through the duration of the program, we've exposed ourselves to a little problem. If the COLOR_BTNHIGHLIGHT color is changed while the program is running, the color of the static rectangle will change and the text background color will change but the whole background of the text window controls will remain the old COLOR_BTNHIGHLIGHT color.
+
+<p>To fix this problem, COLORS1 also processes the WM_SYSCOLORCHANGE message by simply recreating <I>hBrushStatic</I> using the new color.
+
+</BODY>
+</HTML>
+
+
+
+
+
+

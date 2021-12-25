@@ -1,0 +1,858 @@
+<HTML>
+<HEAD>
+	<LINK REL=StyleSheet HREF="petzoldi.css" TYPE="text/css">
+<title>Palette Animation</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="537"><h1>Palette Animation</h1></A>
+
+<P>If you saw the word &quot;animation&quot; in the title of this section and started thinking about kwazy wabbits running around your screen, your sights are probably set a little too high. Yes, you can do some animation using the Windows Palette Manager, but it is a rather specialized form of animation.
+
+<P>Usually, animation under Windows involves displaying a series of bitmaps in quick succession. Palette animation is quite different. You begin by drawing everything you need on the screen, and then you manipulate the palette to change the colors of these objects, perhaps rendering some of the images invisible against the screen background. In this way, you can get animation effects without redrawing anything. Palette animation is consequently very fast.
+
+<P>The initial creation of the palette for use in palette animation is a little different from what we've seen earlier: The <I>peFlags</I> field of the PALETTEENTRY structure must be set to PC_RESERVED for each RGB color value that will be changed during animation.
+
+<P>Normally, as we've seen, you set the <I>peFlags</I> flag to 0 when you create a logical palette. This allows the GDI to map identical colors from multiple logical palettes into the same system palette entry. For example, suppose two Windows programs create logical palettes containing the RGB entry 10-10-10. Windows needs only one 10-10-10 entry in the system palette table. But if one of these two programs is using palette animation, then you don't want GDI to do this. Palette animation is intended to be very fast&#8212;and it can only be fast if no redrawing occurs. When the program using palette animation changes the palette, it should not affect other programs or force GDI to reorganize the system palette table. The <I>peFlags</I> value of PC_RESERVED reserves the system palette entry for a single logical palette.
+
+<P>When using palette animation, you call <I>SelectPalette</I> and <I>RealizePalette</I> as normal during the WM_PAINT message. You specify color using the PALETTEINDEX macro. This macro takes an index into the logical palette table.
+
+<P>For animation, you probably want to change the palette in response to a WM_TIMER message. To change the RGB color values in the logical palette, you call the function <I>AnimatePalette</I> using an array of PALETTEENTRY structures. This function is fast because it needs to change entries in the system palette only and, consequently, the video board hardware palette table.
+
+<A NAME="538"><h2>The Bouncing Ball</h2></A>
+<P>Figure 16-8 shows the components of the BOUNCE program, yet another program that displays a bouncing ball. For purposes of simplicity, this ball is drawn as an ellipse depending on the size of the client area. Because I have several palette animation programs in this chapter, the PALANIM.C (&quot;palette animation&quot;) file contains some overhead common to all of them.
+
+
+<P><B>Figure 16-8.</b> <i>The BOUNCE program.</I>
+<table cellpadding=5 width="95%"><tr><td>
+<A NAME="539"><h3>PALANIM.C</h3></A>
+<P><pre>
+/*----------------------------------------------
+   PALANIM.C -- Palette Animation Shell Program
+                (c) Charles Petzold, 1998
+  ----------------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+extern HPALETTE CreateRoutine  (HWND) ;
+extern void     PaintRoutine   (HDC, int, int) ;
+extern void     TimerRoutine   (HDC, HPALETTE) ;
+extern void     DestroyRoutine (HWND, HPALETTE) ;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+extern TCHAR szAppName [] ;
+extern TCHAR szTitle [] ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     HWND     hwnd ;
+     MSG      msg ;
+     WNDCLASS wndclass ;
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, szTitle, 
+                          WS_OVERLAPPEDWINDOW, 
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+
+     if (!hwnd)
+          return 0 ;
+
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+BOOL CheckDisplay (HWND hwnd)
+{
+     HDC hdc ;
+     int iPalSize ;
+
+     hdc = GetDC (hwnd) ;
+     iPalSize = GetDeviceCaps (hdc, SIZEPALETTE) ;
+     ReleaseDC (hwnd, hdc) ;
+     if (iPalSize != 256)
+     {
+          MessageBox (hwnd, TEXT (&quot;This program requires that the video &quot;)
+                            TEXT (&quot;display mode have a 256-color palette.&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return FALSE ;
+     }
+     return TRUE ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static HPALETTE hPalette ;
+     static int      cxClient, cyClient ;
+     HDC             hdc ;
+     PAINTSTRUCT     ps ;
+
+     switch (message)
+     {
+     case WM_CREATE:
+          if (!CheckDisplay (hwnd))
+               return -1 ;
+
+          hPalette = CreateRoutine (hwnd) ;
+          return 0 ;
+     
+     case WM_DISPLAYCHANGE:
+          if (!CheckDisplay (hwnd))
+               DestroyWindow (hwnd) ;
+
+          return 0 ;
+
+     case WM_SIZE:
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+          return 0 ;
+
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+
+          SelectPalette (hdc, hPalette, FALSE) ;
+          RealizePalette (hdc) ;
+
+          PaintRoutine (hdc, cxClient, cyClient) ;
+
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+
+     case WM_TIMER:
+          hdc = GetDC (hwnd) ;
+
+          SelectPalette (hdc, hPalette, FALSE) ;
+
+          TimerRoutine (hdc, hPalette) ;
+
+          ReleaseDC (hwnd, hdc) ;
+          return 0 ;
+
+     case WM_QUERYNEWPALETTE:
+          if (!hPalette)
+               return FALSE ;
+
+          hdc = GetDC (hwnd) ;
+          SelectPalette (hdc, hPalette, FALSE) ;
+          RealizePalette (hdc) ;
+          InvalidateRect (hwnd, NULL, TRUE) ;
+
+          ReleaseDC (hwnd, hdc) ;
+          return TRUE ;
+
+     case WM_PALETTECHANGED:
+          if (!hPalette || (HWND) wParam == hwnd)
+               break ;
+
+          hdc = GetDC (hwnd) ;
+          SelectPalette (hdc, hPalette, FALSE) ;
+          RealizePalette (hdc) ;
+          UpdateColors (hdc) ;
+
+          ReleaseDC (hwnd, hdc) ;
+          break ;
+
+     case WM_DESTROY:
+          DestroyRoutine (hwnd, hPalette) ;
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</pre>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="540"><h3>BOUNCE.C</h3></A>
+<P><pre>
+/*---------------------------------------
+
+   BOUNCE.C -- Palette Animation Demo
+               (c) Charles Petzold, 1998
+  ---------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+#define ID_TIMER 1
+
+TCHAR szAppName [] = TEXT (&quot;Bounce&quot;) ;
+TCHAR szTitle   [] = TEXT (&quot;Bounce: Palette Animation Demo&quot;) ;
+
+static LOGPALETTE * plp ;
+
+HPALETTE CreateRoutine (HWND hwnd)
+{
+     HPALETTE hPalette ;
+     int      i ;
+
+     plp = malloc (sizeof (LOGPALETTE) + 33 * sizeof (PALETTEENTRY)) ;
+
+     plp-&gt;palVersion    = 0x0300 ;
+     plp-&gt;palNumEntries = 34 ;
+
+     for (i = 0 ; i &lt; 34 ; i++)
+     {
+          plp-&gt;palPalEntry[i].peRed   = 255 ;
+          plp-&gt;palPalEntry[i].peGreen = (i == 0 ? 0 : 255) ;
+          plp-&gt;palPalEntry[i].peBlue  = (i == 0 ? 0 : 255) ;
+          plp-&gt;palPalEntry[i].peFlags = (i == 33 ? 0 : PC_RESERVED) ;
+     }
+     hPalette = CreatePalette (plp) ;
+
+     SetTimer (hwnd, ID_TIMER, 50, NULL) ;
+     return hPalette ;
+}
+
+void PaintRoutine (HDC hdc, int cxClient, int cyClient)
+{
+     HBRUSH hBrush ;
+     int    i, x1, x2, y1, y2 ;
+     RECT   rect ;
+          // Draw window background using palette index 33
+
+     SetRect (&amp;rect, 0, 0, cxClient, cyClient) ;
+     hBrush = CreateSolidBrush (PALETTEINDEX (33)) ;
+     FillRect (hdc, &amp;rect, hBrush) ;
+     DeleteObject (hBrush) ;
+
+          // Draw the 33 balls
+
+     SelectObject (hdc, GetStockObject (NULL_PEN)) ;
+
+     for (i = 0 ; i &lt; 33 ; i++)
+     {
+          x1 =  i      * cxClient / 33 ;
+          x2 = (i + 1) * cxClient / 33 ;
+
+          if (i &lt; 9)
+          {
+               y1  = i      * cyClient / 9 ;
+               y2 = (i + 1) * cyClient / 9 ;
+          }
+          else if (i &lt; 17)
+          {
+               y1 = (16 - i) * cyClient / 9 ;
+               y2 = (17 - i) * cyClient / 9 ;
+          }
+          else if (i &lt; 25)
+          {
+               y1 = (i - 16) * cyClient / 9 ;
+               y2 = (i - 15) * cyClient / 9 ;
+          }
+          else 
+          {
+               y1 = (32 - i) * cyClient / 9 ;
+               y2 = (33 - i) * cyClient / 9 ;
+          }
+
+          hBrush = CreateSolidBrush (PALETTEINDEX (i)) ;
+          SelectObject (hdc, hBrush) ;
+          Ellipse (hdc, x1, y1, x2, y2) ;
+          DeleteObject (SelectObject (hdc, GetStockObject (WHITE_BRUSH))) ;
+     }
+     return ;
+}
+void TimerRoutine (HDC hdc, HPALETTE hPalette)
+{
+     static BOOL bLeftToRight = TRUE ;
+     static int  iBall ;
+
+          // Set old ball to white
+
+     plp-&gt;palPalEntry[iBall].peGreen = 255 ;
+     plp-&gt;palPalEntry[iBall].peBlue  = 255 ;
+
+     iBall += (bLeftToRight ? 1 : -1) ;
+
+     if (iBall == (bLeftToRight ? 33 : -1))
+     {
+          iBall = (bLeftToRight ? 31 : 1) ;
+          bLeftToRight ^= TRUE ;
+     }
+
+          // Set new ball to red
+
+     plp-&gt;palPalEntry[iBall].peGreen = 0 ;
+     plp-&gt;palPalEntry[iBall].peBlue  = 0 ;
+
+          // Animate the palette
+
+     AnimatePalette (hPalette, 0, 33, plp-&gt;palPalEntry) ;
+     return ;
+}
+
+void DestroyRoutine (HWND hwnd, HPALETTE hPalette)
+{
+     KillTimer (hwnd, ID_TIMER) ;
+     DeleteObject (hPalette) ;
+     free (plp) ;
+     return ;
+}
+</pre>
+</td></tr></table>
+
+<P>Palette animation will not work unless Windows is in a video mode that supports palettes. So, PALANIM.C begins WM_CREATE processing by calling its <I>CheckDisplay</I> function, the same function in the SYSPAL programs.
+
+<P>PALANIM.C calls four functions in BOUNCE.C: <I>CreateRoutine</I> during the WM_CREATE message (during which BOUNCE is expected to create a logical palette), <I>PaintRoutine</I> during the WM_PAINT message, <I>TimerRoutine</I> during the WM_TIMER message, and <I>DestroyRoutine</I> during the WM_DESTROY message (during which BOUNCE is expected to clean up). Prior to calling both <I>PaintRoutine</I> and <I>TimerRoutine</I>, PALANIM.C obtains a device context and selects the logical palette into it. Prior to calling <I>PaintRoutine</I>, it also realizes the palette. PALANIM.C expects <I>TimerRoutine</I> to call <I>AnimatePalette</I>. Although <I>AnimatePalette</I> requires the palette to be selected in the device context, it does not require a call to <I>RealizePalette</I>.
+
+
+<P>The ball in BOUNCE bounces back and forth in a &quot;W&quot; pattern within the client area. The background of the client area is white. The ball is red. At any time, the ball can be seen in one of 33 nonoverlapping positions. This requires 34 palette entries, one for the background and the other 33 for the different positions of the ball. In <I>CreateRoutine</I>, BOUNCE initializes an array of PALETTEENTRY structures by setting the first palette entry (corresponding to the position of the ball in the upper left corner) to red and the others to white. Notice that the <I>peFlags</I> field is set to PC_RESERVED for all entries except the background (the last palette entry). BOUNCE concludes <I>CreateRoutine</I> by setting a Windows timer with an interval of 50 msec.
+
+<P>BOUNCE does all its drawing in <I>PaintRoutine</I>. The background of the window is drawn with a solid brush with a color specified by a palette index of 33. The colors of the 33 balls are drawn with colors based on palette indices ranging from 0 to 32. When BOUNCE first draws on its client area, the palette index of 0 maps to red and the other palette indices map to white. This causes the ball to appear in the upper left corner.
+
+<P>The animation occurs when <I>WndProc</I> processes the WM_TIMER message and calls <I>TimerRoutine</I>. <I>TimerRoutine</I> concludes by calling <I>AnimatePalette</I>, which has the following syntax:
+
+<p><pre>
+AnimatePalette (hPalette, uStart, uNum, &amp;pe) ;
+</PRE>
+
+<P>The first argument is a handle to the palette, and the last argument is a pointer to one or more PALETTEENTRY structures arranged as an array. The function alters one or more entries in the logical palette beginning with the <I>uStart</I> entry and continuing for <I>uNum</I> entries. The new <I>uStart</I> entry in the logical palette is taken from the first element in the PALETTEENTRY structure. Watch out! The <I>uStart</I> parameter is an index into the original logical palette table, not an index into the PALETTEENTRY array.
+
+<P>For convenience, BOUNCE uses the array of PALETTEENTRY structures that is part of the LOGPALETTE structure used when creating the logical palette. The current position of the ball (from 0 to 32) is stored as the static <I>iBall</I> variable. During <I>TimerRoutine</I>, BOUNCE sets that PALETTEENTRY element to white. It then calculates a new position of the ball and sets that element to red. The palette is changed with the call
+
+<p><pre>
+AnimatePalette (hPalette, 0, 33, plp-&gt;palPalEntry) ;
+</PRE>
+
+<P>GDI changes the first 33 logical palette entries (although only 2 actually change), makes the corresponding changes in the system palette table, and then changes the hardware palette table on the video board. The ball appears to move without any redrawing.
+
+<P>You may find it instructive to run SYSPAL2 or SYSPAL3 while BOUNCE is running.
+
+<P>Although <I>AnimatePalette</I> works very quickly, you should probably avoid changing all the logical palette entries when only one or two actually change. This is a little complicated in BOUNCE because the ball bounces back and forth&#8212;<I>iBall</I> is first incremented and then decremented. One approach would be to have two other variables called <I>iBallOld</I> (set to the previous position of the ball) and <I>iBallMin</I> (the lesser of <I>iBall</I> and <I>iBallOld</I>). You then call <I>AnimatePalette</I> like this to change just the two entries:
+
+<p><pre>
+iBallMin = min (iBall, iBallOld) ;
+AnimatePalette (hPal, iBallMin, 2, plp-&gt;palPalEntry + iBallMin) ;
+</PRE>
+
+<P>Here's another approach: Let's suppose you first define a single PALETTEENTRY structure:
+
+<p><pre>
+PALETTEENTRY pe ;
+</PRE>
+
+<P>During <I>TimerRoutine</I>, you set the PALETTEENTRY fields for white and call <I>AnimatePalette</I> to change one entry at the <I>iBall</I> position in the logical palette:
+
+<p><pre>
+     pe.peRed   = 255 ;
+     pe.peGreen = 255 ;
+     pe.peBlue  = 255 ;
+     pe.peFlags = PC_RESERVED ;
+     AnimatePalette (hPalette, iBall, 1, &amp;pe) ;
+</PRE>
+
+<P>You then calculate the new value of <I>iBall</I> as shown in BOUNCE, define the fields of the PALETTEENTRY structure for red, and call <I>AnimatePalette</I> again:
+
+<p><pre>
+     pe.peRed   = 255 ;
+     pe.peGreen = 0 ;
+     pe.peBlue  = 0 ;
+     pe.peFlags = PC_RESERVED ;
+     AnimatePalette (hPalette, iBall, 1, &amp;pe) ;
+</PRE>
+
+<P>Although a bouncing ball is a traditional simple illustration of animation, it's really not suited for palette animation because all the possible positions of the ball must be drawn initially. Palette animation is more suited for showing repetitive patterns of movement.
+
+<A NAME="541"><h2>One-Entry Palette Animation</h2></A>
+<P>One of the more interesting aspects of palette animation is that you can implement some interesting techniques using only one palette entry. This is illustrated in the FADER program show in Figure 16-9. This program also requires the PALANIM.C file shown earlier.
+
+
+
+<P><B>Figure 16-9.</b> <i>The FADER program.</I>
+<table cellpadding=5 width="95%"><tr><td>
+<A NAME="542"><h3>FADER.C</h3></A>
+<P><pre>
+/*--------------------------------------
+   FADER.C -- Palette Animation Demo
+              (c) Charles Petzold, 1998
+  --------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+#define ID_TIMER 1
+
+TCHAR szAppName [] = TEXT (&quot;Fader&quot;) ;
+TCHAR szTitle   [] = TEXT (&quot;Fader: Palette Animation Demo&quot;) ;
+
+static LOGPALETTE lp ;
+
+HPALETTE CreateRoutine (HWND hwnd)
+{
+     HPALETTE hPalette ;
+     
+     lp.palVersion             = 0x0300 ;
+     lp.palNumEntries          = 1 ;
+     lp.palPalEntry[0].peRed   = 255 ;
+     lp.palPalEntry[0].peGreen = 255 ;
+     lp.palPalEntry[0].peBlue  = 255 ;
+     lp.palPalEntry[0].peFlags = PC_RESERVED ;
+   
+     hPalette = CreatePalette (&amp;lp) ;
+     
+     SetTimer (hwnd, ID_TIMER, 50, NULL) ;
+     return hPalette ;
+}
+
+void PaintRoutine (HDC hdc, int cxClient, int cyClient)
+{
+     static TCHAR szText [] = TEXT (&quot; Fade In and Out &quot;) ;
+     int          x, y ;
+     SIZE         sizeText ;
+
+     SetTextColor (hdc, PALETTEINDEX (0)) ;
+     GetTextExtentPoint32 (hdc, szText, lstrlen (szText), &amp;sizeText) ;
+
+     for (x = 0 ; x &lt; cxClient ; x += sizeText.cx)
+     for (y = 0 ; y &lt; cyClient ; y += sizeText.cy)
+
+     {
+          TextOut (hdc, x, y, szText, lstrlen (szText)) ;
+     }
+
+     return ;
+}
+
+void TimerRoutine (HDC hdc, HPALETTE hPalette)
+{
+     static BOOL bFadeIn = TRUE ;
+
+     if (bFadeIn)
+     {
+          lp.palPalEntry[0].peRed   -= 4 ;
+          lp.palPalEntry[0].peGreen -= 4 ;
+
+          if (lp.palPalEntry[0].peRed == 3)
+               bFadeIn = FALSE ;
+     }
+     else
+     {
+          lp.palPalEntry[0].peRed   += 4 ;
+          lp.palPalEntry[0].peGreen += 4 ;
+
+          if (lp.palPalEntry[0].peRed == 255)
+               bFadeIn = TRUE ;
+     }
+
+     AnimatePalette (hPalette, 0, 1, lp.palPalEntry) ;
+     return ;
+}
+
+void DestroyRoutine (HWND hwnd, HPALETTE hPalette)
+{
+     KillTimer (hwnd, ID_TIMER) ;
+     DeleteObject (hPalette) ;
+     return ;
+}
+</pre>
+</td></tr></table>
+
+<P>FADER displays the text string &quot;Fade In And Out&quot; all over its client area. This text is initially displayed in white and appears invisible against the white background of the window. By using palette animation, FADER gradually changes the color of the text to blue and then back to white, over and over again. The text appears as if it's fading in and out.
+
+<P>FADER creates a logical palette in its <I>CreateRoutine</I> function. It needs only one entry of the palette and initializes the color to white&#8212;red, green, and blue values all set to 255. In <I>PaintRoutine</I> (which, you'll recall, is called from PALANIM after the logical palette has been selected into the device context and realized), FADER calls <I>SetTextColor</I> to set the text color to PALETTEINDEX(0). This means that the text color is set to the first entry in the palette table, which initially is white. FADER then fills up its client area with the &quot;Fade In And Out&quot; text string. At this time, the window background is white and the text is white and hence invisible.
+
+<P>In the <I>TimerRoutine</I> function, FADER animates the palette by altering the PALETTEENTRY structure and passing it to <I>AnimatePalette</I>. The program initially decrements the red and green values by 4 for each WM_TIMER message until they reach a value of 3. Then the values are incremented by 4 until they get back up to 255. This causes the color of the text to fade from white to blue and back to white again.
+
+<P>The ALLCOLOR program shown in Figure 16-10 uses a single-entry logical palette to display all the colors that the video adapter can render. It doesn't show them simultaneously, of course, but sequentially. If your video adapter has an 18-bit resolution (in which case it's capable of 262,144 different colors), at the rate of one color every 55 milliseconds you need spend only four hours staring at the screen to see all the colors!
+
+
+
+<P><B>Figure 16-10.</b> <i>The ALLCOLOR program.</I>
+<table cellpadding=5 width="95%"><tr><td>
+<A NAME="543"><h3>ALLCOLOR.C</h3></A>
+<P><pre>
+/*-----------------------------------------
+   ALLCOLOR.C -- Palette Animation Demo
+                 (c) Charles Petzold, 1998
+  -----------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+#define ID_TIMER    1
+
+TCHAR szAppName [] = TEXT (&quot;AllColor&quot;) ;
+TCHAR szTitle   [] = TEXT (&quot;AllColor: Palette Animation Demo&quot;) ;
+
+static int          iIncr ;
+static PALETTEENTRY pe ;
+
+HPALETTE CreateRoutine (HWND hwnd)
+{
+     HDC        hdc ;
+     HPALETTE   hPalette ;
+     LOGPALETTE lp ;
+
+          // Determine the color resolution and set iIncr
+
+     hdc = GetDC (hwnd) ;
+     iIncr = 1 &lt;&lt; (8 - GetDeviceCaps (hdc, COLORRES) / 3) ;
+     ReleaseDC (hwnd, hdc) ;
+
+          // Create the logical palette
+     
+     lp.palVersion             = 0x0300 ;
+     lp.palNumEntries          = 1 ;
+     lp.palPalEntry[0].peRed   = 0 ;
+     lp.palPalEntry[0].peGreen = 0 ;
+     lp.palPalEntry[0].peBlue  = 0 ;
+     lp.palPalEntry[0].peFlags = PC_RESERVED ;
+   
+     hPalette = CreatePalette (&amp;lp) ;
+
+          // Save global for less typing
+
+     pe = lp.palPalEntry[0] ;
+     
+     SetTimer (hwnd, ID_TIMER, 10, NULL) ;
+     return hPalette ;
+}
+
+void DisplayRGB (HDC hdc, PALETTEENTRY * ppe)
+{
+     TCHAR szBuffer [16] ;
+
+     wsprintf (szBuffer, TEXT (&quot; %02X-%02X-%02X &quot;),
+               ppe-&gt;peRed, ppe-&gt;peGreen, ppe-&gt;peBlue) ;
+
+     TextOut (hdc, 0, 0, szBuffer, lstrlen (szBuffer)) ;
+}
+
+void PaintRoutine (HDC hdc, int cxClient, int cyClient)
+{
+     HBRUSH   hBrush ;
+     RECT     rect ;
+
+          // Draw Palette Index 0 on entire window
+
+     hBrush = CreateSolidBrush (PALETTEINDEX (0)) ;
+     SetRect (&amp;rect, 0, 0, cxClient, cyClient) ;
+     FillRect (hdc, &amp;rect, hBrush) ;
+     DeleteObject (SelectObject (hdc, GetStockObject (WHITE_BRUSH))) ;
+
+          // Display the RGB value
+
+     DisplayRGB (hdc, &amp;pe) ;
+     return ;
+}
+
+void TimerRoutine (HDC hdc, HPALETTE hPalette)
+{
+     static BOOL  bRedUp = TRUE, bGreenUp = TRUE, bBlueUp = TRUE ;
+
+          // Define new color value
+
+     pe.peBlue += (bBlueUp ? iIncr : -iIncr) ;
+
+     if (pe.peBlue == (BYTE) (bBlueUp ? 0 : 256 - iIncr))
+     {
+          pe.peBlue = (bBlueUp ? 256 - iIncr : 0) ;
+          bBlueUp ^= TRUE ;
+          pe.peGreen += (bGreenUp ? iIncr : -iIncr) ;
+
+          if (pe.peGreen == (BYTE) (bGreenUp ? 0 : 256 - iIncr))
+          {
+               pe.peGreen = (bGreenUp ? 256 - iIncr : 0) ;
+               bGreenUp ^= TRUE ;
+               pe.peRed += (bRedUp ? iIncr : -iIncr) ;
+
+               if (pe.peRed == (BYTE) (bRedUp ? 0 : 256 - iIncr))
+               {
+                    pe.peRed = (bRedUp ? 256 - iIncr : 0) ;
+                    bRedUp ^= TRUE ;
+               }
+          }
+     }
+
+          // Animate the palette
+     
+     AnimatePalette (hPalette, 0, 1, &amp;pe) ;
+     DisplayRGB (hdc, &amp;pe) ;
+     return ;
+}
+
+void DestroyRoutine (HWND hwnd, HPALETTE hPalette)
+{
+     KillTimer (hwnd, ID_TIMER) ;
+     DeleteObject (hPalette) ;
+     return ;
+}
+</pre>
+</td></tr></table>
+
+<P>Structurally, ALLCOLOR is very similar to FADER. In <I>CreateRoutine</I>, ALLCOLOR creates a palette with only one palette entry whose color is set to black (the red, green, and blue fields of the PALETTEENTRY structure set to 0). In <I>PaintRoutine</I>, ALLCOLOR creates a solid brush using PALETTEINDEX(0) and calls <I>FillRect</I> to color the entire client area with that brush.
+
+<P>In <I>TimerRoutine</I>, ALLCOLOR animates the palette by changing the PALETTEENTRY color and calling <I>AnimatePalette</I>. I wrote ALLCOLOR so that the change in color is smooth. First, the blue value is progressively incremented. When it gets to the maximum, the green value is incremented and then the blue value is progressively decremented. The incrementing and decrementing of the red, green, and blue color values is based on the <I>iIncr</I> variable. This is calculated during <I>CreateRoutine</I> based on the value returned from <I>GetDeviceCaps</I> with the COLORRES argument. If <I>GetDeviceCaps</I> returns 18, for example, then <I>iIncr</I> is set to 4&#8212;the lowest value necessary to obtain all the colors.
+
+<P>ALLCOLOR also displays the current RGB color value in the upper left corner of the client area. I originally added this code for testing purposes, but it proved to be useful so I left it in.
+
+<A NAME="544"><h2>Engineering Applications</h2></A>
+<P>In engineering applications, animation can be useful for the display of mechanical or electrical processes. It's one thing to display a combustion engine on a computer screen, but animation can really make it come alive and show its workings with much greater clarity.
+
+<P>One possible process that's good for palette animation is showing fluids passing through a pipe. This is a case where the image doesn't have to be strictly accurate&#8212;in fact, if the image were accurate (as if you were looking at a transparent pipe), it might be difficult to tell how the contents of the pipe were moving. It's better to take a more symbolic approach here. The PIPES program shown in Figure 16-11 is a simple demonstration of this technique. It has two horizontal pipes in the client area. The contents of the pipes move from left to right in the top pipe and from right to left in the bottom pipe.
+
+
+
+<P><B>Figure 16-11.</b> <i>The PIPES program.</I>
+<table cellpadding=5 width="95%"><tr><td>
+<A NAME="545"><h3>PIPES.C</h3></A>
+<P><pre>
+/*--------------------------------------
+   PIPES.C -- Palette Animation Demo
+              (c) Charles Petzold, 1998
+  --------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+#define ID_TIMER 1
+
+TCHAR szAppName [] = TEXT (&quot;Pipes&quot;) ;
+TCHAR szTitle   [] = TEXT (&quot;Pipes: Palette Animation Demo&quot;) ;
+
+static LOGPALETTE * plp ;
+
+HPALETTE CreateRoutine (HWND hwnd)
+{
+     HPALETTE hPalette ;
+     int      i ;
+
+     plp = malloc (sizeof (LOGPALETTE) + 32 * sizeof (PALETTEENTRY)) ;
+     
+          // Initialize the fields of the LOGPALETTE structure
+     
+     plp-&gt;palVersion    = 0x300 ;
+     plp-&gt;palNumEntries = 16 ;
+
+     for (i = 0 ; i &lt;= 8 ; i++)
+     {
+          plp-&gt;palPalEntry[i].peRed   = (BYTE) min (255, 0x20 * i) ;
+          plp-&gt;palPalEntry[i].peGreen = 0 ;
+          plp-&gt;palPalEntry[i].peBlue  = (BYTE) min (255, 0x20 * i) ;
+          plp-&gt;palPalEntry[i].peFlags = PC_RESERVED ;
+
+          plp-&gt;palPalEntry[16 - i] = plp-&gt;palPalEntry[i] ;
+          plp-&gt;palPalEntry[16 + i] = plp-&gt;palPalEntry[i] ;
+          plp-&gt;palPalEntry[32 - i] = plp-&gt;palPalEntry[i] ;
+     }
+
+     hPalette = CreatePalette (plp) ;
+     
+     SetTimer (hwnd, ID_TIMER, 100, NULL) ;
+     return hPalette ;
+}
+
+void PaintRoutine (HDC hdc, int cxClient, int cyClient)
+{
+     HBRUSH hBrush ;
+     int    i ;
+     RECT   rect ;
+
+          // Draw window background
+
+     SetRect (&amp;rect, 0, 0, cxClient, cyClient) ;
+     hBrush = SelectObject (hdc, GetStockObject (WHITE_BRUSH)) ;
+     FillRect (hdc, &amp;rect, hBrush) ;
+          // Draw the interiors of the pipes
+
+     for (i = 0 ; i &lt; 128 ; i++)
+     {
+          hBrush = CreateSolidBrush (PALETTEINDEX (i % 16)) ;
+          SelectObject (hdc, hBrush) ;
+
+          rect.left   = (127 - i) * cxClient / 128 ;
+          rect.right  = (128 - i) * cxClient / 128 ;
+          rect.top    = 4 * cyClient / 14 ;
+          rect.bottom = 5 * cyClient / 14 ;
+
+          FillRect (hdc, &amp;rect, hBrush) ;
+
+          rect.left   =  i      * cxClient / 128 ;
+          rect.right  = (i + 1) * cxClient / 128 ;
+          rect.top    =  9 * cyClient / 14 ;
+          rect.bottom = 10 * cyClient / 14 ;
+
+          FillRect (hdc, &amp;rect, hBrush) ;
+
+          DeleteObject (SelectObject (hdc, GetStockObject (WHITE_BRUSH))) ;
+     }
+
+          // Draw the edges of the pipes
+
+     MoveToEx (hdc, 0,         4 * cyClient / 14, NULL) ;
+     LineTo   (hdc, cxClient,  4 * cyClient / 14) ;
+
+     MoveToEx (hdc, 0,         5 * cyClient / 14, NULL) ;
+     LineTo   (hdc, cxClient,  5 * cyClient / 14) ;
+
+     MoveToEx (hdc, 0,         9 * cyClient / 14, NULL) ;
+     LineTo   (hdc, cxClient,  9 * cyClient / 14) ;
+
+     MoveToEx (hdc, 0,        10 * cyClient / 14, NULL) ;
+     LineTo   (hdc, cxClient, 10 * cyClient / 14) ;
+     return ;
+}
+
+void TimerRoutine (HDC hdc, HPALETTE hPalette)
+{
+     static int iIndex ;
+
+     AnimatePalette (hPalette, 0, 16, plp-&gt;palPalEntry + iIndex) ;
+     iIndex = (iIndex + 1) % 16 ;
+
+     return ;
+}
+
+void DestroyRoutine (HWND hwnd, HPALETTE hPalette)
+{
+     KillTimer (hwnd, ID_TIMER) ;
+     DeleteObject (hPalette) ;
+     free (plp) ;
+     return ;
+}
+</pre>
+</td></tr></table>
+
+<P>PIPES uses 16 palette entries for the animation, but you could probably get by with fewer. At the minimum, all you really need are enough entries to show the direction of the flow. Even three palette entries would be better than a static arrow.
+
+<P>The TUNNEL program shown in Figure 16-12 is the piggiest program of this batch, using 128 palette entries for animation. But the effect is worth it.
+
+
+
+<P><B>Figure 16-12.</b> <i>The TUNNEL program.</I>
+<table cellpadding=5 width="95%"><tr><td>
+<A NAME="546"><h3>TUNNEL.C</h3></A>
+<P><pre>
+/*---------------------------------------
+   TUNNEL.C -- Palette Animation Demo
+               (c) Charles Petzold, 1998
+  ---------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+#define ID_TIMER 1
+
+TCHAR szAppName [] = TEXT (&quot;Tunnel&quot;) ;
+TCHAR szTitle   [] = TEXT (&quot;Tunnel: Palette Animation Demo&quot;) ;
+
+static LOGPALETTE * plp ;
+
+HPALETTE CreateRoutine (HWND hwnd)
+{
+     BYTE     byGrayLevel ;
+     HPALETTE hPalette ;
+     int      i ;
+
+     plp = malloc (sizeof (LOGPALETTE) + 255 * sizeof (PALETTEENTRY)) ;
+
+          // Initialize the fields of the LOGPALETTE structure
+     
+     plp-&gt;palVersion    = 0x0300 ;
+     plp-&gt;palNumEntries = 128 ;
+     
+     for (i = 0 ; i &lt; 128 ; i++)
+     {
+          if (i &lt; 64)
+               byGrayLevel = (BYTE) (4 * i) ;
+          else
+               byGrayLevel = (BYTE) min (255, 4 * (128 - i)) ;
+          
+          plp-&gt;palPalEntry[i].peRed   = byGrayLevel ;
+          plp-&gt;palPalEntry[i].peGreen = byGrayLevel ;
+          plp-&gt;palPalEntry[i].peBlue  = byGrayLevel ;
+          plp-&gt;palPalEntry[i].peFlags = PC_RESERVED ;
+          
+          plp-&gt;palPalEntry[i + 128].peRed   = byGrayLevel ;
+          plp-&gt;palPalEntry[i + 128].peGreen = byGrayLevel ;
+          plp-&gt;palPalEntry[i + 128].peBlue  = byGrayLevel ;
+          plp-&gt;palPalEntry[i + 128].peFlags = PC_RESERVED ;
+     }
+   
+     hPalette = CreatePalette (plp) ;
+     
+     SetTimer (hwnd, ID_TIMER, 50, NULL) ;
+     return hPalette ;
+}
+
+void PaintRoutine (HDC hdc, int cxClient, int cyClient)
+{
+     HBRUSH hBrush ;
+     int    i ;
+     RECT   rect ;
+     
+     for (i = 0 ; i &lt; 127 ; i++)
+     {
+               // Use a RECT structure for each of 128 rectangles
+          
+          rect.left   =            i * cxClient / 255 ;
+          rect.top    =            i * cyClient / 255 ;
+          rect.right  = cxClient - i * cxClient / 255 ;
+          rect.bottom = cyClient - i * cyClient / 255 ;
+          
+          hBrush = CreateSolidBrush (PALETTEINDEX (i)) ;
+
+               // Fill the rectangle and delete the brush
+          
+          FillRect (hdc, &amp;rect, hBrush) ;
+          DeleteObject (hBrush) ;
+     }
+     return ;
+}
+
+void TimerRoutine (HDC hdc, HPALETTE hPalette)
+{
+     static int iLevel ;
+
+     iLevel = (iLevel + 1) % 128 ;
+
+     AnimatePalette (hPalette, 0, 128, plp-&gt;palPalEntry + iLevel) ;
+     return ;
+}
+
+void DestroyRoutine (HWND hwnd, HPALETTE hPalette)
+{
+     KillTimer (hwnd, ID_TIMER) ;
+     DeleteObject (hPalette) ;
+     free (plp) ;
+     return ;
+}
+</pre>
+</td></tr></table>
+
+<P>TUNNEL uses 64 moving gray shades in the 128 palette entries&#8212;from black to white and back to black&#8212;to give the effect of traveling through a tunnel.
+
+</BODY>
+</HTML>
+
+
+
+
+
+

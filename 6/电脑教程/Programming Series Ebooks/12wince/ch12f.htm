@@ -1,0 +1,203 @@
+<HTML>
+ <HEAD>
+	<LINK REL=StyleSheet HREF="prowice.css" TYPE="text/css">
+<TITLE>Console Applications</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="468"><H1>Console Applications</H1></A>
+
+<P>A console driver was added to Windows CE in version 2.1. Windows CE doesn't support the character mode API supported by Windows NT. Instead, a Windows CE console application just uses the standard C library I/O functions, such as <I>printf</I> and <I>getc,</I> to read and write characters from the command line. Another major difference between command line applications on Windows CE and on other versions of Windows is that they use the standard <I>WinMain</I> entry point instead of the standard C entry point of <I>main</I>.
+
+<P>Below is a Windows CE console application that runs under Windows CE 2.1. Aside from the difference of the entry point, a Windows CE console application looks like any other standard C command line application.
+
+<p><pre>
+//
+// HelloCon - A simple console application
+//
+#include &lt;windows.h&gt;                 // For all that Windows stuff
+
+// Program entry point
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    LPWSTR lpCmdLine, int nCmdShow) {
+
+    // You don't use Unicode for the stdio functions...
+    printf (&quot;Hello World\n&quot;);
+
+    //...but you can with the `w' versions.
+    wprintf (TEXT (&quot;Hello World\n&quot;));
+    return 0;
+}
+</PRE>
+
+<P>Windows CE console applications have access to the Win32 API. In fact, a console application can create windows, enter a message loop, and operate as if it were a standard Windows application. The difference is that the first time you call one of the <I>stdio</I> C library functions, such as <I>printf</I>, a console window is created and the result of that function will be seen in that window.
+
+<P>You implement consoles under Windows CE using a console driver with the appropriate device name of CON. Up to 10 console windows can be opened at any one time. The limit comes from the CON0 through CON9 naming convention used by drivers under Windows CE. Console applications don't directly open a CON driver to read and write to the window. At the current time, support for console applications is limited to a subset of the standard C library character mode functions.
+
+<P>Because the initialization of the console driver occurs only after the first call to an I/O library function, it's possible for a console application to run to completion and terminate without ever creating a console window for output. If you want a console window to always be created, you'll need to include a <I>printf</I> or other console input or output call to force the console to be created. You can always insert a line like
+
+<p><pre>
+printf (&quot; \b&quot;);
+</PRE>
+
+<P>which prints a space and then backspaces over the space to force the console to be created.
+
+<A NAME="469"><H2>The CEFind Example Program</H2></A>
+
+
+<P>The following program is a short console application that searches the Windows CE file system for matching file names. The program can be launched from a console window using CMD.EXE, or it can be launched from the Explorer. Because no concept of a current directory is built into Windows CE, the search always starts from the root of the file system unless a path is specified with the filename specification. Figure 12-6 shows the results of CEFind when looking for all the TrueType fonts on a system.
+
+<P><A HREF="javascript:fullSize('f12rg06x.htm')"> <img src="f12rg06.jpg" width=404 height=303 border=0 ALT="Click to view at full size."> </A>
+<P><!-- caption --><B>Figure 12-6.</B> <I>The results of a CEFind search for TrueType font files.</I><!-- /caption -->
+
+<P>The CEFind source is contained in one file, CEFind.C, shown in Figure 12-7. The entry point is <I>WinMain</I>, which then calls <I>SrchDirectory</I>, which recursively calls itself to search each of the directories underneath the original directory.
+
+<P><B>Figure 12-7.</B> <I>The CEFind program.</I>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<A NAME="470"><P><H3>CEFind.c</H3></A>
+
+<p><pre>
+//======================================================================
+// CEFind - A Windows CE console file search application
+//
+
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//======================================================================
+#include &lt;windows.h&gt;                 // For all that Windows stuff
+
+// Returns number of elements
+#define dim(x) (sizeof(x) / sizeof(x[0]))   
+
+int SrchDirectory (LPTSTR pszDir);
+//----------------------------------------------------------------------
+// Global data
+//
+int nTotal = 0;
+int nFiles = 0;
+
+//======================================================================
+// Program entry point
+//
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    LPWSTR lpCmdLine, int nCmdShow) {
+    TCHAR pInput[256];
+
+    if (wcslen (lpCmdLine) == 0) {
+        printf (&quot;USAGE: CEFIND filespec\n&quot;);
+        return 0;
+    }
+    printf (&quot;\n&quot;);                         // Initialize the console.
+    // We always start at the root.
+    if (*lpCmdLine != TEXT (`\\')) {
+        pInput[0] = TEXT (`\\');
+    } else
+        pInput[0] = L'\0';
+    wcscat (pInput, lpCmdLine);
+
+    // Perform recursive search.
+    SrchDirectory (pInput);
+    wprintf (L&quot;\n  %9d file(s) found.   %d bytes.\n&quot;, nFiles, nTotal);
+    return 0;
+}
+//----------------------------------------------------------------------
+// SrchDirectory - Recursive routine that searches a dir and all
+// child dirs for matching files
+//
+int SrchDirectory (LPTSTR pszDir) {
+    WIN32_FIND_DATA fd;
+    TCHAR szNew[MAX_PATH];
+    INT i, rc, nErr = 0;
+    HANDLE hFind;
+    TCHAR *pPtr, *pSrcSpec;
+
+    // Separate subdirectory from search specification.
+    for (pSrcSpec = pszDir + lstrlen (pszDir); pSrcSpec &gt;= pszDir; 
+         pSrcSpec--)
+        if (*pSrcSpec == TEXT (`\\'))
+            break;
+
+    // Copy the search specification up to the last directory
+    // separation character.
+    if (pSrcSpec &lt;= pszDir)
+        lstrcpy (szNew, TEXT (&quot;\\&quot;));
+    else {
+        for (i = 0; (i &lt; dim(szNew)-10) &amp;&amp; 
+                    ((pszDir+i) &lt;= pSrcSpec); i++)
+            szNew[i] = *(pszDir+i);
+        szNew[i] = TEXT (`\0');
+    }
+    pPtr = szNew + lstrlen (szNew);
+
+    // Find matching files.
+    hFind = FindFirstFile (pszDir, &amp;fd);
+    if (hFind != INVALID_HANDLE_VALUE) {
+
+        do {
+            // Report all matching files.
+            if (!(fd.dwFileAttributes &amp; FILE_ATTRIBUTE_DIRECTORY)) {
+                wprintf (L&quot;  %9d\t %s%s\n&quot;, fd.nFileSizeLow, szNew, 
+                         fd.cFileName);
+                nTotal += fd.nFileSizeLow;
+                nFiles++;
+            }
+
+            rc = FindNextFile (hFind, &amp;fd);
+        } while (rc);
+
+        FindClose (hFind);
+    } else {
+        rc = GetLastError();
+        if ((rc != ERROR_FILE_NOT_FOUND)  &amp;&amp; 
+            (rc != ERROR_NO_MORE_FILES)) {
+            wprintf (L&quot;1Find Error.  Str:%s rc:%d&quot;, pszDir, rc);
+            return -1;
+        }
+    }
+
+    // Create generic search string for all directories.
+    lstrcat (szNew, TEXT (&quot;*.*&quot;));
+
+    hFind = FindFirstFile (szNew, &amp;fd);
+    if (hFind != INVALID_HANDLE_VALUE) {
+        do {
+            if (fd.dwFileAttributes &amp; FILE_ATTRIBUTE_DIRECTORY) {
+                // Recurse to the lower directory
+                lstrcpy (pPtr, fd.cFileName);
+                lstrcat (pPtr, pSrcSpec);
+                nErr = SrchDirectory (szNew);
+                if (nErr) break;
+                *pPtr = TEXT (`\0');
+            }
+            rc = FindNextFile (hFind, &amp;fd);
+        } while (rc);
+
+        FindClose (hFind);
+    } else {
+        rc = GetLastError();
+        if ((rc != ERROR_FILE_NOT_FOUND) &amp;&amp; 
+            (rc != ERROR_NO_MORE_FILES)) {
+            wprintf (L&quot;2Find Error:%d&quot;, rc);
+            return -1;
+        }
+    }
+    return nErr;
+}
+</pre>
+</td></tr></table>
+
+<P>I began this chapter by saying the Windows CE shell is interesting in that, like many parts of Windows CE, it resembles its desktop counterparts but is implemented very differently. These differences show up the most in places, such as the Explorer, where almost all of the COM interfaces are unique and private, and in console applications, where the implementation is limited to supporting a subset of standard C library calls and nothing else.
+
+<P>The next chapter covers the <I>tablet mode</I> shell components. These shell components were first introduced for the Palm-size PC. These components include the SIP (the supplementary input panel), and dedicated hot keys on the system. Let's take a look.
+
+</BODY>
+</HTML>
+
+
+
+

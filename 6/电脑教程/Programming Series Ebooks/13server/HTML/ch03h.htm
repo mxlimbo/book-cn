@@ -1,0 +1,699 @@
+<HTML>
+<HEAD>
+<TITLE>The TimeService Sample Service</TITLE>
+<link rel="STYLESHEET" type="text/css" href="prosrvwin.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR = "#ffffff">
+<A HREF="ch03g.htm">[Previous]</A> <A HREF="ch03i.htm">[Next]</A><P>
+
+<A NAME="62"><H1>The TimeService Sample Service</H1></A>
+<p>The TimeService sample service (&quot;03 TimeService.exe&quot;), shown in Listing 
+3-1 at the end of this section, includes all the necessary components for 
+building a service. The source code and resource files for the application are in 
+the 03TimeService directory on the companion CD. This very simple service 
+returns the server machine's date and time when a client connects to the 
+server. The service does assume that you are somewhat familiar with named pipes 
+and I/O completion ports (discussed in <A HREF="ch02a.htm">Chapter 2</A>).</p>
+
+<p>If you examine the <I>_tWinMain </I>function, you'll see that this service has 
+the ability to install and remove itself from the SCM's database depending 
+on whether &quot;-install&quot; or &quot;-remove&quot; is passed as a command-line argument. 
+Once you build the service, run it once from the command line, passing 
+&quot;-install&quot;. When you no longer want to keep the service on your machine, run the 
+executable from the command line, passing &quot;-remove&quot; as an argument. I'll 
+discuss the details of the functions used for adding services to and deleting services 
+from the SCM database in the <a href="ch04a.htm">next chapter</a>.</p>
+
+<p>The most important aspect of <I>_tWinMain </I>to notice is that an array 
+of SERVICE_TABLE_ENTRY structures is initialized with two members: one 
+for the service and one with NULL entries to identify the last service. The 
+address of this service table array is passed to 
+<I>StartServiceCtrlDispatcher</I>, which 
+creates a thread for the service. This new thread begins execution starting with 
+the <I>TimeServiceMain </I>function. Note that <I>StartServiceCtrlDispatcher 
+</I>will not return to the <I>_tWinMain </I>function until the 
+<I>TimeServiceMain </I>function exits and its thread terminates.</p>
+
+<p>The <I>TimeServiceMain </I>function implements the actual code to process 
+the client requests. It starts by creating an I/O completion port. The service 
+thread sits in a loop waiting for requests to enter the completion port. Two types 
+of requests are possible: a client has connected to the pipe and wants the 
+machine's date and time information; or the service needs to process an action request 
+such as pause, continue, or stop.</p>
+
+<p>Once the completion port is created, I initialize a global 
+CServiceStatus object, <I>g_ssTime</I>. The CServiceStatus C++ class is my own creation and 
+greatly simplifies the reporting of service status updates. This class is derived from 
+the Windows SERVICE_STATUS structure and is basically a thin level of 
+abstraction that places some logic over how the member variables are 
+updated. CServiceStatus has a CGate class object as a member, which is used to 
+synchronize the <I>TimeHandlerEx </I>thread and the 
+<I>TimeServiceMain </I>thread, guaranteeing that the 
+<I>ServiceMain </I>thread processes a single action request at a time.</p>
+
+<p>The CServiceStatus's <I>Initialize </I>method internally calls 
+<I>RegisterServiceCtrlHandlerEx </I>to notify the SCM of the service's 
+<I>HandlerEx </I>function 
+(<I>TimeHandlerEx</I>),<I> </I>and it passes the address of the I/O completion port 
+C++ class object, <I>iocp</I>, to the handler function in its 
+<I>pvContext </I>parameter. The <I>Initialize </I>method also sets the 
+<I>dwServiceType </I>member, which never changes 
+during the lifetime of the service.</p>
+
+<p>Next, I call the <I>AcceptControls </I>method, which sets the 
+<I>dwControlsAccepted </I>member. The <I>AcceptControls 
+</I>method can be called periodically while the 
+service runs to accept or reject the desired controls. The TimeService accepts 
+stop, pause, continue, and shutdown codes during its lifetime.</p>
+
+<p>You'll notice that my <I>TimeHandlerEx </I>function passes control codes to 
+the service thread by calling the CIOCP's <I>PostStatus 
+</I>method, which internally calls <I>PostQueuedCompletionStatus 
+</I>using the handle of the I/O completion port. A completion key of CK_SERVICECONTROL is specified to indicate to 
+the <I>ServiceMain </I>thread that it is waking up because of a service action request. 
+The <I>TimeHandlerEx </I>function then returns as quickly as possible. The service's 
+thread is responsible for waking up, processing the code, and then waiting for 
+more client requests (if appropriate).</p>
+
+<p>Back inside the <I>TimeServiceMain </I>function, a do-while loop starts. 
+Inside this loop, I check the <I>CompKey </I>variable to see what action the service needs 
+to respond to next. Since this variable is initialized to 
+CK_SERVICECONTROL and the <I>dwControl </I>variable is initialized to 
+SERVICE_CONTROL_CONTINUE, the service's first order of business is to create the named 
+pipe that the client application will use to make requests of the service. This pipe 
+is then associated with the completion port by using a completion key of 
+CK_PIPE, and an asynchronous call to <I>ConnectNamedPipe 
+</I>is made. The service now reports to the SCM that it is up and running by calling the 
+<I>g_ssTime</I> object's <I>ReportUltimateState </I>method, which internally calls <I>SetServiceStatus 
+</I>to report SERVICE_RUNNING.</p>
+
+<p>The service calls the <I>iocp </I>object's <I>GetStatus 
+</I>method (which internally calls 
+<I>GetQueuedCompletionStatus</I>). This causes the service thread to sleep until 
+an event appears in the completion port. If a service control code appears 
+(because <I>TimeHandlerEx </I>called 
+<I>PostQueuedCompletionStatus</I>), the service thread 
+wakes, processes the control code (as appropriate), and then reports to the SCM 
+again that the operation is complete. Note that the 
+<I>TimeHandlerEx </I>function is responsible for reporting the pending state of the action, and the 
+<I>TimeServiceMain </I>function is responsible for reporting the service's final execution state 
+(which is the third method I discussed earlier in the section &quot;<A HREF="ch03e.htm#55">Dealing with Interthread Communication Issues</A>&quot;).</p>
+
+<p>When the service thread wakes because <I>GetQueuedCompletionStatus 
+</I>returns a completion key of CK_PIPE, a client has connected to the pipe. At 
+this point, the service gets the system time and calls 
+<I>WriteFile </I>to send the time to the client. Then the service disconnects the client and issues another 
+asynchronous call to <I>ConnectNamedPipe </I>so that another client can connect.</p>
+
+<p>When the service thread wakes with a SERVICE_CONTROL_STOP 
+or SERVICE_CONTROL_SHUTDOWN code, it closes the pipe and 
+terminates. This causes the completion port to close, and the 
+<I>TimeServiceMain </I>function returns, killing the service thread. At this point, the 
+<I>StartServiceCtrlDispatcher </I>returns to the 
+<I>_tWinMain </I>function, which also returns, killing the process.</p>
+
+<p>After you build the service, you must execute the program with the 
+&quot;_install&quot; command-line switch to install the service in the SCM's 
+database. Be sure to include quotes around the executable name since it includes a 
+space, &quot;03 TimeService.exe&quot;. Also, you'll want to use the Services snap-in to start 
+and administer the &quot;Programming Server-Side Applications Time&quot; service.</p>
+
+<p><b>Listing 3-1.</b> <i>The TimeService sample service</i></p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+<p><b>TimeService.cpp</b></p>
+/******************************************************************************
+Module:  TimeService.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#include &quot;..\CmnHdr.h&quot;                 /* See Appendix A. */
+
+#include &quot;..\ClassLib\IOCP.h&quot;          /* See Appendix B */
+#include &quot;..\ClassLib\EnsureCleanup.h&quot; /* See Appendix B */
+
+#define SERVICESTATUS_IMPL
+#include &quot;ServiceStatus.h&quot;
+
+
+//////////////////////////////////////////////////////////////////////////////
+
+
+TCHAR g_szServiceName[] = TEXT(&quot;Programming Server-Side Applications Time&quot;);
+CServiceStatus g_ssTime;
+
+
+//////////////////////////////////////////////////////////////////////////////
+
+
+// The completion port wakes for 1 of 2 reasons:
+enum COMPKEY { 
+   CK_SERVICECONTROL,   // A service control code
+   CK_PIPE              // A client connects to our pipe
+};
+
+
+//////////////////////////////////////////////////////////////////////////////
+
+
+DWORD WINAPI TimeHandlerEx(DWORD dwControl, DWORD dwEventType, 
+   PVOID pvEventData, PVOID pvContext) {
+
+   DWORD dwReturn = ERROR_CALL_NOT_IMPLEMENTED;
+   BOOL fPostControlToServiceThread = FALSE;
+
+   switch (dwControl) {
+   case SERVICE_CONTROL_STOP:
+   case SERVICE_CONTROL_SHUTDOWN:
+      g_ssTime.SetUltimateState(SERVICE_STOPPED, 2000);
+      fPostControlToServiceThread = TRUE;
+      break;
+
+   case SERVICE_CONTROL_PAUSE:
+      g_ssTime.SetUltimateState(SERVICE_PAUSED, 2000);
+      fPostControlToServiceThread = TRUE;
+      break;
+
+   case SERVICE_CONTROL_CONTINUE:
+      g_ssTime.SetUltimateState(SERVICE_RUNNING, 2000);
+      fPostControlToServiceThread = TRUE;
+      break;
+
+   case SERVICE_CONTROL_INTERROGATE:
+      g_ssTime.ReportStatus();
+      break;
+
+   case SERVICE_CONTROL_PARAMCHANGE:
+      break;
+
+   case SERVICE_CONTROL_DEVICEEVENT:
+   case SERVICE_CONTROL_HARDWAREPROFILECHANGE:
+   case SERVICE_CONTROL_POWEREVENT:
+      break;
+
+   case 128:   // A user-define code just for testing
+      // NOTE: Normally, a service shouldn't display UI
+      MessageBox(NULL, TEXT(&quot;In HandlerEx processing user-defined code.&quot;),
+         g_szServiceName, MB_OK | MB_SERVICE_NOTIFICATION);
+      break;
+   }
+   if (fPostControlToServiceThread) {
+      // The Handler thread is very simple and executes very quickly because
+      // it just passes the control code off to the ServiceMain thread
+      CIOCP* piocp = (CIOCP*) pvContext;
+      piocp-&gt;PostStatus(CK_SERVICECONTROL, dwControl);
+      dwReturn = NO_ERROR;
+   }
+
+   return(dwReturn);
+}
+
+
+//////////////////////////////////////////////////////////////////////////////
+
+
+void WINAPI TimeServiceMain(DWORD dwArgc, PTSTR* pszArgv) {
+
+   ULONG_PTR CompKey = CK_SERVICECONTROL;
+   DWORD dwControl = SERVICE_CONTROL_CONTINUE;
+   CEnsureCloseFile hpipe;
+   OVERLAPPED o, *po;
+   SYSTEMTIME st;
+   DWORD dwNumBytes;
+
+   // Create the completion port and save its handle in a global
+   // variable so that the Handler function can access it
+   CIOCP iocp(0);
+
+   g_ssTime.Initialize(g_szServiceName, TimeHandlerEx, (PVOID) &amp;iocp, TRUE);
+   g_ssTime.AcceptControls(
+      SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_PAUSE_CONTINUE);
+   
+   do {
+      switch (CompKey) {
+      case CK_SERVICECONTROL:
+         // We got a new control code
+         switch (dwControl) {
+         case SERVICE_CONTROL_CONTINUE:
+            // While running, create a pipe that clients can connect to
+            hpipe = CreateNamedPipe(TEXT(&quot;\\\\.\\pipe\\TimeService&quot;), 
+               PIPE_ACCESS_OUTBOUND | FILE_FLAG_OVERLAPPED,
+               PIPE_TYPE_BYTE, 1, sizeof(st), sizeof(st), 1000, NULL);
+
+            // Associate the pipe with the completion port
+            iocp.AssociateDevice(hpipe, CK_PIPE);
+
+            // Pend an asynchronous connect against the pipe
+            ZeroMemory(&amp;o, sizeof(o));
+            ConnectNamedPipe(hpipe, &amp;o);
+            g_ssTime.ReportUltimateState();
+            break;
+
+         case SERVICE_CONTROL_PAUSE:
+         case SERVICE_CONTROL_STOP:
+            // When not running, close the pipe so clients can't connect
+            hpipe.Cleanup();
+            g_ssTime.ReportUltimateState();
+            break;
+         }
+         break;
+
+      case CK_PIPE:
+         if (hpipe.IsValid()) {
+            // We got a client request: Send our current time to the client
+            GetSystemTime(&amp;st);
+            WriteFile(hpipe, &amp;st, sizeof(st), &amp;dwNumBytes, NULL);
+            FlushFileBuffers(hpipe);
+            DisconnectNamedPipe(hpipe);
+
+            // Allow another client to connect 
+            ZeroMemory(&amp;o, sizeof(o));
+            ConnectNamedPipe(hpipe, &amp;o);
+         } else {
+            // We get here when the pipe is closed
+         }
+      }
+
+      if (g_ssTime != SERVICE_STOPPED) {
+         // Sleep until a control code comes in or a client connects
+         iocp.GetStatus(&amp;CompKey, &amp;dwNumBytes, &amp;po);
+         dwControl = dwNumBytes;
+      }
+   } while (g_ssTime != SERVICE_STOPPED);
+}
+
+//////////////////////////////////////////////////////////////////////////////
+
+
+void InstallService() {
+
+   // Open the SCM on this machine
+   CEnsureCloseServiceHandle hSCM = 
+      OpenSCManager(NULL, NULL, SC_MANAGER_CREATE_SERVICE);
+
+   // Get our full pathname
+   TCHAR szModulePathname[_MAX_PATH * 2];
+   GetModuleFileName(NULL, szModulePathname, chDIMOF(szModulePathname));
+
+   // Append the switch that causes the process to run as a service.
+   lstrcat(szModulePathname, TEXT(&quot; /service&quot;));   
+
+   // Add this service to the SCM's database
+   CEnsureCloseServiceHandle hService = 
+      CreateService(hSCM, g_szServiceName, g_szServiceName,
+         SERVICE_CHANGE_CONFIG, SERVICE_WIN32_OWN_PROCESS, 
+         SERVICE_DEMAND_START, SERVICE_ERROR_IGNORE,
+         szModulePathname, NULL, NULL, NULL, NULL, NULL);
+
+   SERVICE_DESCRIPTION sd = { 
+      TEXT(&quot;Sample Time Service from &quot;)
+      TEXT(&quot;Programming Server-Side Applications for Microsoft Windows Book&quot;) 
+   };
+   ChangeServiceConfig2(hService, SERVICE_CONFIG_DESCRIPTION, &amp;sd);
+}
+
+//////////////////////////////////////////////////////////////////////////////
+
+
+void RemoveService() {
+
+   // Open the SCM on this machine
+   CEnsureCloseServiceHandle hSCM = 
+      OpenSCManager(NULL, NULL, SC_MANAGER_CONNECT);
+
+   // Open this service for DELETE access
+   CEnsureCloseServiceHandle hService = 
+      OpenService(hSCM, g_szServiceName, DELETE);
+
+   // Remove this service from the SCM's database
+   DeleteService(hService);
+}
+
+
+//////////////////////////////////////////////////////////////////////////////
+
+
+int WINAPI _tWinMain(HINSTANCE hinstExe, HINSTANCE, PTSTR pszCmdLine, int) {
+
+   int nArgc = __argc;
+#ifdef UNICODE
+   PCTSTR *ppArgv = (PCTSTR*) CommandLineToArgvW(GetCommandLine(), &amp;nArgc);
+#else
+   PCTSTR *ppArgv = (PCTSTR*) __argv;
+#endif
+
+   if (nArgc &lt; 2) {
+      MessageBox(NULL, 
+         TEXT(&quot;Programming Server-Side Applications for Microsoft Windows: &quot;)
+         TEXT(&quot;Time Service Sample\n\n&quot;)
+         TEXT(&quot;Usage: TimeService.exe [/install] [/remove] [/debug] &quot;)
+         TEXT(&quot;[/service]\n&quot;)
+         TEXT(&quot;   /install\t\tInstalls the service in the SCM's database.\n&quot;)
+         TEXT(&quot;   /remove\t\tRemoves the service from the SCM's database.\n&quot;)
+         TEXT(&quot;   /debug\t\tRuns the service as a normal process for &quot;)
+         TEXT(&quot;debugging.\n&quot;)
+         TEXT(&quot;   /service\t\tRuns the process as a service &quot;)
+         TEXT(&quot;(should only be set in the SCM's database).&quot;),
+         g_szServiceName, MB_OK);
+   } else {
+      for (int i = 1; i &lt; nArgc; i++) {
+         if ((ppArgv[i][0] == TEXT(`-')) || (ppArgv[i][0] == TEXT(`/'))) {
+            // Command line switch
+            if (lstrcmpi(&amp;ppArgv[i][1], TEXT(&quot;install&quot;)) == 0) 
+               InstallService();
+
+            if (lstrcmpi(&amp;ppArgv[i][1], TEXT(&quot;remove&quot;))  == 0)
+               RemoveService();
+
+            if (lstrcmpi(&amp;ppArgv[i][1], TEXT(&quot;debug&quot;))   == 0) {
+               // Execute the service code
+               TimeServiceMain(0, NULL);
+            }
+
+            if (lstrcmpi(&amp;ppArgv[i][1], TEXT(&quot;service&quot;)) == 0) {
+               // Connect to the service control dispatcher
+               SERVICE_TABLE_ENTRY ServiceTable[] = {
+                  { g_szServiceName, TimeServiceMain },
+                  { NULL,            NULL }   // End of list
+               };
+               chVERIFY(StartServiceCtrlDispatcher(ServiceTable));
+            }
+         }
+      }
+   }
+
+#ifdef UNICODE
+   HeapFree(GetProcessHeap(), 0, (PVOID) ppArgv);
+#endif
+   return(0);
+}
+
+
+///////////////////////////////// End Of File ////////////////////////////////</pre>
+</td></tr></table>
+</p>
+
+<p><table cellpadding=5 width="95%"><tr><td><pre>
+<p><b>ServiceStatus.h</b></p>
+/******************************************************************************
+Module:  ServiceStatus.h
+Notices: Copyright (c) 2000 Jeffrey Richter
+Purpose: This class wraps a SERVICE_STATUS structure ensuring proper use.
+******************************************************************************/
+
+
+#pragma once
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+#include &quot;..\CmnHdr.h&quot;              /* See Appendix A. */
+#include &quot;Gate.h&quot;                   
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+class CServiceStatus : public SERVICE_STATUS {
+public:
+   CServiceStatus();
+
+   BOOL Initialize(PCTSTR szServiceName, LPHANDLER_FUNCTION_EX pfnHandler, 
+      PVOID pvContext, BOOL fOwnProcess, BOOL fInteractWithDesktop = FALSE);
+
+   VOID AcceptControls(DWORD dwFlags, BOOL fAccept = TRUE);
+   BOOL ReportStatus();
+
+   BOOL SetUltimateState(DWORD dwUltimateState, DWORD dwWaitHint = 0);
+   BOOL AdvanceState(DWORD dwWaitHint, DWORD dwCheckPoint = 0);
+   BOOL ReportUltimateState();
+   BOOL ReportWin32Error(DWORD dwError);
+   BOOL ReportServiceSpecificError(DWORD dwError);
+
+   operator DWORD() const { return(dwCurrentState); }
+
+private:
+   SERVICE_STATUS_HANDLE m_hss;
+   CGate m_gate;
+};
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+inline CServiceStatus::CServiceStatus() {
+
+   ZeroMemory(this, sizeof(SERVICE_STATUS));
+   m_hss = NULL;
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+inline VOID CServiceStatus::AcceptControls(DWORD dwFlags, BOOL fAccept) {
+
+   if (fAccept) dwControlsAccepted |= dwFlags;
+   else dwControlsAccepted &amp;= ~dwFlags;
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+inline BOOL CServiceStatus::ReportStatus() {
+
+   BOOL fOk = ::SetServiceStatus(m_hss, this);
+   chASSERT(fOk);
+   return(fOk);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+   
+inline BOOL CServiceStatus::ReportWin32Error(DWORD dwError) {
+   dwWin32ExitCode = dwError;
+   dwServiceSpecificExitCode = 0;
+   return(ReportStatus());
+}
+
+
+inline BOOL CServiceStatus::ReportServiceSpecificError(DWORD dwError) {
+   dwWin32ExitCode = ERROR_SERVICE_SPECIFIC_ERROR;
+   dwServiceSpecificExitCode = dwError;
+   return(ReportStatus());
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+#ifdef SERVICESTATUS_IMPL
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL CServiceStatus::Initialize(PCTSTR szServiceName, 
+   LPHANDLER_FUNCTION_EX pfnHandler, PVOID pvContext,
+   BOOL fOwnProcess, BOOL fInteractWithDesktop) {
+
+   m_hss = RegisterServiceCtrlHandlerEx(szServiceName, pfnHandler, pvContext);
+   chASSERT(m_hss != NULL);
+
+   dwServiceType = fOwnProcess 
+      ? SERVICE_WIN32_OWN_PROCESS : SERVICE_WIN32_SHARE_PROCESS;
+
+   if (fInteractWithDesktop) 
+      dwServiceType |= SERVICE_INTERACTIVE_PROCESS;
+
+   dwCurrentState = SERVICE_START_PENDING;
+   dwControlsAccepted = 0; 
+   dwWin32ExitCode = NO_ERROR;
+   dwServiceSpecificExitCode = 0;
+   dwCheckPoint = 0; 
+   dwWaitHint = 2000;
+   return(m_hss != NULL);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL CServiceStatus::SetUltimateState(DWORD dwUltimateState, 
+   DWORD dwWaitHint) {
+
+   DWORD dwPendingState = 0;  // An invalid state value
+   switch (dwUltimateState) {
+   case SERVICE_STOPPED: 
+      dwPendingState = SERVICE_STOP_PENDING; 
+      break;
+
+   case SERVICE_RUNNING:
+      dwPendingState = (dwCurrentState == SERVICE_PAUSED) 
+         ? SERVICE_CONTINUE_PENDING : SERVICE_START_PENDING; 
+      break;
+
+   case SERVICE_PAUSED:
+      dwPendingState = SERVICE_PAUSE_PENDING; 
+      break;
+
+   default:
+      chASSERT(dwPendingState != 0);   // Invalid parameter
+      break;
+   }
+
+   // When creating a new ServiceMain thread, the system assumes 
+   // dwCurrentState=SERVICE_START_PENDING, dwCheckPoint=0, dwWaitHint=2000
+   // So, since we must always increment the checkpoint, let's start at 1
+   dwCheckPoint = 1;
+   this-&gt;dwWaitHint = dwWaitHint;
+
+   // No error to report
+   dwWin32ExitCode = NO_ERROR;
+   dwServiceSpecificExitCode = 0;
+
+   BOOL fOk = FALSE; // Assume failure
+   if (dwPendingState != 0) {
+
+      // If another pending operation hasn't completed, wait for it
+      m_gate.WaitToEnterGate();
+
+      dwCurrentState = dwPendingState; // Update the state in the structure
+
+      // If no wait hint, we reached the desired state
+      fOk = (dwWaitHint != 0) ? ReportStatus() : ReportUltimateState();
+   }
+
+   return(fOk);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL CServiceStatus::AdvanceState(DWORD dwWaitHint, DWORD dwCheckPoint) {
+
+   // A checkpoint of 0 is invalid, so we'll increment the checkpoint by 1
+   this-&gt;dwCheckPoint = 
+      (dwCheckPoint == 0) ? this-&gt;dwCheckPoint + 1 : dwCheckPoint;
+
+   this-&gt;dwWaitHint = dwWaitHint;
+
+   // No error to report
+   dwWin32ExitCode = NO_ERROR;
+   dwServiceSpecificExitCode = 0;
+
+   return(ReportStatus());
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+   
+BOOL CServiceStatus::ReportUltimateState() {
+
+   DWORD dwUltimateState = 0;  // An invalid state value
+   switch (dwCurrentState) {
+   case SERVICE_START_PENDING:
+   case SERVICE_CONTINUE_PENDING:
+         dwUltimateState = SERVICE_RUNNING; 
+         break;
+   case SERVICE_STOP_PENDING:
+         dwUltimateState = SERVICE_STOPPED; 
+         break;
+   case SERVICE_PAUSE_PENDING:
+         dwUltimateState = SERVICE_PAUSED; 
+         break;
+   }
+   dwCheckPoint = dwWaitHint = 0; // We reached the ultimate state
+
+   // No error to report
+   dwWin32ExitCode = NO_ERROR;
+   dwServiceSpecificExitCode = 0;
+
+   BOOL fOk = FALSE; // Assume failure
+
+   if (dwUltimateState != 0) {
+      dwCurrentState = dwUltimateState;   // Update the state in the structure
+      fOk = ReportStatus();
+
+      // Our state change is complete, allow a new state change
+      m_gate.LiftGate();
+   }
+
+   return(fOk);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+#endif   // SERVICESTATUS_IMPL
+
+
+//////////////////////////////// End of File /////////////////////////////////</pre>
+</td></tr></table>
+</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><b>Gate.h</b></p>
+<pre>
+/******************************************************************************
+Module:  Gate.h
+Notices: Copyright (c) 2000 Jeffrey Richter
+Purpose: This class creates a normally open gate that only one thread can
+         pass through at a time.
+******************************************************************************/
+
+
+#pragma once   // Include this header file once per compilation unit
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+#include &quot;..\CmnHdr.h&quot;              /* See Appendix A. */
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+class CGate {
+public:
+   CGate(BOOL fInitiallyUp = TRUE, PCTSTR pszName = NULL) { 
+      m_hevt = ::CreateEvent(NULL, FALSE, fInitiallyUp, pszName); 
+   }
+
+   ~CGate() { 
+      ::CloseHandle(m_hevt); 
+   }
+
+   DWORD WaitToEnterGate(DWORD dwTimeout = INFINITE, BOOL fAlertable = FALSE) {
+      return(::WaitForSingleObjectEx(m_hevt, dwTimeout, fAlertable)); 
+   }
+   
+   VOID LiftGate() { ::SetEvent(m_hevt); }
+
+private:
+    HANDLE m_hevt;
+};
+
+
+///////////////////////////////// End of File /////////////////////////////////
+
+</pre></td></tr></table>
+</p>
+
+</BODY>
+</HTML>
+
+
+
+

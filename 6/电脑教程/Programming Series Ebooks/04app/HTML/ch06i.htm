@@ -1,0 +1,201 @@
+<HTML>
+<HEAD>
+<TITLE>Gaining a Sense of One's Own Identity</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch06h.htm">[Previous]</A> <A HREF="ch07a.htm">[Next]</A><P>
+
+<A NAME="94"><H1>Gaining a Sense of One's Own Identity</H1></A>
+
+<p>As threads execute, they frequently want to call Windows functions
+that change their execution environment. For example, a thread might
+want to alter its priority or its process's priority. (Priorities
+are discussed in <A HREF="ch07a.htm">Chapter 7</A>.) Since it is common for a thread to alter
+its (or its process's) environment, Windows offers functions that
+make it easy for a thread to refer to its process kernel object or to
+its own thread kernel object:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HANDLE GetCurrentProcess();
+HANDLE GetCurrentThread();
+</pre></td></tr></table></p>
+
+<p>Both of these functions return a pseudo-handle to the calling
+thread's process or thread kernel object. These functions do not
+create new handles in the calling process's handle table. Also,
+calling these functions has no effect on the usage count of the process
+or thread kernel object. If you call <i>CloseHandle</i>, passing a
+pseudo-handle as the parameter, <i>CloseHandle</i> simply ignores the
+call and returns FALSE. </p>
+<p>When you call a Windows function that requires a handle to a process or
+thread, you can pass a pseudo-handle, which causes the function to
+perform its action on the calling process or thread. For example, a
+thread can query its process's time usage by calling <i>
+GetProcessTimes</i> as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+FILETIME ftCreationTime, ftExitTime, ftKernelTime, ftUserTime;
+GetProcessTimes(GetCurrentProcess(),
+   &amp;ftCreationTime, &amp;ftExitTime, &amp;ftKernelTime, &amp;ftUserTime);
+</pre></td></tr></table></p>
+
+<p>Likewise, a thread can query its own thread times by calling <i>
+GetThreadTimes</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+FILETIME ftCreationTime, ftExitTime, ftKernelTime, ftUserTime;
+GetThreadTimes(GetCurrentThread(),
+   &amp;ftCreationTime, &amp;ftExitTime, &amp;ftKernelTime, &amp;ftUserTime);
+</pre></td></tr></table></p>
+
+<p>A few Windows functions allow you to identify a specific process or
+thread by its unique system-wide ID. The following functions allow a
+thread to query its process's unique ID or its own unique ID:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+DWORD GetCurrentProcessId();
+DWORD GetCurrentThreadId();
+</pre></td></tr></table></p>
+
+<p>These functions are generally not as useful as the functions that
+return pseudo-handles, but occasionally they come in handy.</p>
+
+<A NAME="95"><H3>Converting a Pseudo-Handle to a Real Handle</H3></A>
+
+<p>Sometimes you might need to acquire a real handle to a thread
+instead of a pseudo-handle. By &quot;real,&quot; I mean a handle that
+unambiguously identifies a unique thread. Examine the following
+code:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+DWORD WINAPI ParentThread(PVOID pvParam) {
+   HANDLE hThreadParent = GetCurrentThread();
+   CreateThread(NULL, 0, ChildThread, (PVOID) hThreadParent, 0, NULL);
+   // Function continues...
+
+}
+
+DWORD WINAPI ChildThread(PVOID pvParam) {
+   HANDLE hThreadParent = (HANDLE) pvParam;
+   FILETIME ftCreationTime, ftExitTime, ftKernelTime, ftUserTime;
+   GetThreadTimes(hThreadParent,
+      &amp;ftCreationTime, &amp;ftExitTime, &amp;ftKernelTime, &amp;ftUserTime);
+   // Function continues...
+}
+</pre></td></tr></table></p> 
+<P>Can you see the problem with this code fragment? The idea is to have 
+the parent thread pass to the child thread a thread handle that identifies the 
+parent thread. However, the parent thread passes a pseudo-handle, not a real 
+handle. When the child thread begins executing, it passes the pseudo-handle to 
+the <I>GetThreadTimes </I>function, which causes the child thread to get its own 
+CPU times, not the parent thread's CPU times. This happens because a thread 
+pseudo-handle is a handle to the current thread&#8212; that is, a handle to whichever 
+thread is making the function call.</p>
+
+<P>To fix this code, we must turn the pseudo-handle into a real handle. 
+The <I>DuplicateHandle</I> function (discussed in <A HREF="ch03a.htm">Chapter 3</A>) can do this transformation:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+BOOL DuplicateHandle(
+   HANDLE hSourceProcess, 
+   HANDLE hSource,
+   HANDLE hTargetProcess, 
+   PHANDLE phTarget,
+   DWORD fdwAccess, 
+   BOOL bInheritHandle, 
+   DWORD fdwOptions);
+</pre></td></tr></table></p> 
+
+<P>Usually you use this function to create a new process-relative handle 
+from a kernel object handle that is relative to another process. However, we can 
+use it in an unusual way to correct the code fragment discussed earlier. The 
+corrected code fragment is as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+DWORD WINAPI ParentThread(PVOID pvParam) {
+   HANDLE hThreadParent;
+
+   DuplicateHandle(
+      GetCurrentProcess(),     // Handle of process that thread 
+                               // pseudo-handle is relative to
+      GetCurrentThread(),      // Parent thread's pseudo-handle
+      GetCurrentProcess(),     // Handle of process that the new, real,
+                               // thread handle is relative to
+      &amp;hThreadParent,          // Will receive the new, real, handle
+                               // identifying the parent thread
+      0,                       // Ignored due to DUPLICATE_SAME_ACCESS
+      FALSE,                   // New thread handle is not inheritable
+      DUPLICATE_SAME_ACCESS);  // New thread handle has same 
+                               // access as pseudo-handle
+
+   CreateThread(NULL, 0, ChildThread, (PVOID) hThreadParent, 0, NULL);
+   // Function continues...
+}
+DWORD WINAPI ChildThread(PVOID pvParam) {
+   HANDLE hThreadParent = (HANDLE) pvParam;
+   FILETIME ftCreationTime, ftExitTime, ftKernelTime, ftUserTime;
+   GetThreadTimes(hThreadParent,
+      &amp;ftCreationTime, &amp;ftExitTime, &amp;ftKernelTime, &amp;ftUserTime);
+   CloseHandle(hThreadParent);
+   // Function continues...
+}
+</pre></td></tr></table></p> 
+
+<P>Now when the parent thread executes, it converts the ambiguous 
+pseudo-handle identifying the parent thread to a new, real handle that 
+unambiguously identifies the parent thread, and it passes this real handle to 
+<I>CreateThread</I>. When the child thread starts executing, its 
+<I>pvParam</I> parameter contains the real thread handle. Any calls to functions passing this handle will affect the parent 
+thread, not the child thread.</p> 
+<p>Because <I>DuplicateHandle</I> increments the usage count of the 
+specified kernel object, it is important to decrement the object's usage count by 
+passing the target handle to <I>CloseHandle</I> when you finish using the duplicated 
+object handle. This is shown in the code fragment above. Immediately after the 
+call to <I>GetThreadTimes</I>, the child thread calls 
+<I>CloseHandle</I> to decrement the parent thread object's usage count. In this code fragment, I assumed that the 
+child thread would not call any other functions using this handle. If other 
+functions are to be called passing the parent thread's handle, the call to 
+<I>CloseHandle</I> should not be made until the child thread no longer requires the handle. </p>
+
+<p>I should also point out that the 
+<I>DuplicateHandle</I> function can be used to convert a pseudo-handle for a process to a real process handle as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+HANDLE hProcess;
+DuplicateHandle(
+   GetCurrentProcess(),    // Handle of process that the process 
+                           // pseudo-handle is relative to
+   GetCurrentProcess(),    // Process's pseudo-handle
+   GetCurrentProcess(),    // Handle of process that the new, real,
+                           // process handle is relative to
+   &amp;hProcess,              // Will receive the new, real 
+                           // handle identifying the process
+   0,                      // Ignored because of DUPLICATE_SAME_ACCESS
+   FALSE,                  // New thread handle is not inheritable
+   DUPLICATE_SAME_ACCESS); // New process handle has same 
+                           // access as pseudo-handle
+
+
+</pre></td></tr></table></p>
+</body>
+</html>
+
+
+
+
+
+
+

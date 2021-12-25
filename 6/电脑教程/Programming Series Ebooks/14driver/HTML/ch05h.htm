@@ -1,0 +1,228 @@
+<HTML>
+<HEAD>
+<TITLE>Loose Ends</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch05g.htm">[Previous]</A> <A HREF="ch06a.htm">[Next]</a>
+</p>
+
+<A NAME="176"><H1>Loose Ends</H1></A>
+
+<p>I'll close this chapter by describing some other things you need to know that I
+didn't cover earlier. These include two more ways of building IRPs and a word or two about
+how to locate a device object to use as a target for IoCallDriver.</p>
+
+
+<A NAME="177"><H2>Using IoBuildDeviceIoControlRequest</H2></A>
+
+<p>I'll discuss <b>IoBuildDeviceIoControlRequest</b> in <A HREF="ch09a.htm">Chapter 9</A> when I discuss how to
+perform I/O control operations. As far as cleanup and cancellation are concerned, IRPs created
+with this function are like ones created by IoBuildSynchronousFsdRequest.</p>
+
+
+<A NAME="178"><H2>Using IoBuildAsynchronousFsdRequest</H2></A>
+
+<p><b>IoBuildAsynchronousFsdRequest</b> is another routine that you can use to build one of the
+IRPs listed in Table 5-3. The prototype of the function is as follows:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+PIRP IoBuildAsynchronousFsdRequest(ULONG MajorFunction,
+  PDEVICE_OBJECT DeviceObject, PVOID Buffer, ULONG Length,
+  PLARGE_INTEGER StartingOffset, PIO_STATUS_BLOCK IoStatusBlock);
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>This prototype differs from that for IoBuildSynchronousFsdRequest in that there's no <b>
+Event</b> argument and the <b>IoStatusBlock</b> pointer can be NULL. The DDK goes on to tell
+you to install a completion routine whose job will be to call IoFreeIrp on this IRP and return
+STATUS_MORE_PROCESSING_REQUIRED.</p>
+
+<p>I wondered about the different treatment for IRPs built with the two
+IoBuild<i>Xxx</i>FsdRequest functions, so I dug a little deeper. The code for these two
+functions is essentially identical. In fact, IoBuildSynchronousFsdRequest calls
+IoBuildAsynchronous FsdRequest as a subroutine. I'm not telling you anything here that you
+couldn't find out on your own after five minutes with a kernel debugger.
+IoBuildSynchronousFsdRequest's only additional actions are saving your event pointer in the
+IRP (reasonable, since that's how the I/O Manager can find it to signal it) and putting the
+IRP on the queue of IRPs for the current thread, which allows the IRP to be cancelled when the
+thread dies.</p>
+
+<p>I've been able to discern only two situations in which you'd want to call
+IoBuildAsynchronousFsdRequest. The first situation is when you find yourself executing in an
+arbitrary thread context and need to create an IRP. IoBuildAsynchronousFsdRequest is ideal for
+this purpose, since termination of the current (arbitrary) thread should not result in
+cancelling the new IRP. The other situation is when you're running at APC_LEVEL in a
+nonarbitrary thread and need to synchronously&#8212;yes, <i>synchronously</i>&#8212;execute an
+IRP. IoBuildSynchronousFsdRequest won't work for this purpose because the IRQL blocks the
+APC that would normally set the event. So you call IoBuildAsynchronousFsdRequest and wait on an
+event that your completion routine will set. This second case won't come up often, if ever,
+for a device driver.</p>
+
+<p>In a general case, the completion routine you use with IoBuildAsynchronousFsdRequest has to do
+quite a bit more work than just call IoFreeIrp. In fact, you need to duplicate the
+functionality of the internal routine (<b>IopCompleteRequest</b> ) that the I/O Manager uses to
+clean up completed IRPs. You can't just create an IRP with IoBuildAsynchronousFsdRequest
+and launch it into the void, relying on the I/O Manager to clean up. Since the cleanup requires
+an APC in the current releases of Windows 98 and Windows 2000, and since it would be incorrect
+to depend on executing an APC in an arbitrary thread, the I/O Manager doesn't do the
+cleanup for you. You must do all the cleanup yourself.</p>
+
+<p>If the device object to which you send the IRP has the DO_DIRECT_IO flag set,
+IoBuildAsynchronousFsdRequest will create an MDL that you must release with code like the
+following:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+NTSTATUS CompletionRoutine(...)
+  {
+  PMDL mdl;
+  while ((mdl = Irp-&gt;MdlAddress))
+    {
+    Irp-&gt;MdlAddress = mdl-&gt;Next;
+    IoFreeMdl(mdl);
+    }
+  ...
+  IoFreeIrp(Irp);
+  return STATUS_MORE_PROCESSING_REQUIRED;
+  }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>If the device object to which you send the IRP has the DO_BUFFERED_IO flag set,
+IoBuildAsynchronousFsdRequest will allocate a system buffer that you need to release. If
+you're doing an input operation, you also have to copy the input data from the system
+buffer to your real input buffer&#8212;before releasing the memory! If you need to do this copy,
+you need to be sure that the real buffer is in nonpaged memory because completion routines
+might run at DISPATCH_LEVEL. You also need to be sure that you've got a kernel address for
+the buffer, because completion routines run in arbitrary thread context. If these restrictions
+aren't enough to discourage you from using IoBuildAsynchronousFsdRequest with a
+DO_BUFFERED_IO device, consider that you must also test the undocumented flag bits
+IRP_BUFFERED_IO, IRP_INPUT_OPERATION, and IRP_DEALLOCATE_BUFFER to discover what to do in your completion
+routine. I'm not going to show you the code to do this because I took a solemn pledge to
+avoid undocumented tricks in this book.</p>
+
+<p>My advice is to use IoBuildAsynchronousFsdRequest only when you know that the device
+you're sending the IRP to doesn't use DO_BUFFERED_IO.</p>
+
+
+<A NAME="179"><H2>Where Do Device Object Pointers Come From?</H2></A>
+
+<p>The call to IoCallDriver requires a PDEVICE_OBJECT as its first argument. You might be
+wondering where you get a pointer to a device object so that you can send an IRP to
+something.</p>
+
+<p>One of the obvious ways to get a pointer to a device object is by calling <b>
+IoAttachDeviceToDeviceStack</b>, which is something that every WDM driver's AddDevice
+function does. In all of the sample drivers in this book, you'll see a line of code like
+this one:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+pdx-&gt;LowerDeviceObject = IoAttachDeviceToDeviceStack(fdo, pdo);
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>We use this device object pointer whenever we want to pass an IRP down the driver stack.</p>
+
+<p>Another common way to locate a device object is to start with an object name that you happen to
+know about:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+PUNICODE_STRING DeviceName;   // <img src="images/tlarrow.jpg" width=13 height=12 border="0"> something gives you this
+PDEVICE_OBJECT DeviceObject;  // <img src="images/tlarrow.jpg" width=13 height=12 border="0"> an output from this process
+PFILE_OBJECT FileObject;      // <img src="images/tlarrow.jpg" width=13 height=12 border="0"> another output
+NTSTATUS status = IoGetDeviceObjectPointer(DeviceName,
+  <i>&lt;access mask&gt;</i>, &amp;FileObject, &amp;DeviceObject);
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>You get back a pointer to the device object having the name you specify and a pointer to a
+file object. A file object is the thing a file handle points to. Eventually, you'll need to
+dereference the file object, as shown here:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+ObDereferenceObject(FileObject); // <img src="images/tlarrow.jpg" width=13 height=12 border="0"> DeviceObject now poison!
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>As soon as you dereference the file object, you also release your implicit reference to the
+device object. If you want to continue using the device object, be sure to reference it
+first:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+ObReferenceObject(DeviceObject);
+ObDereferenceObject(FileObject); // <img src="images/tlarrow.jpg" width=13 height=12 border="0"> DeviceObject still okay
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>You shouldn't automatically put the preceding two lines of code in your driver, however.
+In fact, when you send an IRP to a device object whose address you obtained by calling <b>
+IoGetDeviceObjectPointer</b>, you should send the address of the file object along:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+PIRP Irp = IoBuild<i>Xxx</i>Request(...);
+PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
+stack-&gt;FileObject = FileObject;
+IoCallDriver(DeviceObject, Irp);
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Here's the explanation for this extra statement. IoGetDeviceObjectPointer internally
+opens a regular handle to the device object, which causes the driver to receive an
+IRP_MJ_CREATE request with a pointer to the same file object you'll later be getting as a
+return value. The driver might create some auxiliary data structure that it associates with the
+file object, and it might require access to that structure to handle later IRPs. It will
+destroy that structure when it processes the IRP_MJ_CLOSE operation that occurs when the last
+reference to the file object disappears. For this to work right, you need to set the <b>
+FileObject</b> pointer in the first stack location for each IRP you send the driver.</p>
+
+<p>You don't <i>always</i> set the file object pointer in a new IRP you create, by the way.
+If you're the driver that owns the file object by virtue of being the real implementor of
+IRP_MJ_CREATE, no one below you has any business looking at the file object. In the case I just
+described, however, the owner of the file object is the driver for the device object you found
+by calling IoGetDeviceObjectPointer. In that situation, you <i>must</i> set the file object
+pointer.</p>
+
+
+</body>
+
+</html>
+
+
+
+
+
+

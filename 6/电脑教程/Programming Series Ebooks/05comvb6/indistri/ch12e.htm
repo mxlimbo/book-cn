@@ -1,0 +1,146 @@
+<HTML>
+<HEAD>
+<LINK REL=StyleSheet HREF="Library.css" TYPE="text/css">
+<TITLE>Creating Middleware for a Distributed Application</TITLE>
+
+
+</HEAD>
+<BODY BGCOLOR="#FFFFFF" TEXT="#000000">
+<SCRIPT LANGUAGE="JavaScript">
+<!--
+
+function fullSize(sURL){
+	window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+
+function LibraryHeaderNavPrevNext(sHref, sImgOff, sImgOn, iH, iW, sImgStyle, sImgRuleStyle, sRuleColor, sRuleSize){
+	var tableStr;
+	//validate questionable args for defs
+	tableStr = "<TABLE BORDER=0 CELLPADDING=0 CELLSPACING=0 border=0 width=100%>";
+	tableStr += "<TR VALIGN=top ALIGN=right>";
+
+	tableStr += "<TD align=right class=" + sImgRuleStyle + ">&nbsp;</TD>";	
+	
+	tableStr += "<TD width=34 align=right class=" + sImgStyle + ">";
+	tableStr += "<A href='" + sHref + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgOff + '\'\"';
+	tableStr += " SRC='" + sImgOff + "' vspace=0 hspace=0></a></TD>";
+
+	tableStr += "<TR VALIGN=top>";
+	tableStr += "<TD height=3 align=center colspan=3 class=" + sImgRuleStyle + ">";
+	tableStr += "<HR color=" + sRuleColor + " size=" + sRuleSize + "></TD></TR></TABLE>";
+	//alert(tableStr);
+	document.write(tableStr);
+}
+																						     
+															//purple is: #aa22aa   orange is: #ff9900
+LibraryHeaderNavPrevNext("ch12d.htm", "images/unit_o_a1.gif", "images/unit_o_a2.gif", 18, 34, "unit01", "headerrule", "#ff9900", "2");
+
+
+//--></SCRIPT>
+<A NAME="196"><H1>Creating Middleware for a Distributed Application</H1></A>
+
+<P>Let's examine a few common high-level design requirements in a distributed application. When you build a large information system, you must often place critical subsystems in the middle tier. While MTS 2 assists you by providing many useful middle-tier services, in a few other areas you're on your own. We'll look at some of the more common pieces of middleware that you need to obtain when you build a distributed application, and I'll also introduce some of the new services you can expect from COM+.
+
+<A NAME="197"><H2>Creating a Scalable Notification System</H2></A>
+
+<P>One common requirement in a LAN-based application is a system that can notify a set of clients when something interesting happens. For example, in an application for stockbrokers, you might want to inform all of your users when a stock price climbs or falls beyond a preset level.
+
+<P>You might assume that you can create a systemwide eventing system using a straightforward technique based on Visual Basic events. However, a naive implementation using Visual Basic events won't scale to accommodate more than a handful of clients. Visual Basic events work best when a source object raises events to a single client. When you hook up multiple event sinks to a single source, Visual Basic events become slow and unreliable because events are broadcast synchronously.
+
+<P>For example, if you have 100 clients with event sinks hooked into one source object, an event is broadcast to client 1 and back, then client 2 and back, and so on. As you can imagine, 100 round-trips run in sequence won't provide the performance you're looking for. To make things worse, if one of the client applications crashes or raises an error in the event handler, you'll encounter problems over which you have little control.
+
+<P>A scalable eventing architecture requires sophisticated multithreading and asynchronous call dispatching. Figure 12-8 shows how an event is propagated in such a system.
+
+<P><A HREF="javascript:fullSize('F12wg08x.htm')"> <img src="images/F12wg08.JPG" width=404 height=351 border=0 ALT = "Click to view at full size."> </A>
+
+<P><!-- caption --><B>Figure 12-8.</b> <i>A scalable eventing service must use multithreading and asynchronous call dispatching. COM+ will provide a similar eventing service that uses a publish-and-subscribe metaphor.</I><!-- /caption -->
+
+<P>Let's say that a client has run an MTS transaction and the root object has determined that it wants to commit the transaction. The root object then checks to see whether the transaction's modifications are worthy of raising an event. The transaction has lowered a stock price by $2.00, and the root object wants to send a notification to every client. The root object does its part by posting an asynchronous request to the eventing service. It can then return control to the client.
+
+<P>When the eventing service receives a request for an event, it must send a notification to every interested client. You can accomplish this by having the eventing service hold onto an outbound interface reference for each client. Such an architecture requires clients to register interface references with the eventing service. <a href="ch06a.htm">Chapter 6</a> showed you how to accomplish this using both Visual Basic events and a custom callback interface. Once all the clients have registered their interface references, the eventing service dispatcher can enumerate through all these references and send a notification to each client. As shown in Figure 12-8, an eventing service usually requires multiple threads and dispatches its notifications asynchronously in order to scale up appropriately when the application has hundreds or thousands of clients.
+
+<P>While you can build this type of an eventing service with Visual Basic, it isn't the best tool for the job. An eventing service developed with C++ offers much more flexibility when it comes to creating multiple threads and dispatching asynchronous calls. You might also consider deploying an eventing service as an actual Windows NT service. Again, C++ is much better suited for creating Windows NT services than Visual Basic.
+
+<P>If you don't mind waiting, COM+ will offer its own eventing service, which is similar to the one I've just described. This eventing service will be based on a publish-and-subscribe metaphor. Applications throughout the network can publish the types of events they expect to raise. Each client can subscribe to receive event notifications from several different applications. This approach will decouple applications that send notifications from those that receive them.
+
+
+<P>The COM+ eventing service will let clients subscribe to one or more events by registering an interface reference in the manner I've just described. It will also let you subscribe a CLSID to an event. When you do this, the eventing service will raise an event by activating an instance of the CLSID and calling a well-known method.
+
+<A NAME="198"><H2>Creating a Queue Listener Application</H2></A>
+
+<P><a href="ch11a.htm">Chapter 11</a> covered the fundamentals of message queues and Microsoft Message Queue (MSMQ) programming. As you'll recall, there are many good reasons to use queues in a distributed application. You can take advantage of MSMQ's ability to send asynchronous requests and to deal with disconnected applications, which might include WAN-based and remote clients. You also saw the benefits of exactly-once delivery, which is made possible by transactional queues.
+
+<P>Sending request messages from clients is relatively straightforward, but you usually have to create an application that listens in on a queue for incoming messages. Unfortunately, an MTS server package is passive&#8212;it requires a base client to activate an object before it will do anything. You usually need a middle-tier queue listener application to solve the problem of receiving request messages from the queue and directing them to the MTS application.
+
+<P>Figure 12-9 shows one approach to creating a queue listener application. You can monitor a queue by synchronously receiving or peeking at incoming messages, or you can use asynchronous MSMQ events. Either way, the application can react whenever a message arrives at the queue. If you have a high volume of incoming messages or if each request takes a long time to process, you should consider processing each message asynchronously. This leads to a more complicated design.
+
+
+<P>If you want to process messages asynchronously, the main thread of your application should listen in on the queue and dispatch a new worker thread to process each message. When the main thread determines that a new message has arrived at the queue with a call to <I>PeekCurrent</I> or <I>PeekNext</I>, it can dispatch a new worker thread and pass it the ID of the new message. The worker thread can locate the message in the queue by peeking at the message IDs and remove it with a call to <I>ReceiveCurrent</I>. 
+
+<P><A HREF="javascript:fullSize('F12wg09x.htm')"> <img src="images/F12wg09.JPG" width=404 height=253 border=0 ALT = "Click to view at full size."> </A>
+
+<P><!-- caption --><B>Figure 12-9.</b> <i>A queue listener application monitors a queue for incoming messages. When a message arrives at the queue, the application receives it and directs the request to some destination, such as an MTS application.</I><!-- /caption -->
+
+<P>Once the worker thread receives the message, it can run an MTS transaction and send a second message to the response queue. This entire process can be wrapped inside an internal MSMQ transaction to provide the exactly-once reliability that we saw in <a href="ch11a.htm">Chapter 11</a>. When you design a listener application, keep in mind that MSMQ requires that all transacted receive operations be conducted locally.
+
+<P>Because Visual Basic makes MSMQ programming easier than using any other language, it makes building a single-threaded queue listener application relatively simple. However, as with creating an eventing service, creating a sophisticated multithreaded listener that will be deployed as a Windows NT service with Visual Basic is cumbersome at best. C++ gives you much more control in addressing all the system-level programming issues that you'll encounter.
+
+
+<P>One last thing I want to mention about message queuing is a new feature that will debut in COM+: <I>queued components</I>. A queued component is a COM component that transparently uses MSMQ as an underlying transport. You'll be able to create a client-side object from a queued component and invoke method calls as usual. Behind the scenes, the method calls will be recorded in an MSMQ message and sent to a special request queue. A complementary server-side component will receive the message and execute the method implementation.
+
+<P>The intention of queued components is to give you the advantages of COM and MSMQ rolled into one. Queued components are like COM components in that a client can create an object and invoke a bunch of methods. (Queued methods are asynchronous and take only input parameters.) Queued components have the advantages of message passing because they do not suffer from the limitations of RPC. Queued components will offer the benefits of priority-based messaging, asynchronous processing, communication among disconnected clients, and exactly-once delivery.
+
+<A NAME="199"><H2>Load Balancing Across Multiple Servers</H2></A>
+
+<P>One of the most common requirements in a distributed application is the ability to scale up to accommodate more users. In most situations, the solution is to throw more hardware at the problem&#8212;to buy a bigger, faster server with multiple processors to increase throughput and concurrency or to add more servers. If you intend to scale a system by adding more servers, you must devise a scheme to balance the processing load of client requests among them.
+
+<P>Let's say that you start with 50 clients and 1 server. You add more servers as more users come on line, and all of a sudden you have 500 clients and 10 servers. The problem you face is how to direct clients 1 through 50 to server 1, clients 51 through 100 to server 2, and so on. One of the most common ways to balance the processing load across a group of servers is to direct different clients to different servers at activation time. A primitive approach is to hardcode the server name into the Registry of each client Registry. A more strategic approach is to add a routing server that acts as an object broker, as shown in Figure 12-10.
+
+<P>Client applications request new objects from the routing server, and the routing server responds by activating an object on what it determines is the most appropriate server. A routing server can employ one of several common algorithms to balance the processing load. For example, a routing server can use a round-robin approach, in which it cycles between each server in the pool for each subsequent activation request. However, a simple algorithm like this is vulnerable to overloading one server while other servers sit around with nothing to do.
+
+<P>COM+ will introduce a load balancing service based on a routing server and an algorithm that selects a server based on statistical data. Each server in the pool will be responsible for sending intermittent data about its processor use and response times for fulfilling requests. This data will allow the router to make an intelligent choice about which server to use next.
+
+<P>In addition, the router used by COM+ will address several important fault tolerance issues. For instance, when the router tries to activate an object on a server that has crashed or gone off line, it will seamlessly activate the requested object on another server. The client will never be bothered with the details of which servers are down or where the object is actually located. The most critical computer will be the one that runs the router itself. You'll be able to make the router fault tolerant by running it on a clustered server.
+
+<P><A HREF="javascript:fullSize('F12wg10x.htm')"> <img src="images/F12wg10.JPG" width=404 height=329 border=0 ALT = "Click to view at full size."> </A>
+
+<P><!-- caption --><B>Figure 12-10.</B> <I>A load balancing service based on a central routing server that connects clients to servers.</I><!-- /caption -->
+
+<A NAME="200"><H2>Moving from COM to COM+</H2></A>
+
+<P>Figure 12-11 shows the middleware world in which distributed application developers live. Today many system requirements force you to build or purchase software for critical services that aren't provided by COM and MTS. As I've described, Microsoft intends to fill the demand for these pieces of middleware with a host of new services in COM+, including the following:
+
+<UL>
+<P><LI>An in-memory database
+<P><LI>An eventing service
+<P><LI>Queued components
+<P><LI>A load balancing service
+</UL>
+
+<P>I'd like to indulge myself and end this book by giving you my thoughts on the transition from COM to COM+. Today COM and MTS are two different beasts. As you learned in <a href="ch09a.htm">Chapter 9</a>, MTS has been carefully layered on top of COM, yet COM has absolutely no knowledge of the existence of MTS. This creates quite a few problems. COM and MTS maintain their configuration information in the Registry in totally different ways. There's one security model for COM and another for MTS. There are also two different programming models. This can be confusing for a developer trying to get up to speed.
+
+<P><A HREF="javascript:fullSize('F12wg11x.htm')"> <img src="images/F12wg11.JPG" width=404 height=269 border=0> </A>
+
+
+<P><!-- caption --><B>Figure 12-11.</B> <I>When you design a distributed application for a Windows NT environment, you must carefully consider the type and size of your intended audience. 
+The choices you make will affect many aspects of the application, such as flexibility, manageability, and scalability.</I><!-- /caption -->
+
+<P>For example, when you call <I>CreateObject</I> in an MTS application, you ask COM's SCM to create an object for you. However, when you call <I>CreateInstance</I> through the <I>ObjectContext </I>interface, you ask the MTS run time to create an object for you. This creates an unnecessary level of confusion for programmers of distributed applications. What's more, calling to COM when you should be calling to MTS can get you in a load of trouble. Things would be much better if there were only one system to call into when you wanted to create an object.
+
+<P>COM+ will likely provide the grand unification of COM and MTS. No longer will there be the COM way of doing things vs. the MTS way. You'll have a single way to register a component and a single security model based on roles similar to the ones that exist today in MTS. You'll have one system to call into when you want to create an object. A single programming model will make it much easier for developers to get up to speed and maintain their sanity.
+
+<P>As COM and MTS are melded into one, the core competencies of each will continue to shine through. COM+, like COM, will use a binary component-based model centered around interface-based programming, and it will use the concept of apartments to integrate components with diverse threading capabilities. COM+ will approach interprocess communication by layering its interfaces on top of RPC, and it will leverage the accounts database and authentication scheme built into Windows NT and the underlying RPC system. As you can see, at the heart of COM+ will be the same old object model that you know and love.
+
+<P>In addition, quite a few core aspects of MTS will take center stage in COM+. Code distribution will be based on packages and components. Interceptors and attribute-based programming will provide the hooks for many system services. The context wrapper and the object context will be part of the mainstream programming model. Applications will use an activity-based concurrency model. You'll be able to configure each application with its own role-based security scheme. And of course, COM+ will continue to support distributed transactions. COM+ will also provide new middleware services for critical subsystems in a distributed application. All of these advancements and the waves of technical information that they'll bring along with them should keep you and me busy well into the next millenium.
+
+</BODY>
+</HTML>
+
+
+
+
+
+

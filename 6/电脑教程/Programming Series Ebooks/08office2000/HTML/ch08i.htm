@@ -1,0 +1,139 @@
+<HTML>
+<HEAD>
+<TITLE>Submitting a Timesheet</TITLE>
+<link rel="STYLESHEET" type="text/css" href="webcomp.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch08h.htm">[Previous]</A> <A HREF="ch08j.htm">[Next]</A><P>
+
+<A NAME="179"><H1>Submitting a Timesheet</H1></A>
+
+<p>Now that you know how to enable a user to save his or her timesheets, let's look 
+at how to process a submitted timesheet. Submitting a timesheet means that the 
+user has finished entering his or her work hours and wants to commit them to the 
+database. I store work hours in another table and write individual rows for each 
+day/project/employee combination. For example, if an employee entered hours for 
+two projects for all five days of the week, I would write ten rows into the WorkHours 
+table. This enables the user to later analyze his or her work hours across the three 
+different dimensions: Time, Project, and Employee.</p>
+
+<p><div class="sidebar"><blockquote>
+<b>Why Doesn't Internet Explorer Just Let Me Cancel the Close?</b>
+<p>When I first tried to implement a warning to remind the user to save the 
+spreadsheet, I thought I could simply set the returnValue property to False and stop 
+the page from unloading. Then I saw the dialog box displayed by Internet 
+Explorer and wondered why the Internet Explorer team had designed it to work that way.</p>
+
+<p>I don't know for certain, but my guess is that this was done for 
+security reasons. Imagine a malicious developer enticing you to visit a page that you 
+can never leave. A script developer who can stop a page from unloading can 
+do so under any circumstances, thus preventing you from leaving his or her page.</p>
+</blockquote></div></p>
+
+<p>Submitting a timesheet follows the same code path as saving a timesheet 
+because saving is part of the submitting process. However, if the user is submitting 
+the timesheet, some extra code in SaveSubmit.asp runs. We will take a look at this 
+with the follwing code.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+' If the action is submit, add to the WorkHours table
+If m_sAction = &quot;submit&quot; Then
+    Dim ss          ' Spreadsheet control
+    Dim rng         ' Temporary Range object
+    Dim dtStart     ' Starting date for timesheet
+    Dim idProj      ' Temporary project ID
+    Dim nHrs        ' Temporary hours
+    Dim iDay        ' Day counter
+    Dim sSQL        ' SQL statement buffer
+
+    dtStart = Request.Form(&quot;StartDate&quot;)
+
+    ' Create a spreadsheet in memory to parse the timesheet
+    Set ss = server.CreateObject(&quot;OWC.Spreadsheet.9&quot;)
+
+    ss.HTMLData = Request.Form(&quot;Timesheet&quot;)
+
+    ' Begin a transaction
+    m_cn.BeginTrans 
+
+    ' Delete any existing records for this timesheet
+    m_cn.Execute &quot;Delete from WorkHours where TimesheetID = &quot; &amp; _
+        m_idTimesheet
+
+    ' Now write the new work hours
+    ' Start at the first project row on the Project ID column
+    Set rng = ss.Range(&quot;b2&quot;)
+
+    ' Loop until the project ID is blank
+    While Len(trim(rng.Text)) &gt; 0
+        ' Get the current project ID
+        idProj = trim(rng.Text)
+
+        ' Loop over days
+        For iDay = 1 To 5
+            ' Check to see whether there were hours for this day
+            nHrs = rng.Offset(0,iDay).Text
+            If Len(trim(nHrs)) &gt; 0 Then
+
+                sSQL = &quot;INSERT INTO WorkHours &quot; &amp; _
+                    &quot;(TimesheetID, Employee, WorkDate, &quot;
+                sSQL = sSQL &amp; &quot; ProjectID, WorkHours) Values(&quot;
+                sSQL = sSQL &amp; m_idTimesheet
+                sSQL = sSQL &amp; &quot;, '&quot; &amp; Request.Form(&quot;Employee&quot;) &amp; &quot;'&quot;
+                sSQL = sSQL &amp; &quot;, #&quot; &amp; CDate(dtStart) + (iDay - 1) &amp; &quot;#&quot;
+                sSQL = sSQL &amp; &quot;, &quot; &amp; idProj
+                sSQL = sSQL &amp; &quot;, &quot; &amp; nHrs &amp; &quot;)&quot;
+
+                m_cn.Execute sSQL
+
+            End If 'Had some hours
+        Next 'iDay
+
+        ' Move down a row
+        Set rng = rng.Offset(1)
+    Wend 'While project ID is valid
+
+    ' Commit the transaction
+    m_cn.CommitTrans
+End If 'submit
+</pre></td></tr></table></p>
+
+<p>This fairly large block of code is actually quite simple in design. When the 
+user submits his or her timesheet, the data received by the SaveSubmit.asp page is the 
+large text stream of timesheet data along with a few other values, including the start 
+date for the timesheet, the employee name, and the timesheet ID. However, you need 
+to somehow extract the values in the individual cells of the timesheet. The way to 
+do this is by using the Spreadsheet component again, but this time on the web 
+server. Since the timesheet data came from the Spreadsheet control, a server-side 
+Spreadsheet component can reload the data and parse out those individual cell values for you.</p>
+
+<p>I create the Spreadsheet object and set its HTMLData property to the 
+posted timesheet data. The Spreadsheet component immediately parses the string and 
+reloads it into the spreadsheet. I next start a database transaction and delete all 
+previous work hours for this timesheet since the user is submitting it again. I then 
+loop over the project rows in the timesheet until reaching the end (an empty project 
+ID). For each project, I loop over the days&#8212;the cells immediately to the right of the 
+Project ID column&#8212;and insert a row for each day. For each row, I save the timesheet 
+ID, date, employee name, project ID, and hours worked. When I am all done, I 
+commit the database transaction and exit.</p>
+
+<p>Using the Spreadsheet component on the server is the topic of the <a href="ch09a.htm">next 
+chapter</a>, so I will not discuss it in any more detail here. However, I will say that the 
+Spreadsheet component is a handy mechanism for parsing HTML table data, so if you 
+ever have a need for that, use an in-memory Spreadsheet component and set its 
+HTMLData property to the HTML table data. Then just walk the cells, using the UsedRange 
+property of the Worksheet object to determine how many rows and columns there were.</p>
+
+
+</BODY>
+</HTML>
+
+
+
+
+

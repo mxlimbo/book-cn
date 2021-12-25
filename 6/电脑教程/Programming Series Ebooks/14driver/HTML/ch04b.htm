@@ -1,0 +1,160 @@
+<HTML>
+<HEAD>
+<TITLE>An Archetypal Synchronization Problem</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch04a.htm">[Previous]</A> <A HREF="ch04c.htm">[Next]</a>
+</p>
+
+<A NAME="109"><H1>An Archetypal Synchronization Problem</H1></A>
+
+<p>A hackneyed example will motivate this discussion. Suppose your driver had a static integer
+variable that you used for some purpose, say to count the number of I/O requests that were
+currently outstanding:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>static LONG lActiveRequests;</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Suppose further that you increment this variable when you receive a request and decrement it
+when you later complete the request:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>NTSTATUS DispatchPnp(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  ++lActiveRequests;
+  ... // process PNP request
+  --lActiveRequests;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>I'm sure you recognize already that a counter like this one ought not to be a static
+variable: it should be a member of your device extension so that each device object has its own
+unique counter. Bear with me and pretend that your driver only ever manages a single device. To
+make the example more meaningful, suppose finally that a function in your driver would be
+called when it was time to delete your device object. You might want to defer the operation
+until no more requests were outstanding, so you might insert a test of the counter:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>NTSTATUS HandleRemoveDevice(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  if (lActiveRequests)
+    <i>&lt;wait for all requests to complete&gt;</i>
+  IoDeleteDevice(fdo);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>This example describes a real problem, by the way, which we'll tackle in Chapter 6,
+&quot;<A HREF="ch06a.htm#180">Plug and Play</A>,&quot; in our discussion of Plug and Play (PnP) requests. The I/O Manager
+can try to remove one of our devices at a time when requests are active, and we need to guard
+against that by keeping some sort of counter. I'll show you in <A HREF="ch06a.htm">Chapter 6</A> how to use <b>
+IoAcquireRemoveLock</b> and some related functions to solve the problem.</p>
+
+<p>A horrible synchronization problem lurks in the code fragments I just showed you, but it
+becomes apparent only if you look behind the increment and decrement operations inside <b>
+DispatchPnp</b>. On an x86 processor, the compiler might implement them using these
+instructions:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>; ++lActiveRequests;
+  mov eax, lActiveRequests
+  add eax, 1
+  mov lActiveRequests, eax
+
+...
+
+; --lActiveRequests;
+  mov eax, lActiveRequests
+  sub eax, 1
+  mov lActiveRequests, eax</pre>
+</td></tr>
+</table>
+</p>
+
+<p>To expose the synchronization problem, let's consider first what might go wrong on a
+single CPU. Imagine two threads that are both trying to advance through DispatchPnp at roughly
+the same time. We know they're not both executing truly simultaneously because we have only
+a single CPU for them to share. But imagine that one of the threads is executing near the end
+of the function and manages to load the current contents of <b>lActiveRequests</b> into the EAX
+register just before it gets preempted by the other thread. Suppose that lActiveRequests equals
+2 at that instant. As part of the thread switch, the operating system saves the EAX register
+(containing the value 2) as part of the outgoing thread's context image somewhere in main
+memory.</p>
+
+<p>Now imagine that the other thread manages to get past the incrementing code at the beginning of
+DispatchPnp. It will increment lActiveRequests from 2 to 3 (because the first thread never got
+to update the variable). If this other thread gets preempted by the first thread, the operating
+system will restore the first thread's context, which includes the value 2 in the EAX
+register. The first thread now proceeds to subtract one from EAX and store the result back into
+lActiveRequests. At this point, lActiveRequests contains the value 1, which is incorrect.
+Somewhere down the road, we may prematurely delete our device object because we've
+effectively lost track of one I/O request.</p>
+
+<p>Solving this particular problem is very easy on an x86 computer&#8212;we just replace the
+load/add/store and load/subtract/store instruction sequences with atomic instructions:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>; ++lActiveRequests;
+  inc lActiveRequests
+  ...
+; --lActiveRequests;
+  dec lActiveRequests</pre>
+</td></tr>
+</table>
+</p>
+
+<p>On an Intel x86, the INC and DEC instructions cannot be interrupted, so there will never be
+a case where a thread could be preempted in the middle of updating the counter. As it stands,
+though, this code still isn't safe in a multiprocessor environment because INC and DEC are
+implemented in several microcode steps. It's possible for two different CPUs to be
+executing their microcode just slightly out of step such that one of them ends up updating a
+stale value. The multi-CPU problem can also be avoided in the x86 architecture by using a LOCK
+prefix:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>; ++lActiveRequests;
+  lock inc lActiveRequests
+  ...
+; --lActiveRequests;
+  lock dec lActiveRequests</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The LOCK instruction prefix locks out all other CPUs while the microcode for the current
+instruction executes, thereby guaranteeing data integrity.</p>
+
+<p>Not all synchronization problems have such an easy solution, unfortunately. The point of this
+example isn't to demonstrate how to solve one simple problem on one of the platforms where
+Windows NT runs, but rather to illustrate the two sources of difficulty: preemption of one
+thread by another in the middle of a state change and simultaneous execution of conflicting
+state-change operations. As we'll see in the remainder of this chapter, we can avoid
+preemption by using the IRQL priority scheme, and we can prevent simultaneous execution by
+judiciously using spin locks.</p>
+
+</BODY>
+</HTML>
+
+
+
+
+

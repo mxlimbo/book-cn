@@ -1,0 +1,138 @@
+<HTML>
+<HEAD>
+<TITLE>IRP_MJ_PNP Dispatch Function</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch06a.htm">[Previous]</A> <A HREF="ch06c.htm">[Next]</a>
+</p>
+
+<A NAME="181"><H1>IRP_MJ_PNP Dispatch Function</H1></A>
+
+<p>In Chapter 5, &quot;<A HREF="ch05a.htm#147">The I/O Request Packet</A>,&quot; I explained the mechanics of passing IRPs
+down the driver stack in two situations: one in which you care about the result and therefore
+need a completion routine, and the other in which you don't care about the result and
+therefore don't install a completion routine. Many of the PnP requests fit into the second
+of these categories&#8212;you're receiving the IRP and passing it down, but you don't
+care what happens to it afterward. To begin with, then, I suggest writing a helper function
+that you can use to pass a request down in the &quot;don't care&quot; scenario&#8212;see the
+code below.</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>NTSTATUS DefaultPnpHandler(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  IoSkipCurrentIrpStackLocation(Irp);
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+  return IoCallDriver(pdx-&gt;LowerDeviceObject, Irp);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>A simplified version of the dispatch function for IRP_MJ_PNP might look like the
+following:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+
+
+1<img src="images/arorite2.jpg" width=17 height=10 border="0">
+2<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+3<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+
+
+
+
+4<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+5<img src="images/arorite2.jpg" width=17 height=10 border="0">
+</pre></td>
+<td valign="top">
+<pre>NTSTATUS DispatchPnp(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
+  ULONG fcn = stack-&gt;MinorFunction;
+
+  static NTSTATUS (*fcntab[])(PDEVICE_OBJECT, PIRP) = {
+    HandleStartDevice,         // IRP_MN_START_DEVICE
+    HandleQueryRemove,         // IRP_MN_QUERY_REMOVE_DEVICE
+    <i>&lt;etc.&gt;,</i>
+    };
+
+  if (fcn &gt;= arraysize(fcntab))
+    return DefaultPnpHandler(fdo, Irp);
+  return (*fcntab[fcn])(fdo, Irp);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> All the parameters for the IRP, including the all-important minor function code,
+are in the stack location. Hence, we obtain a pointer to it by calling <b>
+IoGetCurrentIrpStackLocation</b>.</li></p>
+
+<p><li> We expect the IRP's minor function code to be one of those listed in
+Table 6-1.</li></p>
+
+<p><li> A method of handling the two dozen possible minor function codes is to write a
+subdispatch function for each one we're going to handle and then to define a table of
+pointers to those subdispatch functions. Many of the entries in the table will be <b>
+DefaultPnpHandler</b>. Subdispatch functions like <b>HandleStartDevice</b> will take pointers
+to a device object and an IRP as parameters and will return an NTSTATUS code.</li></p>
+
+<p><li> If we get a minor function code we don't recognize, it's probably because
+Microsoft defined a new one in a release of the DDK after the DDK with which we built our
+driver. The right thing to do is to pass the minor function code down the stack by calling the
+default handler. By the way, <b>arraysize</b> is a macro that returns the number of elements in
+an array. It's defined as <b>#define arraysize(p) (sizeof(p)/sizeof((p)[0]))</b>.</li></p>
+
+<p><li> This is the operative statement in the dispatch routine, with which we index the
+table of subdispatch functions and call the right one.</li></p>
+</ol>
+
+<P><div class="sidebar"><blockquote>
+<p><b>Using a Function Pointer Table</b></p>
+
+<p>Using a table of function pointers to dispatch handlers for minor function codes as I'm
+showing you in <b>DispatchPnp</b> entails some danger. A future version of the operating system
+might change the meaning of some of the codes. That's not a practical worry except during
+the beta test phase of a system, though, because a later change would invalidate an unknown
+number of existing drivers. I like using a table of pointers to subdispatch functions because
+having separate functions for the minor function codes seems like the right engineering
+solution to me. If I were designing a C++ class library, for instance, I'd define a base
+class that used virtual functions for each of the minor function codes.</p>
+
+<p>Most programmers would probably place a <b>switch</b> statement in their DispatchPnp
+routine. You can simply recompile your driver to conform to any reassignment of minor function
+codes. Recompilation will also highlight&#8212;by producing compilation errors!&#8212;name
+changes that might signal functionality shifts. That happened a time or two during the
+Microsoft Windows 98 and Windows 2000 betas, in fact. Furthermore, an optimizing compiler
+should be able to use a jump table to produce slightly faster code for a switch statement than
+for calls to subdispatch functions.</p>
+
+<p>I think the choice between a switch statement and a table of function pointers is mostly a
+matter of taste, with readability and modularity winning over efficiency in my own evaluation.
+You can avoid uncertainty during a beta test by placing appropriate assertions into your code.
+For example, the HandleStartDevice function could assert that <b>stack-&gt;MinorFunction == IRP_MN_START_DEVICE</b>. If you recompile your driver with each new beta DDK, you'll
+catch any number reassignments or name changes.</p>
+</blockquote></div>
+</P>
+
+</BODY>
+</HTML>
+
+
+
+
+

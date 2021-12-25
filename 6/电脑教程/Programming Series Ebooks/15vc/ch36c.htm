@@ -1,0 +1,140 @@
+<HTML>
+<HEAD>
+<LINK REL=StyleSheet HREF="basicIE4.css" TYPE="text/css">
+<TITLE>ActiveX Document Server Example EX36A</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY>
+<A NAME="974"><H1>ActiveX Document Server Example EX36A</H1></A><P>You could construct the EX36A example in two phases. The first phase is a 
+plain ActiveX document server that loads a file from its container. The view base 
+class is <I>CRichEditView</I>, which means the program loads, edits, and stores text 
+plus embedded objects. In the second phase, the application is enhanced to 
+download a separate text file from the Internet one line at a time, demonstrating 
+that ActiveX document servers can make arbitrary WinInet calls.
+<A NAME="975"><H2>EX36A Phase 1&#151;A Simple Server</H2></A><P>The EX36A example on the book's CD-ROM is complete with the text 
+download feature from Phase 2. You can exercise its Phase 1 capabilities by 
+building it, or you can create a new application with AppWizard. If you do use 
+AppWizard, you should refer to Figure 36-3 to see the AppWizard EXE 
+project dialog and select the appropriate options. All other options are the default 
+options, except those for selecting SDI (Step 1), setting the project's 
+filename extension to <I>36a</I> using the Advanced button in Step 4, and changing the 
+view's base class (<I>CRichEditView</I>&#151;on the wizard's last page). You don't have to 
+write any C++ code at all.
+<P>Be sure to run the program once in stand-alone mode to register it. 
+While the program is running in stand-alone mode, type some text (and insert 
+some OLE embedded objects) and then save the document as test.36a in your 
+Internet server's home directory (\scripts or \wwwroot directory). Try loading 
+test.36a from Internet Explorer and from Office Binder. Use Binder's Section menu 
+for loading and storing EX36A documents to and from disk files.
+<P>You should customize the document icons for your ActiveX 
+document servers because those icons show up on the right side of an Office Binder 
+window.
+<A NAME="976"><H2>Debugging an ActiveX Document Server</H2></A><P>If you want to debug your program in ActiveX document server mode, click 
+on the Debug tab in the Build Settings dialog. Set Program Arguments to 
+<I>/Embedding</I>, and then start the program. Now start the container program and use 
+it to &quot;start&quot; the server, which has in fact already started in the debugger and 
+is waiting for the container.
+<A NAME="977"><H2>EX36A Phase 2&#151;Adding WinInet Calls</H2></A><P>The EX36A example on the CD-ROM includes two dialog bar objects, one 
+for the main frame window and another for the in-place frame window. Both 
+are attached to the same resource template, 
+<I>IDD_DIALOGBAR</I>, which contains an edit control that accepts a text file URL plus start and stop buttons that 
+display green and red bitmaps. If you click the green button (handled by the 
+<I>OnStart</I> member function of the 
+<I>CEx36aView</I> class), you'll start a thread that reads 
+the text file one line at a time. The thread code from the file UrlThread.cpp is 
+shown here:
+<P><PRE>CString g_strURL = &quot;http:// &quot;;
+volatile BOOL g_bThreadStarted = FALSE;
+CEvent g_eKill;
+
+UINT UrlThreadProc(LPVOID pParam)
+{
+    g_bThreadStarted = TRUE;
+    CString strLine;
+    CInternetSession session;
+    CStdioFile* pFile1 = NULL;
+
+    try {
+        pFile1 = session.OpenURL(g_strURL, 0, INTERNET_FLAG_TRANSFER_BINARY
+            | INTERNET_FLAG_KEEP_CONNECTION); // needed for Windows NT  
+                                              //  c/r authentication
+        // Keep displaying text from the URL until the Kill event is 
+        //  received
+        while(::WaitForSingleObject(g_eKill.m_hObject, 0) != WAIT_OBJECT_0) {
+            // one line at a time
+            if(pFile1-&gt;ReadString(strLine) == FALSE) break;
+            strLine += `\n';
+            ::SendMessage((HWND) pParam, EM_SETSEL, (WPARAM) 999999, 
+                1000000);
+            ::SendMessage((HWND) pParam, EM_REPLACESEL, (WPARAM) 0,
+                          (LPARAM) (const char*) strLine);
+            Sleep(250); // Deliberately slow down the transfer
+        }
+    }
+    catch(CInternetException* e) {
+        LogInternetException(pParam, e);
+        e-&gt;Delete();
+    }
+    if(pFile1 != NULL) delete pFile1; // closes the file&#151;prints a warning
+    g_bThreadStarted = FALSE;
+    // Post any message to update the toolbar buttons
+    ::PostMessage((HWND) pParam, EM_SETSEL, (WPARAM) 999999, 1000000);
+    TRACE(&quot;Post thread exiting normally\n&quot;);
+    return 0;
+}</PRE>
+<P>This code uses the <I>CStdioFile</I> pointer to 
+<I>pFile1</I> returned from <I>OpenURL</I>. The 
+<I>ReadString</I> member function reads one line at a time, and each line is sent 
+to the rich edit view window. When the main thread sets the &quot;kill&quot; event (the 
+red button), the URL thread exits.
+<P>Before you test EX36A, make sure that the server (EX34A or IIS) is 
+running and that you have a text file in the server's home directory. Test the 
+EX36A program first in stand-alone mode by entering the text file URL in the 
+dialog bar. Next try running the program in server mode from Internet Explorer. 
+Enter <I>test.36a</I> (the document you created when you ran EX36A in stand-alone 
+mode) in Internet Explorer's Address field to load the server.
+<P>
+<DIV CLASS=note>
+<BLOCKQUOTE>
+<IMG SRC="note.jpg" width=123 height=18 BORDER="0"><P>
+We considered using the<I> 
+CAsyncMonikerFile</I> class (see <A HREF="ch34j.htm">Asynchronous Moniker Files</A>) instead of the MFC 
+<I>WinInet</I> classes to read the text file. We stuck with WinInet, however, because the program could use the <I>CStdioFile</I> class <I>ReadString</I> member function to &quot;pull&quot; individual 
+text lines from the server when it wanted them. The 
+<I>CAsyncMonikerFile</I> class would have &quot;pushed&quot; arbitrary blocks of characters into 
+the program (by calling the overridden 
+<I>OnDataAvailable</I> function) as soon as the characters had been received.
+
+</BLOCKQUOTE></DIV>
+<P>
+<DIV CLASS=note>
+<BLOCKQUOTE>
+<B>Displaying Bitmaps on Buttons</B>
+<P><A HREF="ch11a.htm">Chapter 11</A> describes the <I>CBitmapButton</I> class for associating a 
+group of bitmaps with a pushbutton. Microsoft Windows 95, Microsoft 
+Windows 98, and Microsoft Windows NT 4.0 support an alternative 
+technique that associates a single bitmap with a button. First you apply 
+the Bitmap style (on the button's property sheet) to the button, and 
+then you declare a variable of class 
+<I>CBitmap</I> that will last at least as long as the button is enabled. Then you make sure that the 
+<I>CButton::SetBitmap</I> function is called just after the button is created.
+<P>Here is the code for associating a bitmap with a button, from 
+the EX36A MainFrm.cpp and IpFrame.cpp files:
+<P><PRE>m_bitmapGreen.LoadBitmap(IDB_GREEN);
+HBITMAP hBitmap = (HBITMAP) m_bitmapGreen.GetSafeHandle();
+((CButton*) m_wndDialogBar.GetDlgItem(IDC_START))
+-&gt;SetBitmap(hBitmap);</PRE>
+<P>If your button was in a dialog, you could put similar code in 
+the <I>OnInitDialog</I> member function and declare a 
+<I>CBitmap</I> member in the class derived from 
+<I>CDialog</I>.
+</BLOCKQUOTE></DIV>
+</BODY>
+</HTML>
+
+
+

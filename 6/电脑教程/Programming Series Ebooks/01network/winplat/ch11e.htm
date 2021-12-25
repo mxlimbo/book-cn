@@ -1,0 +1,1207 @@
+<HTML>
+<HEAD>
+<TITLE>Multicasting with Winsock</title>
+<link rel="STYLESHEET" type="text/css" href="Library.css">
+
+
+</head>
+<BODY BGCOLOR="#FFFFFF" TEXT="#000000">
+<SCRIPT LANGUAGE="JavaScript">
+<!--
+
+function fullSize(sURL){
+	window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+
+function LibraryHeaderNav(sBackward, sForward, sImgLeftOff, sImgLeftOn, sImgRightOff, sImgRightOn, iH, iW, sImgLeftStyle, sImgRightStyle, sImgRuleStyle, sRuleColor, sRuleSize){
+	var tableStr;
+	//validate questionable args for defs
+	tableStr = "<TABLE BORDER=0 CELLPADDING=0 CELLSPACING=0 border=0 width=100%>";
+	tableStr += "<TR VALIGN=top ALIGN=right>";
+
+	tableStr += "<TD align=right class=" + sImgRuleStyle + ">&nbsp;</TD>";	
+	
+	tableStr += "<TD width=34 align=right class=" + sImgLeftStyle + ">";
+	tableStr += "<A href='" + sBackward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgLeftOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgLeftOff + '\'\"';
+	tableStr += " SRC='" + sImgLeftOff + "' vspace=0 hspace=0></a></TD>";
+	
+	tableStr += "<TD width=34 align=left class=" + sImgRightStyle + ">";
+	tableStr += "<A href='" + sForward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgRightOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgRightOff + '\'\"';
+	tableStr += " SRC='" + sImgRightOff + "' vspace=0 hspace=0></a></TD></TR>";
+
+	tableStr += "<TR VALIGN=top>";
+	tableStr += "<TD height=3 align=center colspan=3 class=" + sImgRuleStyle + ">";
+	tableStr += "<HR color=" + sRuleColor + " size=" + sRuleSize + "></TD></TR></TABLE>";
+	//alert(tableStr);
+	document.write(tableStr);
+}
+
+ 																						     //purple is: #aa22aa   orange is: #ff9900
+LibraryHeaderNav("ch11d.htm" , "ch11f.htm", "images/unit_o_a1.gif", "images/unit_o_a2.gif", "images/unit_o_b1.gif", "images/unit_o_b2.gif", 18, 34, "unit01", "unit02", "headerrule", "#ff9900", "2");
+//--></SCRIPT>
+
+
+
+<A NAME="332"><H1>Multicasting with Winsock</H1></A>
+
+<p>Now that you are familiar with the two types of multicasting available on Windows platforms, let's take a look at the API calls provided by Winsock to make multicasting possible. Winsock offers two different methods for IP multicasting that are based on the version of Winsock you use. The first method, available in Winsock 1, is to use socket options to join a group. Winsock 2 introduces a new function for joining a multicast group, <i>WSAJoinLeaf</i>, which is independent of the underlying protocol. The Winsock 1 method, which we will cover first, is the most widely used method, especially because it was derived from Berkeley sockets.</p>
+
+<A NAME="333"><H2>Winsock 1 Multicasting</H2></A>
+
+<p>Winsock 1 implements joining and leaving an IP multicast group by using <i>setsockopt</i> with the <i>IP_ADD_MEMBERSHIP</i> and <i>IP_DROP_MEMBERSHIP</i> options. When using either of the socket options, you must pass in an <i>ip_mreq</i> structure, which is defined as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>struct ip_mreq 
+{
+    struct in_addr  imr_multiaddr; 
+    struct in_addr  imr_interface; 
+};</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>imr_multiaddr</i> field specifies the multicast group to join, while <i>imr_interface</i> specifies the local interface to send multicast data out on. If you specify <i>INADDR_ANY</i> for <i>imr_interface</i>, the default interface is used; otherwise, specify the IP address of the local interface to be used if there is more than one. The following code example illustrates joining the multicast group 234.5.6.7.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>SOCKET            s;
+struct ip_mreq    ipmr;
+SOCKADDR_IN       local;
+int               len = sizeof(ipmr);
+
+s = socket(AF_INET, SOCK_DGRAM, 0);
+
+local.sin_family = AF_INET;
+local.sin_addr.s_addr = htonl(INADDR_ANY);
+local.sin_port = htons(10000);
+
+ipmr.imr_multiaddr.s_addr = inet_addr(&quot;234.5.6.7&quot;);
+ipmr.imr_interface.s_addr = htonl(INADDR_ANY);
+
+bind(s, (SOCKADDR *)&amp;local, sizeof(local));
+setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP,
+    (char *)&amp;ipmr, &amp;len);</pre>
+</td></tr></table>
+</p>
+
+<p>To leave the multicast group, simply call <i>setsockopt</i> with <i>IP_DROP_MEMBERSHIP</i>, passing an <i>ip_mreq</i> structure with the same values that you used to join the group, as in the following code:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>setsockopt(s, IPPROTO_IP, IP_DROP_MEMBERSHIP,
+    (char *)&amp;ipmr, &amp;len);</pre>
+</td></tr></table>
+</p>
+
+<A NAME="334"><H3>Winsock 1 IP multicast example</H3></A>
+
+<p>In Figure 11-3 we provide a simple IP multicast sample program that joins a specified group and then acts as a sender or receiver, depending on the command line arguments. This example is written so that a sender only sends, whereas a receiver simply waits in a loop for incoming data. This design doesn't illustrate the fact that if the sender sends data to the multicast group and is also listening for data as a member of that group, the data sent will be looped back to the sender's own incoming data queue. This is known as the multicast loopback, and it occurs only when you use IP multicasting. We will discuss how to disable this loopback later in this chapter.</p>
+<p><b>Figure 11-3.</b> <i>The Winsock 1.1 multicast example </i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>// Module name: Mcastws1.c
+
+#include &lt;windows.h&gt;
+#include &lt;winsock.h&gt;
+
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+
+#define MCASTADDR     &quot;234.5.6.7&quot;
+#define MCASTPORT      25000
+#define BUFSIZE        1024
+#define DEFAULT_COUNT  500
+
+BOOL  bSender = FALSE,      // Act as sender?
+      bLoopBack = FALSE;    // Disable loopback?
+
+DWORD dwInterface,          // Local interface to bind to
+      dwMulticastGroup,     // Multicast group to join
+      dwCount;              // Number of messages to send/receive
+
+short iPort;                // Port number to use
+
+// 
+// Function: usage
+//
+// Description:
+//    Print usage information and exit
+//
+void usage(char *progname)
+{
+    printf(&quot;usage: %s -s -m:str -p:int -i:str -l -n:int\n&quot;,
+        progname);
+    printf(&quot; -s     Act as server (send data); otherwise\n&quot;);
+    printf(&quot;          receive data.\n&quot;);
+    printf(&quot; -m:str Dotted decimal multicast IP addres to join\n&quot;);
+    printf(&quot;          The default group is: %s\n&quot;, MCASTADDR);
+    printf(&quot; -p:int Port number to use\n&quot;);
+    printf(&quot;          The default port is: %d\n&quot;, MCASTPORT);
+    printf(&quot; -i:str Local interface to bind to; by default \n&quot;);
+    printf(&quot;          use INADDRY_ANY\n&quot;);
+    printf(&quot; -l     Disable loopback\n&quot;);
+    printf(&quot; -n:int Number of messages to send/receive\n&quot;);
+    ExitProcess(-1);
+}
+
+//
+// Function: ValidateArgs
+//
+// Description:
+//    Parse the command line arguments, and set some global flags,
+//    depending on the values
+//
+void ValidateArgs(int argc, char **argv)
+{
+    int      i;
+
+    dwInterface = INADDR_ANY;
+    dwMulticastGroup = inet_addr(MCASTADDR);
+    iPort = MCASTPORT;
+    dwCount = DEFAULT_COUNT;
+
+    for(i = 1; i &lt; argc; i++)
+    {
+        if ((argv[i][0] == '-') || (argv[i][0] == '/'))
+        {
+            switch (tolower(argv[i][1]))
+            {
+                case 's':   // Sender
+                    bSender = TRUE;
+                    break;
+                case 'm':   // Multicast group to join
+                    if (strlen(argv[i]) &gt; 3)
+                        dwMulticastGroup = inet_addr(&amp;argv[i][3]);
+                    break;
+                case 'i':   // Local interface to use
+                    if (strlen(argv[i]) &gt; 3)
+                        dwInterface = inet_addr(&amp;argv[i][3]);
+                    break;
+                case 'p':   // Port number to use
+                    if (strlen(argv[i]) &gt; 3)
+                        iPort = atoi(&amp;argv[i][3]);
+                    break;
+                case 'l':   // Disable loopback?
+                    bLoopBack = TRUE;
+                    break;
+                case 'n':   // Number of messages to send/recv
+                    dwCount = atoi(&amp;argv[i][3]);
+                    break;
+                default:
+                    usage(argv[0]);
+                    break;
+            }
+        }
+    }
+    return;
+}
+
+//
+// Function: main
+// 
+// Description:
+//    Parse the command line arguments, load the Winsock library, 
+//    create a socket, and join the multicast group. If this program
+//    is started as a sender, begin sending messages to the 
+//    multicast group; otherwise, call recvfrom() to read messages 
+//    sent to the group.
+//    
+int main(int argc, char **argv)
+{
+    WSADATA             wsd;
+    struct sockaddr_in  local,
+                        remote,
+                        from;
+    struct ip_mreq      mcast;
+    SOCKET              sockM;
+    TCHAR               recvbuf[BUFSIZE],
+
+                        sendbuf[BUFSIZE];
+    int                 len = sizeof(struct sockaddr_in),
+                        optval,
+                        ret;
+    DWORD               i=0;
+
+    // Parse the command line, and load Winsock
+    //
+    ValidateArgs(argc, argv);
+     
+    if (WSAStartup(MAKEWORD(1, 1), &amp;wsd) != 0)
+    {
+        printf(&quot;WSAStartup failed\n&quot;);
+        return -1;
+    }
+    // Create the socket. In Winsock 1, you don't need any special
+    // flags to indicate multicasting.
+    //
+    if ((sockM = socket(AF_INET, SOCK_DGRAM, 0)) == INVALID_SOCKET)
+    {
+        printf(&quot;socket failed with: %d\n&quot;, WSAGetLastError());
+        WSACleanup();
+        return -1;
+    }
+    // Bind the socket to the local interface. This is done so 
+    // that we can receive data.
+    //
+    local.sin_family = AF_INET;
+    local.sin_port   = htons(iPort);
+    local.sin_addr.s_addr = dwInterface;
+
+    if (bind(sockM, (struct sockaddr *)&amp;local, 
+        sizeof(local)) == SOCKET_ERROR)
+    {
+        printf(&quot;bind failed with: %d\n&quot;, WSAGetLastError());
+        closesocket(sockM);
+        WSACleanup();
+        return -1;
+    }
+
+    // Set up the im_req structure to indicate what group we want
+    // to join as well as the interface
+    //
+    remote.sin_family      = AF_INET;
+    remote.sin_port        = htons(iPort);
+    remote.sin_addr.s_addr = dwMulticastGroup;
+
+    mcast.imr_multiaddr.s_addr = dwMulticastGroup;
+    mcast.imr_interface.s_addr = dwInterface;
+
+    if (setsockopt(sockM, IPPROTO_IP, IP_ADD_MEMBERSHIP,
+        (char *)&amp;mcast, sizeof(mcast)) == SOCKET_ERROR)
+    {
+        printf(&quot;setsockopt(IP_ADD_MEMBERSHIP) failed: %d\n&quot;,
+            WSAGetLastError());
+        closesocket(sockM);
+        WSACleanup();
+        return -1;
+    }
+    // Set the TTL to something else. The default TTL is 1.
+    //
+    optval = 8;
+    if (setsockopt(sockM, IPPROTO_IP, IP_MULTICAST_TTL, 
+        (char *)&amp;optval, sizeof(int)) == SOCKET_ERROR)
+    {
+        printf(&quot;setsockopt(IP_MULTICAST_TTL) failed: %d\n&quot;,
+            WSAGetLastError());
+        closesocket(sockM);
+        WSACleanup();
+        return -1;
+    }
+    // Disable the loopback if selected. Note that in Windows NT 4
+    // and Windows 95 you cannot disable it.
+    //
+    if (bLoopBack)
+    {
+        optval = 0;
+        if (setsockopt(sockM, IPPROTO_IP, IP_MULTICAST_LOOP,
+            (char *)&amp;optval, sizeof(optval)) == SOCKET_ERROR)
+        {
+            printf(&quot;setsockopt(IP_MULTICAST_LOOP) failed: %d\n&quot;,
+                WSAGetLastError());
+            closesocket(sockM);
+            WSACleanup();
+            return -1;
+        }
+    }
+
+    if (!bSender)           // Client
+    {
+        // Receive some data
+        //
+        for(i = 0; i &lt; dwCount; i++)
+        {
+
+            if ((ret = recvfrom(sockM, recvbuf, BUFSIZE, 0,
+                (struct sockaddr *)&amp;from, &amp;len)) == SOCKET_ERROR)
+            {
+                printf(&quot;recvfrom failed with: %d\n&quot;, 
+                    WSAGetLastError());
+                closesocket(sockM);
+                WSACleanup();
+                return -1;
+            }
+            recvbuf[ret] = 0;
+            printf(&quot;RECV: '%s' from &lt;%s&gt;\n&quot;, recvbuf, 
+                inet_ntoa(from.sin_addr));
+        }
+    }
+    else                    // Server
+    {
+        // Send some data
+        //
+        for(i = 0; i &lt; dwCount; i++)
+        {
+            sprintf(sendbuf, &quot;server 1: This is a test: %d&quot;, i);
+            if (sendto(sockM, (char *)sendbuf, strlen(sendbuf), 0,
+                (struct sockaddr *)&amp;remote, 
+                sizeof(remote)) == SOCKET_ERROR)
+            {
+                printf(&quot;sendto failed with: %d\n&quot;, 
+                    WSAGetLastError());
+                closesocket(sockM);
+                WSACleanup();
+                return -1;
+            }
+            Sleep(500);
+        }
+    }
+    // Drop group membership
+    //
+    if (setsockopt(sockM, IPPROTO_IP, IP_DROP_MEMBERSHIP,
+        (char *)&amp;mcast, sizeof(mcast)) == SOCKET_ERROR)
+    {
+        printf(&quot;setsockopt(IP_DROP_MEMBERSHIP) failed: %d\n&quot;,
+            WSAGetLastError());
+    }
+    closesocket(sockM);
+
+    WSACleanup();
+    return 0;
+}</pre>
+</td></tr></table>
+</p>
+
+<p>One note of caution when you implement the Winsock 1 method of multicasting: use the correct header file and library for linking. If you load the Winsock 1.1 library, you should include <i>Winsock.h</i> and link with <i>Wsock32.lib.</i> If you're loading version 2 or later, include <i>Winsock2.h</i> and <i>Ws2tcpip.h</i> and link with <i>Ws2_32.lib</i>. This is necessary because two different sets of values exist for the constants <i>IP_ADD_MEMBERSHIP</i>, <i>IP_DROP_MEMBERSHIP</i>, <i>IP_MULTICAST_IF</i>, and <i>IP_MULTICAST_LOOP</i>. The original specification for these values&#8212;by Stephen Deering&#8212;was never officially integrated into the Winsock specification. As a result, these values changed in the Winsock 2 specification. Of course, if you are using the older Winsock version, linking with <i>wsock32.lib</i> takes care of everything, so the constants translate into the correct values when run on a Winsock 2 machine.</p>
+
+<A NAME="335"><H2>Winsock 2 Multicasting</H2></A>
+
+<p>Winsock 2 multicasting is a bit more complicated than Winsock 1 multicasting, but it offers facilities to support protocols that offer additional features, such as Quality of Service (QOS). Additionally, it provides support for protocols supporting rooted multicast schemes. Socket options are no longer used to initiate group membership; instead, a new function, <i>WSAJoinLeaf</i>, is introduced in its place. The prototype is as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>SOCKET WSAJoinLeaf(
+    SOCKET s,
+    const struct sockaddr FAR * name,
+    int namelen,
+    LPWSABUF lpCallerData,
+    LPWSABUF lpCalleeData,
+    LPQOS lpSQOS,
+    LPQOS lpGQOS,
+    DWORD dwFlags
+);</pre>
+</td></tr></table>
+</p>
+
+<p>The first parameter, <i>s</i>, is the socket handle returned from <i>WSASocket</i>. The socket passed in must be created with the appropriate multicast flags; otherwise, <i>WSAJoinLeaf</i> will fail with the error <i>WSAEINVAL</i>. Remember that you need to specify two multipoint flags: one to indicate whether this socket will be rooted or nonrooted in the control plane and another to indicate whether this socket will be rooted or nonrooted in the data plane. The flags for specifying the control plane are <i>WSA_FLAG_MULTIPOINT_C_ROOT</i> and <i>WSA_FLAG_MULTIPOINT_C_LEAF</i>, while the flags for the data plane are <i>WSA_FLAG_MULTIPOINT_D_ROOT</i> and <i>WSA_FLAG_MULTIPOINT_D_LEAF</i>. The second parameter is the <i>SOCKADDR</i> structure specific to the protocol in use. For rooted control schemes (ATM, for example), this address specifies the client to invite, while for nonrooted control schemes (IP, for example), this address is that of the multicast group that a host wants to join. The <i>namelen</i> parameter is exactly that: the length in bytes of the <i>name</i> parameter. The <i>lpCallerData</i> parameter is used to transfer a buffer of data to the peer upon session establishment, while <i>lpCalleeData</i> indicates a buffer to be transmitted back from the peer upon session establishment. Note that these two parameters are not implemented on the current Windows platforms and should be set to <i>NULL</i>. The <i>lpSQOS</i> parameter specifies a <i>FLOWSPEC</i> structure indicating the required bandwidth for the application.
+(<A HREF="ch12a.htm">Chapter 12</A> covers QOS in greater detail.) The <i>lpGQOS</i> parameter is ignored, as none of the current Windows platforms support socket groups. The last parameter, <i>dwFlags</i>, specifies whether this host will be sending data, receiving data, or both. The possible values for this parameter are <i>JL_SENDER_ONLY</i>, <i>JL_RECEIVER_ONLY</i>, or <i>JL_BOTH</i>.</p>
+
+<p>The function returns a <i>SOCKET</i> descriptor for the socket bound to the multicast group. If the <i>WSAJoinLeaf</i> call is made with an asynchronous (or nonblocking) socket, the returned socket descriptor is <i>not</i> usable until after the join operation completes. For example, if the socket is in asynchronous mode from a <i>WSAAsyncSelect</i> or <i>WSAEventSelect</i> call, the descriptor isn't valid until the original socket <i>s</i> receives a corresponding <i>FD_CONNECT</i> indication. Note that an <i>FD_CONNECT</i> notification is generated only in rooted control schemes in which the <i>name</i> parameter indicates a specific endpoint's address. Table 11-2 lists under what circumstances an application will receive an <i>FD_CONNECT</i> notification. You can cancel the outstanding join request for these nonblocking modes by calling <i>closesocket</i> on the original socket. A root node in a multipoint session might call <i>WSAJoinLeaf</i> one or more times in order to add a number of leaf
+nodes; however, at most one multipoint connection request at a time can be outstanding.</p>
+
+<p>As we mentioned earlier, the join request cannot complete immediately with nonblocking sockets, and the socket descriptor returned is not usable until the request is complete. If the socket is in nonblocking mode through the <i>ioctlsocket</i> command <i>FIONBIO</i>, the call to <i>WSAJoinLeaf</i> will not return the <i>WSAEWOULDBLOCK</i> error because the function has effectively returned a &quot;successful start&quot; indication. Note that, in an asynchronous I/O model, the only method for receiving notification of a successful start is via the <i>FD_CONNECT</i> message. See <a href="ch08a.htm">Chapter 8</A> for more information on using the <i>WSAAsyncSelect</i> and <i>WSAEventSelect</i> asynchronous I/O models. Blocking sockets cannot notify an application of either a success or a failure of <i>WSAJoinLeaf</i>. In other words, straight nonblocking sockets should probably be avoided, as there is no definitive way of determining whether the multicast join succeeds until the socket is actually used in subsequent Winsock calls
+(which would fail if the join failed).</p>
+
+<p>The socket descriptor returned by <i>WSAJoinLeaf</i> differs depending on whether the input socket is a root node or a leaf node. With a root node, the <i>name</i> parameter indicates the address of a specific leaf that is being invited into the multipoint session. For the c_root to maintain leaf membership, <i>WSAJoinLeaf</i> returns a new socket handle for the leaf. This new socket has all the same attributes as the root's socket used in the invitation. This includes any asynchronous events registered through the asynchronous I/O models, such as <i>WSAEventSelect</i> and <i>WSAAsyncSelect</i>. However, these new sockets should be used only to receive <i>FD_CLOSE</i> notifications from the leaf. Any data to be sent to the multipoint groups should be sent using the c_root socket. In some cases, you can send data on the socket returned from <i>WSAJoinLeaf</i>, but only the leaf corresponding to that socket will receive the data. The ATM protocol allows this. Finally, to remove a leaf node from the
+multipoint session, the root simply has to call <i>closesocket</i> on the socket corresponding to that leaf.</p>
+
+<p>On the other hand, when <i>WSAJoinLeaf</i> is invoked with a leaf node, the <i>name</i> parameter specifies the address of either a root node or a multipoint group. The former case specifies a leaf-initiated join, which isn't currently supported by any protocol. (However, the ATM UNI 4.0 specification will support this.) The latter case is how IP multicasting operates. In either case, the socket handle returned from <i>WSAJoinLeaf</i> is simply the same socket handle passed as <i>s</i>. In the case in which the call to <i>WSAJoinLeaf</i> is a leaf-initiated join, the root node listens for incoming connections using the <i>bind</i>, <i>listen</i>, and <i>accept/WSAAccept</i> methods that you normally expect for a server. When the application wants to remove itself from the multipoint session, <i>closesocket</i> is called on the socket that terminates membership (and also frees socket resources). Table 11-2 summarizes the actions that are carried out depending on the type of control plane and the
+parameters that are passed for the socket and name parameters. These actions include whether a new socket descriptor is returned upon successful function call as well as whether the application will receive an <i>FD_CONNECT</i> notification.</p>
+
+<p><b>Table 11-2.</b> WSAJoinLeaf <i>actions</i></p>
+
+<p>
+<table cellpadding=5 width="95%">
+<tr> 
+<th><i>Control<br>Plane</i>  </th>
+<th>s   </th>
+<th>Name  </th>
+<th><i>Action</i>  </th>
+<th><i>Receives</i><br>FD_CONNECT<br><i>Notification?</i>  </th>
+<th> <i>Returned<br>Socket<br>Descriptor</i> </th></tr>
+<tr>
+<td valign="top" rowspan="2">Rooted  </td>
+<td valign="top">c_root  </td>
+<td valign="top">Address of leaf  </td>
+<td valign="top"> Root is inviting a leaf. </td>
+<td valign="top">Yes  </td>
+<td valign="top">Used for <i>FD_CLOSE</i>notification and for sending private data to that leaf only  </td></tr>
+<tr>
+<td valign="top">c_leaf  </td>
+<td valign="top">Address of root </td>
+<td valign="top">Leaf is initiating a connection to root.</td>
+<td valign="top">Yes  </td>
+<td valign="top">Is a duplicate of <i>s</i>  </td></tr>
+<tr>
+<td valign="top" rowspan="2">Nonrooted  </td>
+<td valign="top">c_root  </td>
+<td valign="top">N/A  </td>
+<td valign="top">Not a possible combination.  </td>
+<td valign="top">N/A  </td>
+<td valign="top">N/A  </td></tr>
+<tr>
+<td valign="top">c_leaf  </td>
+<td valign="top">Address of group </td>
+<td valign="top">Leaf joins a group. </td>
+<td valign="top">No  </td>
+<td valign="top">Is a duplicate of <i>s</i>  </td></tr>
+</table></p>
+
+
+<p>When an application calls the <i>accept</i> or the <i>WSAAccept</i> function either to wait for a root-initiated invitation or, as root, to wait for join requests from leaves, the function returns a socket that is a c_leaf socket descriptor just like those that <i>WSAJoinLeaf</i> returns. To accommodate protocols that allow both root-initiated and leaf-initiated joins, it is acceptable for a c_root socket that is already in listening mode to be used as an input to <i>WSAJoinLeaf</i>.</p>
+
+<p>Once the call to <i>WSAJoinLeaf</i> is made, a new socket handle is returned. This handle is not used to send and receive data. The original socket handle returned from <i>WSASocket</i> that is passed into <i>WSAJoinLeaf</i> is used on all sending and receiving operations. The new handle indicates that you are a member of the given multicast group as long as the handle is valid. Calling <i>closesocket</i> on the new handle will terminate your application's membership to the multicast group. Calling <i>closesocket</i> on a c_root socket causes all associated c_leaf nodes using an asynchronous I/O model to receive an <i>FD_CLOSE</i> notification.</p>
+
+<A NAME="336"><H3>Winsock 2 IP multicast example</H3></A>
+
+<p>Figure 11-4 contains Mcastws2.c, which illustrates how to join and leave an IP multicast group using <i>WSAJoinLeaf</i>. This example is simply the Winsock 1 IP multicast example, Mcastws1.c, except that the join/leave calls have been converted to use <i>WSAJoinLeaf</i>.</p>
+
+<p><b>Figure 11-4.</b> <i>IP multicast example </i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>// Module: Mcastws2.c
+//
+#include &lt;winsock2.h&gt;
+#include &lt;ws2tcpip.h&gt;
+
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+
+#define MCASTADDR     &quot;234.5.6.7&quot;
+#define MCASTPORT      25000
+#define BUFSIZE        1024
+#define DEFAULT_COUNT  500
+
+BOOL  bSender = FALSE,      // Act as a sender?
+      bLoopBack = FALSE;    // Disable loopback?
+
+DWORD dwInterface,          // Local interface to bind to
+      dwMulticastGroup,     // Multicast group to join
+      dwCount;              // Number of messages to send/receive
+
+short iPort;                // Port number to use
+
+// 
+// Function: usage
+
+//
+// Description:
+//    Print usage information and exit
+//
+void usage(char *progname)
+{
+    printf(&quot;usage: %s -s -m:str -p:int -i:str -l -n:int\n&quot;,
+        progname);
+    printf(&quot;   -s        Act as server (send data); otherwise\n&quot;);
+    printf(&quot;              receive data.\n&quot;);
+    printf(&quot;   -m:str    Dotted decimal multicast IP addres &quot;
+       &quot;to join\n&quot;);
+    printf(&quot;              The default group is: %s\n&quot;, MCASTADDR);
+    printf(&quot;   -p:int    Port number to use\n&quot;);
+    printf(&quot;              The default port is: %d\n&quot;, MCASTPORT);
+    printf(&quot;   -i:str    Local interface to bind to; by default \n&quot;);
+    printf(&quot;              use INADDRY_ANY\n&quot;);
+    printf(&quot;   -l        Disable loopback\n&quot;);
+    printf(&quot;   -n:int    Number of messages to send/receive\n&quot;);
+    ExitProcess(-1);
+}
+
+//
+// Function: ValidateArgs
+//
+// Description:
+//    Parse the command line arguments, and set some global flags,
+//    depending on the values
+//
+void ValidateArgs(int argc, char **argv)
+{
+    int      i;
+
+    dwInterface = INADDR_ANY;
+    dwMulticastGroup = inet_addr(MCASTADDR);
+    iPort = MCASTPORT;
+    dwCount = DEFAULT_COUNT;
+
+    for(i=1; i &lt; argc ;i++)
+    {
+        if ((argv[i][0] == '-') || (argv[i][0] == '/'))
+        {
+            switch (tolower(argv[i][1]))
+            {
+                case 's':  // Sender
+                    bSender = TRUE;
+                    break;
+
+                case 'm':  // Multicast group to join
+                    if (strlen(argv[i]) &gt; 3)
+                        dwMulticastGroup = inet_addr(&amp;argv[i][3]);
+                    break;
+                case 'i':  // Local interface to use
+                    if (strlen(argv[i]) &gt; 3)
+                        dwInterface = inet_addr(&amp;argv[i][3]);
+                    break;
+                case 'p':  // Port to use
+                    if (strlen(argv[i]) &gt; 3)
+                        iPort = atoi(&amp;argv[i][3]);
+                    break;
+                case 'l':  // Disable loopback
+                    bLoopBack = TRUE;
+                    break;
+                case 'n':  // Number of messages to send/recv
+                    dwCount = atoi(&amp;argv[i][3]);
+                    break;
+                default:
+                    usage(argv[0]);
+                    break;
+            }
+        }
+    }
+    return;
+}
+
+//
+// Function: main
+// 
+// Description:
+//    Parse the command line arguments, load the Winsock library, 
+//    create a socket, and join the multicast group. If this program
+//    is run as a sender, begin sending messages to the multicast 
+//    group; otherwise, call recvfrom() to read messages sent to the 
+//    group.
+// 
+int main(int argc, char **argv)
+{
+    WSADATA             wsd;
+    struct sockaddr_in  local,
+                        remote,
+                        from;
+    SOCKET              sock, sockM;
+    TCHAR               recvbuf[BUFSIZE],
+                        sendbuf[BUFSIZE];
+    int                 len = sizeof(struct sockaddr_in),
+                        optval,
+                        ret;
+    DWORD               i=0;
+
+    // Parse the command line, and load Winsock
+    //
+    ValidateArgs(argc, argv);
+
+    if (WSAStartup(MAKEWORD(2, 2), &amp;wsd) != 0)
+    {
+        printf(&quot;WSAStartup() failed\n&quot;);
+        return -1;
+    }
+    // Create the socket. In Winsock 2, you do have to specify the
+    // multicast attributes that this socket will be used with.
+    //
+    if ((sock = WSASocket(AF_INET, SOCK_DGRAM, 0, NULL, 0,
+                  WSA_FLAG_MULTIPOINT_C_LEAF 
+              | WSA_FLAG_MULTIPOINT_D_LEAF 
+              | WSA_FLAG_OVERLAPPED)) == INVALID_SOCKET)
+    {
+        printf(&quot;socket failed with: %d\n&quot;, WSAGetLastError());
+        WSACleanup();
+        return -1;
+    }
+    // Bind to the local interface. This is done to receive data.
+    local.sin_family = AF_INET;
+    local.sin_port   = htons(iPort);
+    local.sin_addr.s_addr = dwInterface;
+    
+    if (bind(sock, (struct sockaddr *)&amp;local, 
+        sizeof(local)) == SOCKET_ERROR)
+    {
+        printf(&quot;bind failed with: %d\n&quot;, WSAGetLastError());
+        closesocket(sock);
+        WSACleanup();
+        return -1;
+    }
+    // Set up the SOCKADDR_IN structure describing the multicast 
+    // group we want to join
+    //
+    remote.sin_family      = AF_INET;
+    remote.sin_port        = htons(iPort);
+    remote.sin_addr.s_addr = dwMulticastGroup;
+    //
+    // Change the TTL to something more appropriate
+    //
+
+    optval = 8;
+    if (setsockopt(sock, IPPROTO_IP, IP_MULTICAST_TTL, 
+        (char *)&amp;optval, sizeof(int)) == SOCKET_ERROR)
+    {
+        printf(&quot;setsockopt(IP_MULTICAST_TTL) failed: %d\n&quot;,
+            WSAGetLastError());
+        closesocket(sock);
+        WSACleanup();
+        return -1;
+    }
+    // Disable loopback if needed
+    //
+    if (bLoopBack)
+    {
+        optval = 0;
+        if (setsockopt(sock, IPPROTO_IP, IP_MULTICAST_LOOP,
+            (char *)&amp;optval, sizeof(optval)) == SOCKET_ERROR)
+        {
+            printf(&quot;setsockopt(IP_MULTICAST_LOOP) failed: %d\n&quot;,
+                WSAGetLastError());
+            closesocket(sock);
+            WSACleanup();
+            return -1;
+        }
+    }
+    // Join the multicast group.  Note that sockM is not used 
+    // to send or receive data. It is used when you want to 
+    // leave the multicast group. You simply call closesocket() 
+    // on it.
+    //
+    if ((sockM = WSAJoinLeaf(sock, (SOCKADDR *)&amp;remote, 
+        sizeof(remote), NULL, NULL, NULL, NULL, 
+        JL_BOTH)) == INVALID_SOCKET)
+    {
+        printf(&quot;WSAJoinLeaf() failed: %d\n&quot;, WSAGetLastError());
+        closesocket(sock);
+        WSACleanup();
+        return -1;
+    }
+
+    if (!bSender)           // Receiver
+    {
+        // Receive data
+        //
+        for(i = 0; i &lt; dwCount; i++)
+        {
+            if ((ret = recvfrom(sock, recvbuf, BUFSIZE, 0,
+                (struct sockaddr *)&amp;from, &amp;len)) == SOCKET_ERROR)
+            {
+                printf(&quot;recvfrom failed with: %d\n&quot;, 
+                    WSAGetLastError());
+                closesocket(sockM);
+                closesocket(sock);
+                WSACleanup();
+                return -1;
+            }
+            recvbuf[ret] = 0;
+            printf(&quot;RECV: '%s' from &lt;%s&gt;\n&quot;, recvbuf, 
+                inet_ntoa(from.sin_addr));
+        }
+    }
+    else                    // Sender
+    {
+        // Send data
+        //
+        for(i = 0; i &lt; dwCount; i++)
+        {
+            sprintf(sendbuf, &quot;server 1: This is a test: %d&quot;, i);
+            if (sendto(sock, (char *)sendbuf, strlen(sendbuf), 0,
+                (struct sockaddr *)&amp;remote, 
+                sizeof(remote)) == SOCKET_ERROR)
+            {
+                printf(&quot;sendto failed with: %d\n&quot;, 
+                    WSAGetLastError());
+                closesocket(sockM);
+                closesocket(sock);
+                WSACleanup();
+                return -1;
+            }
+            Sleep(500);
+        }
+    }
+    // Leave the multicast group by closing sock.
+    // For nonrooted control and data plane schemes, WSAJoinLeaf
+    // returns the same socket handle that you pass into it.
+    //
+    closesocket(sock);
+
+    WSACleanup();
+    return -1;
+}</pre>
+</td></tr></table>
+</p>
+
+<A NAME="337"><H3>Winsock 2 ATM multicast example</H3></A>
+
+<p>Figure 11-5 contains <i>Mcastatm.c</i>, which is a simple ATM multicasting example that illustrates a root-initiated join. The figure does not include the file <i>Support.c</i>, which includes some routines that are used by the multicast example but aren't specific to multicasting, such as <i>GetATMAddress</i>, which simply returns the ATM address of the local interface.</p>
+
+<p>When you look at the code in Figure 11-5, you will see that the most important section for the multicast root is in the function <i>Server</i>, which uses a loop to call <i>WSAJoinLeaf</i> once for each client specified on the command line. You'll see that the server keeps an array of sockets for each client that joins; however, in the <i>WSASend</i> calls, the main socket is used. If the ATM protocol supported it, the server could choose to listen on the leaf socket (for example, the socket returned from <i>WSAJoinLeaf</i>) if it were interested in receiving &quot;side chat&quot; information. In other words, if the client sends data on the connected socket, the server receives it on the corresponding handle returned from <i>WSAJoinLeaf</i>. No other clients will receive this data.</p>
+
+<p>On the client side, look at the <i>Client</i> function. You'll see that the only requirement is that the client bind to a local interface and await the server's invitation on an <i>accept</i> or a <i>WSAAccept</i> call. Once the invitation arrives, the newly created socket can be used to receive data sent by the root.</p>
+
+<p><b>Figure 11-5.</b> <i>ATM multicast example </i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>// Module: Mcastatm.c
+
+#include &quot;Support.h&quot;
+
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+
+
+#define BUFSIZE               1024
+#define MAX_ATM_LEAF             4
+
+#define ATM_PORT_OFFSET       ((ATM_ADDR_SIZE * 2) - 2)
+#define MAX_ATM_STR_LEN       (ATM_ADDR_SIZE * 2)
+
+DWORD  dwAddrCount = 0,
+       dwDataCount = 20;
+BOOL   bServer = FALSE,
+       bLocalAddress = FALSE;
+char   szLeafAddresses[MAX_ATM_LEAF][MAX_ATM_STR_LEN + 1],
+       szLocalAddress[MAX_ATM_STR_LEN + 1],
+       szPort[3];
+SOCKET sLeafSock[MAX_ATM_LEAF];
+
+// Module: usage
+//
+// Description:
+//    Print usage information
+//
+void usage(char *progname)
+{
+    printf(&quot;usage: %s [-s]\n&quot;, progname);
+    printf(&quot;     -s       Act as root\n&quot;);
+    printf(&quot;     -l:str   Leaf address to invite (38 chars)\n&quot;);
+    printf(&quot;              May be specified multiple times\n&quot;);
+    printf(&quot;     -i:str   Local interface to bind to (38 chars)\n&quot;);
+    printf(&quot;     -p:xx    Port number (2 hex chars)\n&quot;);
+    printf(&quot;     -n:int   Number of packets to send\n&quot;);
+    ExitProcess(1);
+}
+
+// Module: ValidateArgs
+//
+// Description:
+//    Parse command line arguments
+//
+void ValidateArgs(int argc, char **argv)
+{
+    int      i;
+
+    memset(szLeafAddresses, 0, 
+        MAX_ATM_LEAF * (MAX_ATM_STR_LEN + 1));
+    memset(szPort, 0, sizeof(szPort));
+
+    for(i = 1; i &lt; argc; i++)
+    {
+        if ((argv[i][0] == '-') || (argv[i][0] == '/'))
+        {
+            switch (tolower(argv[i][1]))
+            {
+                case 's':     // Server
+                    bServer = TRUE;
+                    break;
+                case 'l':     // Leaf address
+                    if (strlen(argv[i]) &gt; 3)
+                    {
+                        strncpy(szLeafAddresses[dwAddrCount++], 
+                            &amp;argv[i][3], MAX_ATM_STR_LEN - 2);
+                    }
+                    break;
+
+                case 'i':     // Local interface
+                    if (strlen(argv[i]) &gt; 3)
+                    {
+                        strncpy(szLocalAddress, &amp;argv[i][3],
+                            MAX_ATM_STR_LEN - 2);
+                        bLocalAddress = TRUE;
+                    }
+                    break;
+                case 'p':     // Port address to use
+                    if (strlen(argv[i]) &gt; 3)
+                        strncpy(szPort, &amp;argv[i][3], 2);
+                    break;
+                case 'n':     // Number of packets to send
+                    if (strlen(argv[i]) &gt; 3)
+                        dwDataCount = atoi(&amp;argv[i][3]);
+                    break;
+                default:
+                    usage(argv[0]);
+                    break;
+            }
+        }
+    }
+    return;
+}
+
+//
+// Function: Server
+//
+// Description:
+//    Bind to the local interface, and then invite each leaf
+//    address that was specified on the command line.
+//    Once each connection is made, send some data.
+//
+void Server(SOCKET s, WSAPROTOCOL_INFO *lpSocketProtocol)
+{
+    // Server routine
+    //
+    SOCKADDR_ATM  atmleaf, atmroot;
+    WSABUF        wsasend;
+    char          sendbuf[BUFSIZE],
+                  szAddr[BUFSIZE];
+    DWORD         dwBytesSent,
+                  dwAddrLen = BUFSIZE,
+                  dwNumInterfaces,
+                  i;
+    int           ret;
+
+    // If no specified local interface is given, pick the 
+    // first one
+    //
+    memset(&amp;atmroot, 0, sizeof(SOCKADDR_ATM));
+    if (!bLocalAddress)
+    {
+        dwNumInterfaces = GetNumATMInterfaces(s);
+        GetATMAddress(s, 0, &amp;atmroot.satm_number);
+    }
+    else
+        AtoH(&amp;atmroot.satm_number.Addr[0], szLocalAddress, 
+            ATM_ADDR_SIZE - 1);
+    //
+    // Set the port number in the address structure
+    //
+    AtoH(&amp;atmroot.satm_number.Addr[ATM_ADDR_SIZE-1], szPort, 1);
+    //
+    // Fill in the rest of the SOCKADDR_ATM structure
+    //
+    atmroot.satm_family                 = AF_ATM;
+    atmroot.satm_number.AddressType     = ATM_NSAP;
+    atmroot.satm_number.NumofDigits     = ATM_ADDR_SIZE;
+    atmroot.satm_blli.Layer2Protocol    = SAP_FIELD_ANY;
+    atmroot.satm_blli.Layer3Protocol    = SAP_FIELD_ABSENT;
+    atmroot.satm_bhli.HighLayerInfoType = SAP_FIELD_ABSENT;
+    //
+    // Print out what we're binding to, and bind
+    //
+    if (WSAAddressToString((LPSOCKADDR)&amp;atmroot, 
+        sizeof(atmroot), lpSocketProtocol, szAddr, 
+        &amp;dwAddrLen))
+    {
+        printf(&quot;WSAAddressToString failed: %d\n&quot;, 
+            WSAGetLastError());
+    }
+    printf(&quot;Binding to: &lt;%s&gt;\n&quot;, szAddr);
+
+    if (bind(s, (SOCKADDR *)&amp;atmroot, 
+        sizeof(SOCKADDR_ATM)) == SOCKET_ERROR)
+    {
+        printf(&quot;bind() failed: %d\n&quot;, WSAGetLastError());
+        return;
+    }
+    // Invite each leaf
+    //
+    for(i = 0; i &lt; dwAddrCount; i++)
+    {
+
+        // Fill in the SOCKADDR_ATM structure for each leaf
+        //
+        memset(&amp;atmleaf, 0, sizeof(SOCKADDR_ATM));
+        AtoH(&amp;atmleaf.satm_number.Addr[0], szLeafAddresses[i],
+            ATM_ADDR_SIZE - 1);
+        AtoH(&amp;atmleaf.satm_number.Addr[ATM_ADDR_SIZE - 1],
+            szPort, 1);
+
+        atmleaf.satm_family                 = AF_ATM;
+        atmleaf.satm_number.AddressType     = ATM_NSAP;
+        atmleaf.satm_number.NumofDigits     = ATM_ADDR_SIZE;
+        atmleaf.satm_blli.Layer2Protocol    = SAP_FIELD_ANY;
+        atmleaf.satm_blli.Layer3Protocol    = SAP_FIELD_ABSENT;
+        atmleaf.satm_bhli.HighLayerInfoType = SAP_FIELD_ABSENT;
+        //
+        // Print out client's address, and then invite it
+        //
+        if (WSAAddressToString((LPSOCKADDR)&amp;atmleaf, 
+            sizeof(atmleaf), lpSocketProtocol, szAddr, 
+            &amp;dwAddrLen))
+        {
+            printf(&quot;WSAAddressToString failed: %d\n&quot;, 
+                WSAGetLastError());
+        }
+        printf(&quot;[%02d] Inviting: &lt;%s&gt;\n&quot;, i, szAddr);
+   
+        if ((sLeafSock[i] = WSAJoinLeaf(s, 
+            (SOCKADDR *)&amp;atmleaf, sizeof(SOCKADDR_ATM), NULL, 
+            NULL, NULL, NULL, JL_SENDER_ONLY)) 
+            == INVALID_SOCKET)
+        {
+            printf(&quot;WSAJoinLeaf() failed: %d\n&quot;, 
+                WSAGetLastError());
+            WSACleanup();
+            return;
+        }
+    }
+    // Note that the ATM protocol is a bit different from TCP.
+    // When the WSAJoinLeaf (or connect) call completes, the
+    // peer has not necessarily accepted the connection yet,
+    // so immediately sending data will result in an error; 
+    // therefore, we wait for a short time.
+    // 
+    printf(&quot;Press a key to start sending.&quot;);
+    getchar();
+    printf(&quot;\n&quot;);
+    //
+    // Now send some data to the group address, which will
+    // be replicated to all clients
+    //
+    wsasend.buf = sendbuf;
+    wsasend.len = 128;
+    for(i = 0; i &lt; dwDataCount; i++)
+    {
+        memset(sendbuf, 'a' + (i % 26), 128);
+        ret = WSASend(s, &amp;wsasend, 1, &amp;dwBytesSent, 0, NULL, 
+            NULL);
+        if (ret == SOCKET_ERROR)
+        {
+            printf(&quot;WSASend() failed: %d\n&quot;, WSAGetLastError());
+            break;
+        }
+        printf(&quot;[%02d] Wrote: %d bytes\n&quot;, i, dwBytesSent);
+        Sleep(500);
+    }
+
+    for(i = 0; i &lt; dwAddrCount; i++)
+        closesocket(sLeafSock[i]);
+    return;
+}
+
+//
+// Function: Client
+//
+// Description:
+//    First the client binds to the local interface (either one 
+//    specified on the command line or the first local ATM address).
+//    Next it waits on an accept call for the root invitation. It
+//    then waits to receive data.
+//
+void Client(SOCKET s, WSAPROTOCOL_INFO *lpSocketProtocol)
+{
+    SOCKET       sl;
+    SOCKADDR_ATM atm_leaf,
+                 atm_root;
+    DWORD        dwNumInterfaces,
+                 dwBytesRead,
+                 dwAddrLen=BUFSIZE,
+                 dwFlags,
+                 i;
+    WSABUF       wsarecv;
+    char         recvbuf[BUFSIZE],
+                 szAddr[BUFSIZE];
+
+    int          iLen = sizeof(SOCKADDR_ATM),
+                 ret;
+
+    // Set up the local interface
+    //
+    memset(&amp;atm_leaf, 0, sizeof(SOCKADDR_ATM));
+    if (!bLocalAddress)
+    {
+        dwNumInterfaces = GetNumATMInterfaces(s);
+        GetATMAddress(s, 0, &amp;atm_leaf.satm_number);
+    }
+    else
+        AtoH(&amp;atm_leaf.satm_number.Addr[0], szLocalAddress, 
+            ATM_ADDR_SIZE-1);
+    AtoH(&amp;atm_leaf.satm_number.Addr[ATM_ADDR_SIZE - 1], 
+        szPort, 1);
+    //
+    // Fill in the SOCKADDR_ATM structure
+    //
+    atm_leaf.satm_family                 = AF_ATM;
+    atm_leaf.satm_number.AddressType     = ATM_NSAP;
+    atm_leaf.satm_number.NumofDigits     = ATM_ADDR_SIZE;
+    atm_leaf.satm_blli.Layer2Protocol    = SAP_FIELD_ANY;
+    atm_leaf.satm_blli.Layer3Protocol    = SAP_FIELD_ABSENT;
+    atm_leaf.satm_bhli.HighLayerInfoType = SAP_FIELD_ABSENT;
+    //
+    // Print the address we're binding to, and bind
+    //
+    if (WSAAddressToString((LPSOCKADDR)&amp;atm_leaf, 
+        sizeof(atm_leaf), lpSocketProtocol, szAddr, 
+        &amp;dwAddrLen))
+    {
+        printf(&quot;WSAAddressToString failed: %d\n&quot;, 
+            WSAGetLastError());
+    }
+    printf(&quot;Binding to: &lt;%s&gt;\n&quot;, szAddr);
+
+    if (bind(s, (SOCKADDR *)&amp;atm_leaf, sizeof(SOCKADDR_ATM)) 
+            == SOCKET_ERROR)
+    {
+        printf(&quot;bind() failed: %d\n&quot;, WSAGetLastError());
+        return;
+    }
+    listen(s, 1);
+    //
+    // Wait for the invitation
+    //
+    memset(&amp;atm_root, 0, sizeof(SOCKADDR_ATM));
+    if ((sl = WSAAccept(s, (SOCKADDR *)&amp;atm_root, &amp;iLen, NULL, 
+        0)) == INVALID_SOCKET)
+    {
+        printf(&quot;WSAAccept() failed: %d\n&quot;, WSAGetLastError());
+        return;
+    }
+    printf(&quot;Received a connection!\n&quot;);
+
+    // Receive some data
+    //
+    wsarecv.buf = recvbuf;
+    for(i = 0; i &lt; dwDataCount; i++)
+    {
+        dwFlags = 0;
+        wsarecv.len = BUFSIZE;
+        ret = WSARecv(sl, &amp;wsarecv, 1, &amp;dwBytesRead, &amp;dwFlags, 
+            NULL, NULL);
+        if (ret == SOCKET_ERROR)
+        {
+            printf(&quot;WSARecv() failed: %d\n&quot;, WSAGetLastError());
+            break;
+        }
+        if (dwBytesRead == 0)
+            break;
+        recvbuf[dwBytesRead] = 0;
+        printf(&quot;[%02d] READ %d bytes: '%s'\n&quot;, i, dwBytesRead, 
+            recvbuf);
+    }
+    closesocket(sl);
+    return;
+}
+
+//
+// Function: main
+//
+// Description:
+//    This function loads Winsock library, parses command line 
+//    arguments, creates the appropriate socket (with the right
+//    root or leaf flags), and starts the client or the server
+//    functions, depending on the specified flags
+//
+int main(int argc, char **argv)
+{
+    WSADATA             wsd;
+    SOCKET              s;
+    WSAPROTOCOL_INFO    lpSocketProtocol;
+    DWORD               dwFlags;
+
+    ValidateArgs(argc, argv);
+    //
+    // Load the Winsock library
+    //
+    if (WSAStartup(MAKEWORD(2, 2), &amp;wsd) != 0)
+    {
+        printf(&quot;WSAStartup failed\n&quot;);
+        return -1;
+    }
+    // Find an ATM-capable protocol
+    //
+    if (FindProtocol(&amp;lpSocketProtocol) == FALSE)
+    {
+        printf(&quot;Unable to find ATM protocol entry!\n&quot;);
+        return -1;
+    }
+    // Create the socket using the appropriate root or leaf flags
+    //
+    if (bServer)
+        dwFlags = WSA_FLAG_OVERLAPPED 
+                  | WSA_FLAG_MULTIPOINT_C_ROOT 
+                  | WSA_FLAG_MULTIPOINT_D_ROOT;
+    else
+        dwFlags = WSA_FLAG_OVERLAPPED 
+                  | WSA_FLAG_MULTIPOINT_C_LEAF
+                  | WSA_FLAG_MULTIPOINT_D_LEAF;
+
+    if ((s = WSASocket(FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO, 
+            FROM_PROTOCOL_INFO, &amp;lpSocketProtocol, 0, 
+            dwFlags)) == INVALID_SOCKET)
+    {
+        printf(&quot;socket failed with: %d\n&quot;, WSAGetLastError());
+        WSACleanup();
+        return -1;
+    }
+    // Start the correct driver, depending on which flags were
+    // supplied on the command line
+    //
+    if (bServer)
+    {
+        Server(s, &amp;lpSocketProtocol);
+    }
+    else
+    {
+        Client(s, &amp;lpSocketProtocol);
+    }
+    closesocket(s);
+
+    WSACleanup();
+    return 0;
+}</pre>
+</td></tr></table>
+</p>
+
+<A NAME="338"><H2>Common Winsock Options</H2></A>
+
+<p>Three socket options pertain to both the Winsock 1 and Winsock 2 implementations of Winsock: <i>IP_MULTICAST_TTL</i>, <i>IP_MULTICAST_IF</i>, and <i>IP_MULTICAST_LOOP</i>. These options are commonly associated with the Winsock 1 options for joining and leaving multicast groups; however, they can be equally useful with the Winsock 2 multicast functions. Of course, all three of the socket options pertain only to IP multicasting.</p>
+
+<A NAME="339"><h3><i>IP_MULTICAST_TTL</i></h3></A>
+<p>This option sets the TTL value for multicast data. By default, the TTL value is 1, which means that multicast data is dropped by the first router that encounters the data and only multicast members on the same network will receive the data. If you increase the TTL, the multicast data can cross multiple routers&#8212;equal to the value set for the TTL. Whenever a router receives a packet and determines that it should forward the packet to its adjoining networks, the TTL value is decremented by 1. If the newly decremented value is 0, the router drops the packet because its lifetime has expired. A multicast router does not forward multicast datagrams with destination addresses between 224.0.0.0 and 224.0.0.255 inclusive, regardless of their TTLs. This particular range of addresses is reserved for the use of routing protocols and other low-level topology discovery and maintenance protocols, such as gateway discovery and group membership reporting.</p>
+
+<p>When you call <i>setsockopt</i>, the <i>level</i> parameter is <i>IPPROTO_IP</i>, the <i>optname</i> parameter is <i>IP_MULTICAST_TTL</i>, and the <i>optval</i> parameter is an integer that indicates the new TTL value. The following code snippet illustrates how to set the TTL value.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>int    optval;
+
+optval = 8;
+if (setsockopt(s, IPPROTO_IP, IP_MULTICAST_TTL, (char *)&amp;optval,
+        sizeof(int)) == SOCKET_ERROR)
+{
+    // Error
+}</pre>
+</td></tr></table>
+</p>
+
+<p>In addition to this socket option, the option <i>SIO_MULTICAST_SCOPE</i> exists for use with the <i>WSAIoctl</i> or <i>ioctlsocket</i> function that performs the same operation on a socket.</p>
+
+<p>A TTL parameter is not necessary in ATM multicasting because sending data on an ATM is one way only and all recipients are known. Because the control plane is rooted, the c_root node must explicitly invite each leaf to join; this means that you don't need to limit the scope of a data transmission so that data isn't duplicated on networks where there might not be any multicast participants.</p>
+
+<A NAME="340"><h3><i>IP_MULTICAST_IF</i></h3></A>
+<p>This option sets the IP interface that multicast data is sent from when you send multicast data. Under normal (nonmulticast) circumstances, the routing table is the sole determinant of the interface a datagram goes out on. The system determines which interface is best suited for a particular datagram and its destination. However, since multicast addresses can be used by anyone, the routing table isn't sufficient. The programmer must possess some knowledge of where the multicast data should go. Of course, this is only an issue if the machine on which multicast data is being sent is connected to multiple networks via network cards. For this option, the <i>optval</i> parameter is the address of the local interface on which to send multicast data. The following code illustrates this.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>DWORD    dwInterface;
+
+dwInterface = inet_addr(&quot;129.121.32.19&quot;);
+if (setsockopt(s, IPPROTO_IP, IP_MULTICAST_IF, (char *)&amp;dwInterface,
+    sizeof(DWORD)) == SOCKET_ERROR)
+{
+    // Error
+}</pre>
+</td></tr></table>
+</p>
+
+<p>In the above example, we see that we are setting the local interface to 129.121.32.19. Any multicast data sent on socket <i>s</i> goes out on the network interface on which that IP address is assigned.</p>
+
+<p>Again, ATM does not require a separate socket option to set an interface. The c_root can explicitly bind to a particular interface before calling <i>WSAJoinLeaf</i>. Likewise, the client must bind to a specific ATM interface in order to wait for an invitation with <i>accept</i> or <i>WSAAccept</i>.</p>
+
+<A NAME="341"><h3><i>IP_MULTICAST_LOOP</i></h3></A>
+<p>The last socket option determines whether your application receives its own multicast data. If your application joins a multicast group and sends data to that group, your application will receive that data. If you have a <i>recvfrom</i> call pending when the data was sent, the call will return with a copy of that data. Note that it is not necessary for an application to join a multicast group in order for the application to send data to the multicast group. You are required to join the group only if you want to receive data destined for that group. The <i>IP_MULTICAST_LOOP</i> socket option is designed to turn off this echoing of data back to the local interface. With this option, you pass an integer value as the <i>optval</i> parameter, which is a simply Boolean value indicating whether to enable or disable multicast loopback. The following code example shows this.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>int    optval;
+
+optval = 0;     // Disable loopback
+if (setsockopt(s, IPPROTO_IP, IP_MULTICAST_LOOP, (char *)&amp;optval,
+    sizeof(int)) == SOCKET_ERROR)
+{
+    // Error
+}</pre>
+</td></tr></table>
+</p>
+
+<p>Additionally, an accompanying ioctl command used with <i>WSAIoctl</i> or <i>ioctlsocket&#8212;SIO_MULTIPOINT_LOOPBACK</i>&#8212;performs the same function. Unfortunately, this socket option is not implemented on Windows 95, Windows 98, or Windows NT 4, and by default the loopback is enabled. If you attempt to disable loopback by use of this socket option, you will receive the error <i>WSAENOPROTOOPT</i>.</p>
+
+<p>By definition, an ATM root node, which is the only member allowed to send data to the multicast group, will not receive its own data because the root socket is not a leaf socket. Only leaf sockets can receive data in ATM multicasting. The same process that creates the c_root can create a separate c_leaf node that the c_root can invite; however, this is not a true loopback.</p>
+
+<A NAME="342"><H2>One Limitation of Dial-Up Networking Multicasting</H2></A>
+
+<p>There is one limitation to be aware of when attempting to send or receive multicast data on a Remote Access Service (RAS), or dial-up, interface. This limitation actually lies within the server you dial into. The majority of Windows-based dial-in servers run Windows NT 4, which does not have an IGMP proxy. This means that any group membership requests you make won't make it off of the Windows NT 4 server. As a result, your application cannot join any multicast group and therefore cannot send or receive multicast data. The RAS server for Windows 2000 does contain an IGMP proxy, although it is not enabled by default. However, once it is enabled, dial-in clients will be able to join groups as well as send and receive multicast data.</p>
+
+</BODY>
+</HTML>
+
+
+
+

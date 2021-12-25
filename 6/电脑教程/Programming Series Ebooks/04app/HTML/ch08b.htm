@@ -1,0 +1,397 @@
+<HTML>
+<HEAD>
+<TITLE>Atomic Access: The Interlocked Family of Functions</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch08a.htm">[Previous]</A> <A HREF="ch08c.htm">[Next]</A><P>
+
+<A NAME="111"><H1>Atomic Access: The Interlocked Family of Functions</H1></A>
+
+<p>A big part of thread synchronization has to do with <i>atomic
+access</i>&#8212;a thread's ability to access a resource with the
+guarantee that no other thread will access that same resource at the
+same time. Let's look at a simple example:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// Define a global variable.
+long g_x = 0;
+
+DWORD WINAPI ThreadFunc1(PVOID pvParam) {
+   g_x++;
+   return(0);
+}
+
+DWORD WINAPI ThreadFunc2(PVOID pvParam) {
+   g_x++;
+   return(0);
+}
+</pre></td></tr></table></p>
+
+<p>I've declared a global variable, <i>g_x</i>, and initialized it
+to 0. Now let's say that I create two threads: one thread executes
+<i>ThreadFunc1</i>, and the other thread executes <i>ThreadFunc2</i>.
+The code in these two functions is identical: they both add 1 to the
+global variable <i>g_x</i>. So when both threads stop running, you
+might expect to see the value <i>2</i> in <i>g_x</i>. But do you? The
+answer is&#8230;maybe. The way the code is written, you can't tell
+what <i>g_x</i> will ultimately contain. Here's why. Let's say
+that the compiler generates the following code for the line that
+increments <i>g_x</i> by 1:
+</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+MOV EAX, [g_x]       ; Move the value in g_x into a register.
+INC EAX              ; Increment the value in the register.
+MOV [g_x], EAX       ; Store the new value back in g_x.
+</pre></td></tr></table></p>
+
+<p>Both threads are unlikely to execute this code at exactly the same
+time. So if one thread executes this code followed by another thread,
+here is what effectively executes:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+MOV EAX, [g_x]       ; Thread 1: Move 0 into a register.
+INC EAX              ; Thread 1: Increment the register to 1.
+MOV [g_x], EAX       ; Thread 1: Store 1 back in g_x.
+
+MOV EAX, [g_x]       ; Thread 2: Move 1 into a register.
+INC EAX              ; Thread 2: Increment the register to 2.
+MOV [g_x], EAX       ; Thread 2: Store 2 back in g_x.
+</pre></td></tr></table></p>
+
+<p>After both threads are done incrementing <i>g_x</i>, the value in
+<i>g_x</i> is 2. This is great and is exactly what we expect: take zero
+(0), increment it by 1 twice, and the answer is 2. Beautiful. But
+wait&#8212;Windows is a preemptive, multithreaded environment. So a
+thread can be switched away from at any time and another thread might
+continue executing at any time. So the code above might not execute
+exactly as I've written it. Instead, it might execute as
+follows:</p>
+
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+MOV EAX, [g_x]       ; Thread 1: Move 0 into a register.
+INC EAX              ; Thread 1: Increment the register to 1.
+
+MOV EAX, [g_x]       ; Thread 2: Move 0 into a register.
+INC EAX              ; Thread 2: Increment the register to 1.
+MOV [g_x], EAX       ; Thread 2: Store 1 back in g_x.
+
+MOV [g_x], EAX       ; Thread 1: Store 1 back in g_x.
+</pre></td></tr></table></p>
+
+<p>If the code executes this way, the final value in <i>g_x</i> is
+1&#8212;not 2 as you expect! This is pretty scary, especially since you
+have so little control over the scheduler. In fact, if you have 100
+threads executing similar thread functions, after all of them exit, the
+value in <i>g_x</i> might still be 1! Obviously, software developers
+can't work in an environment like this. We expect that incrementing
+0 twice results in 2 all the time. Also, let's not forget that the
+results might be different depending on how the compiler generates
+codes, what CPU is executing the code, and how many CPUs are installed
+in the host computer. This is how the environment works, and there is
+nothing we can do about that. But Windows does offer some functions
+that, when used correctly, guarantee the outcome of our
+application's code.</p>
+
+<p>To solve the problem above, we need something simple. We need a way
+to guarantee that the incrementing of the value is done
+atomically&#8212;that is, without interruption. The interlocked family
+of functions provides the solution we need. The interlocked functions
+are awesome and underused by most software developers, even though they
+are incredibly helpful and easy to understand. All of the functions
+manipulate a value atomically. Take a look at <i>
+InterlockedExchangeAdd</i>:</p>
+
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+LONG InterlockedExchangeAdd(
+   PLONG plAddend, 
+   LONG lIncrement); 
+</pre></td></tr></table></p>
+
+<p>What could be simpler? You call this function, passing the address
+of a long variable and indicating by how much to increment this value.
+But this function guarantees that the adding of the value is
+accomplished atomically. So we can rewrite the code presented earlier
+as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// Define a global variable.
+long g_x = 0;
+
+DWORD WINAPI ThreadFunc1(PVOID pvParam) {
+   InterlockedExchangeAdd(&amp;g_x, 1);
+   return(0);
+}
+
+DWORD WINAPI ThreadFunc2(PVOID pvParam) {
+   InterlockedExchangeAdd(&amp;g_x, 1);
+   return(0);
+}
+</pre></td></tr></table></p>
+
+<p>By making this small change, <i>g_x</i> is incremented atomically
+and therefore you are guaranteed that the final value in <i>g_x</i>
+will be <i>2</i>. Don't you feel better already? Note that all the
+threads should attempt to modify the shared long variable by calling
+these functions; no thread should ever attempt to modify the shared
+variable by using simple C statements:</p>
+
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// The long variable shared by many threads
+LONG g_x;
+
+<img src="images/grayvellip.JPG" width=3 height=13 border="0">
+
+// Incorrect way to increment the long
+g_x++;
+
+<img src="images/grayvellip.JPG" width=3 height=13 border="0">
+
+// Correct way to increment the long
+InterlockedExchangeAdd(&amp;g_x, 1);
+</pre></td></tr></table></p>
+
+<p>How do the interlocked functions work? The answer depends on the
+CPU platform that you're running on. For the <i>x</i>86 family of
+CPUs, interlocked functions assert a hardware signal on the bus that
+prevents another CPU from accessing the same memory address. On the
+Alpha platform, the interlocked functions do something like this:</p>
+
+<ol>
+<p><li>Turn on a special bit flag in the CPU and note the memory address
+being accessed.</li></p>
+
+<p><li>Read the value from memory into a register.</li></p> 
+
+<p><li>Modify the register.</li></p>
+
+<p><li>If the special bit flag in the CPU is off, go to step 2.
+Otherwise, the special bit flag is still on and the register's
+value is stored back into memory.</li></p>
+</ol>
+
+<p>You might wonder how the special CPU bit flag is ever turned off by
+the time step 4 is executed. Here's the answer: If another CPU in
+the system attempts to modify the same memory address, it can turn off
+our CPU's special bit flag, causing the interlocked function to
+loop back to step 2.</p>
+
+<p>You need not understand exactly how the interlocked functions work.
+What's important to know is that they guarantee that a value will
+be modified atomically, no matter how the compiler generates code and
+no matter how many CPUs are installed in the host machine. You must
+also ensure that the variable addresses that you pass to these
+functions are properly aligned or the functions might fail. (I'll
+discuss data alignment in <A HREF="ch13a.htm">Chapter 13</A>.)</p>
+
+<p>Another important thing to know about the interlocked functions is
+that they execute extremely quickly. A call to an interlocked function
+usually causes just a few CPU cycles (usually less than 50) to execute,
+and there is no transition from user mode to kernel mode (which usually
+requires more than 1000 cycles to execute).</p>
+
+<p>Of course, you can use <i>InterlockedExchangeAdd</i> to subtract a
+value&#8212;you simply pass a negative value for the second parameter.
+<i>InterlockedExchangeAdd</i> returns the original value that was in
+<i>*plAddend</i>.</p>
+
+<p>Here are two more interlocked functions:</p>
+
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+LONG InterlockedExchange(
+   PLONG plTarget, 
+   LONG lValue);
+
+PVOID InterlockedExchangePointer(
+   PVOID* ppvTarget, 
+   PVOID pvValue);
+</pre></td></tr></table></p>
+
+<p><i>InterlockedExchange and InterlockedExchangePointer</i>
+atomically replace the current value whose address is passed in the
+first parameter with a value passed in the second parameter. For a
+32-bit application, both functions replace a 32bit value with another
+32-bit value. But for a 64-bit application, <i>InterlockedExchange</i>
+replaces a 32-bit value while <i>InterlockedExchangePointer</i>
+replaces a 64-bit value. Both functions return the original value. <i>
+InterlockedExchange</i> is extremely useful when you implement a
+spinlock:</p>
+
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// Global variable indicating whether a shared resource is in use or not
+BOOL g_fResourceInUse = FALSE;
+
+<img src="images/grayvellip.JPG" width=3 height=13 border="0">
+
+void Func1() {
+   // Wait to access the resource.
+   while (InterlockedExchange (&amp;g_fResourceInUse, TRUE) == TRUE)
+      Sleep(0);
+
+   // Access the resource.
+
+   <img src="images/grayvellip.JPG" width=3 height=13 border="0"> 
+
+   // We no longer need to access the resource.
+   InterlockedExchange(&amp;g_fResourceInUse, FALSE);
+}
+</pre></td></tr></table></p>
+
+<p>The <i>while</i> loop spins repeatedly, changing the value in <i>
+g_fResourceInUse</i> to TRUE and checking its previous value to see if
+it was TRUE. If the value was previously FALSE, the resource was not in
+use but the calling thread just set it to in-use and exits the loop. If
+the previous value was TRUE, the resource was in use by another thread
+and the <i>while</i> loop continues to spin.</p>
+
+<p>If another thread were to execute similar code, it would spin in
+its <i>while</i> loop until the <i>g_fResourceInUse</i> was changed
+back to FALSE. The call to <i>InterlockedExchange</i> at the end of the
+function shows how <i>g_fResourceInUse</i> should be set back to
+FALSE.</p>
+
+<p>You must take extreme care when using this technique because a
+spinlock wastes CPU time. The CPU must constantly compare two values
+until one &quot;magically&quot; changes due to another thread. Also,
+this code assumes that all threads using the spinlock run at the same
+priority level. You might also want to disable thread priority boosting
+(call <i>SetProcessPriorityBoost</i> or <i>SetThreadPriorityBoost</i>)
+for threads that execute spinlocks.</p>
+
+<p>In addition, you should ensure that the lock variable and the data
+that the lock protects are maintained in different cache lines
+(discussed later in this chapter). If the lock variable and data share
+the same cache line, a CPU using the resource will contend with any
+CPUs attempting access of the resource. This hurts performance.</p>
+
+<p>You should avoid using spinlocks on single-CPU machines. If a
+thread is spinning, it's wasting precious CPU time, which prevents
+the other thread from changing the value. My use of <i>Sleep</i> in the
+<i>while</i> loop above improves this situation somewhat. If you use
+<i>Sleep</i>, you might want to sleep a random amount of time, and each
+time the request to access the resource is denied, you might want to
+increase the sleep time even more. This prevents threads from simply
+wasting CPU time. Depending on your situation, it might be better to
+remove the call to <i>Sleep</i> altogether. Or you might want to
+replace it with a call to <i>SwitchToThread</i> (not available on
+Windows 98). I hate to say it, but trial and error might be your best
+approach.</p>
+
+<p>Spinlocks assume that the protected resource is always accessed for
+short periods of time. This makes it more efficient to spin and then
+transition to kernel mode and wait. Many developers spin some number of
+times (say 4000), and if access to the resource is still denied, the
+thread transitions to kernel mode, where it waits (consuming no CPU
+time) until the resource becomes available. This is how critical
+sections are implemented.</p>
+
+<p>Spinlocks are useful on multiprocessor machines because one thread
+can spin while the other thread runs on another CPU. However, even in
+this scenario, you must be careful. You do not want a thread to spin
+for a long time, or you'll waste more CPU time. We'll discuss
+spinlocks further later in this chapter. Also, the section titled
+&quot;<A HREF="ch10b.htm#144">Implementing a Critical Section: The Optex</A>&quot; in Chapter 10
+shows how to use spinlocks.</p>
+
+<p>Here are the last two interlocked functions:</p>
+
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+PVOID InterlockedCompareExchange(
+   PLONG plDestination, 
+   LONG lExchange, 
+   LONG lComparand);
+
+PVOID InterlockedCompareExchangePointer(
+   PVOID* ppvDestination,
+   PVOID pvExchange, 
+   PVOID pvComparand); 
+</pre></td></tr></table></p>
+
+<p>These two functions perform an atomic test and set operation: for
+a 32-bit application, both functions operate on 32-bit values, but in
+a 64-bit application, <i>InterlockedCompareExchange</i> operates on
+32-bit values while <i>InterlockedCompareExchangePointer</i> operates
+on 64-bit values. In pseudocode, here is what happens:</p>
+
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+LONG InterlockedCompareExchange(PLONG plDestination,
+   LONG lExchange, LONG lComparand) {
+
+   LONG lRet = *plDestination;   // Original value
+
+   if (*plDestination == lComparand)
+      *plDestination = lExchange;
+   return(lRet);
+}
+</pre></td></tr></table></p>
+
+<p>The function compares the current value (pointed to by the <i>
+plDestination</i> parameter) with the value passed in the <i>
+lComparand</i> parameter. If the values are the same, <i>
+*plDestination</i> is changed to the value of the <i>lExchange</i>
+parameter. If what is in <i>*plDestination</i> doesn't match the
+value of <i>lComparand</i>, <i>*plDestination</i> is not changed. The
+function returns the original value in <i>*plDestination</i>. Remember
+that all of these operations are performed as one atomic unit of
+execution.</p>
+
+<p>There is no interlocked function that simply reads a value (without
+changing it) because no such function is necessary. If a thread simply
+attempts to read the contents of a value that is always modified with
+an interlocked function, the value read is always a good value. You
+don't know if you'll read the original value or the updated
+value, but you know that it will be one of them. For most applications,
+this is sufficient. In addition, the interlocked functions might be
+used by threads in multiple processes when you're synchronizing
+access to a value that is in a shared memory section such as a
+memory-mapped file. (<A HREF="ch09a.htm">Chapter 9</A> includes a few sample applications that
+show how to properly use the interlocked functions.)</p>
+
+<p>Windows offers a few other interlocked functions, but the functions
+I've described do everything that the other functions do and more.
+Here are two other functions:</p>
+
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+LONG InterlockedIncrement(PLONG plAddend);
+
+LONG InterlockedDecrement(PLONG plAddend);
+</pre></td></tr></table></p>
+
+<p><i>InterlockedExchangeAdd</i> replaces both of these older
+functions. The new function can add or subtract any value; the old
+functions are limited to adding or subtracting 1.</p>
+
+
+</BODY>
+</HTML>
+
+
+
+
+
+

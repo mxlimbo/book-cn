@@ -1,0 +1,590 @@
+<HTML>
+<HEAD>
+<TITLE>The &quot;Standard Model&quot; for IRP Processing</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch05b.htm">[Previous]</A> <A HREF="ch05d.htm">[Next]</a>
+</p>
+
+<A NAME="151"><H1>The &quot;Standard Model&quot; for IRP Processing</H1></A>
+
+<p>Particle physics has its &quot;standard model&quot; for the universe, and so does WDM.
+Figure 5-5 illustrates a typical flow of ownership for an IRP as it progresses through various
+stages in its life. Not every type of IRP would go through these steps, and some of the steps
+might be missing or altered depending on the type of device and the type of IRP.
+Notwithstanding the possible variability, however, the picture provides a useful starting point
+for discussion.</p>
+
+<p>
+<A HREF="javascript:fullSize('F05wi05x.htm')"> <img src="images/F05wi05.JPG" width=404 height=253 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 5-5.</b> <i>The &quot;standard model&quot; for IRP processing.</i><!--/caption-->
+</p>
+
+
+<P>
+<DIV CLASS="SIDEBAR"><BLOCKQUOTE>
+<b>It's Even More Complicated than You Thought&#8230;</b>
+<p>The first time you encounter the concepts that make up the standard model for IRP
+processing, they'll probably seem pretty complicated. Unfortunately, the standard model is
+also not quite sufficient to handle all the problems that can arise in a regime that includes
+hot pluggable devices, dynamic resource reconfiguration, and power management. In later
+chapters, I'll describe another way of queuing and cancelling IRPs that deals with these
+extra problems. The standard model will seem like a model of clarity when you're done
+reading about that!</p>
+
+<p>Despite the problems that some devices present, many devices can still employ the standard
+model (which is, of course, why I'm bothering to explain it here). If your device cannot be
+removed or reconfigured while the system is running and can reject I/O requests while in a
+low-power state, you can use the standard model.</p>
+</BLOCKQUOTE></DIV>
+</P>
+
+
+<A NAME="152"><H2>Creating an IRP</H2></A>
+
+<p>The IRP begins life when some entity calls an I/O Manager function to create it. In the
+figure, I used the term <i>I/O Manager</i> to describe this entity, as though there were a
+single system component responsible for creating IRPs. In reality, no such single actor in the
+population of operating system routines exists, and it would have been more accurate to just
+say that <i>something</i> creates the IRP. Your own driver will be creating IRPs from time to
+time, for example, and you will occupy the initial ownership box for those particular IRPs.</p>
+
+<p>You can use any of four functions to create a new IRP:</p>
+
+<ul>
+
+<p><li> <b>IoBuildAsynchronousFsdRequest</b> builds an IRP on whose completion you don't plan
+to wait. This function and the next are appropriate for building only certain types of
+IRP.</li></p>
+
+<p><li> <b>IoBuildSynchronousFsdRequest</b> builds an IRP on whose completion you <i>do</i> plan
+to wait.</li></p>
+
+<p><li> <b>IoBuildDeviceIoControlRequest</b> builds a synchronous IRP_MJ_DEVICE_CONTROL or
+IRP_MJ_INTERNAL_DEVICE_CONTROL request.</li></p>
+
+<p><li> <b>IoAllocateIrp</b> builds an IRP that is not one of the types supported by the
+preceding three functions.</li></p>
+
+</ul>
+
+<p>The <b>Fsd</b> in the first two of these function names stands for <i>file system driver</i>
+(FSD). Although FSDs are the primary users of the functions, any driver is allowed to call
+them. The DDK also documents a function named <b>IoMakeAssociatedIrp</b> for building an IRP
+that's subordinate to some other IRP. WDM drivers should not call this function. Indeed,
+completion of associated IRPs doesn't work correctly in Microsoft Windows 98 anyway.</p>
+
+<p>Deciding which of these functions to call and determining what additional initialization you
+need to perform on an IRP is a rather complicated matter. I'll come back to this subject,
+therefore, at the end of this chapter.</p>
+
+
+<A NAME="153"><H2>Forwarding to a Dispatch Routine</H2></A>
+
+<p>After you create an IRP, you call <b>IoGetNextIrpStackLocation</b> to obtain a pointer to
+the first stack location. Then you initialize just that first location. At the very least, you
+need to fill in the MajorFunction code. Having initialized the stack, you call <b>
+IoCallDriver</b> to send the IRP to a device driver:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+PDEVICE_OBJECT DeviceObject; // <img src="images/tlarrow.jpg" width=13 height=12 border="0"> something gives you this
+PIO_STACK_LOCATION stack = IoGetNextIrpStackLocation(Irp);
+stack-&gt;MajorFunction = IRP_MJ_<i>Xxx</i>;
+<i>&lt;other initialization of &quot;stack&quot;&gt;</i>
+NTSTATUS status = IoCallDriver(DeviceObject, Irp);
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The first argument to IoCallDriver is the address of a device object that you've
+obtained somehow. I'll describe two common ways of getting a device object pointer at the
+very end of this chapter in &quot;<A HREF="ch05h.htm#179">Where Do Device Object Pointers Come From?</A>&quot; For the time
+being, imagine that these pointers just come to you out of the blue.</p>
+
+<p>The initial stack location pointer in the IRP gets initialized to one <i>before</i> the
+actual first location. Since the I/O stack is an array of IO_STACK_LOCATION structures, you
+could think of the stack pointer as being initialized to point to the &quot;-1&quot; element,
+which doesn't exist. (In fact, the stack &quot;grows&quot; from high toward low addresses,
+but that detail shouldn't obscure the concept I'm trying to describe here.) We
+therefore ask for the &quot;next&quot; stack location when we want to initialize the first one.
+IoCallDriver will advance the stack pointer to the 0 entry and extract the major function code
+that we left there. That's the made-up value IRP_MJ_<i>Xxx</i> in this example. Then,
+IoCallDriver will follow the DriverObject pointer inside the device object to the MajorFunction
+table belonging to the top-level driver. Recall that the driver's <b>DriverEntry</b> 
+function filled that table in with pointers to <i>dispatch functions</i> in the driver.
+IoCallDriver will use the major function code to index the table, and it will then call the
+function whose address it finds.</p>
+
+<p>You can imagine IoCallDriver as looking something like this (but I hasten to add that this
+is not a copy of the actual source code):</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>NTSTATUS IoCallDriver(PDEVICE_OBJECT device, PIRP Irp)
+  {
+  IoSetNextIrpStackLocation(Irp);
+  PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
+  stack-&gt;DeviceObject = device;
+  ULONG fcn = stack-&gt;MajorFunction;
+  PDRIVER_OBJECT driver = device-&gt;DriverObject;
+  return (*driver-&gt;MajorFunction[fcn])(device, Irp);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+
+<A NAME="154"><H2>Duties of a Dispatch Routine</H2></A>
+
+<p>An archetypal IRP dispatch routine would look similar to this example:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr>
+<td valign=top>
+<pre>
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 border="0">
+2 <img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+3 <img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+</pre>
+</td>
+<td valign=top>
+<pre>
+NTSTATUS Dispatch<i>Xxx</i>(PDEVICE_OBJECT device, PIRP Irp)
+  {
+  PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) device-&gt;DeviceExtension;
+  ...
+  return STATUS_<i>Xxx</i>;
+  }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+
+<p><li> You generally need to access the current stack location to determine parameters
+or to examine the minor function code.</li></p>
+
+<p><li> You also generally need to access the device extension you created and
+initialized during AddDevice.</li></p>
+
+<p><li> You'll be returning some NTSTATUS code to IoCallDriver, which will propagate
+the code back to <i>its</i> caller.</li></p>
+
+</ol>
+
+<p>In this book, I'll be using names of the form <b>Dispatch</b><i>Xxx</i> (for example,
+<b>DispatchRead</b>, <b>DispatchPnp</b>, and so forth) for the dispatch functions in my sample
+drivers. Other authors use different conventions for these names. Microsoft recommends, for
+example, that you use a name like <b>RandomDispatchRead</b> for the IRP_MJ_READ dispatch
+function in a driver named RANDOM.SYS. Conventions like this make it easier to understand
+debugger traces in some situations, but they also require you to do more typing. Since these
+names aren't visible outside the name space of your own driver, it's up to you whether
+you use very specific names as Microsoft recommends or names such as <b>Fred</b> that have
+meaning to you.</p>
+
+<p>Where I used an ellipsis in the prototypical dispatch function above, a dispatch function
+has to choose between three courses of action. It can complete the request immediately, pass
+the request down to a lower-level driver in the same driver stack, or queue the request for
+later processing by other routines in this driver. I'm going to discuss each of these
+alternatives fully in this chapter, but I'm going to talk about only the queuing
+possibility now because that's what comes next in the standard model for IRP processing.
+You see, the largest number of requests that come into a device involves reading or writing
+data, and you usually need to put these requests into a queue to serialize access to your
+hardware.</p>
+
+<p>Every device object gets a request queue object &quot;for free,&quot; and there's a
+standard way of using this queue:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr>
+<td valign=top>
+<pre>
+
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 border="0">
+2 <img src="images/arorite2.jpg" width=17 height=10 border="0">
+3 <img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+</pre>
+</td>
+
+<td valign=top>
+<pre>
+NTSTATUS Dispatch<i>Xxx</i>(...)
+  {
+  ...
+  IoMarkIrpPending(Irp);
+  IoStartPacket(device, Irp, NULL, NULL);
+  return STATUS_PENDING;
+  }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+
+<p><li> Whenever we return STATUS_PENDING from a dispatch routine (as we're about to
+do here), we make this call to help the I/O Manager avoid an internal race condition. We must
+do this <i>before</i> we relinquish ownership of the IRP.</li></p>
+
+<p><li> If our device is currently busy, <b>IoStartPacket</b> puts the request onto a
+queue. If our device is idle, IoStartPacket marks the device as being busy and calls our <b>
+StartIo</b> routine. I'll describe the StartIo routine in the next section. The third
+argument to IoStartPacket is the address of a ULONG key used for sorting the queue. Disk
+drivers, for example, might specify a cylinder address here to provide for ordered-seek
+queuing. If you supply NULL, as here, this request is added to the tail of the queue. The last
+argument is the address of a cancel routine. I'll discuss cancel routines later in this
+chapter&#8212;they're complicated!</li></p>
+
+<p><li> We return STATUS_PENDING to tell our caller that we're not done with this IRP
+yet.</li></p>
+
+</ol>
+
+<p>It's very important not to touch the IRP once we call IoStartPacket. By the time that
+function returns, the IRP may have been completed and the memory it occupies released. The
+pointer we have might, therefore, now be invalid.</p>
+
+
+<A NAME="155"><H2>The StartIo Routine</H2></A>
+
+<p>The I/O Manager calls your <b>StartIo</b> routine to process one IRP at a time:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>VOID StartIo(PDEVICE_OBJECT device, PIRP Irp)
+  {
+  PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) device-&gt;DeviceExtension;
+  ...
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Your StartIo routine receives control at DISPATCH_LEVEL, meaning that it must not generate
+any page faults. In addition, the <b>CurrentIrp</b> field of the device object and the <b>
+Irp</b> argument will both point to the IRP that's being submitted to you
+for processing.</p>
+
+<p>Your job in StartIo is to commence the IRP you've been handed. How you do this depends
+entirely on your device. Often you will need to access hardware registers that are also used by
+your interrupt service routine (ISR) and, perhaps, by other routines in your driver. In fact,
+sometimes the easiest way to commence a new operation is to store some state information in
+your device extension and then fake an interrupt. Since either of these approaches needs to be
+carried out under protection of the same spin lock that protects your ISR, the correct way to
+proceed is to call <b>KeSynchronizeExecution</b>. For example:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>VOID StartIo(...)
+  {
+  ...
+  KeSynchronizeExecution(pdx-&gt;InterruptObject,
+    TransferFirst, (PVOID) pdx);
+  }
+
+BOOLEAN TransferFirst(PVOID context)
+  {
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) context;
+  ...
+  return TRUE;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The <b>TransferFirst</b> routine shown here is an example of the generic class of <i>
+SynchCritSection</i> routines, so called because they are synchronized with the ISR. I'll
+discuss the SynchCritSection concept in more detail in Chapter 7, &quot;<A HREF="ch07a.htm#226">Reading and Writing Data</A>.&quot;</p>
+
+<p>Once StartIo gets the device busy handling the new request, it returns. You'll see the
+request next when your device interrupts to signal that it's done with whatever transfer
+you started.</p>
+
+
+<A NAME="156"><H2>The Interrupt Service Routine</H2></A>
+
+<p>When your device is finished transferring data, it might signal a hardware interrupt. In
+<A HREF="ch07a.htm">Chapter 7</A>, I'll show you how to use <b>IoConnectInterrupt</b> to &quot;hook&quot; the
+interrupt. One of the arguments to IoConnectInterrupt is the address of your ISR. When the
+interrupt occurs, the hardware abstraction layer (HAL) calls your ISR. The ISR runs at the
+device IRQL (DIRQL) of your particular device and under the protection of a spin lock
+associated specifically with your ISR. The ISR has the following prototype:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>BOOLEAN OnInterrupt(PKINTERRUPT InterruptObject, PVOID context)
+  {
+  ...
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The first argument of your ISR is the address of the interrupt object created by
+IoConnectInterrupt, but you're unlikely to use this argument. The second argument is
+whatever context value you specified in your original call to IoConnectInterrupt; it will
+probably be the address of your device object or of your device extension, depending on your
+preference.</p>
+
+<p>I'll discuss the duties of your ISR in detail in <A HREF="ch07a.htm">Chapter 7</A> in connection with reading
+and writing data, the subject to which interrupt handling is most relevant. To carry on with
+this discussion of the standard model, I need to tell you that one of the likely things for the
+ISR to do is to schedule a deferred procedure call (DPC). The purpose of the DPC is to let you
+do things, like calling <b>IoCompleteRequest</b>, that can't be done at the rarified DIRQL
+at which your ISR runs. So, supposing you develop a pointer named <b>device</b> to your device
+object inside the ISR, you'd have a line of code like this one:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>IoRequestDpc(device, device-&gt;CurrentIrp, NULL);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>You'll next see the IRP in the DPC routine you registered inside AddDevice with your
+call to <b>IoInitializeDpcRequest</b>. The traditional name for that routine is <b>
+DpcForIsr</b> because it's the DPC routine your ISR requests.</p>
+
+
+<A NAME="157"><H2>Deferred Procedure Call Routine</H2></A>
+
+<p>The <b>DpcForIsr</b> routine requested by your ISR receives control at DISPATCH_LEVEL.
+Generally, its job is to finish up the processing of the IRP that caused the most recent
+interrupt. Often that job entails calling IoCompleteRequest to complete this IRP and
+IoStartNextPacket to remove the next IRP from your device queue for forwarding to StartIo.</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr>
+<td valign=top>
+<pre>
+
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 border="0">
+2 <img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+</pre>
+</td>
+<td valign=top>
+<pre>
+VOID DpcForIsr(PKDPC Dpc PDEVICE_OBJECT device, PIRP Irp, PVOID context)
+  {
+  ...
+  IoStartNextPacket(device, FALSE);
+  IoCompleteRequest(Irp, boost);
+  }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+
+<p><li> <b>IoStartNextPacket</b> removes the next IRP from your queue and sends it to
+StartIo. The FALSE argument indicates that this IRP can't be cancelled in the normal way.
+By the time you finish this chapter, you'll know how to handle the more normal case in
+which you specify TRUE for the second argument.</li></p>
+
+<p><li> <b>IoCompleteRequest</b> completes the IRP you specify as the first argument. The
+second argument specifies a priority boost for the thread that has been waiting for this IRP.
+You'll also fill in the IoStatus block within the IRP before calling IoCompleteRequest, as
+I'll explain later in the section &quot;<A HREF="ch05d.htm#160">Completion Mechanics</A>.&quot;</li></p>
+
+</ol>
+
+<p>The call to IoCompleteRequest is the end of this standard way of handling an I/O request.
+After that call, the I/O Manager (or whatever created the IRP in the first place) owns the IRP
+once more. That entity will destroy the IRP and might unblock a thread that has been waiting
+for the request to complete.</p>
+
+
+<A NAME="158"><H2>Custom Queues</H2></A>
+
+<p>Some devices operate in such a way that it makes sense to have more than one queue of
+requests. A common example is a serial port, which can handle independent streams of input and
+output requests simultaneously. Both IoStartPacket and IoStartNextPacket (and their key-sorting
+equivalents) work with a queue that you get &quot;for free&quot; as part of the device object.
+It's relatively easy to create additional queues that work the same way as the standard
+queue managed by those routines.</p>
+
+<p>To make it easier to discuss things, let's suppose that you need a separate queue to
+manage IRP_MJ_SPECIAL requests. (There's no such major function code&#8212;I made it up just
+so that we'd have a concrete topic for the discussion.) You would write two helper
+functions that would do for these special IRPs pretty much the same thing as the StartIo and
+DpcForIsr routines I mentioned earlier:</p>
+
+<ul>
+
+<p><li> A StartIo-like function&#8212;let's call it <b>StartIoSpecial</b>&#8212;that starts the
+next IRP_MJ_SPECIAL request.</li></p>
+
+<p><li> A DPC function&#8212;let's call it <b>DpcSpecial</b>&#8212;that handles completing an
+IRP_MJ_SPECIAL request.</li></p>
+
+</ul>
+
+
+<p>You'll also create a KDEVICE_QUEUE object in your device extension. You'd initialize
+this object during AddDevice:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>NTSTATUS AddDevice(...)
+  {
+  ...
+  KeInitializeDeviceQueue(&amp;pdx-&gt;dqSpecial);
+  ...
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>where <b>dqSpecial</b> is the name of the KDEVICE_OBJECT we'll use for IRP_MJ_SPECIAL
+requests. A device queue object is a three-state object. (See Figure 5-6.) These states
+influence how the support routines for device queues operate:</p>
+
+<ul>
+
+<p><li> The <b>idle</b> state occurs when the device isn't busy handling any requests and the
+queue is empty. <b>KeInsertDeviceQueue</b> and <b>KeInsertByKeyDeviceQueue</b> mark the queue
+busy but empty (the next state) and return FALSE. You shouldn't call <b>
+KeRemoveDeviceQueue</b> or <b>KeRemoveByKeyDeviceQueue</b> when the queue is idle.</li></p>
+
+<p><li> The <b>busy but empty</b> state occurs when the device is busy but no IRPs are on the
+queue. KeInsertDeviceQueue and KeInsertByKeyDeviceQueue add an IRP to the end of the queue, put
+the queue into the busy but not empty state, and return TRUE. KeRemoveDeviceQueue or
+KeRemoveByKeyDeviceQueue return NULL and put the queue into the idle state.</li></p>
+
+<p><li> The <b>busy but not empty</b> state occurs when the device is busy and there's at
+least one IRP on the queue. KeInsertDeviceQueue and KeInsertByKeyDeviceQueue add an IRP to the
+end of the queue, leave the queue in this same state, and return TRUE. (This is like what
+happens in the busy but empty state, except that no state transition occurs.)
+KeRemoveDeviceQueue or KeRemoveByKeyDeviceQueue remove the first entry from the queue and
+return its address. In addition, if the queue becomes empty, they put the queue into the busy
+but empty state.</li></p>
+</ul>
+
+<p>
+<img src="images/F05wi06.JPG" width=403 height=382 border=0>
+</p><p>
+<!--caption--><b>Figure 5-6.</b> <i>States of a KDEVICE_QUEUE queue.</i><!--/caption-->
+</p>
+
+<p>We use these support routines and the special device queue in our dispatch and DPC routines,
+as follows:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr>
+<td valign=top>
+<pre>
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+2 <img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+3 <img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+
+
+
+
+
+
+
+
+4 <img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+
+
+
+
+</pre>
+</td>
+<td valign=top>
+<pre>
+NTSTATUS DispatchSpecial(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  IoMarkIrpPending(Irp);
+  KIRQL oldirql;
+  KeRaiseIrql(DISPATCH_LEVEL, &amp;oldirql);
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+  if (!KeInsertDeviceQueue(&amp;pdx-&gt;dqSpecial,
+    &amp;Irp-&gt;Tail.Overlay.DeviceQueueEntry))
+    StartIoSpecial(fdo, Irp);
+  KeLowerIrql(oldirql);
+  return STATUS_PENDING;
+  }
+
+VOID DpcSpecial(...)
+  {
+  ...
+  PKDEVICE_QUEUE_ENTRY qep = KeRemoveDeviceQueue(&amp;pdx-&gt;dqSpecial);
+  if (qep)
+    StartIoSpecial(fdo, CONTAINING_RECORD(qep, IRP,
+      Tail.Overlay.DeviceQueueEntry));
+  ...
+  }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+
+<p><li> As with a &quot;regular&quot; dispatch routine, we mark this IRP as pending
+because we're going to queue it and return STATUS_PENDING.</li></p>
+
+<p><li> KeInsertDeviceQueue and our own StartIoSpecial expect to be called at
+DISPATCH_LEVEL. Hence, we explicitly raise IRQL to that level. We'll use <b>KeLowerIrql</b> 
+shortly to lower IRQL back to what it currently is (probably PASSIVE_LEVEL).</li></p>
+
+<p><li> This call to <b>KeInsertDeviceQueue</b> might add the IRP to the queue, in which
+case the return value will be TRUE and we won't do anything more with the IRP. If the
+device is currently idle, however, the return value will be FALSE and the IRP will not have
+been placed on the queue. We therefore call StartIoSpecial directly.</li></p>
+
+<p><li> This call to <b>KeRemoveDeviceQueue</b> from the DPC routine will have one of two
+results. If the queue is currently empty, the return value will be NULL and we won't do
+anything more about starting a new request (as there aren't any!). Otherwise, the return
+value will be the address of the queue linking field within the IRP. We use CONTAINING_RECORD
+to recover the address of the IRP, which we then pass to StartIoSpecial. Note that this DPC
+routine is already running at DISPATCH_LEVEL, so we don't need to adjust IRQL before
+removing an entry from the queue or calling the StartIo routine.</li></p>
+
+</ol>
+
+<p>It's no coincidence that my earlier descriptions of StartPacket and StartNextPacket
+sound so similar to what I've just described. Those functions work with a KDEVICE_QUEUE
+object named <b>DeviceQueue</b> that's one of the opaque fields of a device object, and
+their logic is the same as your logic when you manage your own device queue.</p>
+
+
+</BODY>
+</HTML>
+
+
+
+
+

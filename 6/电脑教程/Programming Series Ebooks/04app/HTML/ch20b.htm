@@ -1,0 +1,227 @@
+<HTML>
+<HEAD>
+<TITLE>Explicit DLL Module Loading and Symbol Linking</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch20a.htm">[Previous]</A> <A HREF="ch20c.htm">[Next]</A><P>
+
+<A NAME="260"><H1>Explicit DLL Module Loading and Symbol Linking</H1></A>
+
+<p>In order for a thread to call a function in a DLL module, the
+DLL's file image must be mapped into the address space of the calling thread's process. You can accomplish this in two ways. The first way is to have your application's source code simply
+reference symbols contained in the DLL. This causes the loader to
+implicitly load (and link) the required DLL when the application is invoked.</p>
+
+<p>The second way is for the application to explicitly load the
+required DLL and explicitly link to the desired exported symbol while the application is running. In other words, while the application is running, a thread within it can decide that it wants to call a function within a DLL. That thread can explicitly load the DLL into the process's address space, get the virtual memory address of a function contained within the DLL, and then call the function using this memory address. The beauty of this technique is that everything is done while the application is running.</p>
+
+<p>Figure 20-1 shows how an application explicitly loads a DLL and links to a symbol within it.</p>
+
+<p>
+<A HREF="javascript:fullSize('F20SI01x.htm')"> <img src="images/F20SI01.JPG" width=404 height=570 border=0 ALT="Click to view at full size."> </A>
+</p><p>
+<!-- CAPTION --><b>Figure 20-1.</b> <i>How a DLL is created and explicitly linked by an application</i><!-- /CAPTION -->
+</p>
+
+<A NAME="261"><H2>Explicitly Loading the DLL Module</H2></A>
+
+<p>At any time, a thread in the process can decide to map a DLL into the process's address space by calling one of these two
+functions:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HINSTANCE LoadLibrary(PCTSTR pszDLLPathName);
+
+HINSTANCE LoadLibraryEx(
+   PCTSTR pszDLLPathName, 
+   HANDLE hFile,
+   DWORD dwFlags);
+</pre>
+</td></tr></table></p>
+
+<p>Both of these functions locate a file image on the user's system (using the search algorithm discussed in the previous chapter) and attempt to map the DLL's file image into the calling process's address space. The HINSTANCE value returned from both functions identifies the virtual memory address where the file image is mapped. If the DLL cannot be mapped into the process's address space, NULL is returned. To get more information about the error, you can call <i>GetLastError</i>.</p>
+
+<p>You'll notice that the <i>LoadLibraryEx</i> function has two
+additional parameters: <i>hFile</i> and <i>dwFlags</i>. The <i>hFile</i> parameter is reserved for future use and must be NULL for now. For the <i>dwFlags</i> parameter, you must specify 0 or a combination of the DONT_RESOLVE_DLL_REFERENCES, LOAD_LIBRARY_AS_DATAFILE, and LOAD_WITH_ALTERED_SEARCH_ 
+PATH flags, which are discussed briefly below.</p>
+
+<A NAME="262"><H3>DONT_RESOLVE_DLL_REFERENCES</H3></A>
+
+<p>The DONT_RESOLVE_DLL_REFERENCES flag tells the system to map the DLL into the calling process's address space. Normally, when a DLL is mapped into a process's address space, the system calls a special function in the DLL, usually <i>DllMain</i> (discussed later in this chapter), which is used to initialize the DLL. The
+DONT_RESOLVE_DLL_REFERENCES flag causes the system to simply map the file image without calling <i>DllMain</i>.</p>
+
+<p>In addition, a DLL might import functions contained in another DLL. When the system maps a DLL into a process's address space, it also checks to see whether the DLL requires any additional DLLs and automatically loads these as well. When the DONT_RESOLVE_DLL_REFERENCES flag is specified, the system does not automatically load any of these additional DLLs into the process's address space.</p>
+
+<A NAME="263"><H3>LOAD_LIBRARY_AS_DATAFILE</H3></A>
+
+<p>The LOAD_LIBRARY_AS_DATAFILE flag is similar to the DONT_RESOLVE_DLL_REFERENCES flag in that the system simply maps the DLL into the process's address space as if it were a data file. The system spends no additional time preparing to execute any code in the file. For example, when a DLL is mapped into a process's address space, the system examines some information in the DLL to determine which page protection attributes should be assigned to different sections of the file. If you don't specify the LOAD_LIBRARY_AS_DATAFILE flag, the system sets the page protection attributes in the same way that it would if it were expecting to execute code in the file.</p>
+ 
+<p>This flag is useful for several reasons. First, if you have a DLL that contains only resources and no functions, you can specify this flag so that the DLL's file image is mapped into the process's address space. You can then use the HINSTANCE value returned from <i>LoadLibraryEx</i> in calls to functions that load resources. Also, you can use the LOAD_LIBRARY_AS_DATAFILE flag if you want to use resources that are contained in an .exe file. Normally, loading an .exe file starts a new process, but you can also use the <i>LoadLibraryEx</i> function to map an .exe file's image into a process's address space. With the mapped .exe file's HINSTANCE value, you can access resources within it. Because an .exe file doesn't have the <i>DllMain</i> function, you must specify the LOAD_LIBRARY_AS_DATAFILE flag when you call <i>LoadLibraryEx</i> to load an .exe file.</p>
+
+<A NAME="264"><H3>LOAD_WITH_ALTERED_SEARCH_PATH</H3></A>
+
+<p>The LOAD_WITH_ALTERED_SEARCH_PATH flag changes the search algorithm that <i>LoadLibraryEx</i> uses to locate the specified DLL file. Normally, <i>LoadLibraryEx</i> searches for files in the order shown in <A HREF="ch19a.htm">Chapter 19</A>. However, if the LOAD_WITH_ALTERED_SEARCH_PATH flag is specified, <i>LoadLibraryEx</i> searches for the file using the following algorithm:</p>
+
+<ol>
+<P><LI>The directory specified in the <i>pszDLLPathName</i>
+parameter</li></p>
+
+<P><LI>The process's current directory</li></p>
+
+<P><LI>The Windows system directory</li></p>
+
+<P><LI>The Windows directory</li></p>
+
+<P><LI>The directories listed in the PATH environment variable</li></p>
+</ol>
+
+<A NAME="265"><H2>Explicitly Unloading the DLL Module</H2></A>
+
+<p>When the threads in the process no longer want to reference symbols in a DLL, you can explicitly unload the DLL from the process's address space by calling this function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL FreeLibrary(HINSTANCE hinstDll);
+</pre>
+</td></tr></table></p>
+
+<p>You must pass the HINSTANCE value that identifies the DLL you want to unload. This value was returned by an earlier call to <i>
+LoadLibrary</i>(<i>Ex</i>)<i>.</i></p>
+
+<p>You can also unload a DLL module from a process's address space by calling this function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+VOID FreeLibraryAndExitThread(
+   HINSTANCE hinstDll,
+   DWORD dwExitCode);
+</pre></td></tr></table></p>
+
+<p>This function is implemented in Kernel32.dll as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+VOID FreeLibraryAndExitThread(HINSTANCE hinstDll, DWORD dwExitCode) {
+   FreeLibrary(hinstDll);
+   ExitThread(dwExitCode);
+}
+</pre></td></tr></table></p>
+
+<p>At first glance, this doesn't look like a big deal, and you
+might wonder why Microsoft went to the trouble of creating the <i>FreeLibraryAndExitThread</i> function. The reason has to do with the following scenario: Suppose you are writing a DLL that, when it is first mapped into a process's address space, creates a thread. When the thread finishes its work, it can unmap the DLL from the process's address space and terminate by calling <i>FreeLibrary</i> and then immediately calling <i>ExitThread</i>.</p>
+
+<p>But if the thread calls <i>FreeLibrary</i> and <i>ExitThread</i> individually, a serious problem occurs. The problem, of course, is that the call to <i>FreeLibrary</i> unmaps the DLL from the process's address space immediately. By the time the call to <i>FreeLibrary</i> returns, the code that contains the call to <i>ExitThread</i> is no longer available and the thread will attempt to execute nothing. This causes an access violation, and the entire process is terminated!</p>
+
+<p>However, if the thread calls <i>FreeLibraryAndExitThread</i>, this function calls <i>FreeLibrary</i>, causing the DLL to be immediately unmapped. The next instruction executed is in Kernel32.dll, not in the DLL that has just been unmapped. This means that the thread can continue executing and can call <i>ExitThread</i>. <i>ExitThread</i> causes the thread to terminate and does not return.</p>
+
+<p>Granted, you probably won't have much need for the <i>FreeLibraryAndExitThread</i> function. I've needed it only once, and I was performing a very specialized task. Also, I was writing code for Microsoft Windows NT 3.1, which did not offer this function. So I was glad to see that Microsoft had added it to more recent versions of Windows.</p>
+
+<p>In reality, the <i>LoadLibrary</i> and <i>LoadLibraryEx</i>
+functions increment a per-process usage count associated with the
+specified library, and the <i>FreeLibrary</i> and <i>FreeLibraryAndExitThread</i> functions decrement the library's
+per-process usage count. For example, the first time you call <i>
+LoadLibrary</i> to load a DLL, the system maps the DLL's file image into the calling process's address space and sets the DLL's
+usage count to 1. If a thread in the same process later calls <i>LoadLibrary</i> to load the same DLL file image, the system does not map the DLL file image into the process's address space a second time. Instead, it simply increments the usage count associated with the DLL for that process.</p>
+
+<p>In order for the DLL file image to be unmapped from the
+process's address space, threads in the process must call <i>FreeLibrary</i> twice&#8212;the first call simply decrements the DLL's usage count to 1, and the second call decrements the
+DLL's usage count to 0. When the system sees that a DLL's usage
+count has reached 0, it unmaps the DLL's file image from this
+process's address space. Any thread that attempts to call a
+function in the DLL raises an access violation because the code at the specified address is no longer mapped into the process's address space.</p>
+
+<p>The system maintains a DLL's usage count on a per-process basis; that is, if a thread in Process A makes the following call and then a thread in Process B makes the same call, MyLib.dll is mapped into both processes' address spaces&#8212;the DLL's usage count for Process A and for Process B are both 1.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HINSTANCE hinstDll = LoadLibrary(&quot;MyLib.dll&quot;);
+</pre></td></tr></table></p>
+
+<p>If a thread in Process B later calls the following function, the DLL's usage count for Process B becomes 0, and the DLL is unmapped from Process B's address space. However, the mapping of the DLL in Process A's address space is unaffected, and the DLL's usage count for Process A remains 1.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+FreeLibrary(hinstDll);
+</pre></td></tr></table></p>
+
+<p>A thread can determine whether a DLL is already mapped into its process's address space by calling the <i>GetModuleHandle</i>
+function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HINSTANCE GetModuleHandle(PCTSTR pszModuleName);
+</pre></td></tr></table></p>
+
+<p>For example, the following code loads MyLib.dll only if it is not already mapped into the process's address space:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HINSTANCE hinstDll = GetModuleHandle(&quot;MyLib&quot;); // DLL extension assumed
+if (hinstDll == NULL) {
+   hinstDll = LoadLibrary(&quot;MyLib&quot;); // DLL extension assumed
+}
+</pre>
+</td></tr></table></p>
+
+<p>You can also determine the full pathname of a DLL (or an .exe) if you have only the DLL's HINSTANCE value by using the <i>GetModuleFileName</i> function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+DWORD GetModuleFileName(
+   HINSTANCE hinstModule,
+   PTSTR pszPathName, 
+   DWORD cchPath);
+</pre></td></tr></table></p>
+
+<p>The first parameter is the DLL's (or .exe's) HINSTANCE. The
+second parameter, <i>pszPathName</i>, is the address of the buffer where the function puts the file image's full pathname. The third parameter, <i>cchPath</i>, specifies the size of the buffer in characters.</p>
+
+<A NAME="266"><H2>Explicitly Linking to an Exported Symbol</H2></A>
+
+<p>Once a DLL module has been explicitly loaded, the thread must get the address of the symbol that it wants to reference by calling this function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+FARPROC GetProcAddress(
+   HINSTANCE hinstDll, 
+   PCSTR pszSymbolName);
+</pre>
+</td></tr></table></p>
+
+<p>The <i>hinstDll</i> parameter, returned from a call to <i>LoadLibrary</i>(<i>Ex</i>) or <i>GetModuleHandle</i>, specifies the handle of the DLL containing the symbol. The <i>pszSymbolName</i> parameter can take one of two forms. The first form is the address of a zero-terminated string containing the name of the symbol whose address you want:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+FARPROC pfn = GetProcAddress(hinstDll, &quot;SomeFuncInDll&quot;);
+</pre>
+</td></tr></table></p>
+
+<p>Notice that the <i>pszSymbolName</i> parameter is prototyped as a PCSTR, as opposed to a PCTSTR. This means that the <i>GetProcAddress</i> function accepts only ANSI strings&#8212;you never pass Unicode strings to this function because the compiler/linker always stores symbol names as ANSI strings in the DLL's export section.</p>
+
+<p>The second form of the <i>pszSymbolName</i> parameter indicates the ordinal number of the symbol whose address you want:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+FARPROC pfn = GetProcAddress(hinstDll, MAKEINTRESOURCE(2));
+</pre>
+</td></tr></table></p>
+
+<p>This usage assumes that you know that the desired symbol name was assigned the ordinal value of 2 by the creator of the DLL. Again, let me reiterate that Microsoft strongly discourages the use of ordinals, so you won't often see this second usage of <i>GetProcAddress</i>.</p>
+
+<p>Either method provides the address to the desired symbol contained in the DLL. If the requested symbol does not exist in the DLL module's export section, <i>GetProcAddress</i> returns NULL to indicate failure.</p>
+
+<p>You should be aware that the first method of calling <i>GetProcAddress</i> is slower than the second because the system must perform string comparisons and searches on the symbol name string that was passed. With the second method, if you pass an ordinal number that hasn't been assigned to any of the exported functions, <i>GetProcAddress</i> might return a non-NULL value. This return value will trick your application into thinking that you have a valid address when you don't. Attempting to call this address will almost certainly cause the thread to raise an access violation. Early in my Windows programming career, I didn't fully understand this behavior and was burned by it several times&#8212;so watch out. (This behavior is yet another reason to avoid ordinals in favor of symbol names.)</p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

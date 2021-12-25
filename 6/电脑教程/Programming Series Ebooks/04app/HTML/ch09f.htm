@@ -1,0 +1,171 @@
+<HTML>
+<HEAD>
+<TITLE>Semaphore Kernel Objects</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch09e.htm">[Previous]</A> <A HREF="ch09g.htm">[Next]</A><P>
+
+<A NAME="131"><H1>Semaphore Kernel Objects</H1></A>
+
+<p>Semaphore kernel objects are used for resource counting. They
+contain a usage count, as all kernel objects do, but they also contain
+two additional signed 32-bit values: a maximum resource count and a
+current resource count. The maximum resource count identifies the
+maximum number of resources that the semaphore can control; the current
+resource count indicates the number of these resources that are
+currently available.</p>
+
+<p>To put this in perspective, let's see how an application might use
+semaphores. Let's say that I'm developing a server process in
+which I have allocated a buffer that can hold client requests. I've
+hard-coded the size of the buffer so that it can hold a maximum of five
+client requests at a time. If a new client attempts to contact the
+server while five requests are outstanding, the new client is turned
+away with an error indicating that the server is busy and the client
+should try again later. When my server process initializes, it creates
+a thread pool consisting of five threads, each thread ready to process
+individual client requests as they come in.</p>
+
+<p>Initially, no clients have made any requests, so my server doesn't
+allow any of the threads in the pool to be schedulable. However, if
+three client requests come in simultaneously, three threads in the pool
+should be schedulable. You can handle this monitoring of resources and
+scheduling of threads very nicely using a semaphore: the maximum
+resource count is set to 5 since that is the size of my hard-coded
+buffer. The current resource count is initially set to 0 since no
+clients have made any requests. As client requests are accepted, the
+current resource count is incremented, and as client requests are
+handed off to server pool threads, the current resource count is
+decremented.</p>
+
+<p>The rules for a semaphore are as follows:</p>
+
+<ul>
+
+<p><li>If the current resource count is greater than 0, the semaphore is
+signaled.</li></p>
+
+<p><li>If the current resource count is 0, the semaphore is
+nonsignaled.</li></p>
+
+<p><li>The system never allows the current resource count to be
+negative.</li></p>
+
+<p><li>The current resource count can never be greater than the maximum
+resource count.</li></p>
+
+</ul>
+
+<p>When you use a semaphore, do not confuse the semaphore object's
+usage count with its current resource count.</p>
+
+<p>This function creates a semaphore kernel object:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HANDLE CreateSemaphore(
+   PSECURITY_ATTRIBUTE psa,
+   LONG lInitialCount, 
+   LONG lMaximumCount, 
+   PCTSTR pszName);
+</pre></td></tr></table></p>
+
+<p>The <i>psa</i> and <i>pszName</i> parameters are discussed in
+<A HREF="ch03a.htm">Chapter 3</A>. Of course, another process can obtain its own process
+relative handle to an existing semaphore by calling <i>
+OpenSemaphore</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HANDLE OpenSemaphore(
+   DWORD fdwAccess, 
+   BOOL bInheritHandle, 
+   PCTSTR pszName);
+</pre></td></tr></table></p>
+
+<p>The <i>lMaximumCount</i> parameter tells the system the maximum
+number of resources that your application can handle. Since this is a
+signed, 32-bit value, you can have as many as 2,147,483,647 resources.
+The <i>lInitialCount</i> parameter indicates how many of these
+resources are initially (currently) available. When my server process
+initializes, there are no client requests, so I call <i>
+CreateSemaphore</i> as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HANDLE hsem = CreateSemaphore(NULL, 0, 5, NULL);
+</pre></td></tr></table></p>
+
+<p>This creates a semaphore with a maximum resource count of 5, but
+initially 0 resources are available. (Incidentally, the kernel
+object's usage count is 1 since I just created this kernel object;
+don't get the counters confused.) Since the current resource count
+is initialized to 0, the semaphore is nonsignaled. Any threads that
+wait on the semaphore are therefore placed in a wait state.</p>
+
+<p>A thread gains access to a resource by calling a wait function, passing
+the handle of the semaphore guarding the resource. Internally, the wait
+function checks the semaphore's current resource count and if its
+value is greater than 0 (the semaphore is signaled), the counter is
+decremented by 1 and the calling thread remains schedulable. The nifty
+thing about semaphores is that they perform this test-and-set operation
+atomically; that is, when you request a resource from a semaphore, the
+operating system checks whether the resource is available and
+decrements the count of available resources without letting another
+thread interfere. Only after the resource count has been decremented
+does the system allow another thread to request access to a
+resource.</p>
+
+<p>If the wait function determines that the semaphore's current
+resource count is 0 (the semaphore is nonsignaled), the system places
+the calling thread in a wait state. When another thread increments the
+semaphore's current resource count, the system remembers the
+waiting thread (or threads) and allows it to become schedulable
+(decrementing its current resource count appropriately).</p>
+
+<p>A thread increments a semaphore's current resource count by calling
+<i>ReleaseSemaphore</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL ReleaseSemaphore(
+   HANDLE hsem, 
+   LONG lReleaseCount, 
+   PLONG plPreviousCount);
+</pre></td></tr></table></p>
+
+<p>This function simply adds the value in <i>lReleaseCount</i> to the
+semaphore's current resource count. Usually, you pass 1 for the <i>
+lReleaseCount</i> parameter, but this is certainly not required; I
+often pass values of 2 or more. The function also returns the current
+resource count's original value in <i>*plPreviousCount</i>. Few
+applications actually care about this value, so fortunately you can
+pass NULL to ignore it.</p>
+
+<p>Sometimes it is useful to know the current resource count of a
+semaphore without actually altering the count, but there is no function
+that queries a semaphore's current resource count value. At first,
+I thought that calling <i>ReleaseSemaphore</i> and passing 0 for the
+<i>lReleaseCount</i> parameter might work by returning the actual count
+in <i>*plPreviousCount</i>. But this doesn't work; <i>
+ReleaseSemaphore</i> fills the long variable with 0. Next, I tried
+passing a really big number as the second parameter, hoping that it
+would not affect the current resource count because it would take it
+over the maximum. Again, <i>ReleaseSemaphore</i> filled <i>
+*plPreviousCount</i> with 0. Unfortunately, there is just no way to get
+the current resource count of a semaphore without altering it.</p>
+
+
+</BODY>
+</HTML>
+
+
+
+
+
+

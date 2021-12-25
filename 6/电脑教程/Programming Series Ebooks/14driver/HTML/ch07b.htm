@@ -1,0 +1,199 @@
+<HTML>
+<HEAD>
+<TITLE>Configuring Your Device</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch07a.htm">[Previous]</A> <A HREF="ch07c.htm">[Next]</a>
+</p>
+
+<A NAME="227"><H1>Configuring Your Device</H1></A>
+
+<p>In the <a href="ch06a.htm">previous chapter</a>, I discussed the various IRP_MJ_PNP requests that the Plug and Play
+(PnP) Manager sends you. IRP_MN_START_DEVICE is the vehicle for giving you information about
+the I/O resources that have been assigned by the PnP Manager for your use. I showed you how to
+obtain parallel lists of raw and translated resource descriptions and how to call a <b>
+StartDevice</b> helper function that would have the following prototype:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>NTSTATUS StartDevice(PDEVICE_OBJECT fdo,
+  PCM_PARTIAL_RESOURCE_LIST raw,
+  PCM_PARTIAL_RESOURCE_LIST translated)
+  {
+  ...
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The time has now come to explain what to do with these resource lists. In summary,
+you'll extract descriptions of your assigned resources from the translated list and use
+those descriptions to create additional kernel objects that give you access to your
+hardware.</p>
+
+<p>The CM_PARTIAL_RESOURCE_LIST structures contain a count and an array of
+CM_PARTIAL_RESOURCE_DESCRIPTOR structures, as illustrated in Figure 7-1. Each resource
+descriptor in the array has a <b>Type</b> member that indicates what type of resource it
+describes and some additional members that supply the particulars about some allocated
+resource. You're not going to be surprised by what you find in this array, by the way: if
+your device uses an IRQ and a range of I/O ports, you'll get two resource descriptors in
+the array. One of the descriptors will be for your IRQ, and the other will be for your I/O port
+range. Unfortunately, you can't predict in advance the order in which these descriptors
+will happen to appear in the array. Consequently, your StartDevice helper function has to begin
+with a loop that &quot;flattens&quot; the array by extracting resource values into a collection
+of local variables. You can later use the local variables to deal with the assigned resources
+in whatever order you please (which, it goes without saying, can be different from the order in
+which the PnP Manager chose to present them to you).</p>
+
+<p>
+<A HREF="javascript:fullSize('F07wi01x.htm')"> <img src="images/F07wi01.JPG" width=404 height=369 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 7-1.</b> <i>Structure of a partial resource list.</i><!--/caption-->
+</p>
+
+
+<p>In sketch, then, your <b>StartDevice</b> function looks like this:</p>
+
+<p>
+<table cellpadding=5 width="95%">
+<tr><td valign=top>
+<pre>
+
+
+
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+2 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+3 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+4 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+5 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+6 <img src="images/arorite2.jpg" width=17 height=10 border=0></pre>
+</td>
+<td valign=top>
+<pre>
+NTSTATUS StartDevice(PDEVICE_OBJECT fdo,
+  PCM_PARTIAL_RESOURCE_LIST raw,
+  PCM_PARTIAL_RESOURCE_LIST translated)
+  {
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+  PCM_PARTIAL_RESOURCE_DESCRIPTOR resource = 
+    translated-&gt;PartialDescriptors;
+  ULONG nres = translated-&gt;Count;
+  <i>&lt;local variable declarations&gt;</i>
+  for (ULONG i = 0; i &lt; nres; ++i, ++resource)
+    {
+    switch (resource-&gt;Type)
+      {
+    case CmResourceTypePort:
+      <i>&lt;save port info in local variables&gt;</i>
+      break;
+    case CmResourceTypeInterrupt:
+      <i>&lt;save interrupt info in local variables&gt;</i>
+      break;
+    case CmResourceTypeMemory:
+      <i>&lt;save memory info in local variables&gt;</i>
+      break;
+    case CmResourceTypeDma:
+      <i>&lt;save DMA info in local variables&gt;</i>
+      break;
+      }
+    }
+  <i>&lt;use local variables to configure driver &amp; hardware&gt;</i>  
+  IoSetDeviceInterfaceState(&amp;pdx-&gt;ifname, TRUE);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> I'll use the <b>resource</b> pointer to point to the current resource
+descriptor in the variable-length array. By the end of the upcoming loop, it will point past
+the last valid descriptor.</li></p>
+
+<p><li> The <b>Count</b> member of a resource list indicates how many resource
+descriptors are in the <b>PartialDescriptors</b> array.</li></p>
+
+<p><li> You should declare appropriate local variables for each of the I/O resources you
+expect to receive. I'll detail what these would be later on when I discuss how to deal with
+each of the standard I/O resources.</li></p>
+
+<p><li> Within the loop over resource descriptors, you use a <b>switch</b> statement to
+save resource description information into the appropriate local variables. In the text, I
+posited a device that needed just an I/O port range and an interrupt, and such a device would
+expect to find resource types <b>CmResourceTypePort</b> and <b>CmResourceTypeInterrupt</b>.
+I'm showing the other two standard resource types&#8212;<b>CmResourceTypeMemory</b> and <b>
+CmResourceTypeDma</b>&#8212;for thoroughness.</li></p>
+
+<p><li> Once outside the loop, the local variables you initialized in the various case
+labels will hold the resource information you need.</li></p>
+
+<p><li> If you registered a device interface during AddDevice, this is the time to enable
+that interface so that applications can find you and open handles to your device.</li></p>
+</ol>
+
+<p>If you have more than one resource of a particular type, you need to invent a way to tell
+the resource descriptors apart. To give a concrete (but entirely fictitious) example, suppose
+that your device uses one 4-KB range of memory for control purposes and a different 16-KB range
+of memory as a data capture buffer. You expect to receive two CmResourceTypeMemory resources
+from the PnP Manager. The control memory is the block that's 4 KB long, whereas the data
+memory is the block that's 16 KB long. If your device's resources have a distinguishing
+characteristic such as the size difference in the example, you'll be able to tell which
+resource is which.</p>
+
+<p>When dealing with multiple resources of the same type, don't assume that the resource
+descriptors will be in the same order that your configuration space lists them in, and
+don't assume that the same bus driver will always construct resource descriptors in the
+same order on every platform or every release of the operating system. The first assumption is
+tantamount to assuming that the bus driver programmer adopted a particular algorithm, while the
+second is tantamount to assuming that all bus driver programmers think alike and will never
+change their minds.</p>
+
+<p>I'll explain how to deal with each of the four standard I/O resource types at
+appropriate places in the remainder of this chapter. Table 7-1 presents an overview of the
+critical step(s) for each type of resource.</p>
+
+<p><b>Table 7-1.</b> <i>Overview of processing steps for I/O resources.</i></p>
+
+<table cellpadding="5" width="95%">
+<tr><th><i>Resource Type</i></th><th><i>Overview</i></th></tr>
+<tr><td valign="top">Port</td><td valign="top">Possibly maps port range; saves base port address in device extension</td></tr>
+<tr><td valign="top">Memory</td><td valign="top">Maps memory range; saves base address in device extension</td></tr>
+<tr><td valign="top">Dma</td><td valign="top">Calls IoGetDmaAdapter to create an adapter object</td></tr>
+<tr><td valign="top">Interrupt</td><td valign="top">Calls IoConnectInterrupt to create an interrupt object that points to your interrupt service routine (ISR)</td></tr>
+</table>
+
+
+
+</BODY>
+</HTML>
+
+
+
+
+

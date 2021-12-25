@@ -1,0 +1,1225 @@
+<HTML>
+<HEAD>
+<TITLE>Attaching Virtualized Input Queues and Local Input State Together</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch27c.htm">[Previous]</A> <A HREF="chaaa.htm">[Next]</A><P>
+
+<A NAME="364"><H1>Attaching Virtualized Input Queues and Local Input State Together</H1></A>
+
+<p>You can see from our discussion that the input model is robust
+because each thread has its own local input state environment and that each thread connects to and disconnects from the RIT when necessary. At times you might want to have two or more threads share a single set of local input state variables and share a single virtualized input queue.</p>
+
+<p>You can force two or more threads to share the same virtualized input queue and local input state variables by using the <i>AttachThreadInput</i> function:</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<PRE>
+BOOL AttachThreadInput(
+   DWORD idAttach, 
+   DWORD idAttachTo,
+   BOOL fAttach);
+</PRE>
+</TD></TR></TABLE></P>
+
+<p>The first parameter, <i>idAttach</i>, is the ID of the thread
+containing the virtualized input queue (and local input state
+variables) you no longer want to use. The second parameter, <i>
+idAttachTo</i>, is the ID of the thread containing the virtualized input queue (and local input state variables) you want the threads to share. The last parameter, <i>fAttach</i>, is TRUE if you want the sharing to occur or FALSE if you want to separate the two threads' virtualized input queues and local input state variables. You can tell several threads to share the same virtualized input queue and local input state variables by making multiple calls to the <i>AttachThreadInput</i> function.</p>
+
+<p>Returning to the earlier example, let's say that Thread A calls <i>AttachThreadInput</i>, passing Thread A's ID as the first parameter, Thread B's ID as the second parameter, and TRUE as the last parameter:</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<PRE>
+AttachThreadInput(idThreadA, idThreadB, TRUE);
+</PRE>
+</TD></TR></TABLE></P>
+
+<p>Now every hardware input event destined for Window A1, Window B1, or Window B2 will be appended to Thread B's virtualized input queue as shown in Figure 27-3. Thread A's virtualized input queue will no longer receive input events unless the two queues are detached by calling <i>AttachThreadInput</i> a second time, passing FALSE as the <i>fAttach</i> parameter.</p>
+
+<p>
+<A HREF="javascript:fullSize('F27si03x.htm')"> <img src="images/F27si03.JPG" width=404 height=329 border=0 ALT="Click to view at full size."> </A>
+</p><p>
+<!-- CAPTION --><b>Figure 27-3.</b> <i>Hardware messages for Window A1, Window B1, and Window B2 go in Thread B's virtualized input queue.</i><!-- /CAPTION -->
+</p>
+
+<p>When you attach two threads' input together, you make the
+threads share a single virtualized input queue and a single set of local input state variables. The threads still use their own
+posted-message queue, send-message queue, reply-message queue, and wake flags (as discussed in <A HREF="ch26a.htm">Chapter 26</A>).</p>
+
+<p>If you make all threads share a single queue, you severely curtail the robustness of the system. If one thread receives a keystroke and hangs, another thread can't receive any input. So you should avoid using the <i>AttachThreadInput</i> function.</p>
+
+<p>On a few occasions the system implicitly attaches two threads
+together. The first occasion is when a thread installs a journal record hook or journal playback hook. When the hook is uninstalled, the system automatically restores all the threads so that they use the same input queues they used before the hook was installed.</p>
+
+<p>When a thread installs a journal record hook, it tells the system that it wants to be notified of all hardware events entered by the user. The thread usually saves or records this information in a file. Since the user's input must be recorded in the same order as entered, every thread in the system shares a single virtualized input queue, making all input processing synchronous.</p>
+
+<p>There is one other instance in which the system implicitly calls <i>AttachThreadInput</i> on your behalf. Let's say you have an application that creates two threads. The first thread creates a dialog box. After the dialog box has been created, the second thread calls <i>CreateWindow</i>, using the WS_CHILD style, and passes the handle of the dialog box to be the child's parent. The system calls <i>AttachThreadInput</i> with the child window's thread to tell the child's thread that it should use the same input queue that the dialog box thread is using. This action forces input to be synchronized among all the child windows in the dialog box.</p>
+
+<A NAME="365"><H2>The Local Input State Laboratory (LISLab) Sample Application</H2></A>
+
+<p>The LISLab application (&quot;27 LISLab.exe&quot;), listed in Figure 27-4, is a laboratory that allows you to experiment with local input states. The source code and resource files for the application are in the 27-LISLab directory on the companion
+CD-ROM.</p>
+
+<p>To experiment with local input states, you need two threads as
+guinea pigs. The LISLab process has one thread, and I decided to make Notepad's thread be another. If Notepad is not running when LISLab is started, LISLab will start Notepad. After LISLab has initialized, you'll see the following dialog box.</p>
+
+<p>
+<A HREF="javascript:fullSize('G27si01x.htm')"> <img src="images/G27si01.JPG" width=404 height=292 border=0 ALT="Click to view at full size."> </A>
+</p>
+
+<p>In the upper left corner is the Windows group box. The five entries in this box are updated twice per second&#8212;that is, the dialog box receives a WM_TIMER message twice every second, and in response, it calls the following functions: <i>GetFocus</i>, <i>GetActiveWindow</i>, <i>GetForegroundWindow</i>, <i>GetCapture</i>, and <i>GetClipCursor</i>. The first four functions return window handles. From these window handles, I can determine the window's class and caption and display this information. Remember that these window handles are being retrieved from my own thread's local input state variables.</p>
+
+<p>If I activate another application (for example, Notepad), the Focus and Active entries change to (No Window) and the Foreground entry changes to [Notepad] Untitled - Notepad. Notice that by activating Notepad you make LISLab think that no window has focus and that no window is active.</p>
+
+<p>Next you can experiment with changing the window focus. First select SetFocus from the Function combo box at the upper right corner of the Local Input State Lab dialog box. Then enter the delay time (in seconds) that you want LISLab to wait before calling <i>SetFocus</i>. For this experiment, you'll probably want to specify a delay of 0 seconds. I'll explain shortly how the Delay field is used.</p>
+
+<p>Next select a window that you want to pass in the call to <i>
+SetFocus</i>. You select a window using the Notepad Windows And Self list box on the left side of the Local Input State Lab dialog box. For this experiment, select [Notepad] Untitled - Notepad in the list box. Now you are ready to call <i>SetFocus</i>. Simply click on the Delay button and watch what happens to the Windows group box&#8212;nothing. The system does not perform a focus change.</p>
+
+<p>If you really want <i>SetFocus</i> to change focus to Notepad, you can click on the Attach To Notepad button. Clicking on this button causes LISLab to call the following function:</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<PRE>
+AttachThreadInput(GetWindowThreadProcessId(g_hwndNotepad, NULL),
+   GetCurrentThreadId(), TRUE);
+</PRE>
+</TD></TR></TABLE></P>
+
+<p>This call tells LISLab's thread to use the same virtualized
+input queue as that of Notepad. In addition, LISLab's thread will
+also share the same local input state variables used by Notepad.</p>
+
+<p>If after clicking on the Attach To Notepad button you click on
+Notepad's window, LISLab's dialog box looks like this.</p>
+
+<p>
+<A HREF="javascript:fullSize('G27si02x.htm')"> <img src="images/G27si02.JPG" width=404 height=292 border=0 ALT="Click to view at full size."> </A>
+</p>
+
+<p>Notice that now, because the input queues are attached, LISLab can follow window focus changes made in Notepad. The above dialog box shows that the Edit control currently has the focus. If we display the File Open dialog box in Notepad, LISLab will continue to update its display and show us which Notepad window has focus, which window is active, and so on.</p>
+
+<p>Now we can move back to LISLab, click on the Delay button, and have <i>SetFocus</i> attempt to give Notepad focus. This time the call to <i>SetFocus</i> succeeds because the input queues are attached.</p>
+
+<p>You can continue to experiment by placing calls to <i>SetActiveWindow</i>, <i>SetForegroundWindow</i>, <i>BringWindowToTop</i>, and <i>SetWindowPos</i> by selecting the desired function from the Function combo box. Try calling these functions both when the input queues are attached and when they are detached and notice the differences.</p>
+
+<p>Now I'll explain why I include the delay option. This option
+causes LISLab to call the specified function after the number of
+seconds indicated. An example will help illustrate why you need it. First make sure that LISLab is detached from Notepad by clicking on the Detach From Notepad button. Then select ---&gt; This Dialog Box &lt;--- from the Notepad Windows And Self list box. Next select SetFocus from the Function combo box, and enter a delay of 10 seconds. Finally, click on the Delay button, and then quickly click on Notepad's window to make it active. You must make Notepad active before the 10 seconds elapse.</p>
+
+<p>While LISLab is waiting for the 10 seconds to elapse, it displays the word Pending to the right of the seconds value. After the 10 seconds, Pending is replaced by Executed and the result of calling the function is displayed. If you watch carefully, you'll see that LISLab will give focus to the Function combo box and show that the combo box now has the focus. But Notepad will still be receiving your keystrokes. LISLab's thread thinks that the combo box has the focus, and Notepad's thread thinks that one of its windows has the focus. However, the RIT remains &quot;connected&quot; to Notepad's thread.</p>
+
+<p>One final point about windows and the focus: Both the <i>
+SetFocus</i> and <i>SetActiveWindow</i> functions return the handle to the window that originally had the focus or was active. The information for this window is displayed in the PrevWnd field in the LISLab dialog box. Also, just before LISLab calls <i>SetForegroundWindow</i>, it calls <i>GetForegroundWindow</i> to get the handle of the window that was originally in the foreground. This information is also displayed in the PrevWnd field.</p>
+
+<p>It's time to move on to experiments involving the mouse cursor. Whenever you move the mouse over LISLab's dialog box (but not over any of its child windows), the mouse is displayed as a vertical arrow. As mouse messages are sent to the dialog box, they are also added to the Mouse Messages Received list box. This is how you know when the dialog box is receiving mouse messages. If you move the mouse outside the dialog box or over one of its child windows, you'll see that messages are no longer added to the list box.</p>
+
+<p>Now move the mouse to the right of the dialog box&#8212;over the text Click Right Mouse Button To Set Capture&#8212;and click and hold the right mouse button. When you do this, LISLab calls <i>SetCapture</i> and passes the handle of LISLab's dialog box. Notice that LISLab reflects that it has capture by updating the Windows group box at the top.</p>
+
+<p>Without releasing the right mouse button, move the mouse over
+LISLab's child windows and watch the mouse messages being added to the list box. Notice that if you move the mouse outside of LISLab's dialog box, LISLab continues to be notified of mouse messages. The mouse cursor retains its vertical arrow shape no matter where you move the mouse on the screen.</p>
+
+<p>Now we're ready to see where the system behaves differently.
+Release the right mouse button and watch what happens. The capture window reflected at the top of LISLab continues to show that LISLab thinks it still has mouse capture. However, if you move the mouse outside of LISLab's dialog box, the cursor no longer remains a vertical arrow and mouse messages stop going to the Mouse Messages Received list box. If you move the mouse over any of LISLab's child windows, you'll see that capture is still in effect because all the windows are using the same set of local input state variables.</p>
+
+<p>When you're done experimenting with mouse capture, you can turn it off using one of two techniques:</p>
+
+<ul>
+<p><li>Double-click the right mouse button anywhere in the Local Input State Lab dialog box to have LISLab place a call to <i>
+ReleaseCapture</i>.</li></p>
+
+<p><li>Click on a window created by a thread other than LISLab's
+thread. When you do this, the system automatically sends mouse button up and mouse button down messages to LISLab's dialog box.</li></p>
+</ul>
+
+<p>Regardless of which method you choose, watch how the Capture field in the Windows group box changes to reflect that no window has mouse capture.</p>
+
+<p>There are only two more mouse-related experiments: one experiment involves clipping the mouse cursor's movement to a rectangle, and the other involves cursor visibility. When you click on the Top, Left button, LISLab executes the following code:</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<PRE>
+RECT rc;
+<p>
+<img src="images/grayvellip.JPG" width=3 height=13  border="0">
+</p>
+SetRect(&amp;rc, 0, 0, GetSystemMetrics(SM_CXSCREEN) / 2,
+   GetSystemMetrics(SM_CYSCREEN) / 2);
+</PRE>
+</TD></TR></TABLE></P>
+
+<p>This causes the mouse cursor to be confined to the top left quarter of the screen. If you use Alt+Tab to select another application's window, you'll notice that the clipping rectangle stays in effect. The system automatically stops clipping the mouse and allows it to traverse the entire screen when you perform any of the following operations:</p>
+
+<p><table width="95%" cellpadding="5">
+<tr>
+<td valign="TOP" class="columns">Windows 98</td>
+<td valign="TOP" class="columns">Click on another application's title bar and move the window.</td>
+</tr>
+<tr>
+<td valign="TOP" class="columns">Windows 2000</td>
+<td valign="TOP" class="columns">Click on another application's title bar. (You don't have to move the window.)</td>
+</tr>
+<tr>
+<td valign="TOP" class="columns">Windows 2000</td>
+<td valign="TOP" class="columns">Invoke and dismiss the Task Manager using Ctrl+Shift+Esc.</td>
+</tr>
+</table></p>
+
+<p>You can also click on the Remove button in the Local Input State Lab dialog box (assuming that the button is in the clipping rectangle) to remove the clipping rectangle.</p>
+
+<p>Clicking on the Hide or Show Cursor button causes LISLab to execute the following code:</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<PRE>
+ShowCursor(FALSE);
+</PRE>
+</TD></TR></TABLE></P>
+
+
+<p>or</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<PRE>
+ShowCursor(TRUE);
+</PRE>
+</TD></TR></TABLE></P>
+
+<p>When you hide the mouse cursor, it doesn't appear when you move the mouse over LISLab's dialog box. But the moment you move the mouse outside this dialog box, the cursor appears again. Use the Show button to counteract the effect of the Hide button. Note that the effects of hiding the cursor are cumulative; that is, if you click on the Hide button five times, you must click on the Show button five times to make the cursor visible.</p>
+
+<p>The last experiment involves using the Infinite Loop button. When you click on this button, LISLab executes the following code:</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<PRE>
+SetCursor(LoadCursor(NULL, IDC_NO));
+for (;;)
+   ;
+</PRE>
+</TD></TR></TABLE></P>
+
+<p>The first line changes the mouse cursor to a slashed circle, and the second line executes an infinite loop. After you click on the Infinite Loop button, LISLab stops responding to any input whatsoever. If you move the mouse over LISLab's dialog box, the cursor remains as the slashed circle. However, if you move the mouse outside the dialog box, the cursor changes to reflect the cursor of the window over which it is located. You can use the mouse to manipulate these other windows.</p>
+
+<p>If you move the mouse back over LISLab's dialog box, the system sees that LISLab is not responding and automatically changes the cursor back to its most recent shape&#8212;the slashed circle. You can see that a thread executing an infinite loop is an inconvenience to the user but other windows can be used.</p>
+
+<p>Notice that if you move a window over the hung Local Input State Lab dialog box and then move it away, the system sends LISLab a WM_PAINT message. But the system also realizes that the thread is not responding. The system helps out here by repainting the window for the unresponsive application. Of course, the system cannot repaint the window correctly because it doesn't know what the application is supposed to be doing, so the system simply erases the window's background and redraws the frame.</p>
+
+<p>Now the problem is that we have a window on the screen that
+isn't responding to anything we do. How do we get rid of it? In
+Windows 98, we must first press Ctrl+Alt+Del to display the Close
+Program window shown here.</p>
+
+<p>
+<img src="images/G27si03.JPG" width=321 height=280 border="0">
+</p>
+
+<p>And in Windows 2000, you can either right-click on the
+application's button on the Taskbar or you can display the Task
+Manager window shown here.</p>
+
+<p>
+<img src="images/G27si04.JPG" width=404 height=447 border="0">
+</p>
+
+<p>Then we simply select the application we want to terminate&#8212;Local Input State Lab, in this case&#8212;and click on the End Task button. The system will attempt to terminate LISLab in a nice way (by sending a WM_CLOSE message) but will notice that the application isn't responding. This causes the system to display the following dialog box in Windows 98.</p>
+
+<p>
+<img src="images/G27si05a.JPG" width=366 height=253 border="0">
+</p>
+
+<p>In Windows 2000 it looks like this.</p>
+
+<p>
+<img src="images/G27si05b.JPG" width=354 height=243 border="0">
+</p>
+
+<p>Choosing End Task (for Windows 98) or End Now (Windows 2000) causes the system to forcibly remove LISLab from the system. The Cancel button tells the system that you changed your mind and no longer want to terminate the application. Choose End Task or End Now to remove LISLab from the system.</p>
+
+<p>The whole point of these experiments is to show you the system's robustness. It's impossible for one application to place the operating system in a state that would render the other applications unusable. Also note that both Windows 98 and Windows 2000 automatically free all resources that were allocated by threads in the terminated process&#8212;there are no memory leaks!</p>
+
+<p>
+<b>Figure 27-4.</b> <i>The LISLab sample application</i>
+</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<p><b>LISLab.cpp</b></p>
+<PRE>
+/******************************************************************************
+Module:  LISLab.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+#include &quot;..\CmnHdr.h&quot;     /* See Appendix A. */
+#include &lt;windowsx.h&gt;
+#include &lt;tchar.h&gt;
+#include &lt;string.h&gt;
+#include &quot;Resource.h&quot;
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+#define TIMER_DELAY (500)  // Half a second
+
+UINT_PTR g_uTimerId = 1;
+int      g_nEventId = 0;
+DWORD    g_dwEventTime = 0;
+HWND     g_hwndSubject = NULL;
+HWND     g_hwndNotepad = NULL;
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void CalcWndText(HWND hwnd, PTSTR szBuf, int nLen) {
+
+   TCHAR szClass[50], szCaption[50], szBufT[150];
+
+   if (hwnd == (HWND) NULL) {
+      _tcscpy(szBuf, TEXT(&quot;(no window)&quot;));
+      return;
+   }
+
+
+   if (!IsWindow(hwnd)) {
+      _tcscpy(szBuf, TEXT(&quot;(invalid window)&quot;));
+      return;
+   }
+
+   GetClassName(hwnd, szClass, chDIMOF(szClass));
+   GetWindowText(hwnd, szCaption, chDIMOF(szCaption));
+
+   wsprintf(szBufT, TEXT(&quot;[%s] %s&quot;), (PTSTR) szClass,
+      (*szCaption == 0) ? (PTSTR) TEXT(&quot;(no caption)&quot;) : (PTSTR) szCaption);
+   _tcsncpy(szBuf, szBufT, nLen - 1);
+   szBuf[nLen - 1] = 0; // Force zero-terminated string
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+// To minimize stack use, one instance of WALKWINDOWTREEDATA
+// is created as a local variable in WalkWindowTree() and a
+// pointer to it is passed to WalkWindowTreeRecurse.
+
+// Data used by WalkWindowTreeRecurse
+typedef struct {
+   HWND  hwndLB;        // Handle to the output list box
+   HWND  hwndParent;    // Handle to the parent
+   int   nLevel;        // Nesting depth
+   int   nIndex;        // List box item index
+   TCHAR szBuf[100];    // Output buffer
+   int   iBuf;          // Index into szBuf
+} WALKWINDOWTREEDATA, *PWALKWINDOWTREEDATA;
+
+
+void WalkWindowTreeRecurse(PWALKWINDOWTREEDATA pWWT) {
+
+   if (!IsWindow(pWWT-&gt;hwndParent))
+      return;
+
+   pWWT-&gt;nLevel++;
+   const int nIndexAmount = 2;
+
+   for (pWWT-&gt;iBuf = 0; pWWT-&gt;iBuf &lt; pWWT-&gt;nLevel * nIndexAmount; pWWT-&gt;iBuf++)
+      pWWT-&gt;szBuf[pWWT-&gt;iBuf] = TEXT(' ');
+
+   CalcWndText(pWWT-&gt;hwndParent, &amp;pWWT-&gt;szBuf[pWWT-&gt;iBuf], 
+      chDIMOF(pWWT-&gt;szBuf) - pWWT-&gt;iBuf);
+   pWWT-&gt;nIndex = ListBox_AddString(pWWT-&gt;hwndLB, pWWT-&gt;szBuf);
+   ListBox_SetItemData(pWWT-&gt;hwndLB, pWWT-&gt;nIndex, pWWT-&gt;hwndParent);
+
+   HWND hwndChild = GetFirstChild(pWWT-&gt;hwndParent);
+   while (hwndChild != NULL) {
+      pWWT-&gt;hwndParent = hwndChild;
+      WalkWindowTreeRecurse(pWWT);
+      hwndChild = GetNextSibling(hwndChild);
+   }
+
+   pWWT-&gt;nLevel--;
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void WalkWindowTree(HWND hwndLB, HWND hwndParent) {
+
+   WALKWINDOWTREEDATA WWT;
+
+   WWT.hwndLB = hwndLB;
+   WWT.hwndParent = hwndParent;
+   WWT.nLevel = -1;
+
+   WalkWindowTreeRecurse(&amp;WWT);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL Dlg_OnInitDialog(HWND hwnd, HWND hwndFocus, LPARAM lParam) {
+
+   chSETDLGICONS(hwnd, IDI_LISLAB);
+
+   // Associate the Up arrow cursor with the dialog box's client area
+   SetClassLongPtr(hwnd, GCLP_HCURSOR, 
+      (LONG_PTR) LoadCursor(NULL, IDC_UPARROW));
+
+   g_uTimerId = SetTimer(hwnd, g_uTimerId, TIMER_DELAY, NULL);
+
+   HWND hwndT = GetDlgItem(hwnd, IDC_WNDFUNC);
+   ComboBox_AddString(hwndT, TEXT(&quot;SetFocus&quot;));
+   ComboBox_AddString(hwndT, TEXT(&quot;SetActiveWindow&quot;));
+   ComboBox_AddString(hwndT, TEXT(&quot;SetForegroundWnd&quot;));
+   ComboBox_AddString(hwndT, TEXT(&quot;BringWindowToTop&quot;));
+   ComboBox_AddString(hwndT, TEXT(&quot;SetWindowPos-TOP&quot;));
+   ComboBox_AddString(hwndT, TEXT(&quot;SetWindowPos-BTM&quot;));
+   ComboBox_SetCurSel(hwndT, 0);
+
+   // Fill the windows list box with our window
+   hwndT = GetDlgItem(hwnd, IDC_WNDS);
+   ListBox_AddString(hwndT, TEXT(&quot;---&gt; This dialog box &lt;---&quot;));
+
+   ListBox_SetItemData(hwndT, 0, hwnd);
+   ListBox_SetCurSel(hwndT, 0);
+
+   // Now add Notepad's windows
+   g_hwndNotepad = FindWindow(TEXT(&quot;Notepad&quot;), NULL);
+   if (g_hwndNotepad == NULL) {
+
+      // Notepad isn't running; run it.
+      STARTUPINFO si = { sizeof(si) };
+      PROCESS_INFORMATION pi;
+      TCHAR szCommandLine[] = TEXT(&quot;Notepad&quot;);
+      if (CreateProcess(NULL, szCommandLine, NULL, NULL, FALSE, 0, 
+         NULL, NULL, &amp;si, &amp;pi)) {
+
+         // Wait for Notepad to create all its windows.
+         WaitForInputIdle(pi.hProcess, INFINITE);
+         CloseHandle(pi.hProcess);
+         CloseHandle(pi.hThread);
+         g_hwndNotepad = FindWindow(TEXT(&quot;Notepad&quot;), NULL);
+      }
+   }
+   WalkWindowTree(hwndT, g_hwndNotepad);
+
+   return(TRUE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify) {
+
+   HWND hwndT;
+
+   switch (id) {
+
+      case IDCANCEL:
+         if (g_uTimerId != 0)
+            KillTimer(hwnd, g_uTimerId);
+         EndDialog(hwnd, 0);
+         break;
+
+      case IDC_FUNCSTART:
+         g_dwEventTime = GetTickCount() + 1000 *
+            GetDlgItemInt(hwnd, IDC_DELAY, NULL, FALSE);
+         hwndT = GetDlgItem(hwnd, IDC_WNDS);
+         g_hwndSubject = (HWND) 
+            ListBox_GetItemData(hwndT, ListBox_GetCurSel(hwndT));
+         g_nEventId = ComboBox_GetCurSel(GetDlgItem(hwnd, IDC_WNDFUNC));
+         SetWindowText(GetDlgItem(hwnd, IDC_EVENTPENDING), TEXT(&quot;Pending&quot;));
+         break;
+
+      case IDC_THREADATTACH:
+         AttachThreadInput(GetWindowThreadProcessId(g_hwndNotepad, NULL),
+            GetCurrentThreadId(), TRUE);
+         break;
+
+      case IDC_THREADDETACH:
+         AttachThreadInput(GetWindowThreadProcessId(g_hwndNotepad, NULL),
+            GetCurrentThreadId(), FALSE);
+         break;
+
+      case IDC_REMOVECLIPRECT:
+         ClipCursor(NULL);
+         break;
+
+      case IDC_HIDECURSOR:
+         ShowCursor(FALSE);
+         break;
+
+      case IDC_SHOWCURSOR:
+         ShowCursor(TRUE);
+         break;
+
+      case IDC_INFINITELOOP:
+         SetCursor(LoadCursor(NULL, IDC_NO));
+         for (;;)
+             ;
+         break;
+
+      case IDC_SETCLIPRECT:
+         RECT rc;
+         SetRect(&amp;rc, 0, 0, GetSystemMetrics(SM_CXSCREEN) / 2, 
+            GetSystemMetrics(SM_CYSCREEN) / 2);
+         ClipCursor(&amp;rc);
+         break;
+   }
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void AddStr(HWND hwndLB, PCTSTR szBuf) {
+
+   int nIndex;
+
+   do {
+      nIndex = ListBox_AddString(hwndLB, szBuf);
+      if (nIndex == LB_ERR)
+         ListBox_DeleteString(hwndLB, 0);
+   } while (nIndex == LB_ERR);
+
+   ListBox_SetCurSel(hwndLB, nIndex);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+int Dlg_OnRButtonDown(HWND hwnd, BOOL fDoubleClick, 
+   int x, int y, UINT keyFlags) {
+
+   TCHAR szBuf[100];
+   wsprintf(szBuf, 
+      TEXT(&quot;Capture=%-3s, Msg=RButtonDown, DblClk=%-3s, x=%5d, y=%5d&quot;),
+      (GetCapture() == NULL) ? TEXT(&quot;No&quot;) : TEXT(&quot;Yes&quot;),
+      fDoubleClick ? TEXT(&quot;Yes&quot;) : TEXT(&quot;No&quot;), x, y);
+
+   AddStr(GetDlgItem(hwnd, IDC_MOUSEMSGS), szBuf);
+   if (!fDoubleClick) SetCapture(hwnd);
+   else ReleaseCapture();
+   return(0);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+int Dlg_OnRButtonUp(HWND hwnd, int x, int y, UINT keyFlags) {
+
+   TCHAR szBuf[100];
+   wsprintf(szBuf, TEXT(&quot;Capture=%-3s, Msg=RButtonUp,   x=%5d, y=%5d&quot;),
+      (GetCapture() == NULL) ? TEXT(&quot;No&quot;) : TEXT(&quot;Yes&quot;), x, y);
+
+   AddStr(GetDlgItem(hwnd, IDC_MOUSEMSGS), szBuf);
+   return(0);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+int Dlg_OnLButtonDown(HWND hwnd, BOOL fDoubleClick,
+   int x, int y, UINT keyFlags) {
+
+   TCHAR szBuf[100];
+   wsprintf(szBuf,
+      TEXT(&quot;Capture=%-3s, Msg=LButtonDown, DblClk=%-3s, x=%5d, y=%5d&quot;),
+      (GetCapture() == NULL) ? TEXT(&quot;No&quot;) : TEXT(&quot;Yes&quot;),
+      fDoubleClick ? TEXT(&quot;Yes&quot;) : TEXT(&quot;No&quot;), x, y);
+
+   AddStr(GetDlgItem(hwnd, IDC_MOUSEMSGS), szBuf);
+   return(0);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnLButtonUp(HWND hwnd, int x, int y, UINT keyFlags) {
+
+   TCHAR szBuf[100];
+   wsprintf(szBuf,
+      TEXT(&quot;Capture=%-3s, Msg=LButtonUp,   x=%5d, y=%5d&quot;),
+      (GetCapture() == NULL) ? TEXT(&quot;No&quot;) : TEXT(&quot;Yes&quot;), x, y);
+
+   AddStr(GetDlgItem(hwnd, IDC_MOUSEMSGS), szBuf);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnMouseMove(HWND hwnd, int x, int y, UINT keyFlags) {
+   
+   TCHAR szBuf[100];
+   wsprintf(szBuf, TEXT(&quot;Capture=%-3s, Msg=MouseMove,  x=%5d, y=%5d&quot;),
+      (GetCapture() == NULL) ? TEXT(&quot;No&quot;) : TEXT(&quot;Yes&quot;), x, y);
+
+   AddStr(GetDlgItem(hwnd, IDC_MOUSEMSGS), szBuf);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnTimer(HWND hwnd, UINT id) {
+
+   TCHAR szBuf[100];
+
+   CalcWndText(GetFocus(), szBuf, chDIMOF(szBuf));
+   SetWindowText(GetDlgItem(hwnd, IDC_WNDFOCUS), szBuf);
+
+   CalcWndText(GetCapture(), szBuf, chDIMOF(szBuf));
+   SetWindowText(GetDlgItem(hwnd, IDC_WNDCAPTURE), szBuf);
+
+   CalcWndText(GetActiveWindow(), szBuf, chDIMOF(szBuf));
+   SetWindowText(GetDlgItem(hwnd, IDC_WNDACTIVE), szBuf);
+
+   CalcWndText(GetForegroundWindow(), szBuf, chDIMOF(szBuf));
+   SetWindowText(GetDlgItem(hwnd, IDC_WNDFOREGROUND), szBuf);
+
+   RECT rc;
+   GetClipCursor(&amp;rc);
+   wsprintf(szBuf, TEXT(&quot;left=%d, top=%d, right=%d, bottom=%d&quot;),
+      rc.left, rc.top, rc.right, rc.bottom);
+   SetWindowText(GetDlgItem(hwnd, IDC_CLIPCURSOR), szBuf);
+
+
+   if ((g_dwEventTime == 0) || (GetTickCount() &lt; g_dwEventTime))
+      return;
+
+   HWND hwndT;
+   switch (g_nEventId) {
+      case 0:  // SetFocus
+         g_hwndSubject = SetFocus(g_hwndSubject);
+         break;
+
+      case 1:  // SetActiveWindow
+         g_hwndSubject = SetActiveWindow(g_hwndSubject);
+         break;
+
+      case 2:  // SetForegroundWindow
+         hwndT = GetForegroundWindow();
+         SetForegroundWindow(g_hwndSubject);
+         g_hwndSubject = hwndT;
+         break;
+
+      case 3:  // BringWindowToTop
+         BringWindowToTop(g_hwndSubject);
+         break;
+
+      case 4:  // SetWindowPos w/HWND_TOP
+         SetWindowPos(g_hwndSubject, HWND_TOP, 0, 0, 0, 0, 
+            SWP_NOMOVE | SWP_NOSIZE);
+         g_hwndSubject = (HWND) 1;
+         break;
+
+      case 5:  // SetWindowPos w/HWND_BOTTOM
+         SetWindowPos(g_hwndSubject, HWND_BOTTOM, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE);
+         g_hwndSubject = (HWND) 1;
+         break;
+   }
+
+   if (g_hwndSubject == (HWND) 1) {
+      SetWindowText(GetDlgItem(hwnd, IDC_PREVWND), TEXT(&quot;Can't tell.&quot;));
+   } else {
+      CalcWndText(g_hwndSubject, szBuf, chDIMOF(szBuf));
+      SetWindowText(GetDlgItem(hwnd, IDC_PREVWND), szBuf);
+   }
+
+   g_hwndSubject = NULL; g_nEventId = 0; g_dwEventTime = 0;
+   SetWindowText(GetDlgItem(hwnd, IDC_EVENTPENDING), TEXT(&quot;Executed&quot;));
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+INT_PTR WINAPI Dlg_Proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+
+   switch (uMsg) {
+      chHANDLE_DLGMSG(hwnd, WM_INITDIALOG,    Dlg_OnInitDialog);
+      chHANDLE_DLGMSG(hwnd, WM_COMMAND,       Dlg_OnCommand);
+
+      chHANDLE_DLGMSG(hwnd, WM_MOUSEMOVE,     Dlg_OnMouseMove);
+
+      chHANDLE_DLGMSG(hwnd, WM_LBUTTONDOWN,   Dlg_OnLButtonDown);
+      chHANDLE_DLGMSG(hwnd, WM_LBUTTONDBLCLK, Dlg_OnLButtonDown);
+      chHANDLE_DLGMSG(hwnd, WM_LBUTTONUP,     Dlg_OnLButtonUp);
+
+      chHANDLE_DLGMSG(hwnd, WM_RBUTTONDOWN,   Dlg_OnRButtonDown);
+      chHANDLE_DLGMSG(hwnd, WM_RBUTTONDBLCLK, Dlg_OnRButtonDown);
+      chHANDLE_DLGMSG(hwnd, WM_RBUTTONUP,     Dlg_OnRButtonUp);
+
+      chHANDLE_DLGMSG(hwnd, WM_TIMER,         Dlg_OnTimer);
+   }
+   return(FALSE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+int WINAPI _tWinMain(HINSTANCE hinstExe, HINSTANCE, PTSTR pszCmdLine, int) {
+
+   DialogBox(hinstExe, MAKEINTRESOURCE(IDD_LISLAB), NULL, Dlg_Proc);
+   return(0);
+}
+
+
+//////////////////////////////// End of File //////////////////////////////////
+</PRE>
+</TD></TR></TABLE></P>
+
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<p><b>LISLab.rc</b></p>
+<PRE>
+//Microsoft Developer Studio generated-resource script.
+//
+#include &quot;Resource.h&quot;
+
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+/////////////////////////////////////////////////////////////////////////////
+// English (U.S.) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+#ifdef _WIN32
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(1252)
+#endif //_WIN32
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+// Icon with lowest ID value placed first to ensure application icon
+// remains consistent on all systems.
+IDI_LISLAB              ICON    DISCARDABLE     &quot;LISLab.Ico&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
+
+IDD_LISLAB DIALOG DISCARDABLE  12, 38, 286, 178
+STYLE WS_MINIMIZEBOX | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
+CAPTION &quot;Local Input State Lab&quot;
+FONT 8, &quot;MS Sans Serif&quot;
+BEGIN
+    GROUPBOX        &quot;Windows&quot;,IDC_STATIC,4,0,192,56
+    LTEXT           &quot;Focus:&quot;,IDC_STATIC,8,12,23,8
+    LTEXT           &quot;Focus window info&quot;,IDC_WNDFOCUS,52,12,140,8
+    LTEXT           &quot;Active:&quot;,IDC_STATIC,8,20,24,8
+    LTEXT           &quot;Active window info&quot;,IDC_WNDACTIVE,52,20,140,8
+    LTEXT           &quot;Foreground:&quot;,IDC_STATIC,8,28,40,8
+    LTEXT           &quot;Foreground window info&quot;,IDC_WNDFOREGROUND,52,28,140,8
+    LTEXT           &quot;Capture:&quot;,IDC_STATIC,8,36,29,8
+    LTEXT           &quot;Capture window info&quot;,IDC_WNDCAPTURE,52,36,140,8
+    LTEXT           &quot;Clip Cursor:&quot;,IDC_STATIC,8,44,39,8
+    LTEXT           &quot;Cursor clipping info&quot;,IDC_CLIPCURSOR,52,44,140,8
+    LTEXT           &quot;&amp;Function:&quot;,IDC_STATIC,200,4,32,8
+    COMBOBOX        IDC_WNDFUNC,200,14,82,54,CBS_DROPDOWNLIST | WS_VSCROLL | 
+                    WS_TABSTOP
+    PUSHBUTTON      &quot;Dela&amp;y:&quot;,IDC_FUNCSTART,200,30,26,14
+    EDITTEXT        IDC_DELAY,228,30,24,12,ES_AUTOHSCROLL
+    LTEXT           &quot;Executed&quot;,IDC_EVENTPENDING,252,30,32,10
+    LTEXT           &quot;PrevWnd:&quot;,IDC_STATIC,200,46,34,8
+    LTEXT           &quot;Previous window info&quot;,IDC_PREVWND,208,54,76,18
+    LTEXT           &quot;&amp;Notepad windows and Self:&quot;,IDC_STATIC,4,62,90,8
+    LISTBOX         IDC_WNDS,4,72,192,32,WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      &quot;&amp;Attach to Notepad&quot;,IDC_THREADATTACH,200,72,80,12
+    PUSHBUTTON      &quot;&amp;Detach from Notepad&quot;,IDC_THREADDETACH,200,88,80,12
+    LTEXT           &quot;&amp;Mouse messages received:&quot;,IDC_STATIC,4,102,89,8
+    LISTBOX         IDC_MOUSEMSGS,4,112,192,32,WS_VSCROLL | WS_TABSTOP
+    LTEXT           &quot;Click right mouse button to set capture.\n\nDouble-click 
+right mouse button to release capture.&quot;,
+                    IDC_STATIC,200,110,80,40
+    LTEXT           &quot;Clipping rect:&quot;,IDC_STATIC,4,148,44,8
+    PUSHBUTTON      &quot;&amp;Top, left&quot;,IDC_SETCLIPRECT,52,146,56,14
+    PUSHBUTTON      &quot;&amp;Remove&quot;,IDC_REMOVECLIPRECT,112,146,56,12
+    LTEXT           &quot;Cursor visibility:&quot;,IDC_STATIC,4,164,47,8
+    PUSHBUTTON      &quot;&amp;Hide&quot;,IDC_HIDECURSOR,52,162,56,12
+    PUSHBUTTON      &quot;&amp;Show&quot;,IDC_SHOWCURSOR,112,162,56,12
+    PUSHBUTTON      &quot;&amp;Infinite loop&quot;,IDC_INFINITELOOP,200,162,80,12,WS_GROUP | 
+                    NOT WS_TABSTOP
+END
+
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// TEXTINCLUDE
+//
+
+1 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;Resource.h\0&quot;
+END
+
+2 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;#include &quot;&quot;afxres.h&quot;&quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+3 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+#endif    // APSTUDIO_INVOKED
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// DESIGNINFO
+//
+
+#ifdef APSTUDIO_INVOKED
+GUIDELINES DESIGNINFO DISCARDABLE 
+BEGIN
+    IDD_LISLAB, DIALOG
+    BEGIN
+        RIGHTMARGIN, 283
+        BOTTOMMARGIN, 170
+    END
+END
+#endif    // APSTUDIO_INVOKED
+
+#endif    // English (U.S.) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 3 resource.
+//
+
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED 
+</PRE>
+</TD></TR></TABLE></P>
+
+
+<A NAME="366"><H2>The Local Input State Watch (LISWatch) Sample Application</H2></A>
+
+<p>The LISWatch application (&quot;27 LISWatch.exe&quot;), listed in Figure 27-5, is a useful utility that monitors the active window, the focus window, and the mouse capture window. The
+source code and resource files for the application are in the
+27-LISWatch directory on the companion CD-ROM.</p>
+
+<p>When you run LISWatch, it displays the dialog box shown here.</p>
+
+<p>
+<img src="images/G27si06.JPG" width=366 height=92 border="0">
+</p>
+
+<p>When this dialog box receives a WM_INITDIALOG message, it calls <i>SetTimer</i> to set a timer that fires twice every second. When the WM_TIMER message is received, the contents of the dialog box update to reflect which window is active, which window has focus, and which window has captured the mouse. At the bottom of the dialog box, you also see which window is the foreground window. You can experiment with this utility by simply clicking on windows created by different applications. As you move around, you'll notice that LISWatch is able to accurately report the proper window information regardless of which thread has created the various windows.</p>
+
+<p>The interesting part of the utility executes when a WM_TIMER message is received, so you might want to refer to the <i>Dlg_OnTimer</i> function as I go through this explanation. Also, assume for now that the global variable, <i>g_dwThreadIdAttachTo</i>, is set to zero. I'll explain
+the purpose of this variable later.</p>
+
+<p>Since each thread has its own local input state, <i>Dlg_OnTimer</i> first calls <i>GetForegroundWindow</i> to determine which window the user is interacting with. Note that <i>GetForegroundWindow</i> always returns a valid window handle regardless of which thread in the system created this window or calls this function.</p>
+
+<p>This returned window handle is then passed to <i>GetWindowThreadProcessId</i> to determine which thread is connected to the RIT. Now, LISWatch attaches its own thread's local input state to the local input state of the thread connected to the RIT by calling <i>AttachThreadInput</i>. After the local input states are attached, LISWatch's thread can call <i>GetFocus</i>, <i>GetActiveWindow</i>, and <i>GetCapture</i>&#8212;all of which return valid window handles.
+The helper function, <i>CalcWndText</i>, constructs a string containing each window's class name and window text. Each window's string is then updated in LISWatch's dialog box. Finally, just before <i>Dlg_OnTimer</i> returns, it again calls <i>AttachThreadInput</i> but this time passes FALSE for the last parameter so that the two threads' local input states are detached from one another.</p>
+
+<p>This explains the basics of LISWatch. However, I have added another feature to LISWatch that I'd like to explain now. When you start LISWatch, it monitors window activation changes that occur anywhere in the system. This is what the &quot;System-wide&quot; means at the top of the dialog box. However, LISWatch also allows you to restrict it to watching a single thread's local input state changes. With this feature enabled, LISWatch is able to report to you exactly what a single thread sees as its local input state.</p> 
+
+<p>To have LISWatch monitor a single thread's local input state, all you have to do is click the left mouse button on LISWatch's window, drag the mouse cursor over a window created by another thread, and then release the mouse button. After you release the mouse button, LISWatch sets the global <i>g_dwThreadIdAttachTo</i> variable to the ID of the selected thread. This thread ID will replace &quot;System-wide&quot; at
+the top of LISWatch's dialog box. When this global variable is not zero, <i>Dlg_OnTimer</i> alters its behavior slightly. Instead of always attaching its local input state to that of the foreground thread, LISWatch attaches itself to the selected thread. This way, its calls to <i>GetActiveWindow</i>, <i>GetFocus</i>, and <i>GetCapture</i> all reflect what the selected thread's local input state sees.</p>
+
+<p>Let's try an experiment. Run Calculator, and use LISWatch to select its window. When you activate Calculator's window, LISWatch updates its display as shown here.</p>
+
+<p>
+<img src="images/G27si07.JPG" width=366 height=92 border="0">
+</p>
+
+<p>For me, Calculator's thread ID is 0x000004ec. LISWatch is currently set up to monitor this one thread's local input state changes. If I click on any of Calculator's radio buttons or check boxes, LISWatch can show you these focus changes because all of these windows were created by thread 0x000004ec.</p>
+
+<p>However, if you now activate a window created by another application (Notepad in my example), LISWatch looks like this.</p>
+ 
+<p>
+<img src="images/G27si08.JPG" width=366 height=92 border="0">
+</p>
+
+<p>Here LISWatch is reporting that Calculator thread's local input state is reporting that no window in the system has focus, no window is active, and no window has captured the mouse.</p>
+
+<p>To really understand exactly how all this local input state stuff works, you should run multiple instances of LISWatch and set up all the instances so that they are monitoring the local input states of different threads. Then start clicking on various windows to see what each thread's local input state reflects.</p>
+
+<p>
+<b>Figure 27-5.</b> <i>The LISWatch sample application</i>
+</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<p><b>LISWatch.cpp</b></p>
+<PRE>
+/******************************************************************************
+Module:  LISWatch.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#include &quot;..\CmnHdr.h&quot;     /* See Appendix A. */
+#include &lt;tchar.h&gt;
+#include &lt;windowsx.h&gt;
+#include &quot;Resource.h&quot;
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+#define TIMER_DELAY (500)        // Half a second
+
+UINT_PTR g_uTimerId = 1;
+DWORD g_dwThreadIdAttachTo = 0;  // 0=System-wide; Non-zero=specifc thread
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL Dlg_OnInitDialog(HWND hwnd, HWND hwndFocus, LPARAM lParam) {
+
+   chSETDLGICONS(hwnd, IDI_LISWATCH);
+
+   // Update our contents periodically
+   g_uTimerId = SetTimer(hwnd, g_uTimerId, TIMER_DELAY, NULL);
+
+   // Make our window on top of all others
+   SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+   return(TRUE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnRButtonDown(HWND hwnd, BOOL fDoubleClick, int x, int y, 
+   UINT keyFlags) {
+
+   chMB(&quot;To monitor a specific thread, click the left mouse button in &quot;
+        &quot;the main window and release it in the desired window.\n&quot;
+        &quot;To monitor all threads, double-click the left mouse button in &quot;
+        &quot;the main window.&quot;);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnLButtonDown(HWND hwnd, BOOL fDoubleClick, int x, int y, 
+   UINT keyFlags) {
+
+   // If we're attached to a thread, detach from it
+   if (g_dwThreadIdAttachTo != 0)
+      AttachThreadInput(GetCurrentThreadId(), g_dwThreadIdAttachTo, FALSE);
+
+   // Set capture to ourself and change the mouse cursor
+   SetCapture(hwnd);
+   SetCursor(LoadCursor(GetModuleHandle(NULL), MAKEINTRESOURCE(IDC_EYES)));
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnLButtonUp(HWND hwnd, int x, int y, UINT keyFlags) {
+
+   if (GetCapture() == hwnd) {
+
+      // If we had mouse capture set, get the ID of the thread that
+      // created the window that is under the mouse cursor.
+      POINT pt;
+      pt.x = LOWORD(GetMessagePos());
+      pt.y = HIWORD(GetMessagePos());
+      ReleaseCapture();
+      g_dwThreadIdAttachTo = GetWindowThreadProcessId(
+         ChildWindowFromPointEx(GetDesktopWindow(), pt, CWP_SKIPINVISIBLE), 
+         NULL);
+
+      if (g_dwThreadIdAttachTo == GetCurrentThreadId()) {
+
+         // The mouse button is released on one of our windows; 
+         // monitor local-input state on a system-wide basis.
+         g_dwThreadIdAttachTo = 0;
+
+      } else {
+
+         // The mouse button is released on a window that our thread didn't
+         // create; monitor local input state for that thread only.
+         AttachThreadInput(GetCurrentThreadId(), g_dwThreadIdAttachTo, TRUE);
+      }
+   }
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+static void CalcWndText(HWND hwnd, PTSTR szBuf, int nLen) {
+
+   if (hwnd == (HWND) NULL) {
+      lstrcpy(szBuf, TEXT(&quot;(no window)&quot;)); 
+      return;
+   }
+
+   if (!IsWindow(hwnd)) {
+      lstrcpy(szBuf, TEXT(&quot;(invalid window)&quot;)); 
+      return;
+   }
+
+   TCHAR szClass[50], szCaption[50], szBufT[150];
+   GetClassName(hwnd, szClass, chDIMOF(szClass));
+   GetWindowText(hwnd, szCaption, chDIMOF(szCaption));
+   wsprintf(szBufT, TEXT(&quot;[%s] %s&quot;), (PTSTR) szClass,
+      (szCaption[0] == 0) ? (PTSTR) TEXT(&quot;(no caption)&quot;) : (PTSTR) szCaption);
+   _tcsncpy(szBuf, szBufT, nLen - 1);
+   szBuf[nLen - 1] = 0; // Force zero-terminated string
+}
+
+
+//////////////////////////////////////////////////////////////
+
+
+void Dlg_OnTimer(HWND hwnd, UINT id) {
+
+   TCHAR szBuf[100] = TEXT(&quot;System-wide&quot;);
+   HWND hwndForeground = GetForegroundWindow();
+   DWORD dwThreadIdAttachTo = g_dwThreadIdAttachTo;
+
+   if (dwThreadIdAttachTo == 0) {
+
+      // If monitoring local input state system-wide, attach our input
+      // state to the thread that created the current foreground window.
+      dwThreadIdAttachTo = 
+         GetWindowThreadProcessId(hwndForeground, NULL);
+      AttachThreadInput(GetCurrentThreadId(), dwThreadIdAttachTo, TRUE);     
+
+   } else {
+   
+      wsprintf(szBuf, TEXT(&quot;0x%08x&quot;), dwThreadIdAttachTo);
+   }
+
+   SetWindowText(GetDlgItem(hwnd, IDC_THREADID), szBuf);
+
+   CalcWndText(GetFocus(), szBuf, chDIMOF(szBuf));
+   SetWindowText(GetDlgItem(hwnd, IDC_WNDFOCUS), szBuf);
+
+   CalcWndText(GetActiveWindow(), szBuf, chDIMOF(szBuf));
+   SetWindowText(GetDlgItem(hwnd, IDC_WNDACTIVE), szBuf);
+
+   CalcWndText(GetCapture(), szBuf, chDIMOF(szBuf));
+   SetWindowText(GetDlgItem(hwnd, IDC_WNDCAPTURE), szBuf);
+
+   CalcWndText(hwndForeground, szBuf, chDIMOF(szBuf));
+   SetWindowText(GetDlgItem(hwnd, IDC_WNDFOREGRND), szBuf);
+
+   if (g_dwThreadIdAttachTo == 0) {
+      // If monitoring local input state system-wide, detach our input
+      // state from the thread that created the current foreground window.
+      AttachThreadInput(GetCurrentThreadId(), dwThreadIdAttachTo, FALSE);
+   }
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify) {
+
+   switch (id) {
+      case IDCANCEL:
+         EndDialog(hwnd, id);
+         break;
+   }
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+INT_PTR WINAPI Dlg_Proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+
+   switch (uMsg) {
+      chHANDLE_DLGMSG(hwnd, WM_INITDIALOG,  Dlg_OnInitDialog);
+      chHANDLE_DLGMSG(hwnd, WM_COMMAND,     Dlg_OnCommand);
+      chHANDLE_DLGMSG(hwnd, WM_TIMER,       Dlg_OnTimer);
+      chHANDLE_DLGMSG(hwnd, WM_RBUTTONDOWN, Dlg_OnRButtonDown);
+      chHANDLE_DLGMSG(hwnd, WM_LBUTTONDOWN, Dlg_OnLButtonDown);
+      chHANDLE_DLGMSG(hwnd, WM_LBUTTONUP,   Dlg_OnLButtonUp);
+   }
+   return(FALSE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+int WINAPI _tWinMain(HINSTANCE hinstExe, HINSTANCE, PTSTR pszCmdLine, int) {
+
+   DialogBox(hinstExe, MAKEINTRESOURCE(IDD_LISWATCH), NULL, Dlg_Proc);
+   return(0);
+}
+
+
+//////////////////////////////// End of File //////////////////////////////////
+</PRE>
+</TD></TR></TABLE></P>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<p><b>LISWatch.rc</b></p>
+<PRE>
+//Microsoft Developer Studio generated resource script.
+//
+#include &quot;resource.h&quot;
+
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+/////////////////////////////////////////////////////////////////////////////
+// English (U.S.) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+#ifdef _WIN32
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(1252)
+#endif //_WIN32
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// TEXTINCLUDE
+//
+
+1 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;resource.h\0&quot;
+END
+
+2 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;#include &quot;&quot;afxres.h&quot;&quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+3 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+#endif    // APSTUDIO_INVOKED
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
+
+IDD_LISWATCH DIALOG DISCARDABLE  32768, 5, 240, 41
+STYLE WS_MINIMIZEBOX | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
+CAPTION &quot;LISWatch&quot;
+FONT 8, &quot;MS Sans Serif&quot;
+BEGIN
+    LTEXT           &quot;Thread:&quot;,IDC_STATIC,4,0,31,8
+    LTEXT           &quot;ThreadId&quot;,IDC_THREADID,36,0,100,8
+    LTEXT           &quot;Focus:&quot;,IDC_STATIC,4,8,31,8
+    LTEXT           &quot;Focus window&quot;,IDC_WNDFOCUS,36,8,204,8
+    LTEXT           &quot;Active:&quot;,IDC_STATIC,4,16,31,8
+    LTEXT           &quot;Active window&quot;,IDC_WNDACTIVE,36,16,204,8
+    LTEXT           &quot;Capture:&quot;,IDC_STATIC,4,24,31,8
+    LTEXT           &quot;Capture window&quot;,IDC_WNDCAPTURE,36,24,204,8
+    LTEXT           &quot;Foregrnd:&quot;,IDC_STATIC,4,32,31,8
+    LTEXT           &quot;Foreground window&quot;,IDC_WNDFOREGRND,36,32,204,8
+    LTEXT           &quot;HELP: Click right mouse button&quot;,IDC_STATIC,140,0,99,8
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+// Icon with lowest ID value placed first to ensure application icon
+// remains consistent on all systems.
+IDI_LISWATCH            ICON    DISCARDABLE     &quot;LISWatch.ico&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Cursor
+//
+
+IDC_EYES                CURSOR  DISCARDABLE     &quot;Eyes.cur&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// DESIGNINFO
+//
+
+#ifdef APSTUDIO_INVOKED
+GUIDELINES DESIGNINFO DISCARDABLE 
+BEGIN
+    IDD_LISWATCH, DIALOG
+    BEGIN
+        RIGHTMARGIN, 190
+        BOTTOMMARGIN, 10
+    END
+END
+#endif    // APSTUDIO_INVOKED
+
+#endif    // English (U.S.) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 3 resource.
+//
+
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED
+
+</PRE>
+</TD></TR></TABLE></P>
+
+</body>
+</html>
+
+
+
+
+
+
+

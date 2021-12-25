@@ -1,0 +1,108 @@
+<HTML>
+<HEAD>
+<TITLE>Chapter 8 -- Windows 98 Compatibility Notes</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch08d.htm">[Previous]</A> <A HREF="ch09a.htm">[Next]</a>
+</p>
+
+<A NAME="294"><H1>Windows 98 Compatibility Notes</H1></A>
+
+<p>Windows 98 incompletely implements many power management features. Consequently, the Windows
+98 environment will forgive your mistakes more readily than Windows 2000 will, facilitating the
+initial development of a driver. But, since Windows 98 tolerates mistakes that Windows 2000
+won't tolerate, you must be sure to test all of your driver's power functionality under
+Windows 2000.</p>
+
+<A NAME="295"><H2>The Importance of DO_POWER_PAGABLE</H2></A>
+
+<p>The DO_POWER_PAGABLE flag has additional and unexpected significance in Windows 98. Unless
+every device object, including the PDO and all filter devices, in your particular stack has
+this flag set, the I/O Manager tells the Windows 98 Configuration Manager that the device only
+supports the D0 power state and is incapable of waking the system. Thus, an additional
+consequence of not setting the DO_POWER_PAGABLE flag is that any idle notification request you
+make by calling PoRegisterDeviceForIdleDetection is effectively ignored&#8212;that is,
+you'll never receive a power IRP as a result of being idle too long. Another consequence is
+that your device's wake-up feature, if any, won't be used.</p>
+
+<A NAME="296"><H2>Requesting Device Power IRPs</H2></A>
+
+<p>Windows 98 appears to have a bug whereby PoRequestPowerIrp can appear to succeed&#8212;that
+is, it returns STATUS_PENDING&#8212;without actually causing you to receive a device set-power
+IRP. The problem arises when you ask for a set-power IRP that specifies the same device state
+that your device is already in&#8212;the Windows 98 Configuration Manager &quot;knows&quot; that
+there's no news to report by sending a configuration event to the configuration function
+that NTKERN operates on your behalf. Mind you, if you're waiting for a device IRP to
+complete, your device will simply stop responding at this point.</p>
+
+<p>I used an obvious workaround to overcome this problem: if we're running under Windows 98
+and detect that we're about to request a device power IRP for the same power state as the
+device already occupies, I simply pretend that the device IRP succeeded. In terms of the state
+transitions that HandlePowerEvent goes through, I jump from SendDeviceIrp directly to whatever
+action (SubPowerUpComplete or SubPowerDownComplete) is appropriate.</p>
+
+<A NAME="297"><H2>PoCallDriver</H2></A>
+
+<p>PoCallDriver just calls IoCallDriver in Windows 98. Consequently, it would be easy for you
+to make the mistake of using IoCallDriver to forward power IRPs. There is, however, an even
+worse problem in Windows 98.</p>
+
+<p>The Windows 2000 version of PoCallDriver makes sure that it sends power IRPs to
+DO_POWER_PAGABLE drivers at PASSIVE_LEVEL and to INRUSH or nonpaged drivers at DISPATCH_LEVEL.
+I took advantage of that fact in GENERIC to forward power IRPs in situations where
+HandlePowerEvent is called at DISPATCH_LEVEL from an I/O completion routine. The Windows 98
+version, since it's just IoCallDriver under a different name, doesn't switch IRQL. As
+it happens, <i>all</i> power IRPs in Windows 98 should be sent at PASSIVE_LEVEL. So I wrote a
+helper routine named SafePoCallDriver for use in GENERIC that queues an executive work
+item&#8212;refer to <A HREF="ch09a.htm">Chapter 9</A>&#8212;to send the IRP at PASSIVE_LEVEL.</p>
+
+<A NAME="298"><H2>Other Differences</H2></A>
+
+<p>You should know about a few other differences between the way Windows 98 and Windows 2000
+handle power management features. I'll describe them briefly and indicate how they might
+affect the development of your drivers.</p>
+
+<p>When you call PoRegisterDeviceForIdleDetection<b>,</b> you must supply the address of the
+PDO rather than your own device object. That's because, internally, the system needs to
+find the address of the DEVNODE that the Windows 98 Configuration Manager works with, and
+that's accessible only from the PDO. You can also use the PDO as the argument in Windows
+2000, so you might as well write your code that way in the first place.</p>
+
+<p>The <b>PoSetPowerState</b> support routine is a no-operation in Windows 98. Furthermore,
+although it's documented as returning the previous device or system power state, the
+Windows 98 version returns whatever state argument you happen to supply. This is the <i>new</i>
+state rather than the old state&#8212;or maybe just a random number that occupies an
+uninitialized variable that you happened to use as an argument to the function: no one
+checks.</p>
+
+<p>PoStartNextPowerIrp is a no-operation in Windows 98, so it would be easy for you to forget
+to call it if you do your development in Windows 98.</p>
+
+<p>As best I can tell, the PO_POWER_NOOP flag in a device object doesn't do anything in
+Windows 98. Accordingly, there's no point in setting it in the hope of avoiding the need to
+handle power IRPs.</p>
+
+<p>The service routines having to do with device power relations (<b>PoRegisterDeviceNotify</b> 
+and <b>PoCancelDeviceNotify</b> ) are not defined in Windows 98. As far as I can tell, Windows
+98 also doesn't issue a PowerRelations query to gather the information needed to support
+the callbacks in the first place. The service routines <b>PoRegisterSystemState</b>, <b>
+PoSetSystemState</b>, and <b>PoUnregisterSystemState</b> are also not implemented in Windows
+98. To load a driver in Windows 98 that calls these or other undefined service functions,
+you'll need to supply a virtual device driver with stubs, as I'll describe in Appendix
+A, &quot;<A HREF="chaaa.htm#431">Coping with Windows 98 Incompatibilities</A>.&quot;</p>
+</body>
+</html>
+
+
+
+
+
+
+

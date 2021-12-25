@@ -1,0 +1,166 @@
+<HTML>
+<HEAD>
+<TITLE>Scenario 3: Call Functions When Single Kernel Objects Become Signaled</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch11c.htm">[Previous]</A> <A HREF="ch11e.htm">[Next]</A><P>
+
+<A NAME="156"><H1>Scenario 3: Call Functions When Single Kernel Objects Become Signaled</H1></A>
+
+<p>Microsoft discovered that many applications spawn threads simply to
+wait for a kernel object to become signaled. Once the object is
+signaled, the thread posts some sort of notification to another thread
+and then loops back, waiting for the object to signal again. Some
+developers even write code in which several threads each wait on a
+single object. This is incredibly wasteful of system resources. Sure,
+there is a lot less overhead involved in creating threads compared with
+creating processes, but threads are not free. Each thread has a stack,
+and a lot of CPU instructions are required to create and destroy
+threads. You should always try to minimize this.</p>
+
+<p>If you want to register a work item to be executed when a kernel object
+is signaled, you can use another new thread pooling function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL RegisterWaitForSingleObject(
+   PHANDLE phNewWaitObject, 
+   HANDLE hObject,
+   WAITORTIMERCALLBACK pfnCallback, 
+   PVOID pvContext, 
+   ULONG dwMilliseconds,
+   ULONG dwFlags); 
+</pre></td></tr></table></p>
+
+<p>This function communicates your parameters to the wait component of
+the thread pool. You tell this component that you want a work item
+queued when the kernel object (identified by <i>hObject</i>) is
+signaled. You can also pass a timeout value so that the work item is
+queued in a certain amount of time even if the kernel object does not
+become signaled. Timeout values of 0 and INFINITE are legal. Basically,
+this function works like the familiar <i>WaitForSingleObject</i>
+function (discussed in <A HREF="ch09a.htm">Chapter 9</A>). After 
+registering a wait, this function returns a handle (via the 
+<i>phNewWaitObject</i> parameter) that identifies the wait.</p>
+ 
+<p>Internally, the wait component uses <i>WaitForMultipleObjects</i> to
+wait for the registered objects and is bound by any limitations that
+already exist for this function. One such limitation is the inability
+to wait for a single handle multiple times. So if you want to register
+a single object multiple times, you must call <i>DuplicateHandle</i>
+and register the original handle and the duplicated handle
+individually. Of course, <i>WaitForMultipleObjects</i> waits for any
+one of the objects to be signaled, not for all of the objects. If
+you're familiar with <i>WaitForMultipleObjects</i>, you know that
+it can wait on at most 64 (MAXIMUM_WAIT_OBJECTS) objects at a time. 
+So what happens if you register more than 64 objects with 
+<i>RegisterWaitForSingleObject</i>? The wait component adds another 
+thread that also calls <i>WaitForMultipleObjects</i>. In reality, 
+after every 63 objects, another thread must be added to this component 
+because the threads need to also wait on a waitable timer object that 
+controls the timeouts.</p>
+
+<p>When the work item is ready to be executed, it is queued to the non-I/O
+component's threads by default. One of those threads will
+eventually wake up and call your function, which must have the
+following prototype:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+VOID WINAPI WaitOrTimerCallbackFunc(
+   PVOID pvContext, 
+   BOOLEAN fTimerOrWaitFired); 
+</pre></td></tr></table></p>
+
+<p>The <i>fTimerOrWaitFired</i> parameter is TRUE if the wait timed out
+and FALSE if the object became signaled while waiting. </p>
+<p>For <i>RegisterWaitForSingleObject</i>'s <i>dwFlags</i> parameter,
+you can pass WT_EXECUTEINWAITTHREAD, which causes one of the wait
+component's threads to execute the work item function itself. This
+is more efficient because the work item doesn't have to be queued
+to the non-I/O component. But it is dangerous because the wait
+component's thread that is executing your work item function
+can't wait for other objects to be signaled. You should use this
+flag only if your work item function executes quickly.</p>
+
+<p>You can also pass WT_EXECUTEINIOTHREAD or
+WT_EXECUTEINPERSISTENTTHREAD if your work item will issue an
+asynchronous I/O request or perform some operation using a thread that
+never terminates, respectively. You can also use the
+WT_EXECUTELONGFUNCTION flag to tell the thread pool that your function
+might take a long time to execute and that it should consider adding a
+new thread to the pool. You can use this flag only if the work item is
+being posted to the non-I/O or I/O components; you should not execute a
+long function using a wait component's thread.</p>
+ 
+<p>The last flag that you should be aware of is WT_EXECUTEONLYONCE.
+Let's say that you register a wait on a process kernel object. Once
+that process object becomes signaled, it stays signaled. This causes
+the wait component to continuously queue work items. For a process
+object, you probably do not want this behavior; you can prevent it by
+using the WT_EXECUTEONLYONCE flag, which tells the wait component to
+stop waiting on the object after its work item has executed once.</p>
+ 
+<p>Now let's say that you're waiting on an auto-reset event kernel
+object. Once this object becomes signaled, the object is reset to its
+nonsignaled state and its work item is queued. At this point, the
+object is still registered, and the wait component waits again for the
+object to be signaled or for the timeout (which got reset) to expire.
+When you no longer want the wait component to wait on your registered
+object, you must unregister it. This is the case even for waits
+registered with the WT_EXECUTEONLYONCE flag that have queued work
+items. You unregister a wait by calling this function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL UnregisterWaitEx(
+   HANDLE hWaitHandle, 
+   HANDLE hCompletionEvent); 
+</pre></td></tr></table></p>
+
+<p>The first parameter indicates a registered wait (as returned from
+<i>RegisterWaitForSingleObject</i>), and the second parameter indicates
+how you want to be notified when all queued work items for the
+registered wait have executed. As with the <i>DeleteTimerQueueTimer</i>
+function, you can pass NULL (if you don't want a notification),
+INVALID_HANDLE_VALUE (to block the call until all queued work items
+have executed), or the handle of an event object (which gets signaled
+when the queued work items have executed). For a nonblocking call, if
+there are no queued work items, <i>UnregisterWaitEx</i> returns TRUE;
+otherwise, it returns FALSE and <i>GetLastError</i> returns
+STATUS_PENDING.</p>
+ 
+<p>Again, you must be careful to avoid deadlocks when you pass
+INVALID_HANDLE_VALUE to <i>UnregisterWaitEx</i>. A work item function
+shouldn't block itself while attempting to unregister the wait that
+caused the work item to execute. This is like saying: suspend my
+execution until I'm done executing&#8212;deadlock. However, <i>
+UnregisterWaitEx</i> is designed to avoid deadlocking if a wait
+component's thread executes a work item and the work item
+unregisters the wait that caused the work item to execute. One more
+thing: do not close the kernel object's handle until the wait is
+unregistered. This makes the handle invalid, and the wait
+component's thread then internally calls <i>
+WaitForMultipleObjects</i>, passing an invalid handle. <i>
+WaitForMultipleObjects</i> always fails immediately, and the entire
+wait component will not function properly.</p>
+ 
+<p>Finally, you should not call <i>PulseEvent</i> to signal a registered
+event object. If you do, the wait component's thread will probably
+be busy doing something and the pulse will be missed. This problem
+should not be new to you; <i>PulseEvent</i> exhibits this problem with
+almost all threading architectures.</p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

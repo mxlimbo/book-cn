@@ -1,0 +1,154 @@
+<HTML>
+<HEAD>
+<LINK REL=StyleSheet HREF="basicIE4.css" TYPE="text/css">
+<TITLE>The COleVariant Class</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY>
+<A NAME="538"><H1><B>The <I>COleVariant</I> Class</B></H1></A>
+<P>Writing a C++ class to wrap the <I>VARIANT</I> structure makes a lot of sense. Constructors can call <I>VariantInit</I>, and the destructor can call <I>VariantClear</I>. The class can have a constructor for each standard type, and it can have copy constructors and assignment operators that call <I>VariantCopy</I>. When a variant object goes out of scope, its destructor is called and memory is cleaned up automatically.
+
+<P>Well, the MFC team created just such a class, mostly for use in the Data Access Objects (DAO) subsystem, described in <A HREF="ch32a.htm">Chapter 32</A>. It works well in Automation clients and components, however. A simplified declaration is shown here.
+
+<P><pre>
+class COleVariant : public tagVARIANT
+{
+// Constructors
+public:
+    COleVariant();
+
+    COleVariant(const VARIANT&amp; varSrc);
+    COleVariant(const COleVariant&amp; varSrc);
+
+    COleVariant(LPCTSTR lpszSrc);
+    COleVariant(CString&amp; strSrc);
+
+    COleVariant(BYTE nSrc);
+    COleVariant(short nSrc, VARTYPE vtSrc = VT_I2);
+    COleVariant(long lSrc, VARTYPE vtSrc = VT_I4);
+
+    COleVariant(float fltSrc);
+    COleVariant(double dblSrc);
+    COleVariant(const COleDateTime&amp; dateSrc);
+// Destructor
+    ~COleVariant(); // deallocates BSTR
+// Operations
+public:
+    void Clear(); // deallocates BSTR
+    VARIANT Detach(); // more later
+    void ChangeType(VARTYPE vartype, LPVARIANT pSrc = NULL);
+};
+</pre>
+
+<P>In addition, the <I>CArchive</I> and <I>CDumpContext</I> classes have comparison operators, assignment operators, conversion operators, and friend insertion/extraction operators. See the online documentation for a complete description of this useful MFC <I>COleVariant</I> class.
+
+<P>Now let's see how the <I>COleVariant</I> class helps us write the component's <I>GetFigure</I> function that you previously saw referenced in the sample dispatch map. Assume that the component stores strings for four figures in a class data member:
+
+<P><pre>
+private:
+    CString m_strFigure[4];
+</pre>
+
+<P>Here's what we'd have to do if we used the <I>VARIANT</I> structure directly:
+
+<P><pre>
+VARIANT CClock::GetFigure(short n)
+{
+    VARIANT vaResult;
+    ::VariantInit(&amp;vaResult);
+    vaResult.vt = VT_BSTR;
+    // CString::AllocSysString creates a BSTR
+    vaResult.bstrVal = 
+m_strFigure[n].AllocSysString();
+    return vaResult; // Copies vaResult without copying BSTR
+                     //  BSTR still must be freed later
+}
+</pre>
+
+<P>Here's the equivalent, with a <I>COleVariant</I> return value:
+
+<P><pre>
+VARIANT CClock::GetFigure(short n)
+{
+    return COleVariant(m_strFigure[n]).Detach();
+}
+</pre>
+
+<P>Calling the <I>COleVariant::Detach</I> function is critical here. The <I>GetFigure</I> function is constructing a temporary object that contains a pointer to a <I>BSTR</I>. That object gets bitwise-copied to the return value. If you didn't call <I>Detach</I>, the <I>COleVariant</I> destructor would free the <I>BSTR</I> memory and the calling program would get a <I>VARIANT</I> that contained a pointer to nothing.
+
+<P>A component's variant dispatch function parameters are declared as <I>const VARIANT&amp;</I>. You can always cast a <I>VARIANT</I> pointer to a <I>COleVariant</I> pointer inside the function. Here's the <I>SetFigure</I> function:
+
+<P><pre>
+void CClock::SetFigure(short n, const VARIANT&amp; vaNew)
+{
+    COleVariant vaTemp;
+    vaTemp.ChangeType(VT_BSTR, (COleVariant*) &amp;vaNew);
+    m_strFigure[n] = vaTemp.bstrVal;
+}
+</pre>
+
+<p><DIV CLASS=note>
+<BLOCKQUOTE>
+<IMG SRC="note.jpg" width=123 height=18 BORDER=0><P>
+Remember that all <I>BSTR</I>s contain wide characters. The <I>CString</I> class has a constructor and an assignment operator for the <I>LPCWSTR</I> (wide-character pointer) type. Thus, the <I>m_strFigure</I> string will contain single-byte characters, even though <I>bstrVal</I> points to a wide-character array.</blockquote></div>
+
+<P><U>Client</U> dispatch function variant parameters are also typed as <I>const VARIANT&amp;.</I> You can call those functions with either a <I>VARIANT</I> or a <I>COleVariant</I> object. Here's an example of a call to the <I>CClockDriver::SetFigure</I> function:
+
+<P><pre>
+pClockDriver-&gt;SetFigure(0, COleVariant(&quot;XII&quot;));
+</pre>
+
+<DIV CLASS=note>
+<BLOCKQUOTE>
+<IMG SRC="note.jpg" width=123 height=18 BORDER=0><P>
+Visual C++ 5.0 added two new classes for <I>BSTR</I>s and <I>VARIANT</I>s. These classes are independent of the MFC library:<I>_bstr_t </I>and <I>_variant_t</I>. The <I>_bstr_t</I> class encapsulates the <I>BSTR</I> data type; the <I>_variant_t</I> class encapsulates the <I>VARIANT</I> type. Both classes manage resource allocation and deallocation. For more information on these classes, see the online documentation.</blockquote></div>
+
+<A NAME="539"><H2><B>Parameter and Return Type Conversions for <I>Invoke</I></B></H2></A>
+<P>All <I>IDispatch::Invoke</I> parameters and return values are processed internally as <I>VARIANT</I>s. Remember that! The MFC library implementation of <I>Invoke</I> is smart enough to convert between a <I>VARIANT</I> and whatever type you supply (where possible), so you have some flexibility in declaring parameter and return types. Suppose, for example, that your controller's 
+<I>GetFigure</I> function specifies the return type <I>BSTR. </I>If a component returns an <I>int</I> or a <I>long</I>, all is well: COM and the MFC library convert the number to a string. Suppose your 
+component declares a <I>long</I> parameter and the controller supplies an <I>int</I>. Again, no problem.
+
+<DIV CLASS=note>
+<BLOCKQUOTE>
+<IMG SRC="note.jpg" width=123 height=18 BORDER=0><P>
+An MFC library Automation client specifies the expected return type as a <I>VT_</I> parameter to the <I>COleDispatchDriver</I> functions <I>GetProperty</I>, <I>SetProperty</I>, and <I>InvokeHelper</I>. An MFC library Automation component specifies the expected parameter types as <I>VTS_</I> parameters in the <I>DISP_PROPERTY</I> and <I>DISP_FUNCTION</I> macros.</blockquote></div>
+
+<P>Unlike C++, VBA is not a strongly typed language. VBA variables are often stored internally as <I>VARIANT</I>s. Take an Excel spreadsheet cell value, for example. A spreadsheet user can type a text string, an integer, a floating-point number, or a date/time in a cell. VBA treats the cell value as a 
+<I>VARIANT</I> and returns a <I>VARIANT</I> object to an Automation client. If your client function declares a <I>VARIANT</I> return value, it can test <I>vt</I> and process the data accordingly.
+
+<P>VBA uses a date/time format that is distinct from the MFC library <I>CTime</I> class. Variables of type <I>DATE</I> hold both the date and the time in one <U>double</U> value. The fractional part represents time (.25 is 6:00 AM), and the whole part represents the date (number of days since December 30, 1899). The MFC library provides a <I>COleDateTime</I> class that makes dates easy to deal with. You could construct a date this way:
+
+<P><pre>
+COleDateTime date(1998, 10, 1, 18, 0, 0);
+</pre>
+
+<P>The above declaration initializes the date to October 1, 1998, at 6:00 PM.
+
+<P>The <I>COleVariant</I> class has an assignment operator for <I>COleDateTime</I>, and the <I>COleDateTime</I> class has member functions for extracting date/time components. Here's how you print the time:
+
+<P><pre>
+TRACE(&quot;time = %d:%d:%d\n&quot;,
+      date.GetHour(),date.GetMinute(),date.GetSecond());
+</pre>
+
+<P>If you have a variant that contains a <I>DATE</I>, you use the <I>COleVariant::ChangeType</I> function to convert a date to a string, as shown here:
+
+<P><pre>
+COleVariant vaTimeDate = date;
+COleVariant vaTemp;
+vaTemp.ChangeType(VT_BSTR, &amp;vaTimeDate);
+CString str = vaTemp.bstrVal;
+TRACE(&quot;date = %s\n&quot;, str);
+</pre>
+
+<P>One last item concerning <I>Invoke</I> parameters: a dispatch function can have <U>optional</U> <U>parameters</U>. If the component declares trailing parameters as <I>VARIANT</I>s, the client doesn't have to supply them. If the client calls the function without supplying an optional parameter, the <I>VARIANT</I> object's <I>vt</I> value on the component end is VT_ERROR.
+
+</BODY>
+</HTML>
+
+
+

@@ -1,0 +1,301 @@
+<HTML>
+<HEAD>
+<TITLE>Filter Drivers</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch09a.htm">[Previous]</A> <A HREF="ch09c.htm">[Next]</a>
+</p>
+
+<A NAME="300"><H1>Filter Drivers</H1></A>
+
+<p>The Windows Driver Model assumes that a hardware device can have several drivers that each
+contribute in some way to the successful management of the device. The WDM accomplishes the
+layering of drivers by means of a stack of device objects. I discussed this concept in Chapter
+2, &quot;<A HREF="ch02a.htm#30">Basic Structure of a WDM Driver</A>.&quot; Up until now, I've been talking exclusively
+about the <i>function driver</i> that manages the main functionality of a device. In this
+section, I'll describe how you write a <i>filter driver</i> that resides above or below the
+function driver and modifies the behavior of the device in some way by filtering the I/O
+request packets (IRPs) that flow through it.</p>
+
+<p>A filter driver that's above the function driver is called an <i>upper filter
+driver;</i> a filter driver that's below the function driver (but still above the bus
+driver) is called a <i>lower filter driver.</i> The mechanics of building either type of filter
+are exactly the same, even though the drivers themselves serve different purposes. In fact, you
+build a filter driver just as you build any other WDM driver&#8212;with a <b>DriverEntry</b> 
+routine, an <b>AddDevice</b> routine, a bunch of dispatch functions, and so on.</p>
+
+<p>The intended purpose of an upper filter driver is to facilitate supporting a device that
+behaves in most respects like a generic device of its class but that has some additional
+functionality. You can rely, perhaps, on a generic function driver to support the generic
+behavior. To deal with the extra functionality, you write an upper filter driver to intervene
+in the flow of I/O requests. To give a silly example, suppose there existed a standard class of
+toaster device for which someone had written a standard driver. And suppose that your
+particular toaster had an Advanced Waffle Eject feature that caused your toaster to pop toasted
+waffles two feet into the air. Controlling this AWEsome feature would be a natural job for an
+upper filter driver. See Figure 9-1.</p>
+
+<p>
+<img src="images/F09wi01.JPG" width=404 height=309 border="0">
+</p><p>
+<!--caption--><b>Figure 9-1.</b> <i>Role of an upper filter driver.</i><!--/caption-->
+</p>
+
+
+<p>Another use for upper filter drivers is to compensate for bugs in the hardware or in the
+function driver. If you're going to deploy a filter driver for this purpose, Microsoft
+implores you to version-stamp the driver and, insofar as it's under your control, to change
+the version number of whatever component you're compensating for when the bug someday gets
+fixed. Otherwise, it will be harder for Microsoft to install automatic updates.</p>
+
+<p>Lower filter drivers can't intervene in the normal operation of a device with which the
+function driver communicates directly. That's because the function driver will implement
+most substantive requests by making hardware abstraction layer (HAL) calls that directly access
+the hardware. The filter driver, of course, sees only those IRPs that something above chooses
+to pass down to it, and it never knows about the HAL calls.</p>
+
+<p>A lower filter driver might find employment in the stack of drivers for a USB (universal
+serial bus) device, however. For such devices, the function driver uses internal control IRPs
+as containers for USB request blocks (URBs). A lower filter driver could monitor and modify
+these IRPs, perhaps. See Figure 9-2.</p>
+
+<p>
+<img src="images/F09wi02.JPG" width=404 height=377 border="0">
+</p><p>
+<!--caption--><b>Figure 9-2.</b> <i>Role of a lower filter driver.</i><!--/caption-->
+</p>
+
+
+<p>Another possible use for a lower filter driver, suggested by one of my seminar students, is
+to help you write a bus-independent driver. Imagine a device packaged as a PCI (Peripheral
+Component Interconnect) expansion card, a PCMCIA (Personal Computer Memory Card International
+Association) card, a USB device, and so on. You could write a function driver that is totally
+independent of the bus architecture, except that it wouldn't be able to talk to the device.
+You'd also write several lower filter drivers, one for each possible bus architecture, as
+illustrated in Figure 9-3. You'd install the appropriate one of these for a particular
+instance of the hardware. When your function driver needed to talk to the hardware, it would
+send an IRP (perhaps an IRP_MJ_INTERNAL_DEVICE_CONTROL) down to the filter.</p>
+
+<p>
+<A HREF="javascript:fullSize('F09wi03x.htm')"> <img src="images/F09wi03.JPG" width=404 height=399 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 9-3.</b> <i>Using lower filter drivers to achieve bus independence.</i><!--/caption-->
+</p>
+
+
+<A NAME="301"><H2>DriverEntry Routine</H2></A>
+
+<p>The <b>DriverEntry</b> routine for a filter driver is very similar to that for a function
+driver. The major difference is that a filter driver must install dispatch routines for every
+type of IRP, not just for the types of IRP it expects to handle:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>extern &quot;C&quot; NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject,
+  PUNICODE_STRING RegistryPath)
+  {
+  DriverObject-&gt;DriverUnload = DriverUnload;
+  DriverObject-&gt;DriverExtension-&gt;AddDevice = AddDevice;
+  for (int i = 0; i &lt; arraysize(DriverObject-&gt;MajorFunction); ++i)
+    DriverObject-&gt;MajorFunction[i] = DispatchAny;
+  DriverObject-&gt;MajorFunction[IRP_MJ_POWER] = DispatchPower;
+  DriverObject-&gt;MajorFunction[IRP_MJ_PNP] = DispatchPnp;
+  return STATUS_SUCCESS;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>A filter driver has a <b>DriverUnload</b> and an AddDevice function just as any other driver
+does. I filled the major function table with the address of a routine named <b>DispatchAny</b> 
+that would pass any random request down the stack. I specified specific dispatch routines for
+power and Plug and Play (PnP) requests.</p>
+
+<p>The reason that a filter driver has to handle every conceivable type of IRP has to do with
+the order in which driver AddDevice functions get called <i>vis-&agrave;-vis</i> DriverEntry.
+In general, a filter driver has to support all the same IRP types that the driver immediately
+underneath it supports. If a filter were to leave a particular <b>MajorFunction</b> table entry
+in its default state, IRPs of that type would get failed with STATUS_INVALID_DEVICE_REQUEST.
+(The I/O Manager includes a default dispatch function that simply completes a request with this
+status. The driver object initially comes to you with all the MajorFunction table entries
+pointing to that default routine.) But you won't know until AddDevice time which device
+object(s) are underneath you. You could investigate the dispatch table for each lower device
+driver inside AddDevice and plug in the needed dispatch pointers in your own MajorFunction
+table, but remember that you might be in multiple device stacks, so you might get multiple
+AddDevice calls. It's easier to just declare support for all IRPs at DriverEntry time.</p>
+
+<A NAME="302"><H2>AddDevice Routine</H2></A>
+
+<p>Filter drivers have <b>AddDevice</b> functions that get called for each appropriate piece of
+hardware. You'll be calling <b>IoCreateDevice</b> to create an unnamed device object and
+<b>IoAttachDeviceToDeviceStack</b> to plug in to the driver stack. In addition, you'll need
+to copy a few settings from the device object underneath you:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>NTSTATUS AddDevice(PDRIVER_OBJECT DriverObject, PDEVICE_OBJECT pdo)
+  {
+  PDEVICE_OBJECT fido;
+  NTSTATUS status = IoCreateDevice(DriverObject,
+    sizeof(DEVICE_EXTENSION), NULL, FILE_DEVICE_UNKNOWN,
+    <b>0</b>, FALSE, &amp;fido);
+  if (!NT_SUCCESS(status))
+    return status;
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fido-&gt;DeviceExtension;
+  _ _try
+    {
+    pdx-&gt;DeviceObject = fido;
+    pdx-&gt;Pdo = pdo;
+    PDEVICE_OBJECT fdo = IoAttachDeviceToDeviceStack(fido, pdo);
+    pdx-&gt;LowerDeviceObject = fdo;
+    <b>fido-&gt;Flags |= fdo-&gt;Flags &amp;
+      (DO_DIRECT_IO | DO_BUFFERED_IO | DO_POWER_PAGABLE 
+      | DO_POWER_INRUSH);
+    fido-&gt;DeviceType = fdo-&gt;DeviceType;
+    fido-&gt;Characteristics = fdo-&gt;Characteristics;</b> 
+    fido-&gt;Flags &amp;= ~DO_DEVICE_INITIALIZING;
+    }
+  _ _finally
+    {
+    if (!NT_SUCCESS(status))
+      IoDeleteDevice(fido);
+    }
+  return status;
+  }
+    </pre>
+</td></tr>
+</table>
+</p>
+
+<p>The part that's different from a function driver is shown in boldface. Basically,
+we're propagating a few flag bits, the <b>DeviceType</b> value, and the <b>
+Characteristics</b> value from the device object next beneath us. We need to make these copies
+because the I/O Manager bases some of its decisions on what it sees in the topmost device
+object. In particular, whether a read or write IRP gets a memory descriptor list (MDL) or a
+system copy buffer depends on what the top object's DO_DIRECT_IO and DO_BUFFERED_IO flags
+are. We don't need to copy the <b>SectorSize</b> or <b>AlignmentRequirement</b> members of
+the lower device object&#8212;IoAttachDeviceToDeviceStack will do that automatically.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+The reason I told you that you have to declare your choice of buffered versus
+direct I/O in AddDevice and that you can't change you mind afterward should now be clear: a
+filter driver might copy your settings at AddDevice time and won't have any way to know
+about a later change.</blockquote></div>
+</p>
+
+<p>There's ordinarily no need for a filter device object (FiDO) to have its own name. If
+the function driver names its device object and creates a symbolic link, or if the function
+driver registers a device interface for its device object, an application will be able to open
+a handle for the device. Every IRP sent to the device gets sent first to the topmost FiDO
+driver, whether or not that FiDO has its own name.</p>
+
+<p>Do not use the FILE_DEVICE_SECURE_OPEN characteristics flag when you create a FiDO object.
+The PnP Manager propagates this flag, and a few others, up and down the device object stack.
+It's not your decision whether to enforce security checking on file opens&#8212;it's the
+function driver's and maybe the bus driver's.</p>
+
+<A NAME="303"><H3>Dispatch Routines</H3></A>
+
+<p>You write a filter driver in the first place because you want to modify the behavior of a
+device in some way. Therefore, you'll have dispatch functions that do <i>something</i> with
+some of the IRPs that come your way. But you'll be passing most of the IRPs down the stack,
+and you pretty much know how to do this already:</p>
+
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+NTSTATUS DispatchAny(PDEVICE_OBJECT fido, PIRP Irp)
+  {
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fido-&gt;DeviceExtension;
+  NTSTATUS status = IoAcquireRemoveLock(&amp;pdx-&gt;RemoveLock, Irp);
+  if (!NT_SUCCESS(status))
+    return CompleteRequest(Irp, status, 0);
+  IoSkipCurrentIrpStackLocation(Irp);
+  status = IoCallDriver(pdx-&gt;LowerDeviceObject, Irp);
+  IoReleaseRemoveLock(&amp;pdx-&gt;RemoveLock, Irp);
+  return status;
+  }
+
+NTSTATUS DispatchPnp(PDEVICE_OBJECT fido, PIRP Irp)
+  {
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fido-&gt;DeviceExtension;
+  NTSTATUS status = IoAcquireRemoveLock(&amp;pdx-&gt;RemoveLock, Irp);
+  if (!NT_SUCCESS(status))
+    return CompleteRequest(Irp, status, 0);
+  PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
+  ULONG fcn = stack-&gt;MinorFunction; 
+  IoSkipCurrentIrpStackLocation(Irp);
+  status = IoCallDriver(pdx-&gt;LowerDeviceObject, Irp);
+  if (fcn == IRP_MN_REMOVE_DEVICE)
+    {
+    IoReleaseRemoveLockAndWait(&amp;pdx-&gt;RemoveLock, Irp);
+    IoDetachDevice(pdx-&gt;LowerDeviceObject);
+    IoDeleteDevice(fido);
+    }
+  else
+    IoReleaseRemoveLock(&amp;pdx-&gt;RemoveLock, Irp);
+  return status;
+  }
+
+NTSTATUS DispatchPower(PDEVICE_OBJECT fido, PIRP Irp)
+  {
+  PoStartNextPowerIrp(Irp);
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fido-&gt;DeviceExtension;
+  NTSTATUS status = IoAcquireRemoveLock(&amp;pdx-&gt;RemoveLock, Irp);
+  if (!NT_SUCCESS(status))
+    return CompleteRequest(Irp, status, 0);
+  IoSkipCurrentIrpStackLocation(Irp);
+  status = PoCallDriver(pdx-&gt;LowerDeviceObject, Irp);
+  IoReleaseRemoveLock(&amp;pdx-&gt;RemoveLock, Irp);
+  return status;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>It's necessary, by the way, to acquire and release the remove lock for a filter
+driver's device object, as shown in these examples. The initial call to <b>
+IoAcquireRemoveLock</b> checks whether a device removal is currently pending for the FiDO. If
+so, the dispatch function fails the IRP immediately with STATUS_DELETE_PENDING, the only
+nonsuccess value that IoAcquireRemoveLock ever returns. While the filter owns its remove lock
+in one dispatch function, another thread that might be trying to process an
+IRP_MN_REMOVE_DEVICE inside <b>DispatchPnp</b> will block inside <b>
+IoReleaseRemoveLockAndWait</b>. What's thereby prevented is the call to <b>
+IoDetachDevice</b>, which might allow the lower device object to disappear. Our own device
+object is protected from deletion by a reference that was obtained by the caller before sending
+us this IRP&#8212;by using <b>IoGetAttachedDeviceReference</b>, for example.</p>
+
+<p>Except for IRP_MJ_PNP, all dispatch functions in a filter driver need to be in nonpaged memory,
+and none should assume they're being called at PASSIVE_LEVEL. Here are two real-world
+examples of why this might matter. First, a lower filter for a USB device will be receiving and
+passing along IRP_MJ_INTERNAL_DEVICE_CONTROL requests that contain URBs. (See Chapter 11, &quot;<A HREF="ch11a.htm#359">The Universal Serial Bus</A>.&quot;)
+Some of these IRPs arrive at PASSIVE_LEVEL. Others might arrive at DISPATCH_LEVEL because
+they're coming from an I/O completion routine. The second example involves a disk driver,
+which might start out handling power requests at PASSIVE_LEVEL because it's set the
+DO_POWER_PAGABLE flag. The disk driver might subsequently learn that its device is being used
+to hold a paging file or some other special file, whereupon it will lock down its power handler
+and clear the DO_POWER_PAGABLE flag. All of a sudden, any filter driver in the same stack will
+start getting power requests at DISPATCH_LEVEL.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+You should follow this guideline when you program a filter driver: <i>First, do
+no harm.</i> In other words, don't cause drivers above or below you to fail because you
+perturbed anything at all in their environment or in the flow of IRPs.</blockquote></div>
+</p>
+
+</BODY>
+</HTML>
+
+
+
+
+

@@ -1,0 +1,333 @@
+<HTML>
+<HEAD>
+	<LINK REL=StyleSheet HREF="petzoldi.css" TYPE="text/css">
+<title>Wide Characters and Windows</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="30"><h1>Wide Characters and Windows</h1></A>
+<p>Windows NT supports Unicode from the ground up. What this means is that Windows NT internally uses character strings composed of 16-bit characters. Since much of the rest of the world doesn't use 16-bit character strings yet, Windows NT must often convert character strings on the way into the operating system or on the way out. Windows NT can run programs written for ASCII, for Unicode, or for a mix of ASCII and Unicode. That is, Windows NT supports different API function calls that accept 8-bit or 16-bit character strings. (We'll see how this works shortly.)
+
+<p>Windows 98 has much less support of Unicode than Windows NT does. Only a few Windows 98 function calls support wide-character strings. (These functions are listed in Microsoft Knowledge Base article Q125671; they include <I>MessageBox</I>.) If you're going to distribute only one .EXE file that must run under both Windows NT and Windows 98, it shouldn't use Unicode or else it won't run under Windows 98; in particular, the program shouldn't call the Unicode versions of the Windows function calls. However, so that you can be in a better position to distribute a Unicode version of your program sometime in the future, you should probably attempt to have a single source that can be compiled for either ASCII or Unicode. That's how all the programs in the book are written.
+
+<A NAME="31"><h2>Windows Header File Types</h2></A>
+<p>As you saw in the first chapter, a Windows program includes the header file WINDOWS.H. This file includes a number of other header files, including WINDEF.H, which has many of the basic type definitions used in Windows and which itself includes WINNT.H. WINNT.H handles the basic Unicode support.
+
+<p>WINNT.H begins by including the C header file CTYPE.H, which is one of many C header files that have a definition of <I>wchar_t</I>. WINNT.H defines new data types named CHAR and WCHAR:
+
+<p><pre>
+typedef char CHAR ;
+typedef wchar_t WCHAR ;     // wc
+</PRE>
+
+<p>CHAR and WCHAR are the data types recommended for your use in a Windows program when you need to define an 8-bit character or a 16-bit character. That comment following the WCHAR definition is a suggestion for Hungarian notation: a variable based on the WCHAR data type can be preceded with the letters <I>wc</I> to indicate a wide character.
+
+<p>The WINNT.H header file goes on to define six data types you can use as pointers to 8-bit character strings and four data types you can use as pointers to <I>const</I> 8-bit character strings. I've condensed the actual header file statements a bit to show the data types here:
+
+<p><pre>
+typedef CHAR * PCHAR, * LPCH, * PCH, * NPSTR, * LPSTR, * PSTR ;
+typedef CONST CHAR * LPCCH, * PCCH, * LPCSTR, * PCSTR ;
+</PRE>
+
+<p>The N and L prefixes stand for &quot;near&quot; and &quot;long&quot; and refer to the two different sizes of pointers in 16-bit Windows. There is no differentiation between near and long pointers in Win32.
+
+<p>Similarly, WINNT.H defines six data types you can use as pointers to 16-bit character strings and four data types you can use as pointers to <I>const</I> 16-bit character strings:
+
+<p><pre>
+typedef WCHAR * PWCHAR, * LPWCH, * PWCH, * NWPSTR, * LPWSTR, * PWSTR ;
+typedef CONST WCHAR * LPCWCH, * PCWCH, * LPCWSTR, * PCWSTR ;
+</PRE>
+
+<p>So far, we have the data types CHAR (which is an 8-bit <I>char</I>) and WCHAR (which is a 16-bit <I>wchar_t</I>) and pointers to CHAR and WCHAR. As in TCHAR.H, WINNT.H defines TCHAR to be the generic character type. If the identifier UNICODE (<I>without</I> the underscore) is defined, TCHAR and pointers to TCHAR are defined based on WCHAR and pointers to WCHAR; if the identifier UNICODE is not defined, TCHAR and pointers to TCHAR are defined based on <I>char</I> and pointers to <I>char</I>:
+
+<p><pre>
+#ifdef  UNICODE                   
+typedef WCHAR TCHAR, * PTCHAR ;
+typedef LPWSTR LPTCH, PTCH, PTSTR, LPTSTR ;
+typedef LPCWSTR LPCTSTR ;
+#else 
+typedef char TCHAR, * PTCHAR ;
+typedef LPSTR LPTCH, PTCH, PTSTR, LPTSTR ;
+typedef LPCSTR LPCTSTR ;
+#endif
+</PRE>
+
+<p>Both the WINNT.H and WCHAR.H header files are protected against redefinition of the TCHAR data type if it's already been defined by one or the other of these header files. However, whenever you're using other header files in your program, you should include WINDOWS.H before all others.
+
+<p>The WINNT.H header file also defines a macro that appends the L to the first quotation mark of a character string. If the UNICODE identifier is defined, a macro called __TEXT is defined as follows:
+
+<p><pre>
+#define __TEXT(quote) L##quote 
+</PRE>
+
+<p>If the identifier UNICODE is not defined, the __TEXT macro is defined like so:
+
+<p><pre>
+#define __TEXT(quote) quote
+</PRE>
+
+<p>Regardless, the TEXT macro is defined like this:
+
+<p><pre>
+#define TEXT(quote) __TEXT(quote) 
+</PRE>
+
+<p>This is very similar to the way the _TEXT macro is defined in TCHAR.H, except that you need not bother with the underscore. I'll be using the TEXT version of this macro throughout this book.
+
+<p>These definitions let you mix ASCII and Unicode characters strings in the same program or write a single program that can be compiled for either ASCII or Unicode. If you want to explicitly define 8-bit character variables and strings, use CHAR, PCHAR (or one of the others), and strings with quotation marks. For explicit 16-bit character variables and strings, use WCHAR, PWCHAR, and append an L before quotation marks. For variables and characters strings that will be 8 bit or 16 bit depending on the definition of the UNICODE identifier, use TCHAR, PTCHAR, and the TEXT macro.
+
+<A NAME="32"><h2>The Windows Function Calls</h2></A>
+<p>In the 16-bit versions of Windows beginning with Windows 1.0 and ending with Windows 3.1, the <I>MessageBox</I> function was located in the dynamic-link library USER.EXE. In the WINDOWS.H header files included in the Windows 3.1 Software Development Kit, the <I>MessageBox</I> function was defined like so:
+
+<p><pre>
+int WINAPI MessageBox (HWND, LPCSTR, LPCSTR, UINT) ;
+</PRE>
+
+<p>Notice that the second and third arguments to the function are pointers to constant character strings. When a Win16 program was compiled and linked, Windows left the call to <I>MessageBox</I> unresolved. A table in the program's .EXE file allowed Windows to dynamically link the call from the program to the <I>MessageBox</I> function located in the USER library.
+
+<p>The 32-bit versions of Windows (that is, all versions of Windows NT, as well as Windows 95 and Windows 98) include USER.EXE for 16-bit compatibility but also have a dynamic-link library named USER32.DLL that contains entry points for the 32-bit versions of the user interface functions, including the 32-bit version of <I>MessageBox</I>.
+
+<p>But here's the key to Windows support of Unicode: In USER32.DLL, there is no entry point for a 32-bit function named <I>MessageBox</I>. Instead, there are two entry points, one named <I>MessageBoxA</I> (the ASCII version) and the other named <I>MessageBoxW</I> (the wide-character version). Every Win32 function that requires a character string argument has two entry points in the operating system! Fortunately, you usually don't have to worry about this. You can simply use <I>MessageBox</I> in your programs. As in the TCHAR header file, the various Windows header files perform the necessary tricks.
+
+<p>Here's how <I>MessageBoxA</I> is defined in WINUSER.H. This is quite similar to the earlier definition of <I>MessageBox</I>:
+
+<p><pre>
+WINUSERAPI int WINAPI MessageBoxA (HWND hWnd, LPCSTR lpText,
+                                   LPCSTR lpCaption, UINT uType) ;
+</PRE>
+
+<p>And here's <I>MessageBoxW</I>:
+
+<p><pre>
+WINUSERAPI int WINAPI MessageBoxW (HWND hWnd, LPCWSTR lpText,
+                                   LPCWSTR lpCaption, UINT uType) ;
+</PRE>
+
+<p>Notice that the second and third parameters to the <I>MessageBoxW</I> function are pointers to wide-character strings.
+
+<p>You can use the <I>MessageBoxA</I> and <I>MessageBoxW</I> functions explicitly in your Windows programs if you need to mix and match ASCII and wide-character function calls. But most programmers will continue to use <I>MessageBox</I>, which will be the same as <I>MessageBoxA</I> or <I>MessageBoxW</I> depending on whether UNICODE is defined. Here's the rather trivial code in WINUSER.H that does the trick:
+
+<p><pre>
+#ifdef UNICODE
+#define MessageBox  MessageBoxW
+#else
+#define MessageBox  MessageBoxA
+#endif 
+</PRE>
+
+<p>Thus, all the <I>MessageBox</I> function calls that appear in your program will actually be <I>MessageBoxW</I> functions if the UNICODE identifier is defined and <I>MessageBoxA</I> functions if it's not defined.
+
+<p>When you run the program, Windows links the various function calls in your program to the entry points in the various Windows dynamic-link libraries. With just a few exceptions, however, the Unicode versions of the Windows functions are not implemented in Windows 98. The functions have entry points, but they usually return an error code. It is up to an application to take note of this error return and do something reasonable.
+
+<A NAME="33"><h2>Windows' String Functions</h2></A>
+<p>As I noted earlier, Microsoft C includes wide-character and generic versions of all C run-time library functions that require character string arguments. However, Windows duplicates some of these. For example, here is a collection of string functions defined in Windows that calculate string lengths, copy strings, concatenate strings, and compare strings:
+
+<p><pre>
+ILength = lstrlen (pString) ;
+pString = lstrcpy (pString1, pString2) ;
+pString = lstrcpyn (pString1, pString2, iCount) ;
+pString = lstrcat (pString1, pString2) ;
+iComp = lstrcmp (pString1, pString2) ;
+iComp = lstrcmpi (pString1, pString2) ;
+</PRE>
+
+<p>These work much the same as their C library equivalents. They accept wide-character strings if the UNICODE identifier is defined and regular strings if not. The wide-character version of the <I>lstrlenW</I> function is implemented in Windows 98.
+
+<A NAME="34"><h2>Using <I>printf</I> in Windows</h2></A>
+<p>Programmers who have a background in character-mode, command-line C programming are often excessively fond of the <I>printf</I> function. It's no surprise that <I>printf</I> shows up in the Kernighan and Ritchie &quot;hello, world&quot; program even though a simpler alternative (such as <I>puts</I>) could have been used. Everyone knows that enhancements to &quot;hello, world&quot; will need the formatted text output of <I>printf</I> eventually, so we might as well start using it at the outset.
+
+<p>The bad news is that you can't use <I>printf</I> in a Windows program. Although you can use most of the C run-time library in Windows programs&#8212;indeed, many programmers prefer to use the C memory management and file I/O functions over the Windows equivalents&#8212;Windows has no concept of standard input and standard output. You can use <I>fprintf</I> in a Windows program, but not <I>printf</I>.
+
+<p>The good news is that you can still display text by using <I>sprintf</I> and other functions in the <I>sprintf</I> family. These functions work just like <I>printf</I>, except that they write the formatted output to a character string buffer that you provide as the function's first argument. You can then do what you want with this character string (such as pass it to <I>MessageBox</I>).
+
+<p>If you've never had occasion to use <I>sprintf</I> (as I didn't when I first began programming for Windows), here's a brief rundown. Recall that the <I>printf</I> function is declared like so:
+
+<p><pre>
+int printf (const char * szFormat, ...) ;
+</PRE>
+
+<p>The first argument is a formatting string that is followed by a variable number of arguments of various types corresponding to the codes in the formatting string.
+
+<p>The <I>sprintf</I> function is defined like this:
+
+<p><pre>
+int sprintf (char * szBuffer, const char * szFormat, ...) ;
+</PRE>
+
+<p>The first argument is a character buffer; this is followed by the formatting string. Rather than writing the formatted result in standard output, <I>sprintf</I> stores it in <I>szBuffer</I>. The function returns the length of the string. In character-mode programming, 
+
+<p><pre>
+printf (&quot;The sum of %i and %i is %i&quot;, 5, 3, 5+3) ;
+</PRE>
+
+<p>is functionally equivalent to
+
+<p><pre>
+char szBuffer [100] ;
+sprintf (szBuffer, &quot;The sum of %i and %i is %i&quot;, 5, 3, 5+3) ;
+puts (szBuffer) ;
+</PRE>
+
+<p>In Windows, you can use <I>MessageBox</I> rather than <I>puts</I> to display the results.
+
+<p>Almost everyone has experience with <I>printf</I> going awry and possibly crashing a program when the formatting string is not properly in sync with the variables to be formatted. With <I>sprintf</I>, you still have to worry about that and you also have a new worry: the character buffer you define must be large enough for the result. A Microsoft-specific function named <I>_snprintf</I> solves this problem by introducing another argument that indicates the size of the buffer in characters.
+
+<p>A variation of <I>sprintf</I> is <I>vsprintf</I>, which has only three arguments. The <I>vsprintf</I> function is used to implement a function of your own that must perform <I>printf</I>-like formatting of a variable number of arguments. The first two arguments to <I>vsprintf</I> are the same as <I>sprintf</I>: the character buffer for storing the result and the formatting string. The third argument is a pointer to an array of arguments to be formatted. In practice, this pointer actually references variables that have been stored on the stack in preparation for a function call. The <I>va_list</I>, <I>va_start</I>, and <I>va_end</I> macros (defined in STDARG.H) help in working with this stack pointer. The SCRNSIZE program at the end of this chapter demonstrates how to use these macros. The <I>sprintf</I> function can be written in terms of <I>vsprintf</I> like so:
+
+<p><pre>
+int sprintf (char * szBuffer, const char * szFormat, ...)
+{
+     int     iReturn ;
+     va_list pArgs ;
+
+     va_start (pArgs, szFormat) ;
+     iReturn = vsprintf (szBuffer, szFormat, pArgs) ;
+     va_end (pArgs) ;
+
+     return iReturn ;
+}
+</PRE>
+
+<p>The <I>va_start</I> macro sets <I>pArg</I> to point to the variable on the stack right above the <I>szFormat</I> argument on the stack.
+
+<p>So many early Windows programs used <I>sprintf</I> and <I>vsprintf</I> that Microsoft eventually added two similar functions to the Windows API. The Windows <I>wsprintf</I> and <I>wvsprintf</I> functions are functionally equivalent to <I>sprintf</I> and <I>vsprintf</I>, except that they don't handle floating-point formatting.
+
+<p>Of course, with the introduction of wide characters, the <I>sprintf</I> functions blossomed in number, creating a thoroughly confusing jumble of function names. Here's a chart that shows all the <I>sprintf</I> functions supported by Microsoft's C run-time library and by Windows.
+
+<p>
+<TABLE cellpadding="5" width="95%">
+<TR>
+<TD valign="TOP"></td>
+<TD valign="TOP"><B><I>ASCII</I></b></td>
+<TD valign="TOP"><B><I>Wide-Character</I></b></td>
+<TD valign="TOP"><B><I>Generic</I></b></td>
+</tr>
+<TR>
+<TD valign="TOP" colspan=4><B>Variable Number
+<BR>of Arguments</b></td> 
+</tr>
+<TR>
+<TD valign="TOP">Standard Version</td> 
+<TD valign="TOP"><I>sprintf</I></td>      
+<TD valign="TOP"><I>swprintf</I></td> 
+<TD valign="TOP"><I>_stprintf</I></td> 
+</tr>
+<TR>
+<TD valign="TOP">Max-Length Version</td> 
+<TD valign="TOP"><I>_snprintf</I></td>      
+<TD valign="TOP"><I>_snwprintf</I></td> 
+<TD valign="TOP"><I>_sntprintf</I></td> 
+</tr>
+<TR>
+<TD valign="top">Windows Version</td> 
+<TD valign="TOP"><I>wsprintfA</I></td>      
+<TD valign="TOP"><I>wsprintfW</I></td> 
+<TD valign="TOP"><I>wsprintf</I></td> 
+</tr>
+<TR>
+
+<TD valign="TOP" colspan=4><B>Pointer to Array
+<BR>of Arguments</B></td> 
+</tr>
+<TR>
+<TD valign="TOP">Standard Version</td> 
+<TD valign="TOP"><I>vsprintf</I></td>      
+<TD valign="TOP"><I>vswprintf</I></td> 
+<TD valign="TOP"><I>_vstprintf</I></td> 
+</tr>
+<TR>
+<TD valign="TOP">Max-Length Version</td>
+<TD valign="TOP"><I>_vsnprintf</I></td>
+<TD valign="TOP"><I>_vsnwprintf</I></td>
+<TD valign="TOP"><I>_vsntprintf</I></td>
+</tr>
+<TR>
+<TD valign="TOP">Windows Version</td>
+<TD valign="TOP"><I>wvsprintfA</I></td>     
+<TD valign="TOP"><I>wvsprintfW</I></td>
+<TD valign="TOP"><I>wvsprintf</I></td>
+</tr>
+</table>
+<p>In the wide-character versions of the <I>sprintf</I> functions, the string buffer is defined as a wide-character string. In the wide-character versions of all these functions, the formatting string must be a wide-character string. However, it's up to you to make sure that any other strings you pass to these functions are also composed of wide characters.
+
+<A NAME="35"><h2>A Formatting Message Box</h2></A>
+<p>The SCRNSIZE program shown in Figure 2-3 shows how to implement a <I>MessageBoxPrintf</I> function that takes a variable number of arguments and formats them like <I>printf</I>.
+
+<p><B>Figure 2-3.</B> <I>The SCRNSIZE program.</I>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+
+<A NAME="36"><h3>SCRNSIZE.C</h3></A>
+<p><pre>
+/*-----------------------------------------------------
+   SCRNSIZE.C -- Displays screen size in a message box
+                 (c) Charles Petzold, 1998
+  -----------------------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &lt;tchar.h&gt;     
+#include &lt;stdio.h&gt;     
+
+int CDECL MessageBoxPrintf (TCHAR * szCaption, TCHAR * szFormat, ...)
+{
+     TCHAR   szBuffer [1024] ;
+     va_list pArgList ;
+
+          // The va_start macro (defined in STDARG.H) is usually equivalent to:
+          // pArgList = (char *) &amp;szFormat + sizeof (szFormat) ;
+
+     va_start (pArgList, szFormat) ;
+
+          // The last argument to wvsprintf points to the arguments
+
+     _vsntprintf (szBuffer, sizeof (szBuffer) / sizeof (TCHAR), 
+                  szFormat, pArgList) ;
+
+          // The va_end macro just zeroes out pArgList for no good reason
+
+     va_end (pArgList) ;
+
+     return MessageBox (NULL, szBuffer, szCaption, 0) ;
+}
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow) 
+{
+     int cxScreen, cyScreen ;
+
+     cxScreen = GetSystemMetrics (SM_CXSCREEN) ;
+     cyScreen = GetSystemMetrics (SM_CYSCREEN) ;
+     MessageBoxPrintf (TEXT (&quot;ScrnSize&quot;), 
+                       TEXT (&quot;The screen is %i pixels wide by %i pixels high.&quot;),
+                       cxScreen, cyScreen) ;
+     return 0 ;
+}
+</pre>
+</td></tr></table>
+
+<p>The program displays the width and height of the video display in pixels by using information obtained from the <I>GetSystemMetrics</I> function. <I>GetSystemMetrics</I> is a useful function for obtaining information about the sizes of various objects in Windows. Indeed, in <a href="ch04a.htm#62">Chapter 4</a> I'll use the <I>GetSystemMetrics</I> function to show you how to display and scroll multiple lines of text in a Windows window.
+
+<A NAME="37"><h2>Internationalization and This Book</h2></A>
+<p>Preparing your Windows programs for an international market involves more than using Unicode. Internationalization is beyond the scope of this book but is covered extensively in <I>Developing International Software for Windows 95 and Windows NT</I> by Nadine Kano (Microsoft Press, 1995).
+
+<p>This book will restrict itself to showing programs that can be compiled either with or without the UNICODE identifier defined. This involves using TCHAR for all character and string definitions, using the TEXT macro for string literals, and taking care not to confuse bytes and characters. For example, notice the <I>_vsntprintf</I> call in SCRNSIZE. The second argument is the size of the buffer in characters. Typically, you'd use <I>sizeof (szBuffer)</I>. But if the buffer has wide characters, that's not the size of the buffer in characters but the size of the buffer in bytes. You must divide it by <I>sizeof (TCHAR)</I>.
+
+
+<p>Normally in the Visual C++ Developer Studio, you can compile a program in two different configurations: Debug and Release. For convenience, for the sample programs in this book, I have modified the Debug configuration so that the UNICODE identifier is defined. In those programs that use C run-time functions that require string arguments, the _UNICODE identifier is also defined in the Debug configuration. (To see where this is done, choose Settings from the Project menu and click the C/C++ tab.) In this way, the programs can be easily recompiled and linked for testing.
+
+<p>All of the programs in this book&#8212;whether compiled for Unicode or not&#8212;run under Windows NT. With a few exceptions, the Unicode-compiled programs in this book will <I>not</I> run under Windows 98 but the non-Unicode versions will. The programs in this chapter and the first chapter are two of the few exceptions. <I>MessageBoxW</I> is one of the few wide-character Windows functions supported under Windows 98. If you replace _<I>vsntprintf</I> in SCRNSIZE.C with the Windows function <I>wprintf</I> (you'll also have to eliminate the second argument to the function), the Unicode version of SCRNSIZE.C will not run under Windows 98 because Windows 98 does not implement <I>wprintfW</I>.
+
+<p>As we'll see later in this book (particularly in <a href="ch06a.htm#144">Chapter 6</a>, which covers using the keyboard), it is not easy writing a Windows program that can handle the double-byte character sets of the Far Eastern versions of Windows. This book does not show you how, and for that reason some of the non-Unicode versions of the programs in this book do not run properly under the Far Eastern versions of Windows. This is one reason why Unicode is so important to the future of programming. Unicode allows programs to more easily cross national borders.
+</BODY>
+</HTML>
+
+
+
+
+
+
+

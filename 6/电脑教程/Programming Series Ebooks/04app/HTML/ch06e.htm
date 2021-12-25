@@ -1,0 +1,247 @@
+<HTML>
+<HEAD>
+<TITLE>The CreateThread Function</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch06d.htm">[Previous]</A> <A HREF="ch06f.htm">[Next]</A><P>
+
+<A NAME="78"><h1>The <i>CreateThread</i> Function</h1></A>
+<p>We've already discussed how a process's primary thread comes
+into being when <i>CreateProcess</i> is called. If you want to create
+one or more secondary threads, you simply have an already running
+thread call <i>CreateThread</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HANDLE CreateThread(
+   PSECURITY_ATTRIBUTES psa,
+   DWORD cbStack,
+   PTHREAD_START_ROUTINE pfnStartAddr,
+   PVOID pvParam,
+   DWORD fdwCreate,
+   PDWORD pdwThreadID);
+</pre></td></tr></table></p> 
+
+<p>When <i>CreateThread</i> is called, the system creates a thread
+kernel object. This thread kernel object is not the thread itself but a
+small data structure that the operating system uses to manage the
+thread. You can think of the thread kernel object as a small data
+structure that consists of statistical information about the thread.
+This is identical to the way processes and process kernel objects
+relate to each other.</p>
+
+<p>The system allocates memory out of the process's address space
+for use by the thread's stack. The new thread runs in the same
+process context as the creating thread. The new thread therefore has
+access to all of the process's kernel object handles, all of the
+memory in the process, and the stacks of all other threads that are in
+this same process. This makes it really easy for multiple threads in a
+single process to communicate with each other.</p>
+
+<p><div class="note"><blockquote><b>NOTE</b><HR> The <i>
+CreateThread</i> function is the Windows function that creates a
+thread. However, if you are writing C/C++ code, you should never call
+<i>CreateThread</i>. Instead, you should use the Visual C++ run-time
+library function <i>_beginthreadex</i>. If you do not use
+Microsoft's Visual C++ compiler, your compiler vendor will have its
+own alternative to <i>CreateThread</i>. Whatever this alternative is,
+you must use it. I'll explain what <i>_beginthreadex</i> does and
+why it is so important later in this chapter.
+</blockquote></div></p>
+
+<p>OK, that's the broad overview. The following sections explain
+each of <i>CreateThread</i>'s parameters.</p>
+
+<A NAME="79"><H3><i>psa</i></H3></A>
+
+<p>The <i>psa</i> parameter is a pointer to a SECURITY_ATTRIBUTES
+structure. You can (and usually will) pass NULL if you want the default
+security attributes for the thread kernel object. If you want any child
+processes to be able to inherit a handle to this thread object, you
+must specify a SECURITY_ATTRIBUTES structure, whose <i>
+bInheritHandle</i> member is initialized to TRUE. See <A HREF="ch03a.htm">Chapter 3</A> for
+more information.</p>
+
+<A NAME="80"><H3><i>cbStack</i></H3></A>
+
+<p>The <i>cbStack</i> parameter specifies how much address space the
+thread can use for its own stack. Every thread owns its own stack. When
+<i>CreateProcess</i> starts a process, it internally calls <i>
+CreateThread</i> to initialize the process's primary thread. For
+the <i>cbStack</i> parameter, <i>CreateProcess</i> uses a value stored
+inside the executable file. You can control this value using the
+linker's /STACK switch:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+/STACK:[<i>reserve</i>] [,<i>commit</i>]
+</pre></td></tr></table></p> 
+
+<p>The <i>reserve</i> argument sets the amount of address space the
+system should reserve for the thread's stack. The default is 1 MB.
+The <i>commit</i> argument specifies the amount of physical storage
+that should be initially committed to the stack's reserved region.
+The default is one page. As the code in your thread executes, you might
+require more than one page of storage. When your thread overflows its
+stack, an exception is generated. (See <A HREF="ch16a.htm">Chapter 16</A> for more information
+about a thread's stack and stack overflow exceptions; see <a href="ch23a.htm">Chapter
+23</a> for more information about general exception handling.) The system
+catches the exception and commits another page (or whatever you
+specified for the <i>commit</i> argument) to the reserved space, which
+allows a thread's stack to grow dynamically as needed.</p>
+
+<p>When you call <i>CreateThread</i>, passing a value other than 0
+causes the function to reserve and commit all storage for the
+thread's stack. Since all the storage is committed up front, the
+thread is guaranteed to have the specified amount of stack storage
+available. The amount of reserved space is either the amount specified
+by the /STACK linker switch or the value of <i>cbStack</i>, whichever
+is larger. The amount of storage committed matches the value you passed
+for <i>cbStack</i>. If you pass 0 to the <i>cbStack</i> parameter, <i>
+CreateThread</i> reserves a region and commits the amount of storage
+indicated by the /STACK linker switch information embedded in the .exe
+file by the linker.</p>
+
+<p>The reserve amount sets an upper limit for the stack so that you can
+catch endless recursion bugs in your code. For example, let's say
+that you're writing a function that calls itself recursively. This
+function also has a bug that causes endless recursion. Every time the
+function calls itself, a new stack frame is created on the stack. If
+the system didn't set a maximum limit on the stack size, the
+recursive function would never stop calling itself. All of the
+process's address space would be allocated, and enormous amounts of
+physical storage would be committed to the stack. By setting a stack
+limit, you prevent your application from using up enormous amounts of
+physical storage, and you also know much sooner when a bug exists in
+your program. (The Summation sample application in <A HREF="ch16a.htm">Chapter 16</A> shows how
+to trap and handle stack overflows in your application.)</p>
+
+<A NAME="81"><h3><i>pfnStartAddr</i> and<i> pvParam</i></h3></A>
+<p>The <i>pfnStartAddr</i> parameter indicates the address of the
+thread function that you want the new thread to execute. A thread
+function's <i>pvParam</i> parameter is the same as the <i>
+pvParam</i> parameter that you originally passed to <i>
+CreateThread</i>. <i>CreateThread</i> does nothing with this parameter
+except pass it on to the thread function when the thread starts
+executing. This parameter provides a way to pass an initialization
+value to the thread function. This initialization data can be either a
+numeric value or a pointer to a data structure that contains additional
+information.</p>
+
+<p>It is perfectly legal and actually quite useful to create multiple
+threads that have the same function address as their starting point.
+For example, you can implement a Web server that creates a new thread
+to handle each client's request. Each thread knows which client it
+is processing because you pass a different <i>pvParam</i> value as you
+create each thread.</p>
+
+<p>Remember that Windows is a preemptive multithreading system, which
+means that the new thread and the thread that called <i>
+CreateThread</i> can execute simultaneously. Because the threads run
+simultaneously, problems can occur. Watch out for code like this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+DWORD WINAPI FirstThread(PVOID pvParam) {
+   // Initialize a stack-based variable
+   int x = 0;
+   DWORD dwThreadID;
+
+   // Create a new thread.
+   HANDLE hThread = CreateThread(NULL, 0, SecondThread, (PVOID) &amp;x,
+      0, &amp;dwThreadId);
+
+   // We don't reference the new thread anymore, 
+   // so close our handle to it.
+   CloseHandle(hThread);
+
+   // Our thread is done.
+   // BUG: our stack will be destroyed, but  
+   //      SecondThread might try to access it.
+   return(0);
+}
+
+
+DWORD WINAPI SecondThread(PVOID pvParam) {
+   // Do some lengthy processing here.
+   
+   <img src="images/grayvellip.JPG" width=3 height=13 border="0">  
+
+   // Attempt to access the variable on FirstThread's stack.
+   // NOTE: This may cause an access violation _ it depends on timing!
+   * ((int *) pvParam) = 5;
+   
+   <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+
+   return(0);
+}
+</pre></td></tr></table></p> 
+
+<p>In the code above, <i>FirstThread</i> might finish its work before
+<i>SecondThread</i> assigns <i>5</i> to <i>FirstThread</i>'s <i>
+x</i>. If this happens, <i>SecondThread</i> won't know that <i>
+FirstThread</i> no longer exists and will attempt to change the
+contents of what is now an invalid address. This causes <i>
+SecondThread</i> to raise an access violation because <i>
+FirstThread</i>'s stack is destroyed when <i>FirstThread</i>
+terminates. One way to solve this problem is to declare <i>x</i> as a
+static variable so the compiler will create a storage area for <i>x</i>
+in the application's data section rather than on the stack. </p>
+<p>However, this makes the function nonreentrant. In other words, you
+can't create two threads that execute the same function because the
+static variable would be shared between the two threads. Another way to
+solve this problem (and its more complex variations) is to use proper
+thread synchronization techniques (discussed in Chapters <a href="ch08a.htm">8</a>, <a href="ch09a.htm">9</a>, and
+<a href="ch10a.htm">10</a>).</p>
+
+<A NAME="82"><H3><i>fdwCreate</i></H3></A>
+
+<p>The <i>fdwCreate</i> parameter specifies additional flags that
+control the creation of the thread. It can be one of two values. If the
+value is 0, the thread is schedulable immediately after it is created.
+If the value is CREATE_SUSPENDED, the system fully creates and
+initializes the thread but suspends the thread so that it is not
+schedulable. </p>
+<p>The CREATE_SUSPENDED flag allows an application to alter some
+properties of a thread before it has a chance to execute any code.
+Because this is rarely necessary, this flag is not commonly used. The
+JobLab application presented in <A HREF="ch05a.htm">Chapter 5</A> demonstrates a correct use of
+this flag.</p>
+
+<A NAME="83"><H3><i>pdwThreadID</i></H3></A>
+
+<p>The last parameter of <i>CreateThread</i>, <i>pdwThreadID</i>, must
+be a valid address of a DWORD in which <i>CreateThread</i> stores the
+ID that the system assigns to the new thread. (Process and thread IDs
+were discussed in <A HREF="ch04a.htm">Chapter 4</A>.)</p>
+
+<p><div class="note"><blockquote><b>NOTE</b><HR>
+Under Windows 2000 (and Windows NT 4), you can (and usually do) pass NULL for
+this parameter. This tells the function that you're not interested
+in the thread's ID, but the thread is created. On Windows 95 and
+Windows 98, passing NULL for this parameter causes the function to fail
+because the function tries to write the ID to address NULL, which is
+illegal. The thread is not created.
+<p>Of course, this inconsistency between operating systems can
+cause problems for developers. For example, let's say you develop
+and test an application on Windows 2000 (which creates the thread even
+if you pass NULL for the <i>pdwThreadID</i> parameter). When you later
+run your application on Windows 98, <i>CreateThread</i> will not create
+the new thread. You must always thoroughly test your applications on
+all operating systems (and versions) that you claim to
+support.</p>
+</blockquote></div></p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

@@ -1,0 +1,1496 @@
+<HTML>
+<HEAD>
+<TITLE>Managing PnP State Transitions</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch06c.htm">[Previous]</A> <A HREF="ch06e.htm">[Next]</a>
+</p>
+
+<A NAME="188"><H1>Managing PnP State Transitions</H1></A>
+
+<p>As I said at the outset of this chapter, WDM drivers need to track their devices through the
+state transitions diagrammed in Figure 6-1. This state tracking also ties in with
+how you queue and cancel I/O requests. Cancellation in turn implicates the global cancel spin
+lock, which is a performance bottleneck in a multi-CPU system. The standard model of IRP
+processing can't solve all these interrelated problems. In this section, therefore,
+I'll present a new type of object&#8212;called a DEVQUEUE&#8212;that you can use in your PnP
+request handlers and in place of the standard model routines <b>StartPacket</b> and <b>StartNextPacket</b>. DEVQUEUE is my own invention, but it's based on sample drivers,
+especially PNPPOWER and CANCEL, that used to be in the DDK. See also the discussion of IRP
+cancellation in Ervin Peretz's &quot;The Windows Driver Model Simplifies Management of
+Device Driver I/O Requests,&quot; (<i>Microsoft Systems Journal,</i> January 1999). A portion
+of the IRP cancellation logic I'm describing also derives from work by Peretz and other
+Microsoft employees and by Jamie Hanrahan that had not been published at the time I was writing
+this book.</p>
+
+<p>I described the KDEVICE_QUEUE queue object in the previous chapter as encompassing an idle
+state, a busy but empty state, and a busy but not empty state. The support routines you use to
+manipulate a KDEVICE_QUEUE assume that if the device is not currently busy, all you want to do
+is start any new request running on the device. It's precisely this behavior that we need
+to overcome to successfully manage PnP states. Figure 6-4 illustrates the states of a
+DEVQUEUE.</p>
+
+<p>
+<A HREF="javascript:fullSize('F06wi04x.htm')"> <img src="images/F06wi04.JPG" width=404 height=352 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 6-4.</b> <i>States of a DEVQUEUE object.</i><!--/caption-->
+</p>
+
+
+<p>In the READY state, the queue operates much like a KDEVICE_QUEUE, accepting and forwarding
+requests to your <b>StartIo</b> routine in such a way that the device stays busy. In the
+STALLED state, however, the queue does not forward IRPs to StartIo even when the device is
+idle. In the REJECTING state, the queue doesn't even accept new IRPs. Figure 6-5
+illustrates the flow of IRPs through the queue.</p>
+
+<p>
+<A HREF="javascript:fullSize('F06wi05x.htm')"> <img src="images/F06wi05.JPG" width=404 height=340 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 6-5.</b> <i>Flow of IRPs through a DEVQUEUE.</i><!--/caption-->
+</p>
+
+
+<A NAME="189"><H2>Using DEVQUEUE for IRP Queuing and Cancellation</H2></A>
+
+<p>You define a DEVQUEUE object for each queue of requests you'll manage in the driver. For
+example, if your device manages reads and writes in a single queue, you'd define one
+DEVQUEUE:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>typedef struct _DEVICE_EXTENSION {
+  ...
+  DEVQUEUE dqReadWrite; 
+  ...
+  } DEVICE_EXTENSION, *PDEVICE_EXTENSION;</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Table 6-3 lists the support functions you can use with a DEVQUEUE.</p>
+
+<p><b>Table 6-3.</b> <i>DEVQUEUE service routines.</i></p>
+
+<P>
+<table cellpadding=5 width="95%">
+<tr> 
+<th><i>Support Function</i>  </th>
+<th><i>Description</i>  </th></tr>
+<tr>
+<td valign="top">AbortRequests</td>
+<td valign="top">Aborts current and future requests</td></tr>
+<tr>
+<td valign="top">AllowRequests</td>
+<td valign="top">Undoes effect of previous AbortRequests</td></tr>
+<tr>
+<td valign="top">AreRequestsBeingAborted</td>
+<td valign="top">Are we currently aborting new requests?</td></tr>
+<tr>
+<td valign="top">CancelRequest</td>
+<td valign="top">Generic cancel routine</td></tr>
+<tr>
+<td valign="top">CheckBusyAndStall</td>
+<td valign="top">Checks for idle device and stalls requests in one atomic operation</td></tr>
+<tr>
+<td valign="top">CleanupRequests</td>
+<td valign="top">Cancels all requests for a given file object in order to service IRP_MJ_CLEANUP</td></tr>
+<tr>
+<td valign="top">GetCurrentIrp</td>
+<td valign="top">Determines which IRP is currently being processed by associated StartIo routine</td></tr>
+<tr>
+<td valign="top">InitializeQueue</td>
+<td valign="top">Initializes DEVQUEUE object</td></tr>
+<tr>
+<td valign="top">RestartRequests </td>
+<td valign="top">Restarts a stalled queue</td></tr>
+<tr>
+<td valign="top">StallRequests</td>
+<td valign="top">Stalls the queue</td></tr>
+<tr>
+<td valign="top">StartNextPacket</td>
+<td valign="top">Dequeues and starts the next request</td></tr>
+<tr>
+<td valign="top">StartPacket</td>
+<td valign="top">Starts or queues a new request</td></tr>
+<tr>
+<td valign="top">WaitForCurrentIrp</td>
+<td valign="top">Waits for current IRP to finish</td></tr>
+</table></p>
+
+<p>For the moment, I'll just discuss the support functions that replace functions like <b>StartPacket</b> and <b>StartNextPacket</b> in the standard IRP processing model. For each
+queue, you provide a separate StartIo routine. Your DriverEntry routine would not store
+anything in the <b>DriverStartIo</b> pointer field of the driver object. Instead, during
+AddDevice, you'd initialize your queue object(s) like so:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>NTSTATUS AddDevice(...)
+  {
+  ...
+  PDEVICE_EXTENSION pdx = ...;
+  InitializeQueue(&amp;pdx-&gt;dqReadWrite, StartIo);
+  ...
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The dispatch function for an IRP that uses a DEVQUEUE would follow the following
+pattern:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>NTSTATUS DispatchWrite(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+<i>  &lt;some power management stuff you haven't heard about yet&gt;</i>
+  IoMarkIrpPending(Irp);
+  StartPacket(&amp;pdx-&gt;dqReadWrite, fdo, Irp, OnCancel);
+  return STATUS_PENDING;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>That is, instead of calling <b>IoStartPacket</b>, you call the queue's StartPacket
+function with the address of the queue object, the device object, the IRP, and your cancel
+routine. At the start of a dispatch routine, you'll also have a small bit of code to handle
+restoring power after a period of disuse; I'll discuss that code in <A HREF="ch08a.htm">Chapter 8</A>.</p>
+
+<p>Here's a sketch of the new kind of <b>StartIo</b> routine you use with a DEVQUEUE:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>VOID StartIo(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+<i>  &lt;some PnP stuff you haven't heard about yet&gt;</i>
+  // start request on device
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>StartIo doesn't worry about IRP cancellation. The cancel routine you use in this scheme
+is different from a standard one&#8212;it simply delegates all work to the DEVQUEUE:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>VOID OnCancel(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+  CancelRequest(&amp;pdx-&gt;dqReadWrite, Irp);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p><b>CancelRequest</b> will release the global cancel spin lock, which your cancel routine
+owns when it gets control, and will then cancel the IRP in a thread-safe and multiprocessor-safe way.</p>
+
+<p>The deferred procedure call (DPC) routine you use when the request finishes also looks a little
+different from the standard-model one I showed you in <A HREF="ch05a.htm">Chapter 5</A>, as you can see here:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>VOID DpcForIsr(PKDPC Dpc, PDEVICE_OBJECT device, PIRP junk, PVOID context)
+  {
+  PIRP Irp = GetCurrentIrp(&amp;pdx-&gt;dqReadWrite);
+  ...
+  StartNextPacket(&amp;pdx-&gt;dqReadWrite, device);
+<i>  &lt;some PnP stuff you haven't heard about yet&gt;</i>
+  CompleteRequest(Irp, ...);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Like <b>IoStartNextPacket</b>, the <b>StartNextPacket</b> function removes the next IRP from
+the queue and sends it to your (queue-specific) StartIo routine. It also returns the address of
+the IRP you were processing or NULL to indicate that your device was not processing an IRP. A
+NULL return value indicates that the IRP was cancelled or aborted for some reason, so it would
+be incorrect for you to try to complete it. Since you'll obtain the address of the
+finishing IRP by calling <b>GetCurrentIrp</b>, don't use the IRP pointer that comes to you
+as the third argument to the DPC routine. I named it <b>junk</b> to reinforce the point.</p>
+
+<p>The DEVQUEUE also simplifies the handling of an IRP_MJ_CLEANUP. In fact, the code is almost
+trivial:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>NTSTATUS DispatchCleanup(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+  PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
+  CleanupRequests(&amp;pdx-&gt;dqReadWrite, stack-&gt;FileObject,
+    STATUS_CANCELLED);
+  return CompleteRequest(Irp, STATUS_SUCCESS, 0);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<A NAME="190"><H2>Using DEVQUEUE with PnP Requests</H2></A>
+
+<p>The real point of using a DEVQUEUE instead of a KDEVICE_QUEUE is that a DEVQUEUE makes it
+easier to manage the transitions between PnP states. In all of my sample drivers, the device
+extension contains a state variable with the imaginative name <b>state</b>. I also define an
+enumeration named DEVSTATE whose values correspond to the PnP states. When you initialize your
+device object in AddDevice, you'll call <b>InitializeQueue</b> for each of your device
+queues and also indicate that the device is in the STOPPED state:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>NTSTATUS AddDevice(...)
+  {
+  ...
+  PDEVICE_EXTENSION pdx = ...;
+  InitializeQueue(&amp;pdx-&gt;dqRead, StartIoReadWrite);
+  pdx-&gt;state = STOPPED;
+  ...
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>After AddDevice returns, the system sends IRP_MJ_PNP requests to direct you through the
+various PnP states the device can assume.</p>
+
+<A NAME="191"><H3>Starting the Device</H3></A>
+
+<p>A newly initialized DEVQUEUE is in a STALLED state, such that a call to StartPacket will
+queue a request even when the device is idle. You'll keep the queue(s) in the STALLED state
+until you successfully process IRP_MN_START_DEVICE, whereupon you'll execute code like the
+following:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>NTSTATUS HandleStartDevice(...)
+  {
+  status = StartDevice(...);
+  if (NT_SUCCESS(status))
+    {
+    pdx-&gt;state = WORKING;
+    RestartRequests(&amp;pdx-&gt;dqReadWrite, fdo);
+    }
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>You record WORKING as the current state of your device, and you call <b>RestartRequests</b> 
+for each of your queues to release any IRPs that might have arrived between the time AddDevice
+ran and the time you received the IRP_MN_START_DEVICE request.</p>
+
+<A NAME="192"><H3>Is It Okay to Stop the Device?</H3></A>
+
+<p>The PnP Manager always asks your permission before sending you an IRP_MN_STOP_DEVICE. The query takes the form of an IRP_MN_QUERY_STOP_DEVICE request that you can
+succeed or fail as you choose. The query basically means, &quot;Would you be able to
+immediately stop your device if the system were to send you an IRP_MN_STOP_DEVICE in a few
+nanoseconds?&quot; You can handle this query in two slightly different ways. Here's the
+first way, which is appropriate when your device might be busy with an IRP that either finishes
+quickly or can be easily terminated in the middle:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+
+
+
+
+1<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+2<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+3<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+4<img src="images/arorite2.jpg" width=17 height=10 border="0">
+</pre></td>
+<td valign=top>
+<pre>NTSTATUS HandleQueryStop(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  Irp-&gt;IoStatus.Status = STATUS_SUCCESS;
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+  if (pdx-&gt;state != WORKING)
+    return DefaultPnpHandler(fdo, Irp);
+  if (!OkayToStop(pdx))
+    return CompleteRequest(Irp, STATUS_UNSUCCESSFUL, 0);
+  StallRequests(&amp;pdx-&gt;dqReadWrite);
+  WaitForCurrentIrp(&amp;pdx-&gt;dqReadWrite);
+  pdx-&gt;state = PENDINGSTOP;
+  return DefaultPnpHandler(fdo, Irp);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> This statement handles a peculiar situation that can arise for a boot device: the
+PnP Manager might send you a QUERY_STOP when you haven't initialized yet. You want to
+ignore such a query, which is tantamount to saying &quot;yes.&quot;</li></p>
+
+<p><li> At this point, you perform some sort of investigation to see if it will be okay
+to revert to the STOPPED state. I'll discuss factors bearing on the investigation
+immediately below.</li></p>
+
+<p><li> <b>StallRequests</b> puts the DEVQUEUE into the STALLED state so that any new IRP
+just goes into the queue. <b>WaitForCurrentIrp</b> waits until the current request, if there is
+one, finishes on the device. These two steps make the device quiescent until we know whether
+the device is really going to stop or not.</li></p>
+
+<p><li> At this point, we have no reason to demur. We therefore record our state as
+PENDINGSTOP. Then we pass the request down the stack so that other drivers can have a chance to
+accept or decline this query.</li></p>
+</ol>
+
+<p>The other basic way of handling QUERY_STOP is appropriate when your device might be busy
+with a request that will take a long time and can't be stopped in the middle, such as a
+tape retension operation that can't be stopped without potentially breaking the tape. In
+this case, you can use the DEVQUEUE's <b>CheckBusyAndStall</b> function. That function
+returns TRUE if the device is busy, whereupon you'd fail the QUERY_STOP with
+STATUS_UNSUCCESSFUL. The function returns FALSE if the device is idle, in which case it also
+stalls the queue. (The operations of checking the state of the device and stalling the queue
+need to be protected by a spin lock, which is why I wrote this function in the first
+place.)</p>
+
+<p>You can fail a stop query for many reasons. Disk devices that are used for paging, for
+example, cannot be stopped. Neither can devices that are used for storing hibernation or crash
+dump files. (You'll know about these characteristics as a result of an
+IRP_MN_DEVICE_USAGE_NOTIFICATION request, which I'll discuss later in &quot;<A HREF="ch06e.htm#204">Other Configuration Functionality</A>.&quot;) Other reasons may also apply to your device.</p>
+
+<p>Even if you succeed the query, one of the drivers underneath you might fail it for some
+reason. Even if all the drivers succeed the query, the PnP Manager might decide not to shut you
+down. In any of these cases, you'll receive another PnP request with the minor code
+IRP_MN_CANCEL_STOP_DEVICE to tell you that your device won't be shut down. You should then
+clear whatever state you set during the initial query:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>NTSTATUS HandleCancelStop(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  Irp-&gt;IoStatus.Status = STATUS_SUCCESS;
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+  if (pdx-&gt;state != PENDINGSTOP)
+    return DefaultPnpHandler(fdo, Irp);
+  NTSTATUS status = ForwardAndWait(fdo, Irp);
+  if (NT_SUCCESS(status))
+    {
+    pdx-&gt;state = WORKING;
+    RestartRequests(&amp;pdx-&gt;dqReadWrite, fdo);
+    }
+  return CompleteRequest(Irp, status, Irp-&gt;IoStatus.Information);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>We first check to see whether a stop operation is even pending. Some higher-level driver
+might have vetoed a query that we never saw, so we'd still be in the WORKING state. If
+we're not in the PENDINGSTOP state, we simply forward the IRP. Otherwise, we send the
+CANCEL_STOP IRP synchronously to the lower-level drivers. That is, we use our <b>ForwardAndWait</b> helper function to send the IRP down the stack and await its completion. We
+wait for low-level drivers because we're about to resume processing IRPs, and the drivers
+might have work to do before we send them an IRP. If the lower layers successfully handle this
+IRP_MN_CANCEL_STOP_DEVICE, we change our <b>state</b> variable to indicate that we're back
+in the WORKING state, and we call <b>RestartRequests</b> to unstall the queues we stalled when
+we succeeded the query.</p>
+
+<A NAME="193"><H3>While the Device Is Stopped</H3></A>
+
+<p>If, on the other hand, all device drivers succeed the query and the PnP Manager decides to
+go ahead with the shutdown, you'll get an IRP_MN_STOP_DEVICE next. Your subdispatch
+function would look like this one:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+
+
+
+
+1<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+
+
+2<img src="images/arorite2.jpg" width=17 height=10 border="0">
+3<img src="images/arorite2.jpg" width=17 height=10 border="0">
+4<img src="images/arorite2.jpg" width=17 height=10 border="0">
+</pre></td>
+<td valign=top>
+<pre>NTSTATUS HandleStopDevice(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  Irp-&gt;IoStatus.Status = STATUS_SUCCESS;
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+  if (pdx-&gt;state != PENDINGSTOP);
+    {
+    <i>&lt;complicated stuff&gt;</i>
+    }
+  StopDevice(fdo, pdx-&gt;state == WORKING);
+  pdx-&gt;state = STOPPED;
+  return DefaultPnpHandler(fdo, Irp);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> We expect the system to send us a QUERY_STOP before it sends us a STOP, so we
+should already be in the PENDINGSTOP state with all of our queues stalled. There is, however, a
+bug in Windows 98 such that we can sometimes get a STOP (without a QUERY_STOP) instead of a
+REMOVE. You need to take some action at this point that causes you to reject any new IRPs, but
+you mustn't really remove your device object or do the other things you do when you <i>really</i> receive a REMOVE request.</li></p>
+
+<p><li> <b>StopDevice</b> is the helper function I've already discussed that
+deconfigures the device.</li></p>
+
+<p><li> We now enter the STOPPED state. We're in almost the same situation as we were
+when AddDevice was done. That is, all queues are stalled, and the device has no I/O resources.
+The only difference is that we've left our registered interfaces enabled, which means that
+applications will not have received removal notifications and will leave their handles open.
+Applications can also open new handles in this situation. Both aspects are just as they should
+be, because the stop condition won't last long.</li></p>
+
+<p><li> As I previously discussed, the last thing we do to handle IRP_MN_STOP_DEVICE is pass the request down to the lower layers of the driver hierarchy.</li></p>
+</ol>
+
+<A NAME="194"><H3>Is It Okay to Remove the Device?</H3></A>
+
+<p>Just as the PnP Manager asks your permission before shutting your device down with a stop
+device request, it also might ask your permission before removing your device. This query takes
+the form of an IRP_MN_QUERY_REMOVE_DEVICE request that you can, once again, succeed or fail as
+you choose. And, just as with the stop query, the PnP Manager will use an
+IRP_MN_CANCEL_REMOVE_DEVICE request if it changes its mind about removing the device.</p>
+
+<P><table cellpadding=5 width="95%"><TR><TD VALIGN=TOP>
+<pre>
+
+
+
+
+1<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+2<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+3<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+
+
+
+
+
+
+
+
+
+4<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+
+
+
+5<img src="images/arorite2.jpg" width=17 height=10 border="0">
+</pre></td>
+<td valign=top>
+<PRE>
+NTSTATUS HandleQueryRemove(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  Irp-&gt;IoStatus.Status = STATUS_SUCCESS;
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+  if (OkayToRemove(fdo))
+    {
+    StallRequests(&amp;pdx-&gt;dqReadWrite);
+    WaitForCurrentIrp(&amp;pdx-&gt;dqReadWrite);
+    pdx-&gt;prevstate = pdx-&gt;state;
+    pdx-&gt;state = PENDINGREMOVE;
+    return DefaultPnpHandler(fdo, Irp);
+    }
+  return CompleteRequest(Irp, STATUS_UNSUCCESSFUL, 0);
+  }
+
+NTSTATUS HandleCancelRemove(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  Irp-&gt;IoStatus.Status = STATUS_SUCCESS;
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+  if (pdx-&gt;state != PENDINGREMOVE)
+    return DefaultPnpHandler(fdo, Irp);
+  NTSTATUS status = ForwardAndWait(fdo, Irp);
+  if (NT_SUCCESS(status))
+    {
+    pdx-&gt;state = pdx-&gt;prevstate;
+    if (pdx-&gt;state == WORKING)
+      RestartRequests(&amp;pdx-&gt;dqReadWrite, fdo);
+    }
+  return CompleteRequest(Irp, status, Irp-&gt;IoStatus.Information);
+  }</PRE>
+</TD></TR></TABLE>
+</P>
+
+<ol>
+<p><li> This <b>OkayToRemove</b> helper function provides the answer to the question,
+&quot;Is it okay to remove this device?&quot; In general, this answer includes some
+device-specific ingredients, such as whether the device holds a paging or hibernation file, and
+so on.</li></p>
+
+<p><li> Just as I showed you for IRP_MN_QUERY_STOP_DEVICE, you want to stall the request
+queue and wait for a short period, if necessary, until the current request finishes.</li></p>
+
+<p><li> If you look at Figure 6-1 carefully, you'll notice that it's
+possible to get a QUERY_REMOVE when you're in either the WORKING or STOPPED state. The
+right thing to do if the current query is later cancelled is to return to the original state.
+Hence, I have a <b>prevstate</b> variable in the device extension to record the prequery
+state.</li></p>
+
+<p><li> We get the CANCEL_REMOVE request when something either above or below us vetoes a
+QUERY_REMOVE. If we never saw the query, we'll still be in the WORKING state and don't
+need to do anything with this IRP. Otherwise, we need to forward it to the lower levels before
+we process it because we want the lower levels to be ready to process the IRPs we're about
+to release from our queues.</li></p>
+
+<p><li> Here, we undo the steps we took when we succeeded the QUERY_REMOVE. We revert to the previous state. If the previous state was WORKING, we stalled the
+queues when we handled the query and need to unstall them now.</li></p>
+</ol>
+
+<A NAME="195"><H3>Synchronizing Removal</H3></A>
+
+<p>It turns out that the I/O Manager can send you PnP requests simultaneously with other
+substantive I/O requests, such as requests that involve reading or writing. It's entirely
+possible, therefore, for you to receive an IRP_MN_REMOVE_DEVICE at a time when you're still
+processing another IRP. It's up to you to prevent untoward consequences, and the standard
+way to do that involves using an IO_REMOVE_LOCK object and several associated kernel-mode
+support routines.</p>
+
+<p>The basic idea behind the standard scheme for preventing premature removal is that you acquire
+the remove lock each time you start processing a request and you release the lock when
+you're done. Before you remove your device object, you make sure that the lock is free. If
+not, you wait until all references to the lock are released. Figure 6-6 illustrates the
+process.</p>
+
+<p>
+<A HREF="javascript:fullSize('F06wi06x.htm')"> <img src="images/F06wi06.JPG" width=404 height=194 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 6-6.</b> <i>Operation of an IO_REMOVE_LOCK.</i><!--/caption-->
+</p>
+
+
+<p>To handle the mechanics of this process, you define a variable in the device extension:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>struct DEVICE_EXTENSION {
+  ...
+  IO_REMOVE_LOCK RemoveLock;
+  ...
+  };</pre>
+</td></tr>
+</table>
+</p>
+
+<p>You initialize the lock object during <b>AddDevice</b>:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>NTSTATUS AddDevice(PDRIVER_OBJECT DriverObject, PDEVICE_OBJECT pdo)
+  {
+  ...
+  IoInitializeRemoveLock(&amp;pdx-&gt;RemoveLock, 0, 0, 256);
+  ...
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The last three parameters to <b>IoInitializeRemoveLock</b> are, respectively, a tag value,
+an expected maximum lifetime for a lock, and a maximum lock count, none of which are used in
+the free build of the operating system.</p>
+
+<p>These preliminaries set the stage for what you do during the lifetime of the device object.
+Whenever you receive an I/O request, you call <b>IoAcquireRemoveLock</b>. IoAcquireRemoveLock
+will return STATUS_DELETE_PENDING if a removal operation is underway. Otherwise, it will
+acquire the lock and return STATUS_SUCCESS. Whenever you finish an I/O operation, you call <b>
+IoReleaseRemoveLock</b> , which will release the lock and might unleash a heretofore pending
+removal operation. In the context of some purely hypothetical dispatch function that completes
+the IRP it's handed, the code might look like this:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>NTSTATUS DispatchSomething(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+  NTSTATUS status = IoAcquireRemoveLock(&amp;pdx-&gt;RemoveLock, Irp);
+  if (!NT_SUCCESS(status))
+    return CompleteRequest(Irp, status, 0);
+  ...
+  IoReleaseRemoveLock(&amp;pdx-&gt;RemoveLock, Irp);
+  return CompleteRequest(Irp, <i>&lt;some code&gt;</i>, <i>&lt;info value&gt;</i>);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The second argument to IoAcquireRemoveLock and IoReleaseRemoveLock is just a tag value that
+a checked build of the OS can use to match up acquisition and release calls, by the way.</p>
+
+<p>The calls to acquire and release the remove lock dovetail with additional logic in the PnP
+dispatch function and the remove device subdispatch function. First, <b>DispatchPnp</b> has to
+obey the rule about locking and unlocking the device, so it will contain the following code
+that I didn't show you earlier in &quot;<A HREF="ch06b.htm#181">IRP_MJ_PNP Dispatch Function</A>&quot;:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>NTSTATUS DispatchPnp(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+  NTSTATUS status = IoAcquireRemoveLock(&amp;pdx-&gt;RemoveLock, Irp);
+  if (!NT_SUCCESS(status))
+    return CompleteRequest(Irp, status, 0);
+  ...
+  status = (*fcntab[fcn](fdo, Irp);
+  if (fcn != IRP_MN_REMOVE_DEVICE)
+    IoReleaseRemoveLock(&amp;pdx-&gt;RemoveLock, Irp);
+  return status;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>In other words, DispatchPnp locks the device, calls the subdispatch routine, and then
+(usually) unlocks the device afterward. The subdispatch routine for IRP_MN_REMOVE_DEVICE has additional special logic that you also haven't seen yet:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+
+
+
+
+1<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+
+
+2<img src="images/arorite2.jpg" width=17 height=10 border="0">
+3<img src="images/arorite2.jpg" width=17 height=10 border="0">
+</pre></td>
+<td valign=top>
+<pre>NTSTATUS HandleRemoveDevice(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  Irp-&gt;IoStatus.Status = STATUS_SUCCESS;
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+  AbortRequests(&amp;pdx-&gt;dqReadWrite, STATUS_DELETE_PENDING);
+  DeregisterAllInterfaces(pdx);
+  StopDevice(fdo, pdx-&gt;state == WORKING);
+  pdx-&gt;state = REMOVED;
+  NTSTATUS status = DefaultPnpHandler(pdx-&gt;LowerDeviceObject, Irp);
+  IoReleaseRemoveLockAndWait(&amp;pdx-&gt;RemoveLock, Irp);
+  RemoveDevice(fdo);
+  return status;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> Windows 98 doesn't send the SURPRISE_REMOVAL request, so this REMOVE IRP may
+be the first indication you have that the device has disappeared. Calling <b>StopDevice</b> 
+allows you to release all your I/O resources in case you didn't get an earlier IRP that
+caused you to release them. Calling <b>AbortRequests</b> causes you to complete any queued IRPs
+and to start rejecting any new IRPs.</li></p>
+
+<p><li> We pass this request to the lower layers now that we've done our work.</li></p>
+
+<p><li> The PnP dispatch routine acquired the remove lock. We now call the special
+function IoReleaseRemoveLockAndWait to release that lock reference and wait until all
+references to the lock are released. Once the IoReleaseRemoveLockAndWait routine returns, any
+subsequent call to IoAcquireRemoveLock will elicit a STATUS_DELETE_PENDING status to indicate
+that device removal is under way.</li></p>
+</ol>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+You'll notice that the IRP_MN_REMOVE_DEVICE handler might block while some
+IRP finishes. This is certainly okay in Windows 98 and Windows 2000, which were designed with
+this possibility in mind&#8212;the IRP gets sent in the context of a system thread that is
+allowed to block. Some WDM functionality (a Microsoft developer even called it
+&quot;embryonic&quot;) is present in OEM releases of Microsoft Windows 95, but you can't
+block a remove device request there. Consequently, if your driver needs to run in Windows 95,
+you need to discover that fact and avoid blocking. That discovery process is left as an
+exercise for you.</blockquote></div>
+</p>
+
+<p>These are the mechanics of locking and unlocking the device to forestall removing the device
+while it's still in use. You still need to know when to invoke IoAcquireRemoveLock and
+IoReleaseRemoveLock to bring that mechanism into play. Basically, an IRP dispatch function that
+will complete the request quickly should acquire and release the lock.</p>
+
+<p>A dispatch routine that queues an IRP should not acquire the remove lock, however. For a
+queued IRP, you acquire the lock inside StartIo and release it inside your DPC routine. So, we
+can expand the earlier skeleton of <b>StartIo</b> and <b>DpcForIsr</b> as follows:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+
+
+
+1<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+
+2<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+
+
+
+
+
+
+
+
+
+
+
+
+3<img src="images/arorite2.jpg" width=17 height=10 border="0">
+</pre></td>
+<td valign=top>
+<pre>VOID StartIo(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  PDEVICE_EXTENSION pdx =(PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+  NTSTATUS status = IoAcquireRemoveLock(&amp;pdx-&gt;RemoveLock, Irp);
+  if (!NT_SUCCESS(status))
+    {
+    CompleteRequest(Irp, status, 0);
+    return;
+    }
+
+  // start request on device
+  }
+
+VOID DpcForIsr(PKDPC Dpc, PDEVICE_OBJECT device, PIRP junk,
+  PVOID context)
+  {
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+  PIRP Irp = GetCurrentIrp(&amp;pdx-&gt;dqReadWrite);
+  ...
+  StartNextPacket(&amp;pdx-&gt;dqReadWrite, device);
+  IoReleaseRemoveLock(&amp;pdx-&gt;RemoveLock, Irp);
+  CompleteRequest(Irp, ...);
+ }</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> We acquire the lock here rather than in the dispatch routine. We don't want
+the fact that we've got an IRP sitting in our queue to prevent the PnP Manager from
+shutting us down. It's also better to not have to worry about the remove lock in our cancel
+routine.</li></p>
+
+<p><li> <b>IoAcquireRemoveLock</b> fails only if a delete operation is pending. Its
+return value can be either STATUS_SUCCESS or STATUS_DELETE_PENDING. In the failure case,
+don't call <b>StartNextPacket</b>&#8212;there's no point in trying to start a new
+operation when the device is about to disappear. Were we to call StartNextPacket, it would
+recursively call this routine, which would try to acquire the remove lock and fail, whereupon
+it would call StartNextPacket, which would call StartIo, which would&#8230;&lt;BSOD due to stack
+overflow&gt;. You get the idea.</li></p>
+
+<p><li> This call to <b>IoReleaseRemoveLock</b> balances the call inside StartIo.</li></p>
+</ol>
+
+<p>You should also acquire the remove lock when you successfully process an IRP_MJ_CREATE. In
+contrast to the other situations we've considered, you don't release the lock before
+returning from the <b>DispatchCreate</b> routine. The balancing call to IoReleaseRemoveLock
+occurs instead in the dispatch routine for IRP_MJ_CLOSE. In other words, you hold the remove
+lock for the entire time something has a handle open to your device. Here's a sketch of
+what I mean:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>NTSTATUS DispatchCreate(...)
+  {
+  ...
+  IoAcquireRemoveLock(&amp;pdx-&gt;RemoveLock, stack-&gt;FileObject);
+  return CompleteRequest(...);
+  }
+
+NTSTATUS DispatchClose(...)
+  {
+  ...
+  IoReleaseRemoveLock(&amp;pdx-&gt;RemoveLock, stack-&gt;FileObject);
+  return CompleteRequest(...);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>For debugging purposes, the balancing calls to IoAcquireRemoveLock and IoReleaseRemoveLock
+should use the same value for the second argument. You wouldn't use the IRP pointer as
+I've done in my other examples because the CREATE and CLOSE requests are different IRPs.
+The file object will be the same in both requests, though, which is why I used the file object
+in this example.</p>
+
+<p>If the end user uses the Device Manager to remove a device when some application has an open
+handle, the operating system declines to remove the device and so informs the user. In that
+situation, the fact that you've also claimed the remove lock won't influence the course
+of events because you'll never get the IRP_MN_REMOVE_DEVICE that would cause you to wait
+for all holders of the lock to release it. If it's possible for the device to be physically
+removed from the computer without first going through the Device Manager, however, a correctly
+written application will be looking for a WM_DEVICECHANGE message that signals departure of the
+device. (See the discussion of user-mode notifications near the end of this chapter in
+&quot;<A HREF="ch06e.htm#219">PnP Notifications</A>&quot;.) The application will then close its handles. You should delay
+IRP_MN_REMOVE_DEVICE until the handles are actually closed, and the locking logic I've just
+described allows you to do that.
+</p>
+
+<P><div class="sidebar"><blockquote>
+<p><b>Compatibility Note for IO_REMOVE_LOCK</b></p>
+
+<p>It turns out that the IO_REMOVE_LOCK object and associated service functions are technically
+not part of the WDM. The declarations your C code needs are actually in WDM.H, and WDM.LIB
+contains import definitions for the remove-lock functions. But Windows 98 doesn't actually
+export the functions. A driver that references these functions therefore won't load in
+Windows 98. This state of affairs is very unfortunate because every WDM driver needs to
+interlock device removal.</p>
+
+<p>DDK sample programs cope with this incompatibility in one of two ways. Some samples use a
+custom-built mechanism instead of an IO_REMOVE_LOCK. Others provide functions with names like
+<i>Xxx</i><b>AcquireRemoveLock</b> , and so on, that mimic the names of the standard remove lock
+functions.</p>
+
+<p>My sample drivers use a variation on the second of these approaches. By means of <b>#define</b> statements, I substitute my own declarations of the IO_REMOVE_LOCK object and
+support functions for the official ones. Thus, my sample code calls IoAcquireRemoveLock, and so
+on. In the samples that use GENERIC.SYS, preprocessor trickery actually routes these calls to
+functions with names like <b>GenericAcquireRemoveLock</b> that reside in GENERIC.SYS. In the
+samples that don't use GENERIC.SYS, the preprocessor trickery routes the calls to functions
+with names like <b>AcquireRemoveLock</b> that are located in a file named REMOVELOCK.CPP.</p>
+
+<p>I could have written my samples in such a way that they would call the standard remove lock
+functions instead of my own in Windows 2000. To make any of the samples work in Windows 98,
+I'd have needed to write stub implementations of the remove lock functions and required you
+to install a stub virtual device driver (VxD) before you could run any of the samples. (See
+Appendix A, &quot;<A HREF="chaaa.htm#431">Coping with Windows 98 Incompatibilities</A>.&quot;) I didn't think this was
+a good way to explain WDM programming.</p>
+</blockquote></div>
+</P>
+
+<A NAME="196"><H2>How DEVQUEUE Works</H2></A>
+
+<p>In contrast to other examples in this book, I'm going to show you the full
+implementation of the DEVQUEUE object even though the source code is on the companion disc.
+I'm making an exception in this case because I think an annotated listing of the functions
+will make it easier for you to understand how to use it.</p>
+
+<A NAME="197"><H3>Initializing a DEVQUEUE</H3></A>
+
+<p>The DEVQUEUE object has this declaration in my DEVQUEUE.H header file:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>typedef struct _DEVQUEUE {
+  LIST_ENTRY head;
+  KSPIN_LOCK lock;
+  PDRIVER_START StartIo;
+  LONG stallcount;
+  PIRP CurrentIrp;
+  KEVENT evStop;
+  NTSTATUS abortstatus;
+  } DEVQUEUE, *PDEVQUEUE;</pre>
+</td></tr>
+</table>
+</p>
+
+<p>InitializeQueue initializes one of these objects like this:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+
+
+1<img src="images/arorite2.jpg" width=17 height=10 border="0">
+2<img src="images/arorite2.jpg" width=17 height=10 border="0">
+3<img src="images/arorite2.jpg" width=17 height=10 border="0">
+4<img src="images/arorite2.jpg" width=17 height=10 border="0">
+5<img src="images/arorite2.jpg" width=17 height=10 border="0">
+6<img src="images/arorite2.jpg" width=17 height=10 border="0">
+7<img src="images/arorite2.jpg" width=17 height=10 border="0">
+</pre></td>
+<td valign=top>
+<pre>VOID NTAPI InitializeQueue(PDEVQUEUE pdq, PDRIVER_STARTIO StartIo)
+  {
+  InitializeListHead(&amp;pdq-&gt;head);
+  KeInitializeSpinLock(&amp;pdq-&gt;lock);
+  pdq-&gt;StartIo = StartIo;
+  pdq-&gt;stallcount = 1;
+  pdq-&gt;CurrentIrp = NULL;
+  KeInitializeEvent(&amp;pdq-&gt;evStop, NotificationEvent, FALSE);
+  pdq-&gt;abortstatus = (NTSTATUS) 0;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> We use an ordinary (noninterlocked) doubly-linked list to queue IRPs. We
+don't need to use an interlocked list because we'll always access it within the
+protection of our own spin lock.</li></p>
+
+<p><li> This spin lock guards access to the queue and other fields in the DEVQUEUE
+structure. It also takes the place of the global cancel spin lock for guarding nearly all of
+the cancellation process, thereby improving system performance.</li></p>
+
+<p><li> Each queue has its own associated <b>StartIo</b> function that we call
+automatically in the appropriate places.</li></p>
+
+<p><li> The stall counter indicates how many times something has requested that IRP
+delivery to StartIo be stalled. Initializing the counter to 1 means that the
+IRP_MN_START_DEVICE handler must call RestartRequests to release an IRP.</li></p>
+
+<p><li> The <b>CurrentIrp</b> field records the IRP most recently sent to the StartIo
+routine. Initializing this field to NULL indicates that the device is initially idle.</li></p>
+
+<p><li> We use this event to block <b>WaitForCurrentIrp</b> when necessary. We'll set
+this event inside StartNextPacket, which should always be called when the current IRP
+completes.</li></p>
+
+<p><li> We reject incoming IRPs in two situations. The first situation is after we
+irrevocably commit to removing the device, when we must start failing new IRPs with
+STATUS_DELETE_PENDING. The second situation is during a period of low power, when, depending on
+the type of device we're managing, we might choose to fail new IRPs with the
+STATUS_DEVICE_POWERED_OFF code. The <b>abortstatus</b> field records the status code we should use in
+rejecting IRPs in these situations.</li></p>
+</ol>
+
+<A NAME="198"><H3>Stalling the Queue</H3></A>
+
+<p>Stalling the IRP queue involves two DEVQUEUE functions:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+
+
+1<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+
+
+
+
+2<img src="images/arorite2.jpg" width=17 height=10 border="0">
+3<img src="images/arorite2.jpg" width=17 height=10 border="0">
+4<img src="images/arorite2.jpg" width=17 height=10 border="0">
+</pre></td>
+<td valign=top>
+<pre>VOID NTAPI StallRequests(PDEVQUEUE pdq)
+  {
+  InterlockedIncrement(&amp;pdq-&gt;stallcount);
+  }
+
+BOOLEAN NTAPI CheckBusyAndStall(PDEVQUEUE pdq)
+  {
+  KIRQL oldirql;
+  KeAcquireSpinLock(&amp;pdq-&gt;lock, &amp;oldirql);
+  BOOLEAN busy = pdq-&gt;CurrentIrp != NULL;
+  if (!busy)
+    InterlockedIncrement(&amp;pdq-&gt;stallcount);
+  KeReleaseSpinLock(&amp;pdq-&gt;lock, oldirql);
+  return busy;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> To stall requests, we just need to set the stall counter to a nonzero value.
+It's unnecessary to protect the increment with a spin lock because any device that might be
+racing with us to change the value will also be using an interlocked increment or
+decrement.</li></p>
+
+<p><li> Since CheckBusyAndStall needs to operate as an atomic function, we first take the
+queue's spin lock.</li></p>
+
+<p><li> <b>CurrentIrp</b> being non-NULL is the signal that the device is busy handling
+one of the requests from this queue.</li></p>
+
+<p><li> If the device is currently idle, this statement starts stalling the queue,
+thereby preventing the device from becoming busy later on.</li></p>
+</ol>
+
+<A NAME="199"><H3>Queuing IRPs</H3></A>
+
+<p>IRPs get added to the queue when a dispatch function calls <b>StartPacket</b>:</p>
+
+<P><table cellpadding=5 width="95%"><TR><TD VALIGN=TOP>
+<pre>
+
+
+
+1<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+2<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+
+
+
+
+3<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+4<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+
+
+
+
+
+
+
+5<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+
+6<img src="images/arorite2.jpg" width=17 height=10 border="0">
+</pre></td>
+<td valign=top>
+<PRE>
+VOID NTAPI StartPacket(PDEVQUEUE pdq, PDEVICE_OBJECT fdo,
+  PIRP Irp, PDRIVER_CANCEL cancel)
+  {
+  KIRQL oldirql;
+  KeAcquireSpinLock(&amp;pdq-&gt;lock, &amp;oldirql);
+  if (pdq-&gt;abortstatus)
+    {
+    KeReleaseSpinLock(&amp;pdq-&gt;lock, oldirql);
+    Irp-&gt;IoStatus.Status = pdq-&gt;abortstatus;
+    IoCompleteRequest(Irp, IO_NO_INCREMENT);
+    }
+  else if (pdq-&gt;CurrentIrp || pdq-&gt;stallcount)
+    {
+    IoSetCancelRoutine(Irp, cancel);
+    if (Irp-&gt;Cancel &amp;&amp; IoSetCancelRoutine(Irp, NULL))
+      {
+      KeReleaseSpinLock(&amp;pdq-&gt;lock, oldirql);
+      Irp-&gt;IoStatus.Status = STATUS_CANCELLED;
+      IoCompleteRequest(Irp, IO_NO_INCREMENT);
+      }
+  else
+      {
+      InsertTailList(&amp;pdq-&gt;head, &amp;Irp-&gt;Tail.Overlay.ListEntry);
+      KeReleaseSpinLock(&amp;pdq-&gt;lock, oldirql);
+      }
+  else
+    {
+    pdq-&gt;CurrentIrp = Irp;
+    KeReleaseSpinLock(&amp;pdq-&gt;lock, DISPATCH_LEVEL);
+    (*pdq-&gt;StartIo)(fdo, Irp);
+    KeLowerIrql(oldirql);
+    }
+  }</PRE>
+</TD></TR></TABLE>
+</P>
+
+<ol>
+<p><li> Acquiring the spin lock allows us to access fields in the DEVQUEUE without
+interference from the other support routines&#8212;principally StartNextPacket&#8212;that might
+be trying to access the same queue.</li></p>
+
+<p><li> As I described earlier, we sometimes need to reject IRPs on arrival. If <b>
+abortstatus</b> is nonzero, we just complete the request. Our caller will be returning
+STATUS_PENDING, so it's up to us to do the completion.</li></p>
+
+<p><li> If the device is currently busy, or if some other part of the driver has stalled
+this queue, we need to queue the IRP for later processing.</li></p>
+
+<p><li> We might be in race with an instance of <b>IoCancelIrp</b> that is trying to
+cancel this very IRP. We first install our own cancel routine in the IRP by using <b>IoSetCancelRoutine</b>, which performs an (atomic) interlocked exchange. Then we test the <b>Cancel</b> flag. If we find the Cancel flag set, our cancel routine might or might not have
+been called by now, depending on the exact order in which our code and IoCancelIrp executed
+their program steps. If our cancel routine <i>was</i> called, a second call to
+IoSetCancelRoutine will return NULL; we can then enqueue the IRP and rely on the cancel routine
+to immediately dequeue the IRP and complete it. If our cancel routine has not yet been called,
+it won't be possible for it to ever be called after the second invocation of
+IoSetCancelRoutine; we will complete the IRP now in this case.</li></p>
+
+<p><li> This is where we actually queue the IRP. The <b>Tail.Overlay.ListEntry</b> field
+of an IRP was designed for uses like this one.</li></p>
+
+<p><li> The last case is when the queue is in the READY state and the device is not
+currently busy. We set the <b>CurrentIrp</b> pointer in the DEVQUEUE, release the spin lock,
+and call the <b>StartIo</b> routine at DISPATCH_LEVEL.</li></p>
+</ol>
+
+<p>I'd like to discuss a pesky nonproblem in the above code. Programs that change
+CurrentIrp do so while owning our spin lock, so we can be sure there's no ambiguity in our
+test of CurrentIrp. The stall counter, on the other hand, can be incremented without the spin
+lock inside <b>StallRequests</b>. It should be obvious that the only potential problem occurs
+when the counter is being incremented from 0 to 1 more or less simultaneously with us, because
+we behave the same way no matter what nonzero value the counter might have. Consider the
+potential race with a call to StallRequests that will increment the counter from 0 to 1. If we
+beat the increment and find the counter 0, we'll go ahead and start a request. That's
+okay, because the caller of StallRequests is willing to have the device be busy. (If the caller
+weren't willing, it would have used CheckBusyAndStall instead.) If we find the counter
+already incremented, we'll queue the IRP, which is also consistent with what the caller of
+StallRequests intended.</p>
+
+<A NAME="200"><H3>Dequeuing IRPs</H3></A>
+
+<p>The function that dequeues most IRPs is <b>StartNextPacket</b>, which is called from a DPC
+routine:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+
+
+1<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+2<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+3<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+4<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+
+
+5<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+6<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+
+
+
+
+7<img src="images/arorite2.jpg" width=17 height=10 border="0">
+</pre></td>
+<td valign=top>
+<pre>PIRP NTAPI StartNextPacket(PDEVQUEUE pdq, PDEVICE_OBJECT fdo)
+  {
+  KIRQL oldirql;
+  KeAcquireSpinLock(&amp;pdq-&gt;lock, &amp;oldirql));
+  PIRP CurrentIrp = (PIRP) InterlockedExchangePointer
+    (&amp;pdq-&gt;CurrentIrp, NULL);
+  if (CurrentIrp)
+    KeSetEvent(&amp;pdq-&gt;evStop, 0, FALSE);
+  while (!pdq-&gt;stallcount
+    &amp;&amp; !pdq-&gt;abortstatus
+    &amp;&amp; !IsListEmpty(&amp;pdq-&gt;head))
+    {
+    PLIST_ENTRY next = RemoveHeadList(&amp;pdq-&gt;head);
+    PIRP Irp = CONTAINING_RECORD(next, IRP, Tail.Overlay.ListEntry);
+    if (!IoSetCancelRoutine(Irp, NULL))
+      {
+      InitializeListHead(&amp;Irp-&gt;Tail.Overlay.ListEntry);
+      continue;
+      }
+    pdq-&gt;CurrentIrp = Irp;
+    KeReleaseSpinLockFromDpcLevel(&amp;pdq-&gt;lock);
+    (*pdq-&gt;StartIo)(fdo, Irp);
+    KeLowerIrql(oldirql);
+    return CurrentIrp;
+    }
+  KeReleaseSpinLock(&amp;pdq-&gt;lock, oldirql);
+  return CurrentIrp;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> We first acquire the queue's spin lock so that we can muck about with the
+internal structure of the object without interference.</li></p>
+
+<p><li> We'll be returning the address of the current IRP as our return value, and we
+also want to set the <b>CurrentIrp</b> pointer to NULL. Because of the spin lock, we don't
+need to use an atomic operation to extract and nullify CurrentIrp, but doing so can't hurt
+either.</li></p>
+
+<p><li> Some routine might be waiting inside WaitForCurrentIrp for the current request to
+finish. This call to <b>KeSetEvent</b> will satisfy that wait.</li></p>
+
+<p><li> This series of tests determines whether we can and should dequeue a request. The
+queue must not be stalled. Neither can we be in the REJECTING state, in which we're
+rejecting new IRPs. Finally, the queue must contain a request before it makes sense to call <b>RemoveHeadList</b>.</li></p>
+
+<p><li> This code removes the oldest entry in our IRP queue.</li></p>
+
+<p><li> Nullifying the cancel routine pointer in the IRP will prevent IoCancelIrp from
+trying to cancel the IRP. It's possible that IoCancelIrp is in the process of trying to
+cancel this IRP on another CPU at this very moment, in which case we should get NULL as the
+return value from IoSetCancelRoutine. When CancelRequest gains control, it will need to acquire
+the queue's spin lock before proceeding further. At that point, it will blindly try to
+remove this IRP from whatever queue it happens to be on. Calling <b>InitializeListHead</b> on
+the IRP's own chaining field will make it safe for CancelRequest to do this when it
+eventually gains control of the spin lock and proceeds.</li></p>
+
+<p><li> This is where we finally pass the newly dequeued IRP to the <b>StartIo</b> routine for processing.</li></p>
+</ol>
+
+<p>The <b>RestartRequests</b> function balances a call to StallRequests or CheckBusyAndStall.
+It's complicated&#8212;very slightly&#8212;by the need to send the first IRP to the StartIo
+routine. Luckily, it can just call StartNextPacket:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>VOID NTAPI RestartRequests(PDEVQUEUE pdq, PDEVICE_OBJECT fdo)
+  {
+  if (InterlockedDecrement(&amp;pdq-&gt;stallcount) &gt; 0)
+    return;
+  StartNextPacket(pdq, fdo);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<A NAME="201"><H3>Cancelling IRPs</H3></A>
+
+<p>StartPacket registers a cancel routine supplied by its caller, which in turn simply
+delegates the work to the queue's <b>CancelRequest</b> function:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>VOID NTAPI CancelRequest(PDEVQUEUE pdq, PIRP Irp)
+  {
+  KIRQL oldirql = Irp-&gt;CancelIrql;
+  IoReleaseCancelSpinLock(DISPATCH_LEVEL);
+  KeAcquireSpinLockAtDpcLevel(&amp;pdq-&gt;lock);
+  RemoveEntryList(&amp;Irp-&gt;Tail.Overlay.ListEntry);
+  KeReleaseSpinLock(&amp;pdq-&gt;lock, oldirql);
+  Irp-&gt;IoStatus.Status = STATUS_CANCELLED;
+  IoCompleteRequest(Irp, IO_NO_INCREMENT);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>We're called while we own the global cancel spin lock, which we release almost
+immediately. After this everything is protected by the queue's spin lock instead. When
+IoCancelIrp called <b>IoAcquireCancelSpinLock</b> , it saved the previous interrupt request
+level (IRQL) value in the <b>CancelIrql</b> field of the IRP, and we need to eventually revert
+to that same IRQL; hence, we save it in the <b>oldirql</b> variable.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+The caller of IoCancelIrp is responsible for making sure that the IRP has not
+already been completed.</blockquote></div>
+</p>
+
+<p>IRPs can also be cancelled as a result of an IRP_MJ_CLEANUP, which we'll receive prior
+to an IRP_MJ_CLOSE. The DEVQUEUE <b>CleanupRequests</b> function is almost identical to the
+standard-model <b>DispatchCleanup</b> routine I showed you in the previous chapter. The only
+substantive difference between the two is that we only need to acquire the queue's spin
+lock:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+
+
+
+1<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+
+
+
+
+2<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+
+3<img src="images/arorite2.jpg" width=17 height=10 border="0">
+4<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+
+5<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+6<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+
+7<img src="images/arorite2.jpg" width=17 height=10 border="0">
+</pre></td>
+<td valign=top>
+<pre>VOID NTAPI CleanupRequests(PDEVQUEUE pdq, PFILE_OBJECT fop,
+  NTSTATUS status)
+  {
+  LIST_ENTRY cancellist;
+  InitializeListhead(&amp;cancellist);
+  KIRQL oldirql;
+  KeAcquireSpinLock(&amp;pdq-&gt;lock, &amp;oldirql);
+  PLIST_ENTRY first = &amp;pdq-&gt;head;
+  PLIST_ENTRY next;
+  for (next = first-&gt;Flink; next != first; )
+    {
+    PIRP Irp = CONTAINING_RECORD(next, IRP, Tail.Overlay.ListEntry);
+    PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
+    next = next-&gt;Flink;
+    if (fop &amp;&amp; stack-&gt;FileObject != fop)
+      continue;
+    if (!IoSetCancelRoutine(Irp, NULL))
+      continue;
+    RemoveEntryList(next);
+    InsertTailList(&amp;cancellist, next);
+    }
+  KeReleaseSpinLock(&amp;pdq-&gt;lock, oldirql);
+  while (!IsListEmpty(&amp;cancellist))
+    {
+    next = RemoveHeadList(&amp;cancellist);
+    PIRP Irp = CONTAINING_RECORD(next, IRP, Tail.Overlay.ListEntry);
+    Irp-&gt;IoStatus.Status = status;
+    IoCompleteRequest(Irp, IO_NO_INCREMENT);
+    }
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> Our strategy will be to move the IRPs that need to be cancelled into a private
+queue under protection of the queue's spin lock. Hence, we initialize the private queue and
+acquire the spin lock before doing anything else.</li></p>
+
+<p><li> This loop traverses the entire queue until we return to the list head. Note the
+absence of a loop increment step&#8212;the third clause in the <b>for</b> statement. I'll
+explain why none is desirable in a moment.</li></p>
+
+<p><li> If we're being called to help out with IRP_MJ_CLEANUP, the <b>fop</b> 
+argument is the address of a file object that is about to be closed. We're supposed to
+isolate the IRPs that pertain to the same file object, which requires us to first find the
+stack location.</li></p>
+
+<p><li> If we decide to remove this IRP from the queue, we won't thereafter have an
+easy way to find the next IRP in the main queue. We therefore perform the loop increment step
+here.</li></p>
+
+<p><li> This especially clever statement is due to Jamie Hanrahan. We need to worry that
+someone might be trying to cancel the IRP that we're currently looking at during this
+iteration. They could get only as far as the point where CancelRequest tries to acquire the
+spin lock. Before getting that far, however, they necessarily had to execute the statement
+inside IoCancelIrp that nullifies the cancel routine pointer. If we find that pointer NULL when
+<i>we</i> call <b>IoSetCancelRoutine</b> , therefore, we can be sure that someone really is
+trying to cancel this IRP. By simply skipping this IRP during this iteration, we allow the
+cancel routine to complete it later on.</li></p>
+
+<p><li> Here's where we take the IRP out of the main queue and put it in the private
+queue instead.</li></p>
+
+<p><li> Once we finish moving IRPs into the private queue, we can release our spin lock.
+Then we go ahead and cancel all the IRPs we moved.</li></p>
+</ol>
+
+<p>CleanupRequests can be called from elsewhere in the driver, by the way. For example, earlier
+I showed you a call from the IRP_MN_REMOVE_DEVICE handler, which supplied a NULL file object
+pointer (in order to select all IRPs) and a status code of STATUS_DELETE_PENDING.</p>
+
+<A NAME="202"><H3>Awaiting the Current IRP</H3></A>
+
+<p>The handler for IRP_MN_STOP_DEVICE might need to wait for the current IRP, if any, to finish
+by calling <b>WaitForCurrentIrp</b>:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+
+
+1<img src="images/arorite2.jpg" width=17 height=10 border="0">
+2<img src="images/arorite2.jpg" width=17 height=10 border="0">
+3<img src="images/arorite2.jpg" width=17 height=10 border="0">
+</pre></td>
+<td valign=top>
+<pre>VOID NTAPI WaitForCurrentIrp(PDEVQUEUE pdq)
+  {
+  KeClearEvent(&amp;pdq-&gt;evStop);
+  ASSERT(pdq-&gt;stallcount != 0);
+  KIRQL oldirql;
+  KeAcquireSpinLock(&amp;pdq-&gt;lock, &amp;oldirql);
+  BOOLEAN mustwait = pdq-&gt;CurrentIrp != NULL;
+  KeReleaseSpinLock(&amp;pdq-&gt;lock, oldirql);
+  if (mustwait)
+    KeWaitForSingleObject(&amp;pdq-&gt;evStop, Executive, KernelMode,
+      FALSE, NULL);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> StartNextPacket signals the <b>evStop</b> event each time it's called. We
+want to be sure that the wait we're about to perform doesn't complete because of a now
+stale signal, so we clear the event before doing anything else.</li></p>
+
+<p><li> It doesn't make sense to call this routine without first stalling the queue.
+Otherwise, StartNextPacket would just start the next packet if there were one, and the device
+would become busy again.</li></p>
+
+<p><li> If the device is currently busy, we'll wait on the <b>evStop</b> event until
+something calls StartNextPacket to signal that event. We need to protect our inspection of <b>CurrentIrp</b> with the spin lock because, in general, testing a pointer for NULL isn't an
+atomic event. If the pointer is NULL now, it can't change later because we've assumed
+that the queue is stalled.</li></p>
+</ol>
+
+<A NAME="203"><H3>Aborting Requests</H3></A>
+
+<p>Surprise removal of the device demands that we immediately halt every outstanding IRP that
+might try to touch the hardware. In addition, we want to make sure that all further IRPs get
+rejected. The <b>AbortRequests</b> function helps with these tasks:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>VOID NTAPI AbortRequests(PDEVQUEUE pdq, NTSTATUS status)
+  {
+  pdq-&gt;abortstatus = status;
+  CleanupRequests(pdq, NULL, status);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Setting <b>abortstatus</b> puts the queue into the REJECTING state so that all future IRPs
+will be rejected with whatever status value our caller supplied. Calling CleanupRequests at
+this point&#8212;with a NULL file object pointer so that CleanupRequests will process the entire
+queue&#8212;empties the queue.</p>
+
+<p>We don't dare try to do anything with the IRP, if any, that's currently active on
+the hardware. Drivers that don't use the hardware abstraction layer (HAL) to access the
+hardware&#8212;USB drivers, for example, which rely on the hub and host-controller
+drivers&#8212;can count on another driver to fail the current IRP. Drivers that use the HAL
+might, however, need to worry about hanging the system or, at the very least, leaving an IRP in
+limbo because the nonexistent hardware can't generate the interrupt that would let the IRP
+finish. To deal with situations like this, you call <b>AreRequestsBeingAborted</b>:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>NTSTATUS AreRequestsBeingAborted(PDEVQUEUE pdq)
+  {
+  return pdq-&gt;abortstatus;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>It would be silly, by the way, to use the queue spin lock in this routine. Suppose that we
+were to capture the instantaneous value of <b>abortstatus</b> in a thread-safe and
+multiprocessor-safe way. The value we return could become obsolete as soon as we release the
+spin lock.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+If your device might be removed in such a way that an outstanding request
+simply hangs, you should also have a watchdog timer of some sort running that will let you kill
+the IRP after some period of time. See the &quot;<A HREF="ch09g.htm#324">Watchdog Timers</A>&quot; section in Chapter 9,
+&quot;Specialized Topics.&quot;</blockquote></div>
+</p>
+
+<p>Sometimes we need to undo the effect of a previous call to AbortRequest. <b>
+AllowRequests</b> lets us do that:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>VOID NTAPI AllowRequests(PDEVQUEUE pdq)
+  {
+  pdq-&gt;abortstatus = (NTSTATUS) 0;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+</BODY>
+</HTML>
+
+
+
+
+

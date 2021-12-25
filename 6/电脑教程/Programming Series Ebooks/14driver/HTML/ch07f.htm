@@ -1,0 +1,1442 @@
+<HTML>
+<HEAD>
+<TITLE>Direct Memory Access</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch07e.htm">[Previous]</A> <A HREF="ch08a.htm">[Next]</a>
+</p>
+
+<A NAME="250"><H1>Direct Memory Access</H1></A>
+
+<p>Windows 2000 supports direct memory access transfers based on the abstract model of a
+computer depicted in Figure 7-6. In this model, the computer is considered to have a collection
+of <i>map registers</i> that translate between physical CPU address and bus addresses. Each map
+register holds the address of one physical page frame. Hardware accesses memory for reading or
+writing by means of a &quot;logical,&quot; or bus-specific, address. The map registers play the
+same role as page table entries for software by allowing hardware to use different numeric
+values for their addresses than the CPU understands.<br>
+
+<p>
+<A HREF="javascript:fullSize('F07wi06x.htm')"> <img src="images/F07wi06.JPG" width=404 height=386 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 7-6.</b> <i>Abstract computer model for DMA transfers.</i><!--/caption-->
+</p>
+
+
+<p>Some CPUs, such as the Alpha, have actual hardware map registers. One of the steps in
+initializing a DMA transfer&#8212;specifically, the MapTransfer step I'll discuss
+presently&#8212;reserves some of these registers for your use. Other CPUs, such as the
+Intel x86, do not have map registers, but you write your driver as if they did. The MapTransfer
+step on such a computer might end up reserving use of physical memory buffers that belong to
+the system, in which case the DMA operation will proceed using the reserved buffer. Obviously,
+something has to copy data to or from the DMA buffer before or after the transfer. In certain
+cases&#8212;for example, when dealing with a bus-master device that has scatter/gather
+capability&#8212;the MapTransfer phase might do all of nothing on an architecture without map
+registers.</p>
+<p>The Windows 2000 kernel uses a data structure known as an <i>adapter object</i> to describe the
+DMA characteristics of a device and to control access to potentially shared resources, such as
+system DMA channels and map registers. You get a pointer to an adapter object by calling <b>
+IoGetDmaAdapter</b> during your StartDevice processing. The adapter object has a pointer to a
+structure named <b>DmaOperations</b> that, in turn, contains pointers to all the other
+functions you need to call. See Table 74. These functions take the place of global functions
+(such as <b>IoAllocateAdapter</b>, <b>IoMapTransfer</b>, and the like) that you would have used
+in previous versions of Windows NT. In fact, the global names are now macros that invoke the
+DmaOperations functions.</p>
+
+<b>Table 7-4.</b> <i>DmaOperations function pointers for DMA helper routines.</i></p>
+<table cellpadding="5" width="95%">
+<tr><th><i>DmaOperations Function Pointer</i></th><th><i>Description</i></th></tr>
+<tr><td valign="top">PutDmaAdapter</td><td valign="top">Destroys adapter object</td></tr>
+<tr><td valign="top">AllocateCommonBuffer</td><td valign="top">Allocates a common buffer</td></tr>
+<tr><td valign="top">FreeCommonBuffer</td><td valign="top">Releases a common buffer</td></tr>
+<tr><td valign="top">AllocateAdapterChannel</td><td valign="top">Reserves adapter and map registers</td></tr>
+<tr><td valign="top">FlushAdapterBuffers</td><td valign="top">Flushes intermediate data buffers after transfer</td></tr>
+<tr><td valign="top">FreeAdapterChannel</td><td valign="top">Releases adapter object and map registers</td></tr>
+<tr><td valign="top">FreeMapRegisters</td><td valign="top">Releases map registers only</td></tr>
+<tr><td valign="top">MapTransfer</td><td valign="top">Programs one stage of a transfer</td></tr>
+<tr><td valign="top">GetDmaAlignment</td><td valign="top">Gets address alignment required for adapter</td></tr>
+<tr><td valign="top">ReadDmaCounter</td><td valign="top">Determines residual count</td></tr>
+<tr><td valign="top">GetScatterGatherList</td><td valign="top">Reserves adapter and construct scatter/gather list</td></tr>
+<tr><td valign="top">PutScatterGatherList</td><td valign="top">Releases scatter/gather list</td></tr>
+</table>
+
+<A NAME="251"><H2>Transfer Strategies</H2></A>
+
+<p>How you perform a DMA transfer depends on several factors:</p>
+
+<ul>
+<p><li> If your device has bus-mastering capability, it has the necessary electronics to access
+main memory if you tell it a few basic facts, such as where to start, how many units of data to
+transfer, whether you're performing an input or an output operation, and so on. You'll
+consult with your hardware designers to sort out these details, or else you'll be working
+from a specification that tells you what to do at the hardware level.</li></p>
+
+<p><li> A device with scatter/gather capability can transfer large blocks of data to or from
+discontiguous areas of physical memory. Using scatter/gather is advantageous for software
+because it eliminates the need to acquire large blocks of contiguous page frames. Pages can
+simply be locked wherever they're found in physical memory, and the device can be told
+where they are.</li></p>
+
+<p><li> If your device is not a bus master, you'll be using the system DMA controller on the
+motherboard of the computer. This style of DMA is sometimes called <i>slave DMA</i>. The system
+DMA controller associated with the ISA bus has some limitations on what physical memory it can
+access and how large a transfer it can perform without reprogramming. The controller for an
+EISA bus lacks these limits. You won't have to know&#8212;at least, not in Windows
+2000&#8212;which type of bus your hardware plugs in to because the operating system is able to
+take account of these different restrictions automatically.</li></p>
+
+<p><li> Ordinarily, DMA operations involve programming hardware map registers or copying data
+either before or after the operation. If your device needs to read or write data continuously,
+you don't want to do either of these steps for each I/O request&#8212;they might slow down
+processing too much to be acceptable in your particular situation. You can, therefore, allocate
+what's known as a <i>common buffer</i> that your driver and your device can both
+simultaneously access at any time.</li></p>
+</ul>
+
+
+<p>Notwithstanding the fact that many details will be different depending on how these four
+factors interplay, the steps you perform will have many common features. Figure 7-7 illustrates
+the overall operation of a transfer. You start the transfer in your StartIo routine by
+requesting ownership of your adapter object. Ownership has meaning only if you're sharing a
+system DMA channel with other devices, but the Windows 2000 DMA model demands that you perform
+this step anyway. When the I/O Manager is able to grant you ownership, it allocates some map
+registers for your temporary use and calls back to an <i>adapter control</i> routine you
+provide. In your adapter control routine, you perform a <i>transfer mapping</i> step to arrange
+the first (maybe the only) stage of the transfer. Multiple stages can be necessary if
+sufficient map registers aren't available; your device must be capable of handling any
+delay that might occur between stages.</p>
+
+<p>
+<A HREF="javascript:fullSize('F07wi07x.htm')"> <img src="images/F07wi07.JPG" width=404 height=250 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 7-7.</b> <i>Flow of ownership during DMA.</i><!--/caption-->
+</p>
+
+
+<p>Once your adapter control routine has initialized the map registers for the first stage, you
+signal your device to begin operation. Your device will instigate an interrupt when this
+initial transfer completes, whereupon you'll schedule a DPC. The DPC routine will initiate
+another staged transfer, if necessary, or else it will complete the request.</p>
+
+<p>Somewhere along the way, you'll release the map registers and the adapter object. The
+timing of these two events is one of the details that differs based on the factors I summarized
+earlier in this section.</p>
+
+<A NAME="252"><H2>Performing DMA Transfers</H2></A>
+
+<p>Now I'll go into detail about the mechanics of what's often called a <i>
+packet-based</i> DMA transfer, wherein you transfer a discrete amount of data by using the data
+buffer that accompanies an I/O request packet. Let's start simply and suppose that you face
+what will be a very common case nowadays: your device is a PCI bus master but does not have
+scatter/gather capability.</p>
+
+<p>To start with, when you create your device object, you'd ordinarily indicate that you
+want to use the direct method of data buffering by setting the DO_DIRECT_IO flag. You'd
+choose the direct method because you'll eventually be passing the address of a memory
+descriptor list as one of the arguments to the MapTransfer function you'll be calling. This
+choice poses a bit of a problem with regard to buffer alignment, though. Unless the application
+uses the FILE_FLAG_NO_BUFFERING flag in its call to <b>CreateFile</b>, the I/O Manager
+won't enforce the device object's <b>Alignment-Requirement</b> on user-mode data
+buffers. (It doesn't enforce the requirement for a kernel-mode caller at all except in the
+checked build.) If your device or the HAL requires DMA buffers to begin on some particular
+boundary, therefore, you might end up copying a small portion of the user data to a correctly
+aligned internal buffer to meet the alignment requirement&#8212;either that or fail any request
+that has a misaligned buffer.</p>
+
+<p>In your StartDevice function, you create an adapter object by using code like the
+following:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>INTERFACE_TYPE bustype;
+ULONG junk;
+IoGetDeviceProperty(pdx-&gt;Pdo, DevicePropertyLegacyBusType,
+  sizeof(bustype), &amp;bustype, &amp;junk);
+
+DEVICE_DESCRIPTION dd;
+RtlZeroMemory(&amp;dd, sizeof(dd));
+dd.Version = DEVICE_DESCRIPTION_VERSION;
+dd.Master = TRUE;
+dd.InterfaceType = bustype;
+dd.MaximumLength = MAXTRANSFER;
+dd.Dma32BitAddresses = TRUE;
+
+pdx-&gt;AdapterObject = IoGetDmaAdapter(pdx-&gt;Pdo, &amp;dd, &amp;pdx-&gt;nMapRegisters);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The last statement in this code fragment is the important one. <b>IoGetDmaAdapter</b> will
+communicate with the bus driver or the HAL to create an adapter object, whose address it
+returns to you. The first parameter (<b>pdx-&gt;Pdo</b>) identifies the physical device object
+(PDO) for your device. The second parameter points to a DEVICE_DESCRIPTION structure 
+that you initialize to describe the DMA characteristics of your
+device. The last parameter indicates where the system should store the maximum number of map
+registers you'll ever be allowed to attempt to reserve during a single transfer. You'll
+notice that I reserved two fields in the device extension (<b>AdapterObject</b> and <b>
+nMapRegisters</b>) to receive the two outputs from this function.</p>
+
+<p>In your <b>StopDevice</b> function, you destroy the adapter object with this call:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>VOID StopDevice(...)
+  {
+  ...
+  if (pdx-&gt;AdapterObject)
+    (*pdx-&gt;AdapterObject-&gt;DmaOperations-&gt;PutDmaAdapter)
+      (pdx-&gt;AdapterObject);
+  pdx-&gt;AdapterObject = NULL;
+  ...
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>You won't expect to receive an official DMA resource when your device is a bus master.
+That is, your resource extraction loop won't need a CmResourceTypeDma case label. The PnP
+Manager doesn't assign you a DMA resource because your hardware itself contains all the
+necessary electronics for performing DMA transfers, so nothing additional needs to be assigned
+to you.</p>
+
+<p>Previous versions of Windows NT relied on a service function named <b>HalGetAdapter</b> to
+acquire the DMA adapter object. That function still exists for compatibility, but new WDM
+drivers should call IoGetDmaAdapter instead. The difference between the two is that
+IoGetDmaAdapter first issues an IRP_MN_QUERY_INTERFACE Plug and Play IRP to determine whether
+the physical device object supports the GUID_BUS_INTERFACE_STANDARD direct call 
+interface. If so, IoGetDmaAdapter uses that interface to
+allocate the adapter object. If not, it simply calls HalGetAdapter.</p>
+
+<p>Table 7-5 summarizes the fields in the DEVICE_DESCRIPTION structure you pass to
+IoGetDmaAdapter. The only fields that are relevant for a bus-master device are those shown in
+the preceding StartDevice code fragment. The HAL might or might not need to know whether your
+device recognizes 32-bit or 64-bit addresses&#8212;the Intel x86 HAL uses this flag only when
+you allocate a common buffer, for example&#8212;but you should indicate that capability anyway
+to retain portability. By zeroing the entire structure, we set <b>ScatterGather</b> to FALSE.
+Since we won't be using a system DMA channel, none of <b>DmaChannel</b>, <b>DmaPort</b>,
+<b>DmaWidth</b>, <b>DemandMode</b>, <b>AutoInitialize</b>, <b>IgnoreCount</b>, and <b>
+DmaSpeed</b> will be examined by the routine that creates our adapter object.</p>
+
+<p><b>Table 7-5.</b> <i>Device description structure used with IoGetDmaAdapter.</i></P>
+
+
+
+<table cellpadding="5" width="95%">
+<tr><th><i>Field Name</i></th><th><i>Description</i></th><th><i>Relevant To Device</i></th></tr>
+<tr><td valign="top">Version</td><td valign="top">Version number of structure&#8212;initialize to DEVICE_DESCRIPTION_VERSION</td><td valign="top">All</td></tr>
+<tr><td valign="top">Master</td><td valign="top">Bus-master device&#8212;set based on your knowledge of device</td><td valign="top">All</td></tr>
+<tr><td valign="top">ScatterGather</td><td valign="top">Device supports scatter/gather list&#8212;set based on your knowledge of device</td><td valign="top">All</td></tr>
+<tr><td valign="top">DemandMode</td><td valign="top">Use system DMA controller's demand mode&#8212;set based on your knowledge of device</td><td valign="top">Slave</td></tr>
+<tr><td valign="top">AutoInitialize</td><td valign="top">Use system DMA controller's autoinitialize mode&#8212;set based on your knowledge of device</td><td valign="top">Slave</td></tr>
+<tr><td valign="top">Dma32BitAddresses</td><td valign="top">Can use 32-bit physical addresses</td><td valign="top">Common buffer</td></tr>
+<tr><td valign="top">IgnoreCount</td><td valign="top">Controller doesn't maintain an accurate transfer count&#8212;set based on your knowledge of device</td><td valign="top">Slave</td></tr>
+<tr><td valign="top">Reserved1</td><td valign="top">Reserved&#8212;must be FALSE</td><td valign="top">&nbsp;</td></tr>
+<tr><td valign="top">Dma64BitAddresses</td><td valign="top">Can use 64-bit physical addresses</td><td valign="top">Common buffer</td></tr>
+<tr><td valign="top">DoNotUse2</td><td valign="top">Reserved&#8212;must be 0</td><td valign="top">&nbsp;</td></tr>
+<tr><td valign="top">DmaChannel</td><td valign="top">DMA channel number&#8212;initialize from Channel attribute of resource descriptor</td><td valign="top">Slave</td></tr>
+<tr><td valign="top">InterfaceType</td><td valign="top">Bus type&#8212;use result of IoGetDeviceProperty call to get DevicePropertyLegacyBusType</td><td valign="top">All</td></tr>
+<tr><td valign="top">DmaWidth</td><td valign="top">Width of transfers&#8212;set based on your knowledge of device to Width8Bits, Width16Bits, or Width32Bits</td><td valign="top">Slave</td></tr>
+<tr><td valign="top">DmaSpeed</td><td valign="top">Speed of transfers&#8212;set based on your knowledge of device to Compatible, TypeA, TypeB, TypeC, or TypeF</td><td valign="top">Slave</td></tr>
+<tr><td valign="top">MaximumLength</td><td valign="top">Maximum length of a single transfer&#8212;set based on your knowledge of device (and round up to a multiple of PAGE_SIZE)</td><td valign="top">All</td></tr>
+<tr><td valign="top">DmaPort</td><td valign="top">Microchannel-type bus port number&#8212;initialize from Port attribute of resource descriptor</td><td valign="top">Slave</td></tr>
+</table>
+
+<p>To initiate an I/O operation, your StartIo routine first has to reserve the adapter object
+by calling the object's <b>AllocateAdapterChannel</b> routine. One of the arguments to
+AllocateAdapterChannel is the address of an adapter control routine that the I/O Manager will
+call when the reservation has been accomplished. Here's an example of code you would use to
+prepare and execute the call to AllocateAdapterChannel:</p>
+
+<p>
+<table cellpadding=5 width="95%">
+<tr><td valign=top>
+<pre>
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+
+
+
+
+
+
+
+
+
+2 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+
+
+3 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+4 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+
+
+
+
+5 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+</pre>
+</td>
+<td valign=top>
+<pre>
+typedef struct _DEVICE_EXTENSION {
+  ...
+  PADAPTER_OBJECT AdapterObject; // device's adapter object
+  ULONG nMapRegisters; // max # map registers
+  ULONG nMapRegistersAllocated; // # allocated for this xfer
+  ULONG numxfer;       // # bytes transferred so far
+  ULONG xfer;          // # bytes to transfer during this stage
+  ULONG nbytes;        // # bytes remaining to transfer
+  PVOID vaddr;         // virtual address for current stage
+  PVOID regbase;       // map register base for this stage
+  ...
+  } DEVICE_EXTENSION, *PDEVICE_EXTENSION;
+
+VOID StartIo(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+  NTSTATUS status = IoAcquireRemoveLock(&amp;pdx-&gt;RemoveLock, Irp);
+  if (!NT_SUCCESS(status))
+    {
+    CompleteRequest(Irp, status, 0);
+    return;
+    }
+
+  PMDL mdl = Irp-&gt;MdlAddress;
+  pdx-&gt;numxfer = 0;
+  pdx-&gt;xfer = pdx-&gt;nbytes = MmGetMdlByteCount(mdl);
+  pdx-&gt;vaddr = MmGetMdlVirtualAddress(mdl);
+
+  ULONG nregs = ADDRESS_AND_SIZE_TO_SPAN_PAGES(pdx-&gt;vaddr,
+    pdx-&gt;nbytes);
+  if (nregs &gt; pdx-&gt;nMapRegisters)
+    {
+    nregs = pdx-&gt;nMapRegisters;
+    pdx-&gt;xfer = nregs * PAGE_SIZE - MmGetMdlByteOffset(mdl);
+    }
+  pdx-&gt;nMapRegistersAllocated = nregs;
+
+  status = (*pdx-&gt;AdapterObject-&gt;DmaOperations
+    -&gt;AllocateAdapterChannel)(pdx-&gt;AdapterObject, fdo, nregs,
+    (PDRIVER_CONTROL) AdapterControl, pdx);
+  if (!NT_SUCCESS(status))
+    {
+    IoReleaseRemoveLock(&amp;pdx-&gt;RemoveLock, Irp);
+    CompleteRequest(Irp, status, 0);
+    StartNextPacket(&amp;pdx-&gt;dqReadWrite, fdo);
+    }
+  }
+</pre>
+</td></tr></table>
+</p>
+
+<ol>
+<p><li> Your device extension needs several fields related to DMA transfers. The comments
+indicate the uses for these fields.</li></p>
+
+<p><li> This is the appropriate time to claim the remove lock to forestall PnP removal
+events during the pendency of the I/O operation. The balancing call to <b>
+IoReleaseRemoveLock</b> occurs in the DPC routine that ultimately completes this request.</li></p>
+
+<p><li> These few statements initialize fields in the device extension for the first
+stage of the transfer.</li></p>
+
+<p><li> Here, we calculate how many map registers we'll ask the system to reserve for
+our use during this transfer. We begin by calculating the number required for the whole
+transfer. The ADDRESS_AND_SIZE_TO_SPAN_PAGES macro takes into account that the buffer might
+span a page boundary. The number we end up with might, however, exceed the maximum allowed us
+by the original call to IoGetDmaAdapter. In that case, we need to perform the transfer in
+multiple stages. We therefore scale back the first stage so as to use only the allowable number
+of map registers. We also need to remember how many map registers we're allocating (in the
+<b>nMapRegistersAllocated</b> field of the device extension) so that we can release exactly the
+right number later on.</li></p>
+
+<p><li> In this call to <b>AllocateAdapterChannel</b>, we specify the address of the
+adapter object, the address of our own device object, the calculated number of map registers,
+and the address of our adapter control procedure. The last argument (<b>pdx</b>) is a context
+parameter for the adapter control procedure.</li></p>
+</ol>
+
+<p>In general, several devices can share a single adapter object. Adapter object sharing
+happens in real life only when you rely on the system DMA controller; bus-master devices own
+dedicated adapter objects. But, since you don't need to know how the system decides when to
+create adapter objects, you shouldn't make any assumptions about it. In general, then, the
+adapter object might be busy when you call AllocateAdapterChannel, and your request might
+therefore be put into a queue until the adapter object becomes available. Also, all DMA devices
+on the computer share a set of map registers. Further delay can ensue until the requested
+number of registers becomes available. Both of these delays occur inside
+AllocateAdapterChannel, which calls your adapter control procedure when the adapter object and
+all the map registers you asked for are available.</p>
+
+<p>Even though a PCI bus-mastering device owns its own adapter object, if the device doesn't
+have scatter/gather capability, it requires the use of map registers. On CPUs like Alpha that
+have map registers, AllocateAdapterChannel will reserve them for your use. On CPUs like Intel
+that don't have map registers, AllocateAdapterChannel will reserve use of a software
+surrogate, such as a contiguous area of physical memory.<br>
+</p>
+
+<p><div class="sidebar"><blockquote>
+<p><b>What Gets Queued in AllocateAdapterChannel?</b></p>
+The object that AllocateAdapterChannel puts into queues to wait for the adapter object or the
+necessary number of map registers is your device object. Some device architectures allow you to
+perform more than one DMA transfer simultaneously. Since you can put only one device object
+into an adapter object queue at a time (without crashing the system, that is), you need to
+create dummy device objects to take advantage of that multiple-DMA capability.
+</blockquote></div>
+</p>
+
+<p>As I've been discussing, AllocateAdapterChannel eventually calls your adapter control
+routine (at DISPATCH_LEVEL, just like your StartIo routine does). You have two tasks to
+accomplish. First, you should call the adapter object's MapTransfer routine to prepare the
+map registers and other system resources for the first stage of your I/O operation. In the case
+of a bus-mastering device, MapTransfer will return a logical address that represents the
+starting point for the first stage. This logical address might be the same as a CPU physical
+memory address, and it might not be. All you need to know about it is that it's the right
+address to program into your hardware. MapTransfer might also trim the length of your request
+to fit the map registers it's using, which is why you need to supply the address of the
+variable that contains the current stage length as an argument.</p>
+
+<p>Your second task is to perform whatever device-dependent steps are required to inform your
+device of the physical address and to start the operation on your hardware:</p>
+
+<p>
+<table cellpadding=5 width="95%">
+<tr><td valign=top>
+<pre>
+
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+2 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+3 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+4 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+5 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+6 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+7 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+</pre>
+</td>
+<td valign=top>
+<pre>
+IO_ALLOCATION_ACTION AdapterControl(PDEVICE_OBJECT fdo,
+  PIRP junk, PVOID regbase, PDEVICE_EXTENSION pdx)
+  {
+PIRP Irp = GetCurrentIrp(&amp;pdx-&gt;dqReadWrite);
+  PMDL mdl = Irp-&gt;MdlAddress;
+  PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
+BOOLEAN isread = stack-&gt;MajorFunction == IRP_MJ_READ;
+pdx-&gt;regbase = regbase;
+KeFlushIoBuffers(mdl, isread, TRUE);
+PHYSICAL_ADDRESS address =
+    (*pdx-&gt;AdapterObject-&gt;DmaOperations-&gt;MapTransfer)
+    (pdx-&gt;AdapterObject, mdl, regbase, pdx-&gt;vaddr, &amp;pdx-&gt;xfer,
+    !isread);
+...
+return DeallocateObjectKeepRegisters;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> The second argument&#8212;which I named <b>junk</b>&#8212;to <b>AdapterControl</b> 
+is whatever was in the CurrentIrp field of the device object when you called
+AllocateAdapterChannel. When you use a DEVQUEUE for IRP queuing, you need to ask the DEVQUEUE
+object what IRP is current. If you use the standard model, wherein IoStartPacket and
+IoStartNextPacket manage the queue, <b>junk</b> would be the right IRP. In that case, I'd
+have named it <b>Irp</b> instead.</li></p>
+
+<p><li> There are few differences between code to handle input and output operations
+using DMA, so it's often convenient to handle both operations in a single subroutine. This
+line of code examines the major function code for the IRP to decide whether a read or write is
+occurring.</li></p>
+
+<p><li> The <b>regbase</b> argument to this function is an opaque handle that identifies
+the set of map registers that have been reserved for your use during this operation. You'll
+need this value later, so you should save it in your device extension.</li></p>
+
+<p><li><b>KeFlushIoBuffers</b> makes sure that the contents of all processor memory caches for
+the memory buffer you're using are flushed to memory. The third argument (TRUE) indicates
+that you're flushing the cache in preparation for a DMA operation. The CPU architecture
+might require this step because, in general, DMA operations proceed directly to or from memory
+without necessarily involving the caches.</li>
+
+<p><li> The <b>MapTransfer</b> routine programs the DMA hardware for one stage of a
+transfer and returns the physical address where the transfer should start. Notice that you
+supply the address of an MDL as the second argument to this function. Since you need an MDL at
+this point, you would ordinarily have opted for the DO_DIRECT_IO buffering method when you
+first created your device object, and the I/O Manager would therefore have automatically
+created the MDL for you. You also pass along the map register base address (<b>regbase</b>).
+You indicate which portion of the MDL is involved in this stage of the operation by supplying a
+virtual address (<b>pdx-&gt;vaddr</b>) and a byte count (<b>pdx-&gt;xfer</b>). MapTransfer will
+use the virtual address argument to calculate an offset into the buffer area, from which it can
+determine the physical page numbers containing your data.</li></p>
+
+<p><li> This is the point at which you program your hardware in the 
+device-specific way that is required. You might, for example, use one of the WRITE_<i>Xxx</i> HAL
+routines to send the physical address and byte count values to registers on your card, and you
+might thereafter strobe some command register to begin transferring data.</li></p>
+
+<p><li> We return the constant <b>DeallocateObjectKeepRegisters</b> to indicate that
+we're done using the adapter object but are still using the map registers. In this
+particular example (PCI bus master), there will never be any contention for the adapter object
+in the first place, so it hardly matters that we've released the adapter object. In other
+bus-mastering situations, though, we might be sharing a DMA controller with other devices.
+Releasing the adapter object allows those other devices to begin transfers by using a disjoint
+set of map registers from the ones we're still using.</li></p>
+</ol>
+
+<p>An interrupt usually occurs shortly after you start the transfer, and the interrupt service
+routine usually requests a DPC to deal with completion of the first stage of the transfer. Your
+DPC routine would look something like this:</p>
+
+
+<p>
+<table cellpadding=5 width="95%">
+<tr><td valign=top>
+<pre>
+
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+2 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+3 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+4 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+5 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+6 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+7 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+8 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+</pre>
+</td>
+<td valign=top>
+<pre>
+VOID DpcForIsr(PKDPC Dpc, PDEVICE_OBJECT fdo, PIRP junk, PVOID Context)
+  {
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+PIRP Irp = GetCurrentIrp(&amp;pdx-&gt;dqReadWrite);
+  PMDL mdl = Irp-&gt;MdlAddress;
+  BOOLEAN isread = IoGetCurrentIrpStackLocation(Irp)
+    -&gt;MajorFunction == IRP_MJ_READ;
+  (*pdx-&gt;AdapterObject-&gt;DmaOperations-&gt;FlushAdapterBuffers)
+    (pdx-&gt;AdapterObject, mdl, pdx-&gt;regbase, pdx-&gt;vaddr,
+    pdx-&gt;xfer, !isread);
+  pdx-&gt;nbytes -= pdx-&gt;xfer;
+  pdx-&gt;numxfer += pdx-&gt;xfer;
+  NTSTATUS status = STATUS_SUCCESS;
+  ...
+  if (pdx-&gt;nbytes &amp;&amp; NT_SUCCESS(status))
+    {
+    pdx-&gt;vaddr = (PVOID) ((PUCHAR) pdx-&gt;vaddr + pdx-&gt;xfer);
+    pdx-&gt;xfer = pdx-&gt;nbytes;
+    ULONG nregs = ADDRESS_AND_SIZE_TO_SPAN_PAGES(pdx-&gt;vaddr,
+      pdx-&gt;nbytes);
+    if (nregs &gt; pdx-&gt;nMapRegistersAllocated)
+      {
+      nregs = pdx-&gt;nMapRegistersAllocated;
+      pdx-&gt;xfer = nregs * PAGE_SIZE;
+      }
+    PHYSICAL_ADDRESS address =
+      (*pdx-&gt;AdapterObject-&gt;DmaOperations-&gt;MapTransfer)
+      (pdx-&gt;AdapterObject, mdl, pdx-&gt;regbase, pdx-&gt;vaddr,
+      pdx-&gt;xfer, !isread);
+    ...
+    }
+  else
+    {
+    ULONG numxfer = pdx-&gt;numxfer;
+    (*pdx-&gt;AdapterObject-&gt;DmaOperations-&gt;FreeMapRegisters)
+      (pdx-&gt;AdapterObject, pdx-&gt;regbase, 
+      pdx-&gt;nMapRegistersAllocated);
+    IoReleaseRemoveLock(&amp;pdx-&gt;RemoveLock, Irp);
+    StartNextPacket(&amp;pdx-&gt;dqReadWrite, fdo);
+    CompleteRequest(Irp, status, numxfer);
+    }
+  }
+</pre>
+</td></tr></table>
+</p>
+
+<ol>
+<p><li> When you use a DEVQUEUE for IRP queuing, you rely on the queue object to keep
+track of the current IRP.</li></p>
+
+<p><li> The <b>FlushAdapterBuffers</b> routine handles the situation in which the
+transfer required use of intermediate buffers owned by the system. If you've done an input
+operation that spanned a page boundary, the input data is now sitting in an intermediate buffer
+and needs to be copied to the user-mode buffer.</li></p>
+
+<p><li> Here, we update the residual and cumulative data counts after the transfer stage
+that just completed.</li></p>
+
+<p><li> At this point, you determine whether the current stage of the transfer completed
+successfully or with an error. You might, for example, read a status port or inspect the
+results of a similar operation performed by your interrupt routine. In this example, I set the
+<b>status</b> variable to STATUS_SUCCESS with the expectation that you'd change it 
+if you discovered an error here.</li></p>
+
+<p><li> If the transfer hasn't finished yet, you need to program another stage. The
+first step in this process is to calculate the virtual address of the next portion of the
+user-mode buffer. Bear in mind that this calculation is merely working with a
+number&#8212;we're not actually trying to access memory by using this virtual address.
+Accessing the memory would be a bad idea, of course, because we're currently executing in
+an arbitrary thread context.</li></p>
+
+<p><li> The next few statements are almost identical to the ones we performed in the
+first stage for StartIo and AdapterControl. The end result will be a logical address that can
+be programmed into your device. It might or might not correspond to a physical address as
+understood by the CPU. One slight wrinkle is that we're constrained to use only as many map
+registers as were allocated by the adapter control routine; StartIo saved that number in the
+<b>nMapRegistersAllocated</b> field of the device extension.</li></p>
+
+<p><li> If the entire transfer is now complete, we need to release the map registers
+we've been using.</li></p>
+
+<p><li> The remaining few statements in the DPC routine handle the mechanics of
+completing the IRP that got us here in the first place. We release the remove lock to balance
+the acquisition that we did inside StartIo.</li></p>
+</ol>
+
+<A NAME="253"><H3>Transfers Using Scatter/Gather Lists</H3></A>
+
+<p>If your hardware has scatter/gather support, the system has a much easier time doing DMA
+transfers to and from your device. The scatter/gather capability permits the device to perform
+a transfer involving pages that aren't contiguous in physical memory.</p>
+
+<p>Your StartDevice routine creates its adapter object in just about the same way I've already
+discussed, except (of course) that you'll set the <b>ScatterGather</b> flag to TRUE.</p>
+
+<p>The traditional method&#8212;that is, the method you would have used in previous versions of
+Windows NT&#8212;to program a DMA transfer involving scatter/gather functionality is practically
+identical to the packet-based example considered in the previous section, &quot;<A HREF="ch07f.htm#252">Performing DMA Transfers</A>.&quot; The only difference is that instead of making one call to MapTransfer for each
+stage of the transfer, you need to make multiple calls. Each call gives you the information you
+need for a single element in a <i>scatter/gather list</i> that contains a physical address and
+length. When you're done with the loop, you can send the scatter/gather list to your device
+by using some device-specific method, and you can then initiate the transfer.</p>
+
+<p>I'm going to make some assumptions about the framework into which you'll fit the
+construction of a scatter/gather list. First, I'll assume that you've defined a
+manifest constant named <b>MAXSG</b> that represents the maximum number of scatter/gather list
+elements your device can handle. To make life as simple as possible, I'm also going to
+assume that you can just use the SCATTER_GATHER_LIST structure defined in WDM.H to construct
+the list:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>typedef struct _SCATTER_GATHER_ELEMENT {
+  PHYSICAL_ADDRESS Address;
+  ULONG Length;
+  ULONG_PTR Reserved;
+  } SCATTER_GATHER_ELEMENT, *PSCATTER_GATHER_ELEMENT;
+
+typedef struct _SCATTER_GATHER_LIST {
+  ULONG NumberOfElements;
+  ULONG_PTR Reserved;
+  SCATTER_GATHER_ELEMENT Elements[];
+  } SCATTER_GATHER_LIST, *PSCATTER_GATHER_LIST;</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Finally, I'm going to suppose that you can simply allocate a maximum-sized
+scatter/gather list in your AddDevice function and leave it lying around for use whenever you
+need it:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>pdx-&gt;sglist = (PSCATTER_GATHER_LIST)
+  ExAllocatePool(NonPagedPool, sizeof(SCATTER_GATHER_LIST) + 
+  MAXSG * sizeof(SCATTER_GATHER_ELEMENT));</pre>
+</td></tr>
+</table>
+</p>
+
+<p>With this infrastructure in place, your <b>AdapterControl</b> procedure would look like
+this:</p>
+
+<p>
+<table cellpadding=5 width="95%">
+<tr><td valign=top>
+<pre>
+
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+
+
+
+2 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+3 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+4 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+5 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+6 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+7 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+8 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+</pre>
+</td>
+<td valign=top>
+<pre>
+IO_ALLOCATION_ACTION AdapterControl(PDEVICE_OBJECT fdo,
+  PIRP junk, PVOID regbase, PDEVICE_EXTENSION pdx)
+  {
+  PIRP Irp = GetCurrentIrp(&amp;pdx-&gt;dqReadWrite);
+  PMDL mdl = Irp-&gt;MdlAddress;
+  BOOLEAN isread = IoGetCurrentIrpStackLocation(Irp)
+    -&gt;MajorFunction == IRP_MJ_READ;
+  pdx-&gt;regbase = regbase;
+  KeFlushIoBuffers(mdl, isread, TRUE);
+  PSCATTER_GATHER_LIST sglist = pdx-&gt;sglist;
+
+  ULONG xfer = pdx-&gt;xfer;
+  PVOID vaddr = pdx-&gt;vaddr;
+  pdx-&gt;xfer = 0;
+  ULONG isg = 0;
+  while (xfer &amp;&amp; isg &lt; MAXSG)
+    {
+    ULONG elen = xfer;
+    sglist-&gt;Elements[isg].Address =
+      (*pdx-&gt;AdapterObject-&gt;DmaOperations-&gt;MapTransfer)
+      (pdx-&gt;AdapterObject, mdl, regbase, pdx-&gt;vaddr,
+      &amp;elen, !isread);
+    sglist-&gt;Elements[isg].Length = elen;
+    xfer -= elen;
+    pdx-&gt;xfer += elen;
+    vaddr = (PVOID) ((PUCHAR) vaddr + elen);
+    ++isg;
+    }
+  sglist-&gt;NumberOfElements = isg;
+  ...
+  return DeallocateObjectKeepRegisters;
+  }
+</pre>
+</td></tr></table>
+</p>
+
+<ol>
+<p><li> See the earlier discussion (in &quot;<A HREF="ch07f.htm#252">Performing DMA Transfers</A>&quot;) of how to
+get a pointer to the correct IRP in an adapter control procedure.</li></p>
+
+<p><li> We previously (in StartIo) calculated <b>pdx-&gt;xfer</b> based on the allowable
+number of map registers. We're going to try to transfer that much data now, but the
+allowable number of scatter/gather elements might further limit the amount we can transfer
+during this stage. During the following loop, <b>xfer</b> will be the number of bytes that we
+haven't yet mapped and we'll recalculate <b>pdx-&gt;xfer</b> as we go.</li></p>
+
+<p><li> Here's the loop I promised you where we call MapTransfer to construct
+scatter/gather elements. We'll continue the loop until we've mapped the entire stage of
+this transfer or until we run out of scatter/gather elements, whichever happens first.</li></p>
+
+<p><li> When we call <b>MapTransfer</b> for a scatter/gather device, it will modify the
+length argument (<b>elen</b>) to indicate how much of the MDL starting at the given virtual
+address (<b>vaddr</b>) is physically contiguous and can therefore be mapped by a single
+scatter/gather list element. It will also return the physical address of the beginning of the
+contiguous region.</li></p>
+
+<p><li> Here's where we update the variables that describe the current stage of the
+transfer. When we leave the loop, <b>xfer</b> will be down to 0 (or else we'll have run out
+of scatter/gather elements), <b>pdx-&gt;xfer</b> will be up to the total of all the elements we
+were able to map, and <b>vaddr</b> will be up to the byte after the last one we mapped. We
+don't update the <b>pdx-&gt;vaddr</b> field in the device extension&#8212;we're doing
+that in our DPC routine. Just another one of those pesky details&#8230;.</li></p>
+
+<p><li> Here's where we increment the scatter/gather element index to reflect the
+fact that we've just used one up.</li></p>
+
+<p><li> At this point, we have <b>isg</b> scatter/gather elements that we should program
+into our device in whatever hardware-dependent way is appropriate. Then we should start the
+device working on the request.</li></p>
+
+<p><li> Returning <b>DeallocateObjectKeepRegisters</b> is appropriate for a bus-mastering
+device. You can theoretically have a nonmaster device with scatter/gather capability, and it
+would return <b>KeepObject</b> instead.</li></p>
+</ol>
+
+<p>Your device now performs its DMA transfer and, presumably, interrupts to signal completion.
+Your ISR requests a DPC, and your DPC routine initiates the next stage in the operation. The
+DPC routine would perform a MapTransfer loop like the one I just showed you as part of that
+initiation process. I'll leave the details of that code as an exercise for you.</p>
+
+<A NAME="254"><H3>Using GetScatterGatherList</H3></A>
+
+<p>Windows 2000 provides a shortcut to avoid the relatively cumbersome loop of calls to
+MapTransfer in the common case in which you can accomplish the entire transfer by using either
+no map registers or no more than the maximum number of map registers returned by
+IoGetDmaAdapter. The shortcut, which is illustrated in the SCATGATH sample on the companion
+disc, involves calling the <b>GetScatterGatherList</b> routine instead of
+AllocateAdapterChannel. Your <b>StartIo</b> routine looks like this:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>VOID StartIo(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+  PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
+  NTSTATUS status = IoAcquireRemoveLock(&amp;pdx-&gt;RemoveLock, Irp);
+  if (!NT_SUCCESS(status))
+    {
+    CompleteRequest(Irp, status, 0);
+    return;
+    }
+  PMDL mdl = Irp-&gt;MdlAddress;
+  ULONG nbytes = MmGetMdlByteCount(mdl);
+  PVOID vaddr = MmGetMdlVirtualAddress(mdl);
+  BOOLEAN isread = stack-&gt;MajorFunction == IRP_MJ_READ;
+  pdx-&gt;numxfer = 0;
+  pdx-&gt;nbytes = nbytes;
+<b>  status = (*pdx-&gt;AdapterObject-&gt;DmaOperations-&gt;GetScatterGatherList)
+    (pdx-&gt;AdapterObject, fdo, mdl, vaddr, nbytes,
+    (PDRIVER_LIST_CONTROL) DmaExecutionRoutine, pdx, !isread);</b> 
+  if (!NT_SUCCESS(status))
+    {
+    IoReleaseRemoveLock(&amp;pdx-&gt;RemoveLock, Irp);
+    CompleteRequest(Irp, status, 0);
+    StartNextPacket(&amp;pdx-&gt;dqReadWrite, fdo);
+    }
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The call to GetScatterGatherList, shown in bold in the previous code fragment, is the main
+difference between this StartIo routine and the one we looked at in the preceding section.
+GetScatterGatherList waits, if necessary, until you can be granted use of the adapter object
+and all the map registers you need. Then it builds a SCATTER_GATHER_LIST structure and passes
+it to the <b>DmaExecutionRoutine</b>. You can then program your device by using the physical
+addresses in the scatter/gather elements and initiate the transfer:</p>
+
+<p>
+<table cellpadding=5 width="95%">
+<tr><td valign=top>
+<pre>
+
+
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+2 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+</pre>
+</td>
+<td valign=top>
+<pre>
+VOID DmaExecutionRoutine(PDEVICE_OBJECT fdo, PIRP junk,
+  PSCATTER_GATHER_LIST sglist, PDEVICE_EXTENSION pdx)
+  {
+  PIRP Irp = GetCurrentIrp(&amp;pdx-&gt;dqReadWrite);
+  pdx-&gt;sglist = sglist;
+  ...
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> You'll need the address of the scatter/gather list in the DPC routine, which
+will release it by calling <b>PutScatterGatherList</b>.</li></p>
+
+<p><li> At this point, program your device to do a read or write using the address and
+length pairs in the scatter/gather list. If the list has more elements than your device can
+handle at one time, you'll need to perform the whole transfer in stages. If you can program
+a stage fairly quickly, I'd recommend adding logic to your interrupt service routine to
+initiate the additional stages. If you think about it, your DmaExecutionRoutine is probably
+going to be synchronizing with your ISR anyway to start the first stage, so this extra logic is
+probably not large. I programmed the SCATGATH sample with this idea in mind.</li></p>
+</ol>
+
+<p>When the transfer finishes, call the adapter object's PutScatterGatherList to release
+the list and the adapter:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>VOID DpcForIsr(PKDPC Dpc, PDEVICE_OBJECT fdo, PIRP junk, PVOID Context)
+  {
+  ...
+  (*pdx-&gt;AdapterObject-&gt;DmaOperations-&gt;PutScatterGatherList)
+    (pdx-&gt;AdapterObject, pdx-&gt;sglist, !isread);
+  ...
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>To decide whether you can use GetScatterGatherList, you need to be able to predict whether
+you'll meet the preconditions for its use. On an Intel 32-bit platform, scatter/gather
+devices on a PCI or EISA bus can be sure of not needing any map registers. Even on an ISA bus,
+you'll be allowed to request up to 16 map register surrogates (eight if you're also a
+bus-mastering device) unless physical memory is so tight that the I/O system can't allocate
+its intermediate I/O buffers. In that case, you wouldn't be able to do DMA using the
+traditional method either, so there'd be no point in worrying about it.</p>
+
+<p>If you can't predict with certainty at the time you code your driver that you'll be
+able to use GetScatterGatherList, my advice is to just fall back on the traditional loop of
+MapTransfer calls. You'll need to put that code in place anyway to deal with cases in which
+GetScatterGatherList won't work, and having two pieces of logic in your driver is just
+unnecessary complication.</p>
+
+<A NAME="255"><H3>Transfers Using the System Controller</H3></A>
+
+<p>If your device is not a bus master, DMA capability requires that it use the system DMA
+controller. As I've said, people often use the phrase <i>slave DMA,</i> which emphasizes
+that such a device is not master of its own DMA fate. The system DMA controllers have several
+characteristics that affect the internal details of how DMA transfers proceed:</p>
+
+<ul>
+<p><li> There are a limited number of DMA <i>channels</i> that all slave devices must share.
+AllocateAdapterChannel has real meaning in a sharing situation, since only one device can be
+using a particular channel at a time.</li></p>
+
+<p><li> You can expect to find a CmResourceTypeDma resource in the list of I/O resources
+delivered to you by the PnP Manager.</li></p>
+
+<p><li> Your hardware is wired, either physically or logically, to the particular channel it
+uses. If you can configure the DMA channel connection, you'll need to send the appropriate
+commands at StartDevice time.</li></p>
+
+<p><li> The system DMA controllers for an ISA bus computer are able to access data buffers in
+only the first 16 megabytes of physical memory. Four channels for transferring data 8 bits at a
+time and three channels for transferring data 16 bits at a time exist. The controller for 8-bit
+channels doesn't correctly handle a buffer that crosses a 64-KB boundary; the controller
+for 16-bit channels doesn't correctly handle a buffer that crosses a 128-KB boundary.</li></p>
+</ul>
+
+
+<p>Notwithstanding these factors, your driver code will be very similar to the bus-mastering
+code we've just discussed. Your StartDevice routine just works a little harder to set up
+its call to IoGetDmaAdapter, and your AdapterControl and DPC routines apportion the steps of
+releasing the adapter object and map registers differently.</p>
+
+<p>In StartDevice, you have a little bit of additional code to determine which DMA channel the PnP
+Manager has assigned for you, and you also need to initialize more of the fields of the
+DEVICE_DESCRIPTION structure for IoGetDmaAdapter:</p>
+
+<p>
+<table cellpadding=5 width="95%">
+<tr><td valign=top>
+<pre>
+
+
+
+
+
+
+
+
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+
+2 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+
+
+
+
+3 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+</pre>
+</td>
+<td valign=top>
+<pre>
+NTSTATUS StartDevice(...)
+  {
+  ULONG dmachannel;   // system DMA channel #
+  ULONG dmaport;      // MCA bus port number
+  ...
+  for (ULONG i = 0; i &lt; nres; ++i, ++resource)
+    {
+    switch (resource-&gt;Type)
+      {
+    case CmResourceTypeDma:
+    dmachannel = resource-&gt;u.Dma.Channel;
+      dmaport = resource-&gt;u.Dma.Port;
+      break;
+      }
+    }
+  ...
+  INTERFACE_TYPE bustype;
+  IoGetDeviceProperty(...);
+
+  DEVICE_DESCRIPTION dd;
+  RtlZeroMemory(&amp;dd, sizeof(dd));
+  dd.Version = DEVICE_DESCRIPTION_VERSION;
+  dd.InterfaceType = bustype;
+  dd.MaximumLength = MAXTRANSFER;
+
+  dd.DmaChannel = dmachannel;
+  dd.DmaPort = dmaport;
+  dd.DemandMode = <i>??</i>;
+  dd.AutoInitialize = <i>??</i>;
+  dd.IgnoreCount = <i>??</i>;
+  dd.DmaWidth = <i>??</i>;
+  dd.DmaSpeed = <i>??</i>;
+
+  pdx-&gt;AdapterObject = IoGetDmaAdapter(...);
+  }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> The I/O resource list will have a DMA resource, from which you need to extract
+the channel and port numbers. The channel number identifies one of the DMA channels supported
+by a system DMA controller. The port number is relevant only on a Micro Channel Architecture
+(MCA)_bus machine.</li></p>
+
+<p><li> Refer to the previous discussion of how to determine the bus type (in
+&quot;<A HREF="ch07f.htm#252">Performing DMA Transfers</A>&quot;).</li></p>
+
+<p><li> Beginning here, you have to initialize several fields of the DEVICE_DESCRIPTION 
+structure based on your knowledge of your device. See Table 7-5.</li></p>
+</ol>
+
+<p>Everything about your adapter control and DPC procedures will be identical to the code we
+looked at earlier for handling a bus-mastering device without scatter/gather capability, except
+for two small details. First, <b>AdapterControl</b> returns a different value:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>IO_ALLOCATION_ACTION AdapterControl(...)
+  {
+  ...
+  return KeepObject;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The return value <b>KeepObject</b> indicates that we want to retain control over the map
+registers <i>and</i> the DMA channel we're using. Second, since we didn't release the
+adapter object when AdapterControl returned, we have to do so in the DPC routine by calling <b>
+FreeAdapterChannel</b> instead of <b>FreeMapRegisters</b>:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>VOID DpcForIsr(...)
+  {
+  ...
+  (*pdx-&gt;AdapterObject-&gt;DmaOperations-&gt;FreeAdapterChannel)
+    (pdx-&gt;AdapterObject);
+  ...
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>By the way, you don't need to remember how many map registers you were assigned&#8212;I
+previously showed you an nMapRegistersAllocated variable in the device extension to be used for
+this purpose&#8212;since you won't be calling FreeMapRegisters.</p>
+
+<A NAME="256"><H2>Using a Common Buffer</H2></A>
+
+<p>As I mentioned in &quot;<A HREF="ch07f.htm#251">Transfer Strategies</A>,&quot; you might want to allocate a common
+buffer for your device to use in performing DMA transfers. A common buffer is an area of
+nonpaged, physically contiguous memory. Your driver uses a fixed virtual address to access the
+buffer. Your device uses a fixed logical address to access the same buffer.</p>
+
+<p>You can use the common buffer area in several ways. You can support a device that continuously
+transfers data to or from memory by using the system DMA controller's autoinitialize mode.
+In this mode of operation, completion of one transfer triggers the controller to immediately
+reinitialize for another transfer.</p>
+
+<p>Another use for a common buffer area is as a means to avoid extra data copying. The MapTransfer
+routine often copies the data you supply into auxiliary buffers owned by the I/O Manager and
+used for DMA. If you're stuck with doing slave DMA on an ISA bus, it's especially
+likely that MapTransfer will copy data to conform to the 16-MB address and buffer alignment
+requirements of the ISA DMA controller. But if you have a common buffer, you'll avoid the
+copy steps.</p>
+
+<A NAME="257"><H3>Allocating a Common Buffer</H3></A>
+
+<p>You'd normally allocate your common buffer at StartDevice time after creating your
+adapter object:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>typedef struct _DEVICE_EXTENSION {
+  ...
+  PVOID vaCommonBuffer;
+  PHYSICAL_ADDRESS paCommonBuffer;
+  ...
+  } DEVICE_EXTENSION, *PDEVICE_EXTENSION;
+
+dd.Dma32BitAddresses = <i>??</i>;
+dd.Dma64BitAddresses = <i>??</i>;
+pdx-&gt;AdapterObject = IoGetDmaAdapter(...);
+pdx-&gt;vaCommonBuffer =
+  (*pdx-&gt;AdapterObject-&gt;DmaOperations-&gt;AllocateCommonBuffer)
+  (pdx-&gt;AdapterObject, <i>&lt;length&gt;</i>, &amp;pdx-&gt;paCommonBuffer, FALSE);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Prior to calling IoGetDmaAdapter, you set the <b>Dma32BitAddresses</b> and <b>
+Dma64BitAddresses</b> flags in the DEVICE_DESCRIPTION structure to state the truth about your
+device's addressing capabilities. That is, if your device can address a buffer using any
+32-bit physical address, set Dma32BitAddresses to TRUE. If it can address a buffer using any
+64-bit physical address, set Dma64BitAddresses to TRUE.</p>
+
+<p>In the call to <b>AllocateCommonBuffer</b>, the second argument is the byte length of the
+buffer you want to allocate. The fourth argument is a BOOLEAN value that indicates whether you
+want the allocated memory to be capable of entry into the CPU cache (TRUE) or not (FALSE).</p>
+
+<p>AllocateCommonBuffer returns a virtual address. This address is the one you use within your
+driver to access the allocated buffer area. AllocateCommonBuffer also sets the PHYSICAL_ADDRESS
+pointed to by the third argument to be the logical address used by your device for its own
+buffer access.</p>
+
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+The DDK carefully uses the term <i>logical address</i> to refer to the
+address value returned by MapTransfer and the address value returned by the third argument of
+AllocateCommonBuffer. On many CPU architectures, a logical address will be a physical memory
+address that the CPU understands. On other architectures, it might be an address that only the
+I/O bus understands. Perhaps <i>bus address</i> would have been a better term.
+</blockquote></div>
+</p>
+
+<A NAME="258"><H3>Slave DMA with a Common Buffer</H3></A>
+
+<p>If you're going to be performing slave DMA, you must create an MDL to describe the
+virtual addresses you receive. The actual purpose of the MDL is to occupy an argument slot in
+an eventual call to MapTransfer. MapTransfer won't end up doing any copying, but it
+requires the MDL to discover that it doesn't need to do any copying! You'd normally
+create the MDL in your StartDevice function just after allocating the common buffer:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>pdx-&gt;vaCommonBuffer = ...;
+pdx-&gt;mdlCommonBuffer = IoAllocateMdl(pdx-&gt;vaCommonBuffer,
+  <i>&lt;length&gt;</i>, FALSE, FALSE, NULL);
+MmBuildMdlForNonPagedPool(pdx-&gt;mdlCommonBuffer);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>To perform an output operation, first make sure by some means (such as an explicit memory
+copy) that the common buffer contains the data you want to send to the device. The other DMA
+logic in your driver will be essentially the same as I showed you earlier (in &quot;<A HREF="ch07f.htm#252">Performing DMA Transfers</A>&quot;). You'll call AllocateAdapterChannel. It will call your adapter control
+routine, which will call KeFlushIoBuffers&#8212;if you allocated a cacheable buffer&#8212;and
+then call MapTransfer. Your DPC routine will call FlushAdapterBuffers and FreeAdapterChannel.
+In all of these calls, you'll specify the common buffer's MDL instead of the one that
+accompanied the read or write IRP you're processing. Some of the service routines you call
+won't do as much work when you have a common buffer as when you don't, but you must
+call them anyway. At the end of an input operation, you might need to copy data out of your
+common buffer to some other place.</p>
+
+<p>To fulfill a request to read or write more data than fits in your common buffer, you might need
+to periodically refill or empty the buffer. The adapter object's <b>ReadDmaCounter</b> 
+function allows you to determine the progress of the ongoing transfer to help you decide what
+to do.</p>
+
+<A NAME="259"><H3>Bus-Master DMA with a Common Buffer</H3></A>
+
+<p>If your device is a bus master, allocating a common buffer allows you to dispense with
+calling AllocateAdapterChannel, MapTransfer, and FreeMapRegisters. You don't need to call
+those routines because AllocateCommonBuffer also reserves the map registers, if any, needed for
+your device to access the buffer. Each bus-master device has an adapter object that isn't
+shared with other devices and for which you therefore need never wait. Since you have a virtual
+address you can use to access the buffer at any time, and since your device's bus-mastering
+capability allows it to access the buffer by using the physical address you've received
+back from AllocateCommonBuffer, no additional work is required.</p>
+
+<A NAME="260"><H3>Cautions About Using Common Buffers</H3></A>
+
+<p>A few cautions are in order with respect to common buffer allocation and usage. Physically
+contiguous memory is scarce in a running system&#8212;so scarce that you might not be able to
+allocate the buffer you want unless you stake your claim quite early in the life of a new
+session. The Memory Manager makes a limited effort to shuffle memory pages around to satisfy
+your request, and that process can delay the return from AllocateCommonBuffer for a period of
+time. But the effort might fail, and you must be sure to handle the failure case. Not only does
+a common buffer tie up potentially scarce physical pages, but it can also tie up map registers
+that could otherwise be used by other devices. For both these reasons, you should use a
+common-buffer strategy advisedly.</p>
+
+<p>Another caution about common buffers arises from the fact that the Memory Manager necessarily
+gives you one or more full pages of memory. Allocating a common buffer that's just a few
+bytes long is wasteful and should be avoided. On the other hand, it's also wasteful to
+allocate several pages of memory that don't actually need to be physically contiguous. As
+the DDK suggests, therefore, it's better to make several requests for smaller blocks if the
+blocks don't have to be contiguous.</p>
+
+<A NAME="261"><H3>Releasing a Common Buffer</H3></A>
+
+<p>You would ordinarily release the memory occupied by your common buffer in your StopDevice
+routine just before you destroy the adapter object:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>(*pdx-&gt;AdapterObject-&gt;DmaOperations-&gt;FreeCommonBuffer)
+  (pdx-&gt;AdapterObject, <i>&lt;length&gt;</i>, pdx-&gt;paCommonBuffer,
+  pdx-&gt;vaCommonBuffer, FALSE);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The second parameter to <b>FreeCommonBuffer</b> is the same length value you used when you
+allocated the buffer. The last parameter indicates whether the memory is cacheable, and it
+should be the same as the last argument you used in the call to AllocateCommonBuffer.</p>
+
+<A NAME="262"><H2>A Simple Bus-Master Device</H2></A>
+
+<p>The PKTDMA sample driver on the companion disc illustrates how to perform bus-master DMA
+operations without scatter/gather support using the AMCC S5933 PCI matchmaker chip. I've
+already discussed details of how this driver initializes the device in StartDevice and how it
+initiates a DMA transfer in StartIo. I've also discussed nearly all of what happens in this
+driver's AdapterControl and DpcForIsr routines. I indicated earlier that these routines
+would have some device-dependent code for starting an operation on the device; I wrote a helper
+function named <b>StartTransfer</b> for that purpose:</p>
+
+<p>
+<table cellpadding=5 width="95%">
+<tr><td valign=top>
+<pre>
+
+
+
+
+
+
+
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+2 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+3 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+</pre>
+</td>
+<td valign=top>
+<pre>
+VOID StartTransfer(PDEVICE_EXTENSION pdx, PHYSICAL_ADDRESS address,
+  BOOLEAN isread)
+  {
+  ULONG mcsr = READ_PORT_ULONG((PULONG)(pdx-&gt;portbase + MCSR);
+  ULONG intcsr = READ_PORT_ULONG((PULONG)(pdx-&gt;portbase + INTCSR);
+  if (isread)
+    {
+    mcsr |= MCSR_WRITE_NEED4 | MCSR_WRITE_ENABLE;
+    intcsr |= INTCSR_WTCI_ENABLE;
+    WRITE_PORT_ULONG((PULONG)(pdx-&gt;portbase + MWTC), pdx-&gt;xfer);
+    WRITE_PORT_ULONG((PULONG)(pdx-&gt;portbase + MWAR), address.LowPart);
+    }
+  else
+    {
+    mcsr |= MCSR_READ_NEED4 | MCSR_READ_ENABLE;
+    intcsr |= INTCSR_RTCI_ENABLE;
+    WRITE_PORT_ULONG((PULONG)(pdx-&gt;portbase + MRTC), pdx-&gt;xfer);
+    WRITE_PORT_ULONG((PULONG)(pdx-&gt;portbase + MRAR), address.LowPart);
+    }
+  WRITE_PORT_ULONG((PULONG)(pdx-&gt;portbase + INTCSR), intcsr);
+  WRITE_PORT_ULONG((PULONG)(pdx-&gt;portbase + MCSR), mcsr);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>This routine sets up the S5933 operations registers for a DMA transfer and then starts the
+transfer running. The steps in the process are:</p>
+
+<ol>
+<p><li> Program the address (<b>M</b><i>x</i><b>AR</b>) and transfer count
+(<b>M</b><i>x</i><b>TC</b>) registers appropriate to the direction of data flow. AMCC chose to
+use the term <i>read</i> to describe an operation in which data moves from memory to the
+device. Therefore, when we're implementing an IRP_MJ_WRITE, we program a read operation at
+the chip level. The address we use is the logical address returned by MapTransfer.</li></p>
+
+<p><li> Enable an interrupt when the transfer count reaches 0 by writing to the <b>
+INTCSR</b>.</li></p>
+
+<p><li> Start the transfer by setting one of the transfer-enable bits in the <b>
+MCSR</b>.</li></p>
+</ol>
+
+<p>It's not obvious from this fragment of code, but the S5933 is actually capable of doing
+a DMA read and a DMA write at the same time. I wrote PKTDMA in such a way that only one
+operation (either a read or a write) can be occurring. To generalize the driver to allow both
+kinds of operation to occur simultaneously, you would need to (a) implement separate queues for
+read and write IRPs, and (b) create <i>two</i> device objects and <i>two</i> adapter
+objects&#8212;one pair for reading and the other for writing&#8212;so as to avoid the
+embarrassment of trying to queue the same object twice inside AllocateAdapterChannel. I thought
+putting that additional complication into the sample would end up confusing you. (I know
+I'm being pretty optimistic about my expository skills to imply that I haven't <i>
+already</i> confused you, but it could have been worse.)</p>
+
+<A NAME="263"><H3>Handling Interrupts in PKTDMA</H3></A>
+
+<p>PCI42 included an interrupt routine that did a small bit of work to move some data.
+PKTDMA's interrupt routine is a little simpler:</p>
+
+<p>
+<table cellpadding=5 width="95%">
+<tr><td valign=top>
+<pre>
+
+
+
+
+
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+2 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+
+3 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+</pre>
+</td>
+<td valign=top>
+<pre>
+BOOLEAN OnInterrupt(PKINTERRUPT InterruptObject, PDEVICE_EXTENSION pdx)
+  {
+  ULONG intcsr = READ_PORT_ULONG((PULONG) (pdx-&gt;portbase + INTCSR));
+  if (!(intcsr &amp; INTCSR_INTERRUPT_PENDING))
+    return FALSE;
+
+  ULONG mcsr = READ_PORT_ULONG((PULONG) (pdx-&gt;portbase + MCSR));
+  WRITE_PORT_ULONG((PULONG) (pdx-&gt;portbase + MCSR), 
+    mcsr &amp; ~(MCSR_WRITE_ENABLE | MCSR_READ_ENABLE));
+
+  intcsr &amp;= ~(INTCSR_WTCI_ENABLE | INTCSR_WTCI_ENABLE);
+
+  BOOLEAN dpc = GetCurrentIrp(&amp;pdx-&gt;dqReadWrite) != NULL;
+
+  while (intcsr &amp; INTCSR_INTERRUPT_PENDING)
+    {
+    InterlockedOr(&amp;pdx-&gt;intcsr, intcsr);
+    WRITE_PORT_ULONG((PULONG) (pdx-&gt;portbase + INTCSR), intcsr);
+    intcsr = READ_PORT_ULONG((PULONG) (pdx-&gt;portbase + INTCSR));
+    }
+
+  if (dpc)
+    IoRequestDpc(pdx-&gt;DeviceObject, NULL, NULL);
+
+  return TRUE;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>I'll only discuss the ways in which this ISR differs from the one in PCI42:</p>
+
+<ol>
+<p><li> The S5933 will keep trying to transfer data&#8212;subject to the count register,
+that is&#8212;so long as the enable bits are set in the <b>MCSR</b>. This statement clears both
+bits. If your driver were handling simultaneous reads and writes, you'd determine which
+kind of operation had just finished by testing the interrupt flags in the <b>INTCSR</b> and
+then disable just the transfer in that direction.</li></p>
+
+<p><li> We'll shortly write back to the <b>INTCSR</b> to clear the interrupt. This
+statement ensures that we'll also <i>disable</i> the transfer-count-0 interrupts so that
+they can't occur anymore. Once again, a driver that handles simultaneous reads and writes
+would disable only the interrupt that just occurred.</li></p>
+
+<p><li> <b>InterlockedOr</b> is a helper routine I wrote so that I wouldn't have to worry
+about racing with DpcForIsr in accumulating interrupt flags.</li></p>
+</ol>
+
+<A NAME="264"><H3>Testing PKTDMA</H3></A>
+
+<p>You can test PKTDMA if you have an S5933DK1 development board. If you ran the PCI42 test,
+you already installed the S5933DK1.SYS driver to handle the ISA add-on interface card. If not,
+you'll need to install that driver for this test. Then install PKTDMA.SYS as the driver for
+the S5933 development board itself. You can then run the TEST.EXE test program that's in
+the PKTDMA\TEST\DEBUG directory. TEST will perform a write for 8192 bytes to PKTDMA. It will
+also issue a <b>DeviceIoControl</b> to S5933DK1 to read the data back from the add-on side, and
+it will verify that it read the right values.</p>
+</body>
+</html>
+
+
+
+
+
+
+

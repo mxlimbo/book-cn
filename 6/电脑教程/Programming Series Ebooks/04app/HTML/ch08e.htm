@@ -1,0 +1,756 @@
+<HTML>
+<HEAD>
+<TITLE>Critical Sections</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch08d.htm">[Previous]</A> <A HREF="ch09a.htm">[Next]</A><P>
+
+<A NAME="115"><H1>Critical Sections</H1></A>
+
+<p>A <i>critical section</i> is a small section of code that requires
+exclusive access to some shared resource before the code can execute.
+This is a way to have several lines of code &quot;atomically&quot;
+manipulate a resource. By atomic, I mean that the code knows that no
+other thread will access the resource. Of course, the system can still
+preempt your thread and schedule other threads. However, it will not
+schedule any other threads that want to access the same resource until
+your thread leaves the critical section.</p>
+
+<p>Here is some problematic code that demonstrates what happens
+without the use of a critical section:</p>
+
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+const int MAX_TIMES = 1000;
+int   g_nIndex = 0;
+DWORD g_dwTimes[MAX_TIMES];
+
+DWORD WINAPI FirstThread(PVOID pvParam) {
+
+   while (g_nIndex &lt; MAX_TIMES) {
+      g_dwTimes[g_nIndex] = GetTickCount();
+      g_nIndex++;
+   }
+   return(0);
+}
+
+
+DWORD WINAPI SecondThread(PVOID pvParam) {
+
+   while (g_nIndex &lt; MAX_TIMES) {
+      g_nIndex++;
+      g_dwTimes[g_nIndex - 1] = GetTickCount();
+   }
+   return(0);
+}
+</pre></td></tr></table></p>
+
+<p>Taken independently, both thread functions are supposed to produce
+the same result, although each is coded a bit differently. If the <i>
+FirstThread</i> function were to run by itself, it would fill the <i>
+g_dwTimes</i> array with ascending values. The same thing would happen
+if the <i>SecondThread</i> function were to run by itself. Ideally, we
+want both threads to run concurrently and still have the <i>
+g_dwTimes</i> array produce ascending values. However, the code above
+has a problem: the <i>g_dwTimes</i> array won't be filled properly
+because the two thread functions access the same global variables
+simultaneously.</p>
+
+<p>Here is an example of how this could happen. Let's say that we
+just started executing both threads on a system with one CPU. The
+operating system starts running <i>SecondThread</i> first (which could
+very well happen), and right after <i>SecondThread</i> increments <i>
+g_nIndex</i> to 1, the system preempts the thread and allows <i>
+FirstThread</i> to run. <i>FirstThread</i> then sets <i>
+g_dwTimes[1]</i> to the system time, and the system preempts the thread
+and gives time back to <i>SecondThread</i>. <i>SecondThread</i> then
+sets <i>g_dwTimes[1 1]</i> to the new system time. Because this
+operation occurred later, the new system time is a higher value than
+that of the time placed into <i>FirstThread</i>'s array. Also
+notice that index 1 of <i>g_dwTimes</i> was filled in before index 0.
+The data in the array is corrupted.</p>
+
+<p>I'll admit that this example is a bit contrived&#8212;it's
+difficult to come up with a real-life example that doesn't require
+several pages of source code. However, you can see how this problem
+could extend to real-life examples. Consider the case of managing a
+linked list of objects. If access to the linked list is not
+synchronized, one thread can add an item to the list while another
+thread is trying to search for an item in the list. The situation can
+become more chaotic if the two threads add items to the list at the
+same time. By using critical sections, you can ensure that access to
+the data structures is coordinated among threads.</p>
+
+<p>Now that you see all of the problems, let's correct the code
+using a critical section:</p>
+
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+const int MAX_TIMES = 1000;
+int   g_nIndex = 0;
+DWORD g_dwTimes[MAX_TIMES];
+CRITICAL_SECTION g_cs;
+
+DWORD WINAPI FirstThread(PVOID pvParam) {
+
+   while (g_nIndex &lt; MAX_TIMES) {
+      EnterCriticalSection(&amp;g_cs);
+      g_dwTimes[g_nIndex] = GetTickCount();
+      g_nIndex++;
+      LeaveCriticalSection(&amp;g_cs);
+   }
+   return(0);
+}
+
+
+DWORD WINAPI SecondThread(PVOID pvParam) {
+
+   while (g_nIndex &lt; MAX_TIMES) {
+      EnterCriticalSection(&amp;g_cs);
+      g_nIndex++;
+      g_dwTimes[g_nIndex - 1] = GetTickCount();
+      LeaveCriticalSection(&amp;g_cs);
+   }
+   return(0);
+}
+</pre></td></tr></table></p>
+
+<p>I allocated a CRITICAL_SECTION data structure, <i>g_cs</i>, and
+then I wrapped any code that touches the shared resource
+(<i>g_nIndex</i> and <i>g_dwTimes</i> in this example) inside calls to
+<i>EnterCriticalSection</i> and <i>LeaveCriticalSection</i>. Notice
+that I passed the address of <i>g_cs</i> in all calls to <i>
+EnterCriticalSection</i> and <i>LeaveCriticalSection</i>.</p>
+
+<p>What are the key points to remember? When you have a resource that
+is accessed by multiple threads, you should create a CRITICAL_SECTION
+structure. Since I'm writing this on an airplane flight, let me
+draw the following analogy. A CRITICAL_SECTION structure is like an
+airplane's lavatory, and the toilet is the data that you want
+protected. Since the lavatory is small, only one person (thread) at a
+time can be inside the lavatory (critical section) using the toilet
+(protected resource).</p>
+
+<p>If you have multiple resources that are always used together, you
+can place them all in a single lavatory: create just one
+CRITICAL_SECTION structure to guard them all.</p>
+
+<p>If you have multiple resources that are not always used
+together&#8212;for example, threads 1 and 2 access one resource and
+threads 1 and 3 access another resource&#8212;you should create a
+separate lavatory, or CRITICAL_SECTION structure, for each
+resource.</p>
+
+<p>Now, wherever you have code that touches a resource, you must place
+a call to <i>EnterCriticalSection</i>, passing it the address of the
+CRITICAL_SECTION structure that identifies the resource. This is like
+saying that when a thread wants to access a resource, it must first
+check the Occupied sign on the lavatory door. The CRITICAL_SECTION
+structure identifies which lavatory the thread wants to enter and the
+<i>EnterCriticalSection</i> function is what the thread uses to check
+the Occupied sign.</p>
+
+<p>If <i>EnterCriticalSection</i> sees that no other thread is in the
+lavatory (the door shows Unoccupied), the calling thread is allowed to
+use it. If <i>EnterCriticalSection</i> sees that another thread is in
+the lavatory, the calling thread must wait outside the lavatory door
+until the other thread in the lavatory leaves.</p>
+
+<p>When a thread no longer executes code that touches the resource, it
+should call <i>LeaveCriticalSection</i>. This is how the thread tells
+the system that it has left the lavatory containing the resource. If
+you forget to call <i>LeaveCriticalSection</i>, the system will think
+that the resource is still in the lavatory and will not allow any
+waiting threads in. This is similar to leaving the lavatory without
+changing the sign on the door back to Unoccupied.</p>
+
+
+<p><div class="note"><blockquote><b>NOTE</b><HR>
+The hardest thing to remember is that any code you write that touches a
+shared resource must be wrapped inside <i>EnterCriticalSection</i> and
+<i>LeaveCriticalSection</i> functions. If you forget to wrap your code
+in just one place, the shared resource will be subject to corruption.
+For instance, if I remove <i>FirstThread</i>'s calls to <i>
+EnterCriticalSection</i> and <i>LeaveCriticalSection</i>, the <i>
+g_nIndex</i> and <i>g_dwTimes</i> variables become corrupted. This
+happens even though <i>SecondThread</i> still calls <i>
+EnterCriticalSection</i> and <i>LeaveCriticalSection</i> properly.
+<p>Forgetting calls to <i>EnterCriticalSection</i> and <i>
+LeaveCriticalSection</i> is like not requesting permission to enter the
+lavatory. The thread just muscles its way in and manipulates the
+resource. As you can imagine, if just one thread exhibits this rather
+rude behavior, the resource is corrupted.</p>
+</blockquote></div></p>
+
+<p>When you can't solve your synchronization problem with
+interlocked functions, you should try using critical sections. The
+great thing about critical sections is that they are easy to use and
+they use the interlocked functions internally, so they execute quickly.
+The major disadvantage of critical sections is that you cannot use them
+to synchronize threads in multiple processes. However, in <A HREF="ch10a.htm">Chapter 10</A>,
+I'll create my own synchronization object, called an Optex. This
+object shows how critical sections can be implemented by the operating
+system, and it also works with threads in multiple processes.</p>
+
+
+<A NAME="116"><H2>Critical Sections:The Fine Print</H2></A>
+
+<p>By now, you have the theory behind critical sections&#8212;why
+they're useful and how they allow &quot;atomic&quot; access to a
+shared resource. Now let's look more closely at how critical
+sections tick. We'll start with the CRITICAL_SECTION data
+structure. If you look up this structure in the Platform SDK
+documentation, you won't even find an entry for it. What's this
+all about?</p>
+
+<p>It's not that the CRITICAL_SECTION structure is undocumented;
+it's just that Microsoft doesn't think you need to understand
+what this structure is all about&#8212;and rightly so. To us, this
+structure is opaque&#8212;the structure is documented, but the member
+variables within it are not. Of course, since this is just a data
+structure, you can look it up in the Windows header files and see the
+data members. (CRITICAL_SECTION is defined in WinNT.h as
+RTL<i>_</i> CRITICAL_SECTION; the RTL<i>_</i>CRITICAL_SECTION structure is
+typedefed in WinBase.h.) But you should never write code that
+references these members.</p>
+
+<p>To manipulate a CRITICAL_SECTION structure, you call a Windows
+function, passing it the address of the structure. The function knows
+how to manipulate the members and guarantees that the structure's
+state is always consistent. So now, let's turn our attention to
+these functions.</p>
+
+<p>Normally, CRITICAL_SECTION structures are allocated as global
+variables to allow all threads in the process an easy way to reference
+the structure: by variable name. However, CRITICAL_SECTION structures
+can be allocated as local variables or dynamically allocated from a
+heap. There are just two requirements. The first is that all threads
+that want to access the resource must know the address of the
+CRITICAL_SECTION structure that protects the resource. You can get this
+address to these threads using any mechanism you like. The second
+requirement is that the members within the CRITICAL_SECTION structure be initialized before any threads attempt to
+access the protected resource. The structure is initialized via a call
+to:</p>
+
+
+<p><table cellpadding=5><tr><td>
+<PRE>
+VOID InitializeCriticalSection(PCRITICAL_SECTION pcs);
+</pre></td></tr></table></p>
+
+<p>This function initializes the members of a CRITICAL_SECTION
+structure (pointed to by <i>pcs</i>). Since this function simply sets
+some member variables, it cannot fail and is therefore prototyped with
+a return value of VOID. This function must be called before any thread
+calls <i>EnterCriticalSection</i>. The Platform SDK documentation
+clearly states that the results are undefined if a thread attempts to
+enter an uninitialized CRITICAL_SECTION.</p>
+
+<p>When you know that your process's threads will no longer
+attempt to access the shared resource, you should clean up the
+CRITICAL_SECTION structure by calling this function:</p>
+
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+VOID DeleteCriticalSection(PCRITICAL_SECTION pcs);
+</pre></td></tr></table></p>
+
+<p><i>DeleteCriticalSection</i> resets the member variables inside the
+structure. Naturally, you should not delete a critical section if any
+threads are still using it. Again, the Platform SDK documentation
+clearly states that the results are undefined if you do.</p>
+
+<p>When you write code that touches a shared resource, you must prefix
+that code with a call to:</p>
+
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+VOID EnterCriticalSection(PCRITICAL_SECTION pcs); 
+</pre></td></tr></table></p>
+
+<p><i>EnterCriticalSection</i> examines the member variables inside
+the structure. The variables indicate which thread, if any, is
+currently accessing the resource. <i>EnterCriticalSection</i> performs
+the following tests:</p>
+
+<ul>
+<p><li>If no thread is accessing the resource, <i>
+EnterCriticalSection</i> updates the member variables to indicate that
+the calling thread has been granted access and returns immediately,
+allowing the thread to continue executing (accessing the resource).</li></p>
+
+<p><li>If the member variables indicate that the calling thread was already
+granted access to the resource, <i>EnterCriticalSection</i> updates the
+variables to indicate how many times the calling thread was granted
+access and returns immediately, allowing the thread to continue
+executing. This situation is rare and occurs only if the thread calls
+<i>EnterCriticalSection</i> twice in a row without an intervening call
+to <i>LeaveCriticalSection</i>.</li></p> 
+<p><li>If the member variables indicate that a thread (other than the
+calling thread) was granted access to the resource, <i>
+EnterCriticalSection</i> places the calling thread in a wait state.
+This is terrific because the waiting thread does not waste any CPU
+time! The system remembers that the thread wants access to the resource
+and automatically updates the CRITICAL_SECTION's member variables
+and allows the thread to be schedulable as soon as the thread currently
+accessing the resource calls <i>LeaveCriticalSection</i>.
+</li></p>
+</ul>
+
+<p><i>EnterCriticalSection</i> isn't too complicated internally;
+it performs just a few simple tests. What makes this function so
+valuable is that it can perform all of these tests atomically. If two
+threads call <i>EnterCriticalSection</i> at exactly the same time on a
+multiprocessor machine, the function still behaves correctly: one
+thread is granted access to the resource, and the other thread is
+placed in a wait state.</p>
+
+<p>If <i>EnterCriticalSection</i> places a thread in a wait state, the
+thread might not be scheduled again for a long time. In fact, in a
+poorly written application, the thread might never be scheduled CPU
+time again. If this happens, the thread is said to be <i>
+starved</i>.</p>
+
+
+<p><div class="note"><blockquote><b>Windows 2000</b><HR>
+<p>In reality, threads waiting for a critical section never starve. Calls to
+<i>EnterCriticalSection</i> eventually time out, causing an exception
+to be raised. You can then attach a debugger to your application to
+determine what went wrong. The amount of time that must expire is
+determined by the <i>CriticalSectionTimeout</i> data value contained in
+the following registry subkey:</p>
+
+<p>
+<table cellpadding=5><TR><TD>
+<PRE>HKEY_LOCAL_MACHINE\System\CurrentControlSet\Control\Session Manager</PRE>
+</td></tr></table></p>
+
+<p>This value is in seconds and defaults to 2,592,000 seconds, or about
+30 days. Do not set this value too low (below 3 seconds, for example)
+or you will adversely affect threads in the system and other
+applications that normally wait more than 3 seconds for a critical
+section.</p>
+</blockquote></div></p>
+
+<p>You can use this function instead of <i>EnterCriticalSection:</i></p>
+
+
+<p><table cellpadding=5><tr><td>
+<PRE>
+BOOL TryEnterCriticalSection(PCRITICAL_SECTION pcs);
+</pre></td></tr></table></p>
+
+<p><i>TryEnterCriticalSection</i> never allows the calling thread to
+enter a wait state. Instead, its return value indicates whether the
+calling thread was able to gain access to the resource. So if <i>
+TryEnterCriticalSection</i> sees that the resource is being accessed by
+another thread, it returns FALSE. In all other cases, it returns
+TRUE.</p>
+
+<p>With this function, a thread can quickly check to see if it can
+access a certain shared resource and, if not, continue doing something
+else instead of waiting. If <i>TryEnterCriticalSection</i> does return
+TRUE, the CRITICAL_SECTION's member variables have been updated to
+reflect that the thread is accessing the resource. Therefore, every
+call to <i>TryEnterCriticalSection</i> that returns TRUE must be
+matched with a call to <i>LeaveCriticalSection</i>.</p>
+
+<p><div class="note"><blockquote><b>Windows 98</b><HR>
+Windows 98 does not have a useful implementation for the <i>
+TryEnterCriticalSection</i> function. Calling this function always
+returns FALSE.</blockquote></div></p>
+
+<p>At the end of your code that touches the shared resource, you must
+call this function:</p>
+
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+VOID LeaveCriticalSection(PCRITICAL_SECTION pcs); 
+</pre></td></tr></table></p>
+
+<p><i>LeaveCriticalSection</i> examines the member variables inside
+the structure. The function decrements by 1 a counter that indicates
+how many times the calling thread was granted access to the shared
+resource. If the counter is greater than 0, <i>LeaveCriticalSection</i>
+does nothing else and simply returns.</p>
+
+<p>If the counter becomes 0, it checks to see whether any other
+threads are waiting in a call to <i>EnterCriticalSection</i>. If at
+least one thread is waiting, it updates the member variables and makes
+one of the waiting threads (selected &quot;fairly&quot;) schedulable
+again. If no threads are waiting, <i>LeaveCriticalSection</i> updates
+the member variables to indicate that no thread is accessing the
+resource.</p>
+
+<p>Like <i>EnterCriticalSection, LeaveCriticalSection</i> performs all
+of these tests and updates atomically. However, <i>
+LeaveCriticalState</i> never places a thread in a wait state; it always
+returns immediately.</p>
+
+
+<A NAME="117"><H2>Critical Sections and Spinlocks</H2></A>
+
+<p>When a thread attempts to enter a critical section owned by another
+thread, the calling thread is placed immediately into a wait state.
+This means that the thread must transition from user mode to kernel
+mode (about 1000 CPU cycles). This transition is very expensive. On a
+multiprocessor machine, the thread that currently owns the resource
+might execute on a different processor and might relinquish control of
+the resource shortly. In fact, the thread that owns the resource might
+release it before the other thread has completed executing its
+transition into kernel mode. If this happens, a lot of CPU time is
+wasted.</p>
+
+<p>To improve the performance of critical sections, Microsoft has
+incorporated spinlocks into them. So when <i>EnterCriticalSection</i>
+is called, it loops using a spinlock to try to acquire the resource
+some number of times. Only if all the attempts fail does the thread
+transition to kernel mode to enter a wait state.</p>
+
+<p>To use a spinlock with a critical section, you should initialize
+the critical section by calling this function:</p>
+
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL InitializeCriticalSectionAndSpinCount(
+   PCRITICAL_SECTION pcs, 
+   DWORD dwSpinCount);
+</pre></td></tr></table></p>
+
+<p>As in <i>InitializeCriticalSection</i>, the first parameter of <i>
+InitializeCriticalSectionAndSpinCount</i> is the address of the
+critical section structure. But in the second parameter, <i>
+dwSpinCount</i>, you pass the number of times you want the spinlock
+loop to iterate as it tries to acquire the resource before making the
+thread wait. This value can be any number from 0 through 0x00FFFFFF. If
+you call this function while running on a single processor machine, the
+<i>dwSpinCount</i> parameter is ignored and the count is always set to
+0. This is good because setting a spin count on a single-processor
+machine is useless: the thread owning the resource can't relinquish
+it if another thread is spinning.</p>
+
+<p>You can change a critical section's spin count by calling this
+function:</p>
+
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+DWORD SetCriticalSectionSpinCount(
+   PCRITICAL_SECTION pcs, 
+   DWORD dwSpinCount);
+</pre></td></tr></table></p>
+
+<p>Again, the <i>dwSpinCount</i> value is ignored if the host machine
+has just one processor.</p>
+
+<p>In my opinion, you should always use spinlocks with critical
+sections since you have nothing to lose. The hard part is determining
+what value to pass for the <i>dwSpinCount</i> parameters. For the best
+performance, you simply have to play with numbers until you're
+happy with the performance results. As a guide, the critical section
+that guards access to your process's heap uses a spin count of
+4000.</p>
+
+<p>In <A HREF="ch10a.htm">Chapter 10</A>, I'll show you how to implement critical
+sections. This implementation incorporates spinlocks.</p>
+
+
+<A NAME="118"><H2>Critical Sections and Error Handling</H2></A>
+
+<p>There is a small chance that the <i>InitializeCriticalSection</i>
+function can fail. Microsoft didn't really think about this when it
+originally designed the function, which is why the function is
+prototyped as returning VOID. The function might fail because it
+allocates a block of memory so that the system can have some internal
+debugging information. If this memory allocation fails, a
+STATUS_NO_MEMORY exception is raised. You can trap this in your code
+using structured exception handling (discussed in Chapters <a href="ch23a.htm">23</a>, <a href="ch24a.htm">24</a>, and
+<a href="ch25a.htm">25</a>).</p>
+
+<p>You can more easily trap this problem using the newer <i>
+InitializeCriticalSectionAndSpinCount</i> function. This function also
+allocates the memory block for debugging information but returns FALSE
+if the memory could not be allocated.</p>
+
+<p>Another problem can arise when you use critical sections.
+Internally, critical sections use an event kernel object if two or more
+threads contend for the critical section at the same time. (I'll
+show how this kernel object is used when I explain the COptex C++ class
+in <A HREF="ch10a.htm">Chapter 10</A>.) Since contention is rare, the system does not create
+the event kernel object until the first time it is required. This saves
+a lot of system resources since most critical sections never have
+contention.</p>
+
+<p>In a low-memory situation, a critical section might have
+contention, and the system might be unable to create the required event
+kernel object. The <i>EnterCriticalSection</i> function will then raise
+an EXCEPTION_INVALID_HANDLE exception. Most developers simply ignore this potential
+error and have no special handling in their code since this error is
+extremely rare. However, if you want to be prepared for this situation,
+you do have two options.</p>
+
+<p>You can use structured exception handling and trap the error. When
+the error occurs, you can either not access the resource protected with
+the critical section or wait for some memory to become available and
+then call <i>EnterCriticalSection</i> again.</p>
+
+<p>Your other option is to create the critical section using <i>
+InitializeCriticalSectionAndSpinCount</i>, making sure that you set the
+high bit of the <i>dwSpinCount</i> parameter. When this function sees
+that the high bit is set, it creates the event kernel object and
+associates it with the critical section at initialization time. If the
+event cannot be created, the function returns FALSE and you can handle
+this more gracefully in your code. If the event is created
+successfully, you know that <i>EnterCriticalSection</i> will always
+work and never raise an exception. (Always preallocating the event
+kernel objects can waste system resources. You should do this only if
+your code cannot tolerate <i>EnterCriticalSection</i> failing, if you
+are sure that contention will occur, or if you expect the process to be
+run in very low-memory environments.)</p>
+
+
+<A NAME="119"><H2>Useful Tips and Techniques</H2></A>
+
+<p>When you use critical sections, there are some good habits to get
+into and some things to avoid. Here are several tips and techniques to
+help you when you use critical sections. These techniques also apply to
+kernel object synchronization (discussed in the <a href="ch09a.htm">next chapter</a>).</p>
+
+<A NAME="120"><H3>Use One CRITICAL_SECTION Variable per Shared Resource</H3></A>
+
+<p>If you have several unrelated data structures in your application,
+you should create a CRITICAL_SECTION variable for each data structure.
+This is better than having a single CRITICAL_SECTION structure that
+guards access to all shared resources. Examine this code fragment:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+int   g_nNums[100];       // A shared resource
+TCHAR g_cChars[100];      // Another shared resource
+CRITICAL_SECTION g_cs;    // Guards both resources
+
+
+DWORD WINAPI ThreadFunc(PVOID pvParam) {
+
+   EnterCriticalSection(&amp;g_cs);
+
+   for (int x = 0; x &lt; 100; x++) {
+      g_nNums[x]  = 0;
+      g_cChars[x] = TEXT('X');
+   }
+
+   LeaveCriticalSection(&amp;g_cs);
+   return(0);
+
+}
+</pre></td></tr></table></p>
+
+<p>This code uses a single critical section to protect both the <i>
+g_nNums</i> array and the <i>g_cChars</i> array while they are being
+initialized. But the two arrays have nothing to do with one another.
+While this loop executes, no thread can gain access to either array. If
+the <i>ThreadFunc</i> function is implemented as shown below, the two
+arrays are initialized separately:</p>
+
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+DWORD WINAPI ThreadFunc(PVOID pvParam) {
+
+   EnterCriticalSection(&amp;g_cs);
+
+   for (int x = 0; x &lt; 100; x++)
+      g_nNums[x] = 0;
+
+   for (x = 0; x &lt; 100; x++)
+      g_cChars[x] = TEXT('X');
+
+   LeaveCriticalSection(&amp;g_cs);
+   return(0);
+}
+</pre></td></tr></table></p>
+
+<p>Theoretically, after the <i>g_nNums</i> array has been initialized,
+a different thread that needs access only to the <i>g_nNums</i> array
+and not to the <i>g_cChars</i> array can begin executing while <i>
+ThreadFunc</i> continues to initialize the <i>g_cChars</i> array. But
+alas, this is not possible because a single critical section is
+protecting both data structures. To fix this, you can create two
+critical sections as follows:</p>
+
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+int g_nNum[100];             // A shared resource
+CRITICAL_SECTION g_csNums;   // Guards g_nNums
+
+TCHAR g_cChars[100];         // Another shared resource
+CRITICAL_SECTION g_csChars;  // Guards g_cChars
+
+DWORD WINAPI ThreadFunc(PVOID pvParam) {
+
+   EnterCriticalSection(&amp;g_csNums);
+
+   for (int x = 0; x &lt; 100; x++)
+      g_nNums[x] = 0;
+
+   LeaveCriticalSection(&amp;g_csNums);
+
+   EnterCriticalSection(&amp;g_csChars);
+
+   for (x = 0; x &lt; 100; x++)
+      g_cChars[x] = TEXT('X');
+
+   LeaveCriticalSection(&amp;g_ csChars);
+   return(0);
+}
+</pre></td></tr></table></p>
+
+<p>With this implementation, another thread can start using the <i>
+g_nNums</i> array as soon as <i>ThreadFunc</i> has finished
+initializing it. You might also consider having one thread initialize
+the <i>g_nNums</i> array and a separate thread function initialize the
+<i>g_cChars</i> array.</p>
+
+
+<A NAME="121"><H3>Access Multiple Resources Simultaneously</H3></A>
+
+<p>Sometimes you'll need to access two resources simultaneously. If
+this were a requirement of <i>ThreadFunc</i>, it would be implemented
+like this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+DWORD WINAPI ThreadFunc(PVOID pvParam) {
+
+   EnterCriticalSection(&amp;g_csNums);
+   EnterCriticalSection(&amp;g_csChars);
+
+   // This loop requires simultaneous access to both resources.
+   for (int x = 0; x &lt; 100; x++)
+      g_nNums[x] = g_cChars[x];
+
+   LeaveCriticalSection(&amp;g_csChars);
+   LeaveCriticalSection(&amp;g_csNums);
+   return(0);
+}
+</pre></td></tr></table></p>
+
+<p>Suppose another thread in the process, written as follows, also
+requires access to the two arrays:</p>
+
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+DWORD WINAPI OtherThreadFunc(PVOID pvParam) {
+
+   EnterCriticalSection(&amp;g_csChars);
+   EnterCriticalSection(&amp;g_csNums);
+
+   for (int x = 0; x &lt; 100; x++)
+      g_nNums[x] = g_cChars[x];
+
+   LeaveCriticalSection(&amp;g_csNums);
+   LeaveCriticalSection(&amp;g_csChars);
+   return(0);
+}
+</pre></td></tr></table></p>
+
+<p>All I did in the function above was switch the order of the calls
+to <i>EnterCriticalSection</i> and <i>LeaveCriticalSection</i>. But
+because the two functions are written the way they are, a deadlock
+might occur. Suppose that <i>ThreadFunc</i> begins executing and gains
+ownership of the <i>g_csNums</i> critical section. Then the thread
+executing the <i>OtherThreadFunc</i> function is given some CPU time
+and gains ownership of the <i>g_csChars</i> critical section. Now you
+have a deadlock situation. When either <i>ThreadFunc</i> or <i>
+OtherThreadFunc</i> tries to continue executing, neither function can
+gain ownership of the other critical section it requires.</p>
+
+<p>To solve this problem, you must always request access to the
+resources in exactly the same order. Notice that order does not matter
+when you call <i>LeaveCriticalSection</i> because this function never
+causes a thread to enter a wait state.</p>
+
+
+<A NAME="122"><H3>Don't Hold Critical Sections for a Long Time</H3></A>
+
+<p>When a critical section is held for a long time, other threads might
+enter wait states, which will hurt your application's performance.
+Here is a technique you can use to minimize the time spent inside a
+critical section. The following code prevents other threads from
+changing the value in <i>g_s</i> before the WM_ 
+SOMEMSG message is sent to a window:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+SOMESTRUCT g_s;
+CRITICAL_SECTION g_cs;
+
+DWORD WINAPI SomeThread(PVOID pvParam) {
+   EnterCriticalSection(&amp;g_cs);
+
+   // Send a message to a window.
+   SendMessage(hwndSomeWnd, WM_SOMEMSG, &amp;g_s, 0); 
+
+   LeaveCriticalSection(&amp;g_cs);
+   return(0);
+}
+</pre></td></tr></table></p>
+
+<p>It's impossible to tell how much time the window procedure
+requires for processing the WM_SOMEMSG message&#8212;it might be a few
+milliseconds or a few years. During that time, no other threads can
+gain access to the <i>g_s</i> structure. It's better to write the
+code as follows:</p>
+
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+SOMESTRUCT g_s;
+CRITICAL_SECTION g_cs;
+
+DWORD WINAPI SomeThread(PVOID pvParam) {
+
+   EnterCriticalSection(&amp;g_cs);
+   SOMESTRUCT sTemp = g_s;
+   LeaveCriticalSection(&amp;g_cs);
+
+   // Send a message to a window.
+   SendMessage(hwndSomeWnd, WM_SOMEMSG, &amp;sTemp, 0);
+   return(0);
+}
+</pre></td></tr></table></p>
+
+<p>This code saves the value in <i>sTemp</i>, a temporary variable.
+You can probably guess how long the CPU requires to execute this
+line&#8212;only a few CPU cycles. Immediately after the temporary
+variable is saved, <i>LeaveCriticalSection</i> is called because the
+global structure no longer needs to be protected. This second
+implementation is much better than the first because other threads are
+stopped from using the <i>g_s</i> structure for only a few CPU cycles
+instead of for an unknown amount of time. Of course, this technique
+assumes that the &quot;snapshot&quot; of the structure is good enough
+for the window procedure to read. It also assumes that the window
+procedure doesn't need to change the members in the structure.</p>
+
+</body>
+</html>
+
+
+
+
+
+
+

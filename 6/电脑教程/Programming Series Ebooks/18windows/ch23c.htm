@@ -1,0 +1,632 @@
+<HTML>
+<HEAD>
+	<LINK REL=StyleSheet HREF="petzoldi.css" TYPE="text/css">
+<title>WinInet and FTP</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="803"><h1>WinInet and FTP</h1></A>
+<p>The WinInet (&quot;Windows Internet&quot;) API is a collection of high-level functions that assist a programmer in using three popular Internet protocols: the Hypertext Transfer Protocol (HTTP) used for the World Wide Web, the File Transfer Protocol (FTP), and another file-transfer protocol known as Gopher. The syntax of the WinInet functions is very similar to the syntax of the normal Windows file functions, making it almost as easy to use these protocols as it is to use files on local disks. The WinInet API is documented at <I>/Platform SDK/Internet, Intranet, Extranet Services/Internet Tools and Technologies/WinInet API</I>.
+
+<p>The sample program coming up will demonstrate how to use the FTP portion of the WinInet API. Many companies that have Web sites also have &quot;anonymous FTP&quot; sites from which users can download files without typing in a user name or a password. For example, if you enter <I>ftp://ftp.microsoft.com</I> into the Address field of Internet Explorer, you'll get access to Microsoft's anonymous FTP site, and you can navigate the directories and download files. If you go to the address <I>ftp://ftp.cpetzold.com/cpetzold.com/ProgWin/UpdDemo</I>, you'll find a list of files on my anonymous FTP site that are used in conjunction with the sample program I'll be discussing shortly.
+
+<p>These days FTP is considered a bit too user-unfriendly for most Web surfers, but it is still quite useful. For example, an application program can use FTP to obtain data from an anonymous FTP site almost entirely behind the scenes with little user intervention. That's the idea behind the UPDDEMO (&quot;update demonstration&quot;) program we'll be examining shortly.
+
+<A NAME="804"><h2>Overview of the FTP API</h2></A>
+<p>A program that uses WinInet must include the header file WININET.H in any source file that calls WinInet functions. The program must also link with WININET.LIB. You can specify this in Microsoft Visual C++ in the Project Settings dialog box under the Link tab. At runtime, the program links with the WININET.DLL dynamic link library.
+
+<p>In the following discussion, I won't go into details regarding the function syntax because some of it can be quite complex with lots of different options. To get a start with WinInet, you can use the UPDDEMO source code as a cookbook. What's important for the moment is to get an idea of the various steps involved and the range of FTP functions.
+
+<p>To use any of the Windows Internet API, you first call <I>InternetOpen</I>. Following a single call to this function, you can then use any of the protocols supported by WinInet. <I>InternetOpen</I> gives you a handle to the Internet session that you store in a variable of type HINTERNET. When you're all done using the WinInet API, you should close the handle by calling <I>InternetCloseHandle</I>.
+
+<p>To use FTP, you then call <I>InternetConnect</I>. This function requires the Internet session handle created by <I>InternetOpen</I> and returns a handle to the FTP session. You use this handle as the first argument to all the functions that begin with the prefix <I>Ftp</I>. Arguments to the <I>InternetConnect</I> function indicate that you want to use FTP and also provide the server name, such as <I>ftp.cpetzold.com</I>. The function also requires a user name and a password. These can be set to NULL if you're accessing an anonymous FTP site. If the PC is not connected to the Internet when an application calls <I>InternetConnect</I>, Windows 98 will display a Dial-up Connection dialog box. When an application is finished using FTP, it should close the handle by a call to <I>InternetCloseHandle</I>.
+
+<p>At this point, you can begin calling the functions that have <I>Ftp</I> prefixes. You'll find that these are very similar to some of the normal Windows file I/O functions. To avoid a lot of overlap with the other protocols, some functions with an <I>Internet</I> prefix are also used with FTP.
+
+<p>The following four functions let you work with directories:
+
+<p><pre>
+fSuccess = FtpCreateDirectory (hFtpSession, szDirectory) ;
+fSuccess = FtpRemoveDirectory (hFtpSession, szDirectory) ;
+fSuccess = FtpSetCurrentDirectory (hFtpSession, szDirectory) ;
+fSuccess = FtpGetCurrentDirectory (hFtpSession, szDirectory,
+                                   &amp;dwCharacterCount) ;
+</PRE>
+
+<p>Notice that these functions are very similar to the familiar <I>CreateDirectory</I>, <I>RemoveDirectory</I>, <I>SetCurrentDirectory</I>, and <I>GetCurrentDirectory</I> functions provided by Windows for working with a local file system.
+
+<p>Applications accessing anonymous FTP sites cannot create or remove directories, of course. Also, programs cannot assume that an FTP directory has the same type of tree structure that Windows file systems have. In particular, a program that sets a directory using a relative path name should not assume anything about the new fully qualified directory name. The <I>SetCurrentDirectory</I> call should be followed with a <I>GetCurrentDirectory</I> call if the program needs to know the fully qualified name of the resultant directory. The character string argument to <I>GetCurrentDirectory</I> should accommodate at least MAX_PATH characters, and the last argument should point to a variable that contains that value.
+
+<p>These two functions let you delete or rename files (but not on anonymous FTP sites):
+
+<p><pre>
+fSuccess = FtpDeleteFile (hFtpSession, szFileName) ;
+fSuccess = FtpRenameFile (hFtpSession, szOldName, szNewName) ;
+</PRE>
+
+<p>You can search for a file (or multiple files that fit a template containing wildcard characters) by first calling <I>FtpFindFirstFile</I>. This function is very similar to the <I>FindFirstFile</I> function and even uses the same WIN32_FIND_DATA structure. The file returns a handle for the file enumeration. You pass this handle to the <I>InternetFindNextFile</I> function to obtain additional file names. Eventually you close the handle by a call to <I>InternetCloseHandle</I>.
+
+<p>To open a file you call <I>FtpFileOpen</I>. This function returns a handle to the file that you can use in the <I>InternetReadFile</I>, <I>InternetReadFileEx</I>, <I>InternetWrite</I>, and <I>InternetSetFilePointer</I> calls. You eventually close the handle by calling the all-purpose <I>InternetCloseHandle</I> function.
+
+<p>Finally, two high-level functions are particularly useful: The <I>FtpGetFile</I> call copies a file from an FTP server to local storage. It incorporates <I>FtpFileOpen</I>, <I>FileCreate</I>, <I>InternetReadFile</I>, <I>WriteFile</I>, <I>InternetCloseHandle</I>, and <I>CloseHandle</I> calls. One of the arguments to <I>FtpGetFile</I> is a flag that directs the function to fail if a local file by the same name already exists. Similarly the <I>FtpPutFile</I> copies a file from local storage to an FTP server.
+
+<A NAME="805"><h2>The Update Demo</h2></A>
+<p>The UPDDEMO (&quot;update demo&quot;) program shown in Figure 23-2 shows how to use the WinInet FTP functions in a second thread of execution to download files from an anonymous FTP site.
+
+<p><B>Figure 23-2.</b> <i>The UPDDEMO program.</I>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<h3>UPDDEMO.C</h3>
+
+<p><pre>
+/*------------------------------------------------
+   UPDDEMO.C -- Demonstrates Anonymous FTP Access
+
+                (c) Charles Petzold, 1998
+  ------------------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &lt;wininet.h&gt;
+#include &lt;process.h&gt;
+#include &quot;resource.h&quot;
+
+     // User-defined messages used in WndProc
+
+#define WM_USER_CHECKFILES (WM_USER + 1)
+#define WM_USER_GETFILES   (WM_USER + 2)
+
+     // Information for FTP download
+
+#define FTPSERVER TEXT (&quot;ftp.cpetzold.com&quot;)
+#define DIRECTORY TEXT (&quot;cpetzold.com/ProgWin/UpdDemo&quot;)
+#define TEMPLATE  TEXT (&quot;UD??????.TXT&quot;)
+
+     // Structures used for storing filenames and contents
+
+typedef struct
+{
+     TCHAR * szFilename ;
+     char  * szContents ;
+}
+FILEINFO ;
+
+typedef struct
+{
+     int      iNum ;
+     FILEINFO info[1] ;
+}
+FILELIST ;
+
+     // Structure used for second thread
+
+typedef struct
+{
+     BOOL bContinue ;
+     HWND hwnd ;
+}
+PARAMS ;
+
+     // Declarations of all functions in program
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+BOOL    CALLBACK DlgProc (HWND, UINT, WPARAM, LPARAM) ;
+VOID             FtpThread (PVOID) ;
+VOID             ButtonSwitch (HWND, HWND, TCHAR *) ;
+FILELIST *       GetFileList (VOID) ;
+int              Compare (const FILEINFO *, const FILEINFO *) ;
+
+     // A couple globals
+
+HINSTANCE hInst ;
+TCHAR     szAppName[] = TEXT (&quot;UpdDemo&quot;) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+
+     hInst = hInstance ;
+
+     wndclass.style         = 0 ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = NULL ;
+     wndclass.hbrBackground = GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;), 
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Update Demo with Anonymous FTP&quot;),
+                          WS_OVERLAPPEDWINDOW | WS_VSCROLL,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+          // After window is displayed, check if the latest file exists
+
+     SendMessage (hwnd, WM_USER_CHECKFILES, 0, 0) ;
+
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static FILELIST * plist ;
+     static int        cxClient, cyClient, cxChar, cyChar ;
+     HDC               hdc ;
+     int               i ;
+     PAINTSTRUCT       ps ;
+     SCROLLINFO        si ;
+     SYSTEMTIME        st ;
+     TCHAR             szFilename [MAX_PATH] ;
+
+     switch (message)
+     {
+     case WM_CREATE:
+          cxChar = LOWORD (GetDialogBaseUnits ()) ;
+          cyChar = HIWORD (GetDialogBaseUnits ()) ;
+          return 0 ;
+
+     case WM_SIZE:
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+
+          si.cbSize = sizeof (SCROLLINFO) ;
+          si.fMask  = SIF_RANGE | SIF_PAGE ;
+          si.nMin   = 0 ;
+          si.nMax   = plist ? plist-&gt;iNum - 1 : 0 ;
+          si.nPage  = cyClient / cyChar ;
+
+          SetScrollInfo (hwnd, SB_VERT, &amp;si, TRUE) ;
+          return 0 ;
+
+     case WM_VSCROLL:
+          si.cbSize = sizeof (SCROLLINFO) ;
+          si.fMask  = SIF_POS | SIF_RANGE | SIF_PAGE ;
+          GetScrollInfo (hwnd, SB_VERT, &amp;si) ;
+
+          switch (LOWORD (wParam))
+          {
+          case SB_LINEDOWN:       si.nPos += 1 ;              break ;
+          case SB_LINEUP:         si.nPos -= 1 ;              break ;
+          case SB_PAGEDOWN:       si.nPos += si.nPage ;       break ;
+          case SB_PAGEUP:         si.nPos -= si.nPage ;       break ;
+          case SB_THUMBPOSITION:  si.nPos = HIWORD (wParam) ; break ;
+          default:                return 0 ;
+          }
+          si.fMask = SIF_POS ;
+          SetScrollInfo (hwnd, SB_VERT, &amp;si, TRUE) ;
+          InvalidateRect (hwnd, NULL, TRUE) ;
+          return 0 ;
+
+     case WM_USER_CHECKFILES:
+               // Get the system date &amp; form filename from year and month
+
+          GetSystemTime (&amp;st) ;
+          wsprintf (szFilename, TEXT (&quot;UD%04i%02i.TXT&quot;), st.wYear, st.wMonth) ;
+
+               // Check if the file exists; if so, read all the files
+
+          if (GetFileAttributes (szFilename) != (DWORD) -1)
+          {
+               SendMessage (hwnd, WM_USER_GETFILES, 0, 0) ;
+               return 0 ;
+          }
+               // Otherwise, get files from Internet.
+               // But first check so we don't try copy files to a CD-ROM!
+          if (GetDriveType (NULL) == DRIVE_CDROM)
+          {
+               MessageBox (hwnd, TEXT (&quot;Cannot run this program from CD-ROM!&quot;),
+                                 szAppName, MB_OK | MB_ICONEXCLAMATION) ;
+               return 0 ;
+          }
+               // Ask user if an Internet connection is desired
+
+          if (IDYES == MessageBox (hwnd, 
+                                  TEXT (&quot;Update information from Internet?&quot;),
+                                  szAppName, MB_YESNO | MB_ICONQUESTION))
+
+               // Invoke dialog box 
+
+          DialogBox (hInst, szAppName, hwnd, DlgProc) ;
+
+               // Update display
+
+          SendMessage (hwnd, WM_USER_GETFILES, 0, 0) ;
+          return 0 ;
+
+     case WM_USER_GETFILES:
+          SetCursor (LoadCursor (NULL, IDC_WAIT)) ;
+          ShowCursor (TRUE) ;
+
+               // Read in all the disk files
+
+          plist = GetFileList () ;
+
+          ShowCursor (FALSE) ;
+          SetCursor (LoadCursor (NULL, IDC_ARROW)) ;
+
+               // Simulate a WM_SIZE message to alter scroll bar &amp; repaint
+
+          SendMessage (hwnd, WM_SIZE, 0, MAKELONG (cxClient, cyClient)) ;
+          InvalidateRect (hwnd, NULL, TRUE) ;
+          return 0 ;
+
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+          SetTextAlign (hdc, TA_UPDATECP) ;
+
+          si.cbSize = sizeof (SCROLLINFO) ;
+          si.fMask  = SIF_POS ;
+          GetScrollInfo (hwnd, SB_VERT, &amp;si) ;
+
+          if (plist)
+
+          {
+               for (i = 0 ; i &lt; plist-&gt;iNum ; i++)
+               {
+                    MoveToEx (hdc, cxChar, (i - si.nPos) * cyChar, NULL) ;
+                    TextOut  (hdc, 0, 0, plist-&gt;info[i].szFilename, 
+                                lstrlen (plist-&gt;info[i].szFilename)) ;
+                    TextOut  (hdc, 0, 0, TEXT (&quot;: &quot;), 2) ;
+                    TextOutA (hdc, 0, 0, plist-&gt;info[i].szContents, 
+                                 strlen (plist-&gt;info[i].szContents)) ;
+               }
+          }
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+
+     case WM_DESTROY:
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+
+BOOL CALLBACK DlgProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static PARAMS params ;
+
+     switch (message)
+     {
+     case WM_INITDIALOG:
+          params.bContinue = TRUE ;
+          params.hwnd = hwnd ;
+
+          _beginthread (FtpThread, 0, &amp;params) ;
+          return TRUE ;
+
+     case WM_COMMAND:
+          switch (LOWORD (wParam))
+          {
+          case IDCANCEL:           // button for user to abort download
+               params.bContinue = FALSE ;
+               return TRUE ;
+
+          case IDOK:               // button to make dialog box go away
+               EndDialog (hwnd, 0) ;
+               return TRUE ;
+          }
+     }
+     return FALSE ;
+}
+
+/*----------------------------------------------------------------------
+   FtpThread: Reads files from FTP server and copies them to local disk
+  ----------------------------------------------------------------------*/
+
+void FtpThread (PVOID parg)
+{
+     BOOL            bSuccess ;
+     HINTERNET       hIntSession, hFtpSession, hFind ;
+     HWND            hwndStatus, hwndButton ;
+     PARAMS        * pparams ;
+     TCHAR           szBuffer [64] ;
+     WIN32_FIND_DATA finddata ;
+
+     pparams = parg ;
+     hwndStatus = GetDlgItem (pparams-&gt;hwnd, IDC_STATUS) ;
+     hwndButton = GetDlgItem (pparams-&gt;hwnd, IDCANCEL) ;
+
+          // Open an internet session
+     
+     hIntSession = InternetOpen (szAppName, INTERNET_OPEN_TYPE_PRECONFIG,
+                                 NULL, NULL, INTERNET_FLAG_ASYNC) ;
+
+     if (hIntSession == NULL)
+     {
+          wsprintf (szBuffer, TEXT (&quot;InternetOpen error %i&quot;), GetLastError ()) ;
+          ButtonSwitch (hwndStatus, hwndButton, szBuffer) ;
+          _endthread () ;
+     }
+
+     SetWindowText (hwndStatus, TEXT (&quot;Internet session opened...&quot;)) ;
+
+          // Check if user has pressed Cancel
+
+     if (!pparams-&gt;bContinue)
+     {
+          InternetCloseHandle (hIntSession) ;
+          ButtonSwitch (hwndStatus, hwndButton, NULL) ;
+          _endthread () ;
+     }
+
+          // Open an FTP session.
+
+     hFtpSession = InternetConnect (hIntSession, FTPSERVER,
+                                    INTERNET_DEFAULT_FTP_PORT,
+                                    NULL, NULL, INTERNET_SERVICE_FTP, 0, 0) ;
+     if (hFtpSession == NULL)
+     {
+          InternetCloseHandle (hIntSession) ;
+          wsprintf (szBuffer, TEXT (&quot;InternetConnect error %i&quot;), 
+                              GetLastError ()) ;
+          ButtonSwitch (hwndStatus, hwndButton, szBuffer) ;
+          _endthread () ;
+     }
+
+     SetWindowText (hwndStatus, TEXT (&quot;FTP Session opened...&quot;)) ;
+     
+          // Check if user has pressed Cancel
+
+     if (!pparams-&gt;bContinue)
+     {
+          InternetCloseHandle (hFtpSession) ;
+          InternetCloseHandle (hIntSession) ;
+          ButtonSwitch (hwndStatus, hwndButton, NULL) ;
+          _endthread () ;
+     }
+
+          // Set the directory
+     
+     bSuccess = FtpSetCurrentDirectory (hFtpSession, DIRECTORY) ;
+
+     if (!bSuccess)
+     {
+          InternetCloseHandle (hFtpSession) ;
+          InternetCloseHandle (hIntSession) ;
+          wsprintf (szBuffer, TEXT (&quot;Cannot set directory to %s&quot;),
+                              DIRECTORY) ;
+          ButtonSwitch (hwndStatus, hwndButton, szBuffer) ;
+          _endthread () ;
+     }
+
+     SetWindowText (hwndStatus, TEXT (&quot;Directory found...&quot;)) ;
+
+          // Check if user has pressed Cancel
+
+     if (!pparams-&gt;bContinue)
+     {
+          InternetCloseHandle (hFtpSession) ;
+          InternetCloseHandle (hIntSession) ;
+          ButtonSwitch (hwndStatus, hwndButton, NULL) ;
+          _endthread () ;
+     }
+          // Get the first file fitting the template
+
+     hFind = FtpFindFirstFile (hFtpSession, TEMPLATE, 
+                               &amp;finddata, 0, 0) ;
+
+     if (hFind == NULL)
+     {
+          InternetCloseHandle (hFtpSession) ;
+          InternetCloseHandle (hIntSession) ;
+          ButtonSwitch (hwndStatus, hwndButton, TEXT (&quot;Cannot find files&quot;)) ;
+          _endthread () ;
+     }
+
+     do 
+     {
+               // Check if user has pressed Cancel
+
+          if (!pparams-&gt;bContinue)
+          {
+               InternetCloseHandle (hFind) ;
+               InternetCloseHandle (hFtpSession) ;
+               InternetCloseHandle (hIntSession) ;
+               ButtonSwitch (hwndStatus, hwndButton, NULL) ;
+               _endthread () ;
+          }
+               // Copy file from internet to local hard disk, but fail
+               // if the file already exists locally
+
+          wsprintf (szBuffer, TEXT (&quot;Reading file %s...&quot;), finddata.cFileName) ;
+          SetWindowText (hwndStatus, szBuffer) ;
+
+          FtpGetFile (hFtpSession, 
+                      finddata.cFileName, finddata.cFileName, TRUE, 
+                      FILE_ATTRIBUTE_NORMAL, FTP_TRANSFER_TYPE_BINARY, 0) ;
+     }
+     while (InternetFindNextFile (hFind, &amp;finddata)) ;
+
+     InternetCloseHandle (hFind) ;
+     InternetCloseHandle (hFtpSession) ;
+     InternetCloseHandle (hIntSession) ;
+
+     ButtonSwitch (hwndStatus, hwndButton, TEXT (&quot;Internet Download Complete&quot;));
+}
+
+/*-----------------------------------------------------------------------
+   ButtonSwitch:  Displays final status message and changes Cancel to OK
+  -----------------------------------------------------------------------*/
+
+VOID ButtonSwitch (HWND hwndStatus, HWND hwndButton, TCHAR * szText) 
+{
+     if (szText)
+          SetWindowText (hwndStatus, szText) ;
+     else
+          SetWindowText (hwndStatus, TEXT (&quot;Internet Session Cancelled&quot;)) ;
+
+     SetWindowText (hwndButton, TEXT (&quot;OK&quot;)) ;
+     SetWindowLong (hwndButton, GWL_ID, IDOK) ;
+}
+
+/*-----------------------------------------------------------------------
+   GetFileList: Reads files from disk and saves their names and contents
+  -----------------------------------------------------------------------*/
+
+FILELIST * GetFileList (void)
+{
+     DWORD           dwRead ;
+     FILELIST      * plist ;
+     HANDLE          hFile, hFind ;
+     int             iSize, iNum  ;
+     WIN32_FIND_DATA finddata ;
+
+     hFind = FindFirstFile (TEMPLATE, &amp;finddata) ;
+
+     if (hFind == INVALID_HANDLE_VALUE)
+          return NULL ;
+     
+     plist = NULL ;
+     iNum  = 0 ;
+
+     do
+     {
+               // Open the file and get the size
+
+          hFile = CreateFile (finddata.cFileName, GENERIC_READ, FILE_SHARE_READ,
+                              NULL, OPEN_EXISTING, 0, NULL) ;
+
+          if (hFile == INVALID_HANDLE_VALUE)
+               continue ;
+     
+          iSize = GetFileSize (hFile, NULL) ;
+
+          if (iSize == (DWORD) -1)
+          {
+               CloseHandle (hFile) ;
+               continue ;
+          }
+               // Realloc the FILELIST structure for a new entry 
+
+          plist = realloc (plist, sizeof (FILELIST) + iNum * sizeof (FILEINFO));
+
+               // Allocate space and save the filename 
+
+          plist-&gt;info[iNum].szFilename = malloc (lstrlen (finddata.cFileName) +
+                                                 sizeof (TCHAR)) ;
+          lstrcpy (plist-&gt;info[iNum].szFilename, finddata.cFileName) ;
+
+               // Allocate space and save the contents
+
+          plist-&gt;info[iNum].szContents = malloc (iSize + 1) ;
+          ReadFile (hFile, plist-&gt;info[iNum].szContents, iSize, &amp;dwRead, NULL);
+          plist-&gt;info[iNum].szContents[iSize] = 0 ;
+
+          CloseHandle (hFile) ;
+          iNum ++ ;
+     }
+     while (FindNextFile (hFind, &amp;finddata)) ;
+
+     FindClose (hFind) ;
+
+          // Sort the files by filename
+
+     qsort (plist-&gt;info, iNum, sizeof (FILEINFO), Compare) ;
+
+     plist-&gt;iNum = iNum ;
+
+     return plist ;
+}
+
+/*----------------------------
+   Compare function for qsort
+  ----------------------------*/
+
+int Compare (const FILEINFO * pinfo1, const FILEINFO * pinfo2)
+{
+     return lstrcmp (pinfo2-&gt;szFilename, pinfo1-&gt;szFilename) ;
+}
+</pre>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<h3>UPDDEMO.RC (excerpts)</h3>
+
+<p><pre>
+//Microsoft Developer Studio generated resource script.
+
+
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+// Dialog
+
+UPDDEMO DIALOG DISCARDABLE  20, 20, 186, 95
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION &quot;Internet Download&quot;
+FONT 8, &quot;MS Sans Serif&quot;
+BEGIN
+    PUSHBUTTON      &quot;Cancel&quot;,IDCANCEL,69,74,50,14
+    CTEXT           &quot;&quot;,IDC_STATUS,7,29,172,21
+END
+</pre>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<h3>RESOURCE.H (excerpts)</h3>
+
+<p><pre>
+// Microsoft Developer Studio generated include file.
+// Used by UpdDemo.rc
+
+
+#define IDC_STATUS                      40001
+</pre>
+</td></tr></table>
+
+<p>UPDDEMO uses files with names of UDyyyymm.TXT, where <I>yyyy</I> is a 4-digit year (year 2000 compliant, of course) and <I>mm</I> is a 2-digit month. The assumption here is that the program benefits from having updated files every month. Perhaps these files are really entire monthly magazines that the program downloads to local storage for performance purposes.
+
+<p>So, after <I>WinMain</I> calls <I>ShowWindow</I> and <I>UpdateWindow</I> to display UPDDEMO's main window, it sends <I>WndProc</I> a program-defined WM_USER_CHECKFILES message. <I>WndProc</I> processes this message by obtaining the current year and month and checking the default directory for a UDyyyymm.TXT file with that year and month. The existence of such a file means that UPDDEMO is fully updated. (Well, not really. Some of the past files might be missing. A more complete program might do a more extensive check.) In this case, UPDDEMO sends itself a WM_USER_GETFILES message, which it processes by calling the <I>GetFileList</I> function. This is a longish function in UPDDEMO.C, but it's not particularly interesting. All it does is read all the UDyyyymm.TXT files into a dynamically allocated structure of type FILELIST defined at the top of the program. The program then displays the contents of these files in its client area.
+
+<p>If UPDDEMO does not have the most recent file, then it must access the Internet to update itself. The program first asks the user if this is OK. If so, it displays a simple dialog box with a Cancel button and a static text field with an ID of IDC_STATUS. This will serve to give the user a status report as the download takes place, and to allow the user to cancel a particularly sluggish session. The dialog procedure is named <I>DlgProc</I>.
+
+<p><I>DlgProc</I> is very short. It sets up a structure of type PARAMS containing its own window handle and a BOOL variable named <I>bContinue</I>, and then calls _<I>beginthread</I> to execute a second thread of execution.
+
+<p>The <I>FtpThread</I> function performs the actual transfer using calls to <I>InternetOpen</I>, <I>InternetConnect</I>, <I>FtpSetCurrentDirectory</I>, <I>FtpFindFirstFile</I>, <I>InternetFindNextFile</I>, <I>FtpGetFile</I>, and <I>InternetCloseHandle</I> (three times). As with most code, this thread function could be a lot shorter if it weren't so obsessed with checking for errors, letting the user know what's going on, and letting the user cancel the whole show if desired. The <I>FtpThread</I> function keeps the user aware of its progress by calls to <I>SetWindowText</I> using the <I>hwndStatus</I> handle, which refers to the static text field in the center of the dialog box.
+
+<p>The thread can terminate in one of three ways:
+
+<p>First, <I>FtpThread</I> could encounter an error return from one of the WinInet functions. If so, it cleans up and then formats an error string and passes that string (along with the handles to the dialog box text field and Cancel button) to <I>ButtonSwitch</I>. <I>ButtonSwitch</I> is a little function that displays the text string and switches the Cancel button to an OK button&#8212;not only the text string in the button but also the control ID. This allows the user to press the OK button and terminate the dialog box.
+
+
+<p>Second, <I>FtpThread</I> could complete its task without any errors. This is handled in the same way as if it encounters an error, except that the string it displays in the dialog box is &quot;Internet Download Complete.&quot;
+
+
+<p>Third, the user could elect to cancel the download in progress. In this case, <I>DlgProc</I> sets the <I>bContinue</I> field of the PARAMS structure to FALSE. <I>FtpThread</I> frequently checks that value; if <I>bContinue</I> is FALSE, the function cleans up and calls <I>ButtonSwitch</I> with a NULL text argument, indicating that the string &quot;Internet Session Cancelled&quot; is to be displayed. Again, the user must press &quot;OK&quot; to get rid of the dialog box.
+
+
+<p>Although UPDDEMO is written to display only a single line of each file, it's possible that I (the author of this book) could use this program to inform you (the reader of this book) about any possible updates or other information regarding this book that can be found on my Web site in more detail. UPDDEMO thus becomes a means for me to broadcast information out to you and thus continue this book beyond this page.
+
+</BODY>
+</HTML>
+
+
+
+
+
+

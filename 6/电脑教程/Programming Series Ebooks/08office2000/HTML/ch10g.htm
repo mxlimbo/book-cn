@@ -1,0 +1,488 @@
+<HTML>
+<HEAD>
+<TITLE>The Stock Ticker Control</TITLE>
+<link rel="STYLESHEET" type="text/css" href="webcomp.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch10f.htm">[Previous]</A> <A HREF="ch10h.htm">[Next]</A><P>
+
+<A NAME="200"><H1>The Stock Ticker Control</H1></A>
+
+<P>The stock portfolio spreadsheet is quite simple, and the only thing required to 
+make new data values appear in the spreadsheet is the property-binding formula syntax 
+I illustrated earlier. However, implementing the source control that actually gets the 
+data and notifies the Spreadsheet control when values have changed is more difficult.</P>
+
+<P>For this solution, I implemented a control (Stock Ticker) in Visual Basic 6 
+that screen-scrapes stock information from HTML pages returned by the Microsoft 
+Investor web site. This was an approach of last resort, and I would not at all recommend 
+this technique as a reliable way for obtaining live data. The Stock Ticker control 
+needed an easy way to obtain live stock price information, and the few COM controls I 
+found that claimed to deliver this information required complex setups or did not 
+work through a firewall. Thus, I was left with extracting data from an HTML page, but 
+this is littered with limitations.</P>
+
+<P>First, the solution will work only as long as the Microsoft Investor web site 
+retains its current structure and page layout. If the source URL I use in the Stock Ticker 
+control no longer returns stock information, the control will no longer know how to 
+obtain data. If the Investor site inserts a new column in its data results tables, the Stock 
+Ticker control will also fail. Why is this control so fragile? The answer to this question 
+helps us understand why XML and XSL (Extensible Stylesheet Language) were 
+invented. Indeed, the correct future implementation of this kind of control should be XML-based.</P>
+
+<P>Second, HTML is a presentation format. In HTML, data and formatting are 
+mixed together into one stream of text, and extracting just the data values is 
+problematic because they are not explicitly marked. HTML is also an inefficient way to 
+transmit only data values because all the extra formatting and layout information is 
+unnecessary when the requesting program is simply interested in the data values. In 
+many ways, HTML is a step back toward mainframe and minicomputer terminals, and 
+all the lessons learned from client-server computing are now being repeated in the 
+world of Internet technologies&#8212;which brings us to XML and XSL.</P>
+
+<P>XML and XSL represent an attempt to separate data from its presentation. 
+XML defines a mechanism for expressing structured and semistructured data as a 
+hierarchical set of nodes. XSL offers a way to translate those nodes into another set of 
+nodes, most commonly in HTML format. The Stock Ticker control is the perfect example 
+of a component that is interested only in the data portion and therefore needs only 
+the XML nodes. This component could extract the values it needs by finding the 
+appropriate node in the hierarchy by name, and it would not have to rely on a 
+specific, physical onscreen layout.</P>
+
+<P>Furthermore, data expressed in XML can be locale-independent, 
+transmitting numbers and dates in ISO standard formats that programs can accurately 
+interpret no matter what the source and destination locales are. For example, a date 
+transmitted as HTML is generally formatted in some friendly manner because users 
+viewing a web page do not want to see dates formatted as 03-01-1999T00:00:00. 
+However, date formatting is extremely locale specific. If the data source is in the UK, I 
+might get dates in the dd/mm/yy format; however, a U.S. machine expects those dates 
+in mm/dd/yy format. If the source sends a date such as 03/01/99, the receiving 
+program has no way of knowing whether to interpret it as January 3, 1999, or March 1, 
+1999. Formatted numbers pose a similar problem. If the source sends the number 
+1,001, the receiving program has no way of knowing whether to interpret it as &quot;one 
+thousand and one&quot; or as &quot;one and one-one thousandth.&quot; Because XML and XSL 
+separate the data from its presentation, dates and numbers can be expressed in ISO 
+standard formats in XML but formatted in a locale-specific manner with XSL. Programs 
+requiring the raw data values can accurately interpret dates and numbers from the XML, 
+while users viewing the content in a web browser will see a nicely formatted display.</P>
+
+<P>Unfortunately, I was not able to find any site on the Web that distributes 
+stock information in XML. When considering how to get the real-time data for your 
+solution, think about using XML instead of attempting to scrape data values from formatted 
+HTML as I did in this solution. Let's look at how I got the stock information the hard way.</P>
+
+<A NAME="201"><H2>Getting Stock Quote Information the Hard Way</H2></A>
+
+<P>The Stock Ticker control (StockTicker.ctl) has two other COM controls inside it: 
+an Internet Transfer control and a standard Visual Basic Timer control. The first 
+control provides a mechanism for obtaining the results of a URL. The second provides 
+a polling heartbeat by which the Stock Ticker control fetches new data. The 
+timer's interval can be set through the RefreshRate property of the Stock Ticker control. 
+When the timer fires, the Stock Ticker control uses the Internet Transfer control to get 
+the results of a specific URL exposed from the Microsoft Investor web site. Let's look 
+at the code in the Timer event:</P>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Private Sub Timer1_Timer()
+    Dim fSuccess As Boolean
+    If m_colQuotes.Count &gt; 0 Then
+        fSuccess = GetQuotes(True, m_fFakeData)
+        If fSuccess Then
+            UserControl.PropertyChanged &quot;LastUpdated&quot;
+            RaiseEvent NewData(False, &quot;&quot;)
+        Else
+            RaiseEvent NewData(True, m_sLastErrText)
+        End If
+    End If
+End Sub 'Timer1_Timer()
+</pre></td></tr></table></p>
+
+<P>The first thing this code does is check the internal collection of Quote 
+objects to make sure there is at least one quote. The control maintains a collection of 
+Quote objects in the variable m_colQuotes and adds a new object for each distinct 
+symbol requested by a client. If there are no Quote objects, the client has not requested 
+any quotes and there is no need to fetch any new data.</P>
+
+<P>If there are quotes, the code calls the GetQuotes function (which I will 
+describe shortly) to populate the Quote objects with new information. The code passes 
+the data member m_fFakeData, which is set by the control's SimulatedData 
+property. A client application with no connection to the Internet can use this value to 
+specify that data be simulated. If the GetQuotes function returns True (indicating 
+success), the code first calls the PropertyChanged method exposed by the base 
+UserControl object to send a property change notification. I will describe how to raise 
+property change notifications in Visual Basic in more detail in the next section; for now, 
+just understand that the change notification is sent at this point. Next, the code raises 
+the Stock Ticker control's NewData event, passing True (error) or False (no error) 
+and the last error text.</P>
+
+<P>Now let's dive into the GetQuotes method itself:</P>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Private Function GetQuotes(Optional Notify As Boolean = True, _
+Optional FakeData As Boolean = False) As Boolean
+    Dim sURL As String          ' URL to get
+    Dim sHTML As String         ' Returned HTML
+    Dim ss As Spreadsheet       ' Spreadsheet for parsing returned HTML
+    Dim nPos As Long            ' Start position marker
+    Dim nPosEnd As Long         ' End position marker
+    Dim sFind As String         ' String to find in overall returned HTML
+    Dim q As Quote              ' Quote iterator
+    Dim ct As Long              ' Generic loop counter
+    Dim fCancel As Boolean      ' Cancel flag for BeforeNewData event
+    
+    On Error GoTo Err_GetQuotes
+    
+    fCancel = False
+    RaiseEvent BeforeNewData(fCancel)
+    
+    If fCancel Then Exit Function
+    
+    ' Check the FakeData flag
+    If FakeData Then
+        ' If the user wants simulated data, generate it
+        For Each q In m_colQuotes
+            If Len(q.LastSale) = 0 Then
+                ' New quote; initialize with random values
+                q.Description = &quot;Simulated Data!&quot;
+                q.LastSale = GenRandomValue(1, 100)
+                q.Change = &quot;0&quot;
+                q.PercentChange = &quot;0%&quot;
+                q.Volume = GenRandomValue(5000, 1000000)
+            Else
+                ' Existing quote; adjust values based
+                ' on a randomly generated delta
+                q.Description = &quot;Simulated Data!&quot;
+                q.LastSale = GenRandomValue(1, 100)
+                q.Change = &quot;0&quot;
+                q.PercentChange = &quot;0%&quot;
+                q.Volume = q.Volume
+            End If
+        Next q
+        
+        ' Return True
+        GetQuotes = True
+        <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+</pre></td></tr></table></p>
+
+<P>The GetQuotes function begins by declaring a slew of variables you will 
+see throughout the code that follows. It then raises the Stock Ticker control's 
+BeforeNewData event, passing the fCancel variable, giving the client application a chance to 
+stop fetching new data. Because I declared the BeforeNewData event's parameter to 
+be passed ByRef (that is, by reference), the client application can set this parameter to 
+True and my code in the control can check the parameter value after the event to 
+determine whether it should retrieve new data or cancel the operation.</P>
+
+<P>Next the code checks the FakeData flag and, if it is True, stuffs each Quote 
+object full of randomly generated values. Because this is stock price information, I 
+didn't even attempt to make the values look plausible, and I change them wildly with 
+each refresh. This way, it will be obvious that the data is simulated. Otherwise, 
+readers might mistakenly rush to their phones to sell their stocks based on erroneous data.</P>
+
+<P>The GetQuotes function continues processing the Else case:</P>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+    <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+    Else
+        ' Get real data from the Investor web site
+        
+        ' Hack: Due to an Internet Explorer 5 bug, we have to ignore the
+        ' first call to GetQuotes. If you use the WinInet control to get a
+        ' URL while Internet Explorer is still loading and initializing
+        ' the page, it will cause bad things to happen in the
+        ' Spreadsheet control's AutoFit code.
+        ' (You usually see a black area around the control and
+        ' the control doesn't size correctly, and then
+        ' the control often crashes upon closing.)
+        If m_fIgnoreGet Then
+            m_fIgnoreGet = False
+            GetQuotes = True
+            Exit Function
+        End If
+        
+        ' Get out of here if we're still fetching
+        If m_fFetching Then Exit Function
+        <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+</pre></td></tr></table></p>
+
+<P>The first part of this code is the direct result of a long debugging session 
+and an extremely long bug report that bounced between the Internet Explorer and 
+OWC teams. Before I included this code, this solution failed to load properly about 
+50 percent of the time: the Spreadsheet control did not autofit correctly, black 
+areas appeared where the scroll bars were supposed to be, and the solution often 
+crashed when I closed Internet Explorer. After considerable investigation, our 
+developers discovered a timing-related problem in Internet Explorer that manifested itself 
+only in this specific circumstance. Suppose you had a page containing a control 
+that attempted to automatically adjust its size while the page loaded (the 
+Spreadsheet control's AutoFit feature). If at the same time, another control attempted to 
+execute another URL through the Internet Transfer control (which eventually uses 
+WinInet and URLMon, two components also used by Internet Explorer), Internet 
+Explorer would get confused and improperly handle the control's resize request.</P>
+
+<P>After further investigation, we determined that it was possible to work 
+around the problem by simply delaying the Stock Ticker control's first URL request until 
+after its timer fired once. This gives the Spreadsheet control time to complete its 
+resize request and gives Internet Explorer time to process it. Once the Spreadsheet 
+control performs its initial resize, the Stock Ticker control can begin requesting URLs 
+and everything will work properly thereafter. To accomplish this little code dance, I 
+use a data member called m_fIgnoreGet. The variable is initialized to True in the 
+Stock Ticker control's Initialize event. The first time the GetQuotes function runs, it 
+notices that this flag is set to True, sets it to False, and exits successfully. The Stock 
+Ticker control then waits for the next timer event and thereafter fetches stock information.</P>
+
+<P>After this beautiful hack, the GetQuotes method continues like so:</P>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+        <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+        ' Create the spreadsheet in memory
+        Set ss = New Spreadsheet
+        
+        ' Build the URL, adding all the symbols
+        ' Put one symbol on there to begin with so that we get the
+        ' multiquote return page
+        ' even if we have just one symbol in the list
+        sURL = &quot;http://investor.msn.com/quotes/quotes.asp?&quot; &amp; _
+            &quot;QUICKQUOTE=Quote&amp;Symbol=msft&quot;
+               
+        For Each q In m_colQuotes
+            sURL = sURL &amp; &quot;,&quot; &amp; q.Symbol
+        Next q
+        
+        ' Get the data
+        m_fFetching = True
+        
+        ' Set the timeout for twice as long as the refresh rate
+        Inet1.RequestTimeout = ((Timer1.Interval * 2) / 1000)
+        sHTML = Inet1.OpenURL(sURL)
+        
+        m_fFetching = False
+        <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+</pre></td></tr></table></p>
+
+<P>This section of the function builds the URL that will return all the 
+information for all the stock symbols in one request. The Quotes.asp page on the Microsoft 
+Investor web site can process any number of symbols separated by commas, but it 
+will generate different results if you ask for just one symbol instead of two or 
+more. Because I need to have a reliable format to parse, I always add one hard-coded 
+symbol to the front of the URL so that I am guaranteed to have more than one. (As you 
+will remember, the code in the timer event made sure that I had at least one Quote 
+object in my collection.) Luckily, I do not need to worry about which symbol I use, as 
+the Investor site will happily return the same quote information for two identical 
+symbols.</P>
+
+<P>After building the URL, I set the Internet Transfer control's request timeout 
+value so that it is twice as long as our refresh rate. URL requests can take a while to 
+process, but the Quotes.asp page usually returns within a second on a fast modem 
+connection. If you find that the requests are constantly timing out, try setting the Stock 
+Ticker control's refresh rate to a higher value. You can do this by setting the value in 
+the RefreshRate &lt;param&gt; tag. (The solution is coded to refresh every 3 seconds.)</P>
+
+<P>After setting the timeout, I use the Internet Transfer control's OpenURL 
+method to get the results of the URL I built earlier. This method is executed 
+synchronously, so this line of code will block until the results return or until the request times 
+out. A request timeout is considered an error, so a timeout will cause the execution to 
+jump to the error-handling block at the bottom of the GetQuotes function. If the 
+results return successfully, the code continues like so:</P>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+        <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+        ' Find our known string within the results table
+        sFind = &quot;quotes.asp?Symbol=msft&quot;&quot;&gt;&quot;
+        nPos = InStr(1, sHTML, sFind, vbTextCompare)
+        
+        ' If we found it, get the symbol data
+        If nPos &gt; 0 Then
+            ' Look backward for the beginning of the closest table
+            nPos = InStrRev(sHTML, &quot;&lt;table&quot;, nPos, vbTextCompare)
+            
+            ' Look forward for the end of the table
+            nPosEnd = InStr(nPos, sHTML, &quot;&lt;/table&quot;, vbTextCompare)
+            nPosEnd = nPosEnd + 8 '=Len(&quot;&lt;/table&gt;&quot;)
+            
+            ' Load the spreadsheet, and let it parse the table
+            ss.HTMLData = Mid(sHTML, nPos, nPosEnd - nPos)
+            <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+</pre></td></tr></table></p>
+
+<P>This is where the code gets somewhat tricky and is most subject to failure. 
+When building the solution, I looked at the HTML source returned from the Quotes.asp 
+page and saw that I could find the HTML table containing the quote information by 
+searching for the string &quot;quotes.asp?Symbol=msft&quot;&gt;&quot;. This was part of a hyperlink (&lt;a&gt;) 
+tag returned for the first hard-coded symbol in my URL. I knew that if I found this in 
+the HTML string, I could back up to the opening &lt;table&gt; tag and find the closing 
+&lt;/table&gt; tag, allowing myself to extract the whole results table.</P>
+
+<P>I next needed a way to parse the HTML table of results. At first I tried 
+parsing the text myself, but I quickly found that the Investor site sometimes 
+includes &lt;font&gt; tags when it needs to format numbers, such as when it shows negative 
+values in red. Instead of handling all the strange cases that might come back, I 
+decided to let the Spreadsheet control parse the table for me. As noted in <A HREF="ch02a.htm">Chapter 2</A>, you 
+can set the HTMLData property to an HTML table and the Spreadsheet control will 
+load the table cells into the corresponding spreadsheet cells. I could then simply walk 
+the spreadsheet cells to get the various quote information, as shown here:</P>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+            <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+            ' Load the quote objects
+            ct = 3
+            For Each q In m_colQuotes
+                ' Set the Notify flag to whatever was passed in
+                q.Notify = Notify
+                
+                q.Description = ss.Range(&quot;b&quot; &amp; ct).Value
+                q.LastSale = ss.Range(&quot;c&quot; &amp; ct).Value
+                q.Change = ss.Range(&quot;d&quot; &amp; ct).Value
+                q.PercentChange = ss.Range(&quot;e&quot; &amp; ct).Value
+                q.Volume = ss.Range(&quot;f&quot; &amp; ct).Value
+                
+                ' Reset the Notify flag to True
+                q.Notify = True
+                
+                ct = ct + 1
+            Next q
+    
+            GetQuotes = True
+            m_sLastErrText = &quot;&quot;
+            <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+</pre></td></tr></table></p>
+
+<P>The HTML table of results contains one row per stock symbol, with the 
+columns Symbol, Symbol Description, Last Sale, Change, Percent Change, and Volume 
+Values, appearing in that order. Since I already have the symbol itself, I load the other 
+values into the quote object. I also assume that the results table uses the same order as 
+the symbols in the requested URL, so I can simply iterate over the Quotes 
+collection matching each quote to a row in the table.</P>
+
+<P>So what happens when a new symbol is not valid? The Investor site will 
+of course return a page, but it will not include the normal results table. Instead it 
+will return a page stating that one of the symbols was invalid. So if the previous code 
+does not find that special string (quotes.asp?Symbol=msft&quot;&gt;) in the resulting HTML 
+page, the code falls into this Else block:</P>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+        <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+        Else
+            ' Find string was not found--site has changed,
+            ' error has occurred, 
+            ' or the symbol was invalid
+            
+            ' Remove the last quote because if it was invalid,
+            ' it would cause this condition
+            If m_colQuotes.Count &gt; 0 Then
+                m_colQuotes.Remove m_colQuotes.Count
+            End If
+            
+            GetQuotes = False
+            m_sLastErrText = &quot;Symbol not found, or Investor &quot; &amp; _
+                             &quot;has changed its site layout!&quot;
+        End If 'Find string was found
+        <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+</pre></td></tr></table></p>
+
+<P>There are two reasons why the code might not find the special string: the 
+most recent symbol might be invalid, or the results table returned from the Investor 
+site might have changed its layout. The more likely case is that the symbol is invalid. 
+Since I would be totally out of luck if the site had changed, I attempt to correct the 
+condition by removing the quote that was most recently added from the Quotes 
+collection. I know that the quote most recently added must be the invalid one because 
+previous quotes would not have caused this code to run (or else those quotes 
+already would have been removed).</P>
+
+<P>The other type of error condition is an error that occurs during the 
+URLOpen method. If that happens, the code execution jumps to the error handler code 
+block, shown here:</P>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+<img src="images/grayvellip.JPG" width=3 height=13 border="0">
+Err_GetQuotes:
+    ' Error!
+    m_sLastErrText = Err.Description
+    GetQuotes = False
+    
+    ' Set all values to error
+    For Each q In m_colQuotes
+        q.Description = &quot;Error Retrieving Values!&quot;
+        q.LastSale = &quot;#VALUE!&quot;
+        q.Change = &quot;#VALUE!&quot;
+        q.PercentChange = &quot;#VALUE!&quot;
+        q.Volume = &quot;#VALUE!&quot;
+    Next q
+    
+    Exit Function
+    <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+</pre></td></tr></table></p>
+
+<P>In this case, I set all values of all Quote objects to &quot;#VALUE!&quot;. This special 
+string is interpreted by the Spreadsheet control as an error value, and all cells 
+dependent on a cell set to &quot;#VALUE!&quot; are also set to &quot;#VALUE!&quot;. This guarantees that a user 
+does not see stale data values in the event of an error. I also put the Err.Description 
+string into my last error string variable so that I can return it in the NewData event 
+raised from the timer event shown earlier.</P>
+
+<A NAME="202"><H2>Raising Property Change Notifications in Visual Basic</H2></A>
+
+<P>Raising property change notifications from your Visual Basic control is fairly 
+straightforward. However, there are some interesting tricks to raising them from public 
+classes. Let's look at both cases.</P>
+
+<P>To raise a property change notification from a Visual Basic control, you 
+should write code like this:</P>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+UserControl.PropertyChanged &quot;LastUpdated&quot;
+</pre></td></tr></table></p>
+
+<P>UserControl is the base class for any control created in Visual Basic, and 
+a number of common methods and properties required for control development 
+are exposed from this class. The PropertyChanged method provides you with a 
+mechanism for raising property change notifications. The first and only parameter to 
+this method is the name of the changed property. The code above, taken from the 
+Stock Ticker control's timer event, notifies a client that the LastUpdated property has changed.</P>
+
+<P>Raising property change notifications from a public class uses a similar 
+mechanism, but it requires one extra step that is hardly obvious. By default, the Visual 
+Basic compiler will not allow code that calls the PropertyChanged method in a public 
+class. For example, if you type this line of code into a newly created public class, the 
+compiler will generate an error when you try to enter the line:</P>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+PropertyChanged &quot;LastSale&quot;
+</pre></td></tr></table></p>
+
+<P>Without the ability to enter a line of code like this, it would seem that you 
+cannot raise property change notifications from a public class. However, the compiler 
+will allow the previously mentioned line of code if you set the class's 
+DataBindingBehavior property to vbSimpleBound. The class properties are exposed in Visual Basic's 
+property sheet when the class's code window is open and active. Figure 10-4 shows 
+where to find this property.</P>
+
+<P>
+<A HREF="javascript:fullSize('f10pi04x.htm')"> <img src="images/f10pi04.JPG" width=404 height=289 border=0 ALT="Click to view at full size."> </A>
+</P><P>
+<!-- CAPTION --><B>Figure 10-4.</B> <I>Setting the DataBindingBehavior property.</I><!-- /CAPTION -->
+</P>
+
+<P>After setting this property, call the PropertyChanged method to send a 
+property change notification from your public class. This allows a Visual Basic control 
+to act as a factory for public classes that expose properties with change 
+notifications, just as I have done in the Stock Ticker control.</P>
+
+</BODY>
+</HTML>
+
+
+
+
+

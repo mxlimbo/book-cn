@@ -1,0 +1,1023 @@
+<HTML>
+<HEAD>
+	<LINK REL=StyleSheet HREF="petzoldi.css" TYPE="text/css">
+<title>Windows Multithreading</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="719"><h1>Windows Multithreading</h1></A><P>The API function to create a new thread of execution is named CreateThread. The 
+function has the following syntax:
+<P>hThread = CreateThread (&amp;security_attributes, dwStackSize, ThreadProc, 
+                        pParam, dwFlags, &amp;idThread) ;
+<P>The first argument is a pointer to a structure of type SECURITY_ATTRIBUTES. This 
+argument is ignored in Windows 98. It can also be set to NULL in Windows NT. The 
+second argument is an initial stack size for the new thread; this argument can be set to 0 for a 
+default value. In any case, Windows dynamically lengthens the stack, if necessary.
+<P>The third argument to <I>CreateThread</I> is a pointer to the <I>Thread</I> function. This can 
+have any name but must have the syntax
+<P>DWORD WINAPI ThreadProc (PVOID pParam) ;
+<P>The fourth argument to <I>CreateThread</I> becomes the argument to 
+<I>ThreadProc</I>. This is how a main thread and a secondary thread can share data.
+<P>The fifth argument to <I>CreateThread</I> is usually 0 but can be the 
+flag CREATE_SUSPENDED if the thread is to be created but not immediately executed. 
+The thread will remain suspended until 
+<I>ResumeThread</I> is called. The sixth argument is a 
+pointer to a variable that will receive the value of the thread ID.
+<P>Most Windows programmers instead prefer to use a C run-time library 
+named <I>_beginthread</I> that is declared in the PROCESS.H header file. This function has the 
+following syntax:
+<P>hThread = _beginthread (ThreadProc, uiStackSize, pParam) ;
+<P>It's just a bit simpler and is perfectly fine for most applications. This <I>Thread</I> function 
+has the syntax
+<P>void __cdecl ThreadProc (void * pParam) ;
+
+<A NAME="720"><h2>Random Rectangles Revisited</h2></A><P>The RNDRCTMT program shown in Figure 20-1 is a multithreaded version of the 
+RANDRECT program shown in Chapter 5. As you'll recall, RANDRECT used the 
+<I>PeekMessage</I> loop to display a series of random rectangles.
+<P><B>Figure 20-1.</b> <i>The RNDRCTMT program.</I>
+<table cellpadding=5 width="95%"><tr><td>
+<A NAME="721"><h3>RNDRCTMT.C</h3></A><PRE>
+/*------------------------------------------
+   RNDRCTMT.C -- Displays Random Rectangles
+                 (c) Charles Petzold, 1998
+  ------------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &lt;process.h&gt;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+HWND hwnd ;
+int  cxClient, cyClient ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName[] = TEXT (&quot;RndRctMT&quot;) ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+     
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Random Rectangles&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+VOID Thread (PVOID pvoid)
+{
+     HBRUSH hBrush ;
+     HDC    hdc ;
+     int    xLeft, xRight, yTop, yBottom, iRed, iGreen, iBlue ;
+     
+     while (TRUE)
+     {
+          if (cxClient != 0 || cyClient != 0)
+          {
+               xLeft   = rand () % cxClient ;
+               xRight  = rand () % cxClient ;
+               yTop    = rand () % cyClient ;
+               yBottom = rand () % cyClient ;
+               iRed    = rand () &amp; 255 ;
+               iGreen  = rand () &amp; 255 ;
+               iBlue   = rand () &amp; 255 ;
+               
+               hdc = GetDC (hwnd) ;
+               hBrush = CreateSolidBrush (RGB (iRed, iGreen, iBlue)) ;
+               SelectObject (hdc, hBrush) ;
+               
+               Rectangle (hdc, min (xLeft, xRight), min (yTop, yBottom),
+                               max (xLeft, xRight), max (yTop, yBottom)) ;
+               
+               ReleaseDC (hwnd, hdc) ;
+               DeleteObject (hBrush) ;
+          }
+     }
+}
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     switch (message)
+     {
+     case WM_CREATE:
+          _beginthread (Thread, 0, NULL) ;
+          return 0 ;
+          
+     case WM_SIZE:
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+          return 0 ;
+          
+     case WM_DESTROY:
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</PRE>
+</td></tr></table>
+<P>Whenever you create a multithreaded Windows program, you need to change 
+something in the Project Settings dialog box. Select the C/C++ tab, and select Code 
+Generation in the Category combo box. In the Use Run-Time Library combo box, you should see 
+Single-Threaded for the Release configuration and Debug Single-Threaded for the Debug 
+configuration. Change these to Multithreaded and Debug Multithreaded, respectively. This 
+will change a compiler flag to /MT, which the compiler needs to compile a 
+multithreaded application. In particular, the compiler inserts the LIBCMT.LIB filename in the .OBJ file 
+rather than LIBC.LIB. The linker uses this name to link with the run-time library functions.
+<P>The LIBC.LIB and LIBCMT.LIB files contain the C library functions. Some C 
+library functions maintain static data. The 
+<I>strtok</I> function, for example, is designed to be called 
+more than once in succession and stores a pointer in static memory. In a multithreaded 
+program, each thread must have its own static pointer in the 
+<I>strtok</I> function. Thus, the multithreaded version of this function is a little different from the single-threaded 
+<I>strtok</I> function.
+<P>Also notice that I've included the header file PROCESS.H in RNDRCTMT.C. This 
+file declares the <I>_beginthread</I> function that starts up the new thread. The function is not 
+declared unless an _MT identifier is defined, and that's another result of the /MT flag.
+<P>In the <I>WinMain</I> function in RNDRCTMT.C, the 
+<I>hwnd</I> value returned from 
+<I>CreateWindow</I> is stored in a global variable. So also are the 
+<I>cxClient</I> and <I>cyClient</I> values 
+obtained from the WM_SIZE message in the window procedure.
+<P>The window procedure calls <I>_beginthread</I> in the easiest way, with simply the 
+address of the thread function (called 
+<I>Thread</I>) as the first argument and zeros for the other 
+arguments. The thread function returns VOID and has a argument that is a pointer to 
+a VOID. The <I>Thread</I> function in RNDRCTMT does not use this argument.
+<P>After the <I>_beginthread</I> function is called, the code in that thread function, as well 
+as any other function the thread function might call, runs concurrently with the rest of 
+the code in the program. Two or more threads can use the same function in a process. In 
+this case, the automatic local variables (stored on the stack) are unique to each thread; all 
+static variables are common to all threads in the process. This is how the window procedure 
+can set the global <I>cxClient</I> and 
+<I>cyClient</I> variables and the <I>Thread</I> function can use them.
+<P>There are times that you need persistent data unique to more than one thread. 
+Normally, persistent data involves static variables but in Windows 98 you can use TLS, 
+which I've touched on and which I'll discuss in greater detail later in this chapter.
+
+<A NAME="722"><h2>The Programming Contest Problem</h2></A><P>On October 3, 1986, Microsoft held a daylong press briefing for technical editors and 
+writers of computer magazines to discuss their current array of language products, including 
+their first interactive development environment, QuickBASIC 2.0. At that time, Windows 1.0 
+was less than a year old, and no one knew when we'd get something similar for that 
+environment. (It took quite a few years.) What made this event unique was a little something 
+that Microsoft's public relations folks had cooked up&#8212;a programming contest called 
+&quot;Storm the Gates.&quot; Bill Gates would be using QuickBASIC 2.0, and the technical computer 
+press people could use whatever language product they might decide to bring.
+<P>The particular programming problem used for the contest was picked out of a 
+hat from among several others submitted by the contestants and designed to require about 
+a half hour to program. It went something like this:
+<P>Create a multitasking simulation consisting of four windows. The first window 
+must show a series of increasing numbers, the second must show a series of increasing 
+prime numbers, and the third must show the Fibonacci series. (The Fibonacci series begins 
+with the numbers 0 and 1, and every successive number is the sum of the two before it (that 
+is, 0, 1, 1, 2, 3, 5, 8, and so forth.) These three windows should either scroll or clear 
+themselves when the numbers reached the bottom of the window. The fourth window must 
+display circles of random radii, and the program must terminate with a press of the Escape key.
+<P>Of course, in October 1986, such a program running under DOS couldn't be 
+much more than a multitasking simulation, and none of the contestants were brave 
+enough&#8212;and most not yet knowledgeable enough&#8212;to code it for Windows. Moreover, to do so 
+from scratch would almost certainly have taken longer than a half hour!
+<P>Most of the people who participated in this contest wrote a program that divided 
+the screen into four areas. The program contained a loop that sequentially updated each 
+window and then checked if the Escape key had been pressed. As is customary under 
+DOS, the program used 100 percent of CPU processing.
+<P>Had it been programmed for Windows 1.0, the result would have looked 
+something like the MULTI1 program shown in Figure 20-2. I say &quot;something like&quot; because I've 
+converted the program to 32-bit processing. But the structure and much of the code&#8212;aside 
+from variable and function argument definitions and the Unicode support&#8212;would have 
+been the same.
+<P><b>Figure 20-2.</b> <i>The MULTI1 program.</i>
+<table cellpadding=5 width="95%"><tr><td>
+<A NAME="723"><h3>MULTI1.C</h3></A><PRE>
+/*---------------------------------------
+   MULTI1.C -- Multitasking Demo
+               (c) Charles Petzold, 1998
+  ---------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &lt;math.h&gt;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int cyChar ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName[] = TEXT (&quot;Multi1&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+     
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Multitasking Demo&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+int CheckBottom (HWND hwnd, int cyClient, int iLine)
+{
+     if (iLine * cyChar + cyChar &gt; cyClient)
+     {
+          InvalidateRect (hwnd, NULL, TRUE) ;
+          UpdateWindow (hwnd) ;
+          iLine = 0 ;
+     }
+     return iLine ;
+}
+
+// ------------------------------------------------
+// Window 1: Display increasing sequence of numbers
+// ------------------------------------------------
+
+LRESULT APIENTRY WndProc1 (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static int iNum, iLine, cyClient ;
+     HDC        hdc ;
+     TCHAR      szBuffer[16] ;
+     
+     switch (message)
+     {
+     case WM_SIZE:
+          cyClient = HIWORD (lParam) ;
+          return 0 ;
+     case WM_TIMER:
+          if (iNum &lt; 0)
+               iNum = 0 ;
+
+          iLine = CheckBottom (hwnd, cyClient, iLine) ;
+          hdc = GetDC (hwnd) ;
+
+          TextOut (hdc, 0, iLine * cyChar, szBuffer, 
+                   wsprintf (szBuffer, TEXT (&quot;%d&quot;), iNum++)) ;
+
+          ReleaseDC (hwnd, hdc) ;
+          iLine++ ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+
+// ------------------------------------------------------
+// Window 2: Display increasing sequence of prime numbers
+// ------------------------------------------------------
+
+LRESULT APIENTRY WndProc2 (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static int iNum = 1, iLine, cyClient ;
+     HDC        hdc ;
+     int        i, iSqrt ;
+     TCHAR      szBuffer[16] ;
+     
+     switch (message)
+     {
+     case WM_SIZE:
+          cyClient = HIWORD (lParam) ;
+          return 0 ;
+          
+     case WM_TIMER:
+          do   {
+               if (++iNum &lt; 0)
+                    iNum = 0 ;
+               
+               iSqrt = (int) sqrt (iNum) ;
+               for (i = 2 ; i &lt;= iSqrt ; i++)
+                    if (iNum % i == 0)
+                         break ;
+          }
+          while (i &lt;= iSqrt) ;
+          
+          iLine = CheckBottom (hwnd, cyClient, iLine) ;
+          hdc = GetDC (hwnd) ;
+
+          TextOut (hdc, 0, iLine * cyChar, szBuffer, 
+                   wsprintf (szBuffer, TEXT (&quot;%d&quot;), iNum)) ;
+          ReleaseDC (hwnd, hdc) ;
+          iLine++ ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+
+// ----------------------------------------------------------
+// Window 3: Display increasing sequence of Fibonacci numbers
+// ----------------------------------------------------------
+
+LRESULT APIENTRY WndProc3 (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static int iNum = 0, iNext = 1, iLine, cyClient ;
+     HDC        hdc ;
+     int        iTemp ;
+     TCHAR      szBuffer[16] ;
+     
+     switch (message)
+     {
+     case WM_SIZE:
+          cyClient = HIWORD (lParam) ;
+          return 0 ;
+          
+     case WM_TIMER:
+          if (iNum &lt; 0)
+          {
+               iNum  = 0 ;
+               iNext = 1 ;
+          }
+          
+          iLine = CheckBottom (hwnd, cyClient, iLine) ;
+          hdc = GetDC (hwnd) ;
+          TextOut (hdc, 0, iLine * cyChar, szBuffer, 
+                   wsprintf (szBuffer, &quot;%d&quot;, iNum)) ;
+
+          ReleaseDC (hwnd, hdc) ;
+          iTemp  = iNum ;
+          iNum   = iNext ;
+          iNext += iTemp ;
+          iLine++ ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+
+// -----------------------------------------
+// Window 4: Display circles of random radii
+// -----------------------------------------
+
+LRESULT APIENTRY WndProc4 (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static int cxClient, cyClient ;
+     HDC        hdc ;
+     int        iDiameter ;
+     
+     switch (message)
+     {
+     case WM_SIZE:
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+          return 0 ;
+          
+     case WM_TIMER:
+          InvalidateRect (hwnd, NULL, TRUE) ;
+          UpdateWindow (hwnd) ;
+          
+          iDiameter = rand() % (max (1, min (cxClient, cyClient))) ;
+          hdc = GetDC (hwnd) ;
+          
+          Ellipse (hdc, (cxClient - iDiameter) / 2,
+                        (cyClient - iDiameter) / 2,
+                        (cxClient + iDiameter) / 2,
+                        (cyClient + iDiameter) / 2) ;
+          
+          ReleaseDC (hwnd, hdc) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+
+// -----------------------------------
+// Main window to create child windows
+// -----------------------------------
+
+LRESULT APIENTRY WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static HWND    hwndChild[4] ;
+     static TCHAR * szChildClass[] = { TEXT (&quot;Child1&quot;), TEXT (&quot;Child2&quot;),
+                                       TEXT (&quot;Child3&quot;), TEXT (&quot;Child4&quot;) } ;
+     static WNDPROC ChildProc[] = { WndProc1, WndProc2, WndProc3, WndProc4 } ;
+     HINSTANCE      hInstance ;
+     int            i, cxClient, cyClient ;
+     WNDCLASS       wndclass ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+          hInstance = (HINSTANCE) GetWindowLong (hwnd, GWL_HINSTANCE) ;
+          
+          wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+          wndclass.cbClsExtra    = 0 ;
+          wndclass.cbWndExtra    = 0 ;
+          wndclass.hInstance     = hInstance ;
+          wndclass.hIcon         = NULL ;
+          wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+          wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+          wndclass.lpszMenuName  = NULL ;
+          
+          for (i = 0 ; i &lt; 4 ; i++)
+          {
+               wndclass.lpfnWndProc   = ChildProc[i] ;
+               wndclass.lpszClassName = szChildClass[i] ;
+               
+               RegisterClass (&amp;wndclass) ;
+               
+               hwndChild[i] = CreateWindow (szChildClass[i], NULL,
+                                   WS_CHILDWINDOW | WS_BORDER | WS_VISIBLE,
+                                   0, 0, 0, 0, 
+                                   hwnd, (HMENU) i, hInstance, NULL) ;
+          }
+          
+          cyChar = HIWORD (GetDialogBaseUnits ()) ;
+          SetTimer (hwnd, 1, 10, NULL) ;
+          return 0 ;
+          
+     case WM_SIZE:
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+          
+          for (i = 0 ; i &lt; 4 ; i++)
+               MoveWindow (hwndChild[i], (i % 2) * cxClient / 2,
+                                         (i &gt; 1) * cyClient / 2,
+                           cxClient / 2, cyClient / 2, TRUE) ;
+          return 0 ;
+          
+     case WM_TIMER:
+          for (i = 0 ; i &lt; 4 ; i++)
+               SendMessage (hwndChild[i], WM_TIMER, wParam, lParam) ;
+          
+          return 0 ;
+          
+     case WM_CHAR:
+          if (wParam == `\x1B')
+               DestroyWindow (hwnd) ;
+          
+          return 0 ;
+          
+     case WM_DESTROY:
+          KillTimer (hwnd, 1) ;
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</PRE>
+</td></tr></table>
+<P>This program presents nothing we haven't really seen before. The main 
+window creates four child windows, each of which occupies one-quarter of the client area. The 
+main window also sets a Windows timer and sends WM_TIMER messages to each of the 
+four child windows.
+<P>Normally a Windows program should maintain enough information to recreate 
+the contents of its window during the WM_PAINT message. MULTI1 doesn't do this, but 
+the windows are drawn and erased so rapidly that I didn't think it necessary.
+<P>The prime number generator in <I>WndProc2</I> isn't terribly efficient, but it works. 
+A number is prime if it has no divisors except 1 and itself. To check if a 
+particular number is prime, however, doesn't require dividing by all numbers and checking 
+for remainders up to that number being checked, but only up to the square root of that 
+number. That square root calculation is the reason for the unusual introduction of 
+floating-point math in an otherwise all integer-based program.
+<P>There is nothing really wrong with the MULTI1 program. Using the Windows 
+timer is a fine way to simulate multitasking in earlier and current versions of Windows and in Windows 
+98. However, the use of the timer sometimes restricts the speed of a program. If the 
+program can update all its windows within a single WM_TIMER message with time to spare, 
+then it's not taking full advantage of the machine.
+<P>One possible solution is to perform two or more updates during a single 
+WM_TIMER message. But how many? That would have to depend on the speed of the machine, 
+and that is a major variable. One would not want to write a program tuned to a 25-MHz 
+386 or a 50-MHz 486 or a 100-GHz Pentium 7.
+
+<A NAME="724"><h2>The Multithreaded Solution</h2></A>
+<P>Let's take a look at a multithreaded solution to this programming problem. The 
+MULTI2 program is shown in Figure 20-3.
+<P><B>Figure 20-3.</b> <i>The MULTI2 program.</I>
+<table cellpadding=5 width="95%"><tr><td>
+<A NAME="725"><h3>MULTI2.C</h3></A><PRE>
+/*---------------------------------------
+   MULTI2.C -- Multitasking Demo
+               (c) Charles Petzold, 1998
+  ---------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &lt;math.h&gt;
+#include &lt;process.h&gt;
+
+typedef struct
+{
+     HWND hwnd ;
+     int  cxClient ;
+     int  cyClient ;
+     int  cyChar ;
+     BOOL bKill ;
+}
+PARAMS, *PPARAMS ;
+
+LRESULT APIENTRY WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+
+     static TCHAR szAppName[] = TEXT (&quot;Multi2&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+     
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Multitasking Demo&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+int CheckBottom (HWND hwnd, int cyClient, int cyChar, int iLine)
+{
+     if (iLine * cyChar + cyChar &gt; cyClient)
+     {
+          InvalidateRect (hwnd, NULL, TRUE) ;
+          UpdateWindow (hwnd) ;
+          iLine = 0 ;
+     }
+     return iLine ;
+}
+
+// ------------------------------------------------
+// Window 1: Display increasing sequence of numbers
+// ------------------------------------------------
+
+void Thread1 (PVOID pvoid)
+{
+     HDC     hdc ;
+     int     iNum = 0, iLine = 0 ;
+     PPARAMS pparams ;
+     TCHAR   szBuffer[16] ;
+     
+     pparams = (PPARAMS) pvoid ;
+     
+     while (!pparams-&gt;bKill)
+     {
+          if (iNum &lt; 0)
+               iNum = 0 ;
+          
+          iLine = CheckBottom (pparams-&gt;hwnd,   pparams-&gt;cyClient,
+                               pparams-&gt;cyChar, iLine) ;
+
+          hdc = GetDC (pparams-&gt;hwnd) ;
+          
+          TextOut (hdc, 0, iLine * pparams-&gt;cyChar, szBuffer, 
+                   wsprintf (szBuffer, TEXT (&quot;%d&quot;), iNum++)) ;               
+          
+          ReleaseDC (pparams-&gt;hwnd, hdc) ;
+          iLine++ ;
+     }
+     _endthread () ;
+}
+
+LRESULT APIENTRY WndProc1 (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static PARAMS params ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+          params.hwnd = hwnd ;
+          params.cyChar = HIWORD (GetDialogBaseUnits ()) ;
+          _beginthread (Thread1, 0, &amp;params) ;
+          return 0 ;
+          
+     case WM_SIZE:
+          params.cyClient = HIWORD (lParam) ;
+          return 0 ;
+          
+     case WM_DESTROY:
+          params.bKill = TRUE ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+
+// ------------------------------------------------------
+// Window 2: Display increasing sequence of prime numbers
+// ------------------------------------------------------
+
+void Thread2 (PVOID pvoid)
+{
+     HDC     hdc ;
+     int     iNum = 1, iLine = 0, i, iSqrt ;
+     PPARAMS pparams ;
+     TCHAR   szBuffer[16] ;
+     
+     pparams = (PPARAMS) pvoid ;
+     
+     while (!pparams-&gt;bKill)
+     {
+          do
+          {
+               if (++iNum &lt; 0)
+                    iNum = 0 ;
+               
+               iSqrt = (int) sqrt (iNum) ;
+               
+               for (i = 2 ; i &lt;= iSqrt ; i++)
+                    if (iNum % i == 0)
+                         break ;
+          }
+          while (i &lt;= iSqrt) ;
+          iLine = CheckBottom (pparams-&gt;hwnd,   pparams-&gt;cyClient,
+                               pparams-&gt;cyChar, iLine) ;
+          
+          hdc = GetDC (pparams-&gt;hwnd) ;
+          
+          TextOut (hdc, 0, iLine * pparams-&gt;cyChar, szBuffer, 
+                   wsprintf (szBuffer, TEXT (&quot;%d&quot;), iNum)) ;
+          
+          ReleaseDC (pparams-&gt;hwnd, hdc) ;
+          iLine++ ;
+     }
+     _endthread () ;
+}
+
+LRESULT APIENTRY WndProc2 (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static PARAMS params ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+          params.hwnd = hwnd ;
+          params.cyChar = HIWORD (GetDialogBaseUnits ()) ;
+          _beginthread (Thread2, 0, &amp;params) ;
+          return 0 ;
+          
+     case WM_SIZE:
+          params.cyClient = HIWORD (lParam) ;
+          return 0 ;
+          
+     case WM_DESTROY:
+          params.bKill = TRUE ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+
+// Window 3: Display increasing sequence of Fibonacci numbers
+// ----------------------------------------------------------
+
+void Thread3 (PVOID pvoid)
+{
+     HDC     hdc ;
+     int     iNum = 0, iNext = 1, iLine = 0, iTemp ;
+     PPARAMS pparams ;
+     TCHAR   szBuffer[16] ;
+     
+     pparams = (PPARAMS) pvoid ;
+     
+     while (!pparams-&gt;bKill)
+     {
+          if (iNum &lt; 0)
+          {
+               iNum  = 0 ;
+               iNext = 1 ;
+          }
+          iLine = CheckBottom (pparams-&gt;hwnd,   pparams-&gt;cyClient,
+                               pparams-&gt;cyChar, iLine) ;
+
+          hdc = GetDC (pparams-&gt;hwnd) ;
+          
+          TextOut (hdc, 0, iLine * pparams-&gt;cyChar, szBuffer, 
+                   wsprintf (szBuffer, TEXT (&quot;%d&quot;), iNum)) ;
+          
+          ReleaseDC (pparams-&gt;hwnd, hdc) ;
+          iTemp  = iNum ;
+          iNum   = iNext ;
+          iNext += iTemp ;
+          iLine++ ;
+     }
+     _endthread () ;
+}
+
+LRESULT APIENTRY WndProc3 (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static PARAMS params ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+          params.hwnd = hwnd ;
+          params.cyChar = HIWORD (GetDialogBaseUnits ()) ;
+          _beginthread (Thread3, 0, &amp;params) ;
+          return 0 ;
+     case WM_SIZE:
+          params.cyClient = HIWORD (lParam) ;
+          return 0 ;
+          
+     case WM_DESTROY:
+          params.bKill = TRUE ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+
+// -----------------------------------------
+// Window 4: Display circles of random radii
+// -----------------------------------------
+
+void Thread4 (PVOID pvoid)
+{
+     HDC     hdc ;
+     int     iDiameter ;
+     PPARAMS pparams ;
+     
+     pparams = (PPARAMS) pvoid ;
+     
+     while (!pparams-&gt;bKill)
+     {
+          InvalidateRect (pparams-&gt;hwnd, NULL, TRUE) ;
+          UpdateWindow (pparams-&gt;hwnd) ;
+          
+          iDiameter = rand() % (max (1,
+                                min (pparams-&gt;cxClient, pparams-&gt;cyClient))) ;
+          
+          hdc = GetDC (pparams-&gt;hwnd) ;
+          
+          Ellipse (hdc, (pparams-&gt;cxClient - iDiameter) / 2,
+                        (pparams-&gt;cyClient - iDiameter) / 2,
+                        (pparams-&gt;cxClient + iDiameter) / 2,
+                        (pparams-&gt;cyClient + iDiameter) / 2) ;
+          
+          ReleaseDC (pparams-&gt;hwnd, hdc) ;
+     }
+     _endthread () ;
+}
+LRESULT APIENTRY WndProc4 (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static PARAMS params ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+          params.hwnd = hwnd ;
+          params.cyChar = HIWORD (GetDialogBaseUnits ()) ;
+          _beginthread (Thread4, 0, &amp;params) ;
+          return 0 ;
+          
+     case WM_SIZE:
+          params.cxClient = LOWORD (lParam) ;
+          params.cyClient = HIWORD (lParam) ;
+          return 0 ;
+          
+     case WM_DESTROY:
+          params.bKill = TRUE ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+
+// -----------------------------------
+// Main window to create child windows
+// -----------------------------------
+
+LRESULT APIENTRY WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static HWND    hwndChild[4] ;
+     static TCHAR * szChildClass[] = { TEXT (&quot;Child1&quot;), TEXT (&quot;Child2&quot;),
+                                       TEXT (&quot;Child3&quot;), TEXT (&quot;Child4&quot;) } ;
+     static WNDPROC ChildProc[] = { WndProc1, WndProc2, WndProc3, WndProc4 } ;
+     HINSTANCE      hInstance ;
+     int            i, cxClient, cyClient ;
+     WNDCLASS       wndclass ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+          hInstance = (HINSTANCE) GetWindowLong (hwnd, GWL_HINSTANCE) ;
+          wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+          wndclass.cbClsExtra    = 0 ;
+          wndclass.cbWndExtra    = 0 ;
+          wndclass.hInstance     = hInstance ;
+          wndclass.hIcon         = NULL ;
+          wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+          wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+          wndclass.lpszMenuName  = NULL ;
+          
+          for (i = 0 ; i &lt; 4 ; i++)
+          {
+               wndclass.lpfnWndProc   = ChildProc[i] ;
+               wndclass.lpszClassName = szChildClass[i] ;
+               
+               RegisterClass (&amp;wndclass) ;
+               
+               hwndChild[i] = CreateWindow (szChildClass[i], NULL,
+                                   WS_CHILDWINDOW | WS_BORDER | WS_VISIBLE,
+                                   0, 0, 0, 0, 
+                                   hwnd, (HMENU) i, hInstance, NULL) ;
+          }
+          
+          return 0 ;
+          
+     case WM_SIZE:
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+          
+          for (i = 0 ; i &lt; 4 ; i++)
+               MoveWindow (hwndChild[i], (i % 2) * cxClient / 2,
+                                         (i &gt; 1) * cyClient / 2,
+                           cxClient / 2, cyClient / 2, TRUE) ;
+          return 0 ;
+          
+     case WM_CHAR:
+          if (wParam == `\x1B')
+               DestroyWindow (hwnd) ;
+          
+          return 0 ;
+          
+     case WM_DESTROY:
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</pre>
+</td></tr></table>
+<P>The <I>WinMain</I> function and <I>WndProc</I> functions of MULTI2.C are very similar to 
+those in MULTI1.C. <I>WndProc</I> registers four window classes for the four windows, creates 
+those windows, and resizes them during the WM_SIZE message. The only difference in 
+<I>WndProc</I> is that it no longer sets the Windows timer or processes WM_TIMER messages.
+<P>The big difference in MULTI2 is that each of the child window procedures 
+creates another thread of execution by calling the 
+<I>_beginthread</I> function during the WM_CREATE message. In total, the MULTI2 program has five threads of execution that run 
+concurrently. The main thread contains the main window procedure and the four child window 
+procedures. The other four threads use the functions named 
+<I>Thread1</I>, <I>Thread2</I>, and so forth. These other four threads are responsible for drawing the four windows.
+<P>The multithreaded code I showed in the RNDRCTMT program did not use the 
+third argument to <I>_beginthread</I>. This argument allows a thread that creates another thread 
+to pass information to the other thread in 32-bit variables. Customarily, this variable is a 
+pointer, and also customarily, it is a pointer to a structure. This allows the creating thread and 
+the new thread to share information without the use of global variables. As you can see, 
+there are no global variables in MULTI2.
+<P>For the MULTI2 program, I defined a structure named PARAMS near the top of 
+the program and a pointer to that structure named PPARAMS. This structure has five 
+fields&#8212;a window handle, the width and height of the window, the height of a character, and 
+a Boolean variable named <I>bKill</I>. This final structure field allows the creating thread to 
+inform the created thread when it's time to terminate itself.
+<P>Let's take a look at <I>WndProc1</I>, the child window procedure that displays the 
+sequence of increasing numbers. The window procedure has become simple. The only local 
+variable is a PARAMS structure. During the WM_CREATE message, it sets the 
+<I>hwnd</I> and <I>cyChar</I> fields of this structure and calls 
+<I>_beginthread</I> to create a new thread by using the 
+<I>Thread1</I> function, passing to it a pointer to this structure. During the WM_SIZE message, 
+<I>WndProc1</I> sets the <I>cyClient</I> field of the structure, and during the WM_DESTROY message, it sets 
+the <I>bKill</I> field to TRUE. The <I>Thread</I> function concludes by calling 
+<I>_endthread</I>. This is not strictly necessary because the thread is destroyed after exiting the <I>Thread</I> function. 
+However, <I>_endthread</I> is useful for exiting a thread deep within some complex levels of processing.
+<P>The <I>Thread1</I> function does the actual drawing on the window, and it runs 
+concurrently with the other four threads of the program. The function receives a pointer to 
+the PARAMS structure and runs in a <I>while</I> loop, checking each time through the loop 
+whether the <I>bKill</I> field is TRUE or FALSE. If FALSE, the function essentially performs the same 
+processing as during the WM_TIMER message in MULTI1.C&#8212;formatting the number, 
+obtaining a device context handle, and displaying the number using 
+<I>TextOut</I>.
+<P>As you'll see when you run MULTI2 under Windows 98, the windows are 
+updated much faster than in MULTI1, indicating the program is using the power of the 
+processor more efficiently. There's another difference between MULTI1 and MULTI2: Usually 
+when you move or size a window, the default window procedure enters a modal loop and 
+all output to the window stops. In MULTI2, the output continues.
+
+<A NAME="726"><h2>Any Problems?</h2></A><P>It may seem as if MULTI2 is not as bulletproof as it could be. To see what I'm getting 
+at, let's look at some examples of multithreaded &quot;flaws&quot; in MULTI2.C using 
+<I>WndProc1</I> and <I>Thread1</I> as an example.
+<P><I>WndProc1</I> runs in the main thread of MULTI2, and 
+<I>Thread1</I> runs concurrently with it. The times at which Windows 98 switches between these two threads are variable 
+and unpredictable. Suppose <I>Thread1</I> is running and has just executed the code that 
+checks whether the <I>bKill</I> field of the PARAMS structure is TRUE. It's not, but then Windows 
+98 switches control to the main thread, at which time the user terminates the 
+program. <I>WndProc1</I> receives a WM_DESTROY message and sets the 
+<I>bKill</I> argument to TRUE. Oops! Too late! Suddenly the operating system switches to 
+<I>Thread1</I>, and that function attempts to obtain a device context handle to a nonexistent window.
+<P>It turns out this is not a problem. Windows 98 itself is sufficiently bulletproof so 
+that the graphics functions simply fail without causing any problems.
+<P>Proper multithreaded programming techniques involve the use of thread 
+synchronization (and, in particular, critical sections), which I'll discuss in more detail shortly. 
+Basically, critical sections are delimited by calls to 
+<I>EnterCriticalSection</I> and 
+<I>LeaveCriticalSection</I>. If one thread enters a critical section, another thread cannot enter a critical section. 
+The latter thread is blocked on the 
+<I>EnterCriticalSection</I> call until the first thread calls 
+<I>LeaveCriticalSection</I>.
+<P>Another possible problem in MULTI2 is that the main thread could receive a WM_
+ERASEBKGND or WM_PAINT message during the time that a secondary thread is 
+drawing its output. Again, using a critical section would help prevent any problems that 
+could result from two threads attempting to draw on the same window. But 
+experimentation seems to show that Windows 98 properly serializes access to the graphics drawing 
+functions. That is, one thread can't draw on a window while another thread is in the 
+middle of doing so.
+<P>The Windows 98 documentation warns about one area where graphics functions 
+are not serialized, and that involves the use of GDI objects, such as pens, brushes, 
+fonts, bitmaps, regions, and palettes. It is possible for one thread to destroy an object that 
+another thread is using. The solution to this problem requires use of a critical section or, 
+better yet, not sharing GDI objects between threads.
+
+<A NAME="727"><h2>The Benefits of Sleep</h2></A><P>I've discussed what I consider to be the best architecture of a multithreaded program, 
+which is that the primary thread creates all the program's windows, contains all the 
+window procedures for these windows, and processes all messages to the windows. 
+Secondary threads carry out background jobs or lengthy jobs.
+<P>However, suppose you want to do animation in a secondary thread. Normally, 
+animation in Windows is done with WM_TIMER messages. But if a secondary thread does 
+not create a window, it cannot receive these messages. Without any timing, the animation 
+would probably run much too fast.
+<P>The solution is the <I>Sleep</I> function. In effect, a thread calls the 
+<I>Sleep</I> function to suspend itself voluntarily. The single argument is a time in milliseconds. The 
+<I>Sleep</I> function call does not return until the specified time has elapsed. During that time, the thread 
+is suspended and is allocated no time slices (although obviously the thread still requires 
+a small amount of processing time during timer ticks when the system must 
+determine whether the thread should be resumed). An argument of 0 to the 
+<I>Sleep</I> function causes the thread to forfeit the remainder of its time slice.
+<P>When a thread calls <I>Sleep</I>, only that thread is suspended for the specified amount 
+of time. The system still runs other threads, either in the same process or another process. 
+I used the <I>Sleep</I> function in the SCRAMBLE program in Chapter 14 to slow down the 
+scrambling operation.
+<P>Normally, you should not use the <I>Sleep</I> function in your primary thread because 
+it slows down message processing; because SCRAMBLE did not create any windows, 
+there is no problem using it there.
+
+
+</BODY>
+</HTML>
+
+
+
+
+
+

@@ -1,0 +1,329 @@
+<HTML>
+<HEAD>
+<TITLE>Implementing Range-Based Functions</TITLE>
+<link rel="STYLESHEET" type="text/css" href="webcomp.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch11f.htm">[Previous]</A> <A HREF="ch11h.htm">[Next]</A><P>
+
+<A NAME="214"><H1>Implementing Range-Based Functions</H1></A>
+
+<P>As I noted earlier, simple functions take scalar input values and do not require 
+custom user interface editors. In this section, I will show you how to implement custom 
+functions that accept ranges of values for input arguments. Working with a range 
+parameter is somewhat tricky, so let's examine how it is done.</P>
+
+<A NAME="215"><H2>The IXRangeEnum Interface</H2></A>
+
+<P>Although you might expect the Spreadsheet component to pass a Range object for 
+a range parameter, it does not. Instead it passes an IXRangeEnum interface. This 
+interface is marked as hidden in the OWC type library, so you can view it by 
+choosing to show hidden members in your Object Browser. (In Visual Basic, right-click 
+the Object Browser and choose Show Hidden Members.)</P>
+
+<P>This interface is streamlined for the task of retrieving the values from the 
+range's cells. Typically, you need to use only the ColCount, RowCount, and Next 
+methods on this interface. The interface also contains other methods for converting values 
+from one Variant type to another using the Spreadsheet component's internal type 
+conversion routines, which occasionally differ slightly from the type conversion 
+routines in OLE Automation. You can usually ignore these methods, but C++ developers 
+might find them handy if they want more detailed control over type conversions.</P>
+
+<A NAME="216"><H2>Getting Cell Values from IXRangeEnum</H2></A>
+
+<P>To get cell values from the IXRangeEnum interface, you typically use the Next 
+method. The following function, taken from CustomFunctions.cls, shows how to extract 
+cell values in VBA:</P>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Private Function GetCellValues(Range As IXRangeEnum) As Variant()
+    Dim ctCols As Long          ' Number of columns
+    Dim ctRows As Long          ' Number of rows
+    Dim objRange As Object      ' IDispatch interface
+    
+    ' QI for the IDispatch interface so that we can use
+    ' the unsigned longs
+    ' This is dangerous, but we know that the
+    ' number of rows or columns in a range won't be
+    ' greater than the maximum value for a signed long
+    Set objRange = Range
+    
+    ' Performing nasty, dangerous casting from unsigned to 
+    ' signed longs here!
+    ctCols = objRange.ColCount
+    ctRows = objRange.RowCount
+    
+    ' Allocate an array of Variants for all the values, and get them
+    ReDim vRngValues((ctRows * ctCols) - 1) As Variant
+    objRange.Next ctRows * ctCols, vRngValues(0), vbNull
+    
+    ' Return it
+    GetCellValues = vRngValues
+End Function 'GetCellValues()
+</pre></td></tr></table></p>
+
+
+<P>The IXRangeEnum interface was really defined for C++ developers, so the 
+interface is littered with properties and parameters of type unsigned long. This type is 
+not directly supported in OLE Automation (only signed longs are), and you will 
+receive compile errors if you try to access these properties or pass values to these 
+parameters. However, you can work around this nasty limitation by using the 
+IDispatch interface of the object implementing IXRangeEnum. This function accesses 
+the IDispatch interface by declaring a variable of type Object and then setting it 
+equal to the IXRangeEnum parameter. Visual Basic will use the QueryInterface method 
+to get the IDispatch interface of the source object because the destination variable 
+is typed as Object. Once you have the IDispatch interface, your code can access 
+unsigned long values and assign them back to variables declared as Long.</P> 
+
+<p>Although there is a potential for error when assigning unsigned long values 
+to signed long values, it is highly unlikely that the column or row count of a range 
+is larger than the maximum signed long value, which is around 2 billion. The 
+Spreadsheet control itself supports a maximum of 702 columns and 65,536 rows.</p>
+
+<P>Whenever you implement a function that accepts a range, you can use 
+the GetCellValues function shown earlier to obtain a one-dimensional Variant array 
+full of the values from the specified range. Your code can then use the UBound 
+and LBound functions to determine the dimensions of the returned array and iterate 
+over the values.</P>
+
+<A NAME="217"><H2>The SumTopN and SumBottomN Functions</H2></A>
+
+<P>To illustrate how to implement a range-based function, I created two functions in 
+my custom function library: SumTopN and SumBottomN. The SumTopN function 
+adds up the top <I>N </I>numbers in the range, and the SumBottomN adds up the bottom 
+<I>N </I>numbers. Since these functions are similar, much of their implementation is 
+shared; the only major difference is in which direction I sort the data values before 
+adding up the first <I>N </I>items. Let's take a look at the SumTopN function:</P>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Public Function SumTopN(ByVal Range As IXRangeEnum, ByVal N As Long) _
+As Double
+    Dim vRngValues() As Variant
+    Dim colSorted As Collection
+    
+    If N &gt; 0 Then
+        ' Get the cell values
+        vRngValues = GetCellValues(Range)
+                
+        ' Sort the elements into a collection
+        Set colSorted = SortValues(vRngValues, flSortDescending)
+            
+        ' Calculate the SumTopN
+        SumTopN = SumNElems(colSorted, GetRealN(colSorted, N))
+    Else
+        SumTopN = 0
+    End If 'N &gt; 0
+End Function 'SumTopN()
+</pre></td></tr></table></p>
+
+
+
+<P>This function takes two parameters: a range of values and the number of 
+top values to sum. Because the first parameter is a range, I type it as 
+IXRangeEnum. To enable a parameter to accept a range of values, you must declare its type 
+as IXRangeEnum. If you do not, the Spreadsheet component will fail to bind to 
+the function and will resolve the function to an error value.</P> 
+
+<P>The function first checks whether N is greater than zero. If it is not, the 
+function simply returns a zero right away because, by definition, the sum of zero 
+items is zero and I can avoid the overhead of sorting the values. If N is greater than 
+zero, I use the GetCellValues function to obtain all the cell values in the range as a 
+Variant array. I then use another helper function called SortValues to sort the Variant 
+array (in descending order) into a Collection object full of Variants. The code then uses 
+two other helper functions: GetRealN and SumNElems. The first gets the real N 
+value (which I will explain later), and the second adds up that many elements in the 
+collection. Finally, the function returns the sum to the Spreadsheet control. Let's first 
+look at the SortValues function:</P>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Private Function SortValues(vRngValues(), Optional SortDir _
+As SortDirEnum = flSortAscending) As Collection
+    Dim ctCells As Long             ' Number of cells
+    Dim fInserted As Boolean        ' Inserted flag
+    Dim nCell As Long               ' Cell index
+    Dim colSorted As Collection     ' Sorted collection
+    Dim nSortElem As Long           ' Current sort element
+    Dim vVal As Variant             ' Temporary Variant
+    
+    ctCells = UBound(vRngValues) + 1
+    
+    ' Do an insertion sort using a collection
+    Set colSorted = New Collection
+    For nCell = 0 To (ctCells - 1)
+        
+        nSortElem = 1
+        fInserted = False
+        
+        If colSorted.Count = 0 Then
+            colSorted.Add vRngValues(nCell)
+        Else
+            For Each vVal In colSorted
+                If SortDir = flSortAscending Then
+                    If vRngValues(nCell) &lt; vVal Then
+                        colSorted.Add vRngValues(nCell), , nSortElem
+                        fInserted = True
+                        Exit For
+                    End If
+                    nSortElem = nSortElem + 1
+                Else
+                    If vRngValues(nCell) &gt; vVal Then
+                        colSorted.Add vRngValues(nCell), , nSortElem
+                        fInserted = True
+                        Exit For
+                    End If
+                    nSortElem = nSortElem + 1
+                End If
+            Next vVal
+            
+            If Not fInserted Then colSorted.Add vRngValues(nCell)
+            
+        End If 'colSorted.Count = 0
+    Next nCell
+    
+    ' Return the sorted collection
+    Set SortValues = colSorted
+End Function 'SortValues()
+</pre></td></tr></table></p>
+
+<P>The SortValues function is an extremely simple insertion sort, and I do not 
+even pretend to think that this is an optimized sorting algorithm. You can easily 
+improve on this function (for example, by performing a binary search when inserting a 
+new value), but it does perform the job for medium-sized N values. The function 
+builds a new Collection object by inserting each value in the Variant array into its 
+sorted position in the collection. When the function finishes, the returned collection 
+contains a sorted list of items, ready to enumerate and total.</P> 
+
+<P>It is quite amazing that VBA still does not offer any built-in sorting 
+functions, especially considering the existence of the qsort function in the C runtime library. 
+Alas, we are left to implement our own sorting in VBA. Maybe someday we will get 
+built-in functions for sorting arrays and collections, especially when they contain 
+homogenous scalar types.</P>
+
+<P>After sorting the values, the SumTopN function first calls the GetRealN 
+function in the process of calling the SumNElems function. The GetRealN function 
+determines how many items actually constitute the top 
+<I>N </I>items. The following shows what the code for the GetRealN function looks like.</P>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Private Function GetRealN(colSorted As Collection, ByVal N As Long) _
+As Long
+    ' If N &gt; the count of elements, set N = to the count
+    If N &gt;= colSorted.Count Then
+        N = colSorted.Count
+    Else
+        ' Figure out our real N (check for N and N + 1 being equal)
+        Do While colSorted(N) = colSorted(N + 1)
+            If N &gt;= colSorted.Count Then
+                N = colSorted.Count
+                Exit Do
+            End If
+            
+            N = N + 1
+        Loop
+    End If 'N &gt; colSorted.Count
+    
+    ' Return it
+    GetRealN = N
+End Function 'GetRealN()
+</pre></td></tr></table></p>
+
+<P>As I discussed in <A HREF="ch02a.htm">Chapter 2</A>, top or bottom N functions can actually include 
+more than <I>N </I>items in the result if the <I>N 
+</I>and <I>N </I>+ 1 items are equal. If you asked for the 
+top three items in the set {3, 4, 5, 5, 6, 7}, which 5 would you include? You have to 
+include both 5s (a total of four items) because both are within the top three values. 
+The GetRealN function compares the <I>N</I> and 
+<I>N</I> + 1 values, and if they are equal, keeps looping to find the point at which the 
+<I>N</I> and <I>N</I> + 1 values are no longer equal or 
+until it falls off the end of the collection. It then returns the real N value, which is 
+passed to the SumNElems function:</P>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Private Function SumNElems(colSorted As Collection, N As Long) As Double
+    Dim vVal As Variant         ' Temporary Variant
+    Dim nResult As Double       ' Result
+    Dim nSortElem As Long       ' Index of current element
+    
+    ' Start at element one
+    nSortElem = 1
+    nResult = 0
+    
+    ' Sum up the values
+    ' Use For Each and short circuit as this is a
+    ' faster way to iterate over a collection
+    For Each vVal In colSorted
+        nResult = nResult + vVal
+        nSortElem = nSortElem + 1
+        If (nSortElem - 1) = N Then
+            Exit For
+        End If
+    Next vVal
+    
+    ' Return it
+    SumNElems = nResult
+End Function 'SumNElems()
+</pre></td></tr></table></p>
+
+<P>This fairly straightforward function enumerates the collection of sorted 
+values, adding each value to a running total. As soon as the code adds up the 
+<I>N</I> elements, it exits and returns the sum to the SumTopN function, which in turn passes it 
+back to the Spreadsheet control.</P> 
+
+<p>The SumBottomN function works exactly the same way as SumTopN, 
+except that it sorts the range values in ascending order instead of in descending order:</p>
+
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Public Function SumBottomN(ByVal Range As IXRangeEnum, ByVal N As Long) _
+As Double
+    Dim vRngValues() As Variant
+    Dim colSorted As Collection
+    
+    If N &gt; 0 Then
+        ' Get the cell values
+        vRngValues = GetCellValues(Range)
+                
+        ' Sort the elements into a collection
+        Set colSorted = SortValues(vRngValues, flSortAscending)
+            
+        ' Calculate the SumBottomN
+        SumBottomN = SumNElems(colSorted, GetRealN(colSorted, N))
+    Else
+        SumBottomN = 0
+    End If 'N &gt; 0
+End Function 'SumBottomN()
+</pre></td></tr></table></p>
+ 
+<P>Using these functions in the spreadsheet model is just like using the built-in 
+SUM function, except that you pass one extra parameter for the N value:
+</P>
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+=SumTopN(B9:B14,E9)
+=SumBottomN(B9:B14,E9)
+</pre></td></tr></table></p>
+ 
+<P>You pass a range to a custom function the same way you pass a range to 
+any other built-in function. The Spreadsheet control will also allow users to 
+semi-select (click on a cell to paste its cell reference into the current formula) the range 
+reference while building the formula, so your custom function should look and feel built 
+in. To try these functions, run the project in Visual Basic and adjust the inputs in 
+the Analysis Functions section of the test spreadsheet.</P>
+
+</BODY>
+</HTML>
+
+
+
+
+

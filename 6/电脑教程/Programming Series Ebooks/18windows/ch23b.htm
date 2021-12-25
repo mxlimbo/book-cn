@@ -1,0 +1,629 @@
+<HTML>
+<HEAD>
+	<LINK REL=StyleSheet HREF="petzoldi.css" TYPE="text/css">
+<title>Windows Sockets</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="799"><h1>Windows Sockets</h1></A>
+<p>Sockets are a concept developed at the University of California at Berkeley to add network communication support to the UNIX operating system. The API developed there is now known as the &quot;Berkeley socket interface.&quot;
+
+<A NAME="800"><h2>Sockets and TCP/IP</h2></A>
+<p>Sockets are generally, but not exclusively, used in conjunction with the Transmission Control Protocol/Internet Protocol (TCP/IP) that dominates Internet communications. The Internet Protocol (IP) part of TCP/IP involves packaging data into &quot;datagrams&quot; that contain header information to identify the source and destination of the data. The Transmission Control Protocol (TCP) provides a means of reliable transport and error checking for the IP datagrams.
+
+<p>Within TCP/IP, a communication endpoint is defined by an IP address and a port number. The IP address consists of 4 bytes that identify a server on the Internet. The IP address is generally shown in &quot;dotted quad&quot; format, with decimal numbers separated by periods, for example &quot;209.86.105.231&quot;. A port number identifies a particular service or process that the server provides. Some of these port numbers are standardized to provide well-known services.
+
+<p>When a socket is used with TCP/IP, a socket <I>is</I> the TCP/IP communication endpoint. Thus, the socket specifies an IP address and a port number.
+
+<A NAME="801"><h2>Network Time Services</h2></A>
+<p>The sample program that I'll be presenting shortly connects with an Internet server that provides a service known as the Time Protocol. This sample program obtains the current exact date and time and uses that information to set the clock on your PC.
+
+<p>In the United States, the National Institute of Standards and Technology (formerly known as the National Bureau of Standards) is responsible for maintaining the correct time in conjunction with other bureaus around the world. The exact time is available to the public through radio broadcasts, telephone numbers, computer dial-up phone numbers, and the Internet, all of which are documented at the Web site at <I><a href="http://www.bldrdoc.gov/timefreq" target="_window2">http://www.bldrdoc.gov/timefreq</a></I>. (The domain name of &quot;bldrdoc&quot; refers to the Boulder, Colorado, location of the NIST Time and Frequency Division.)
+
+<p>We're interested in the NIST Network Time Service, which is further documented at <I><a href="http://www.bldrdoc.gov/timefreq/service/nts.htm" target="_window2">http://www.bldrdoc.gov/timefreq/service/nts.htm</a></I>. This Web page lists ten servers that provide NIST time services. For example, the first one is named <I>time-a.timefreq.bldrdoc.gov</I>, which has an Internet Protocol (IP) address of 132.163.135.130.
+
+<p>(A program I wrote that uses the non-Internet NIST computer dial-up service was published in <I>PC Magazine</I> and can be found at the Ziff-Davis Web site <a href="http://www.zdnet.com/pcmag/pctech/content/16/20/ut1620.001.html" target="_window2"><I>http://www.zdnet.com/pcmag/pctech/content/16/20/ut1620.001.html</I></a>. This program can be useful for anyone who wants to learn how to use the Windows Telephony API.)
+
+<p>Three different time services are available over the Internet, each one described by a Request for Comment (RFC) common for documenting Internet standards. The Daytime Protocol (RFC-867) provides an ASCII string that indicates the exact date and time. The exact format of this ASCII string is not quite standard, but it is meant to be readable by humans. The Time Protocol (RFC-868) provides a 32-bit number that indicates the number of seconds since midnight January 1, 1900. This time is in UTC (which, despite the ordering of the letters, stands for Coordinated Universal Time), which is very similar to what was once called Greenwich Mean Time or GMT&#8212;the time at Greenwich, England. The third protocol is called the Network Time Protocol (RFC-1305), which is quite complex.
+
+<p>For our purposes&#8212;which involve getting a feel for sockets and keeping our PC's clock updated&#8212;the Time Protocol is ideal. RFC-868 is a short two-page document and basically says that a program wishing to use TCP to obtain the exact time should:
+
+<OL>
+<P><LI>Connect to port 37 on a server that provides this service,
+<P><LI>Receive the 32-bit time, and
+<P><LI>Close the connection.
+</OL>
+
+<p>We now have everything we need to know to write a sockets-based application that accesses this time service.
+
+<A NAME="802"><h2>The NETTIME Program</h2></A>
+<p>The Windows sockets API, commonly called WinSock, is compatible with the Berkeley sockets API; hence, it is conceivable that UNIX socket code could be ported relatively painlessly to Windows. Further support under Windows is provided by extensions to Berkeley sockets in the form of functions beginning with the prefix <I>WSA</I> (&quot;WinSock API&quot;). An overview and reference is provided at <I>/Platform SDK/Networking and Distributed Services/Windows Sockets Version 2</I>.
+
+<p>The NETTIME program shown in Figure 23-1 demonstrates how to use the WinSock API.
+
+<p><B>Figure 23-1.</b> <i>The NETTIME program.</I>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<h3>NETTIME.C</h3>
+
+<p><pre>
+/*-------------------------------------------------------
+   NETTIME.C -- Sets System Clock from Internet Services
+
+                (c) Charles Petzold, 1998
+  -------------------------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &quot;resource.h&quot;
+
+#define WM_SOCKET_NOTIFY (WM_USER + 1)
+#define ID_TIMER         1
+
+LRESULT CALLBACK WndProc   (HWND, UINT, WPARAM, LPARAM) ;
+BOOL    CALLBACK MainDlg   (HWND, UINT, WPARAM, LPARAM) ;
+BOOL    CALLBACK ServerDlg (HWND, UINT, WPARAM, LPARAM) ;
+
+void ChangeSystemTime (HWND hwndEdit, ULONG ulTime) ;
+void FormatUpdatedTime (HWND hwndEdit, SYSTEMTIME * pstOld, 
+                                       SYSTEMTIME * pstNew) ;
+void EditPrintf (HWND hwndEdit, TCHAR * szFormat, ...) ;
+
+HINSTANCE hInst ;
+HWND      hwndModeless ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName[] = TEXT (&quot;NetTime&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     RECT         rect ;
+     WNDCLASS     wndclass ;
+
+     hInst = hInstance ;
+
+     wndclass.style         = 0 ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = NULL ;
+     wndclass.hbrBackground = NULL ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;), 
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Set System Clock from Internet&quot;),
+                          WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU |
+                               WS_BORDER | WS_MINIMIZEBOX,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+
+          // Create the modeless dialog box to go on top of the window
+
+     hwndModeless = CreateDialog (hInstance, szAppName, hwnd, MainDlg) ;
+
+          // Size the main parent window to the size of the dialog box.  
+          //   Show both windows.
+
+     GetWindowRect (hwndModeless, &amp;rect) ;
+     AdjustWindowRect (&amp;rect, WS_CAPTION | WS_BORDER, FALSE) ;
+
+     SetWindowPos (hwnd, NULL, 0, 0, rect.right - rect.left,
+                   rect.bottom - rect.top, SWP_NOMOVE) ;
+
+     ShowWindow (hwndModeless, SW_SHOW) ;     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+          // Normal message loop when a modeless dialog box is used.
+
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          if (hwndModeless == 0 || !IsDialogMessage (hwndModeless, &amp;msg))
+          {
+               TranslateMessage (&amp;msg) ;
+               DispatchMessage (&amp;msg) ;
+          }
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     switch (message)
+     {
+     case WM_SETFOCUS:
+          SetFocus (hwndModeless) ;
+          return 0 ;
+
+     case WM_DESTROY:
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+
+BOOL CALLBACK MainDlg (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static char   szIPAddr[32] = { &quot;132.163.135.130&quot; } ;
+     static HWND   hwndButton, hwndEdit ;
+     static SOCKET sock ;
+     static struct sockaddr_in sa ;
+     static TCHAR  szOKLabel[32] ;
+     int           iError, iSize ;
+     unsigned long ulTime ;
+     WORD          wEvent, wError ;
+     WSADATA       WSAData ;     
+ 
+     switch (message)
+     {
+     case WM_INITDIALOG:
+          hwndButton = GetDlgItem (hwnd, IDOK) ;
+          hwndEdit = GetDlgItem (hwnd, IDC_TEXTOUT) ;
+          return TRUE ;
+
+     case WM_COMMAND:
+          switch (LOWORD (wParam))
+          {
+          case IDC_SERVER:
+               DialogBoxParam (hInst, TEXT (&quot;Servers&quot;), hwnd, ServerDlg, 
+                               (LPARAM) szIPAddr) ;
+               return TRUE ;
+
+          case IDOK:
+                    // Call &quot;WSAStartup&quot; and display description text
+
+               if (iError = WSAStartup (MAKEWORD(2,0), &amp;WSAData))
+               {
+                    EditPrintf (hwndEdit, TEXT (&quot;Startup error #%i.\r\n&quot;), 
+                                          iError) ;
+                    return TRUE ;
+               }
+               EditPrintf (hwndEdit, TEXT (&quot;Started up %hs\r\n&quot;), 
+                                     WSAData.szDescription);
+
+                    // Call &quot;socket&quot;
+
+               sock = socket (AF_INET, SOCK_STREAM, IPPROTO_TCP) ;
+
+               if (sock == INVALID_SOCKET)
+               {
+                    EditPrintf (hwndEdit, 
+                                TEXT (&quot;Socket creation error #%i.\r\n&quot;), 
+                                WSAGetLastError ()) ;
+                    WSACleanup () ;
+                    return TRUE ;
+               }
+               EditPrintf (hwndEdit, TEXT (&quot;Socket %i created.\r\n&quot;), sock) ;
+
+                    // Call &quot;WSAAsyncSelect&quot; 
+
+               if (SOCKET_ERROR == WSAAsyncSelect (sock, hwnd, WM_SOCKET_NOTIFY,
+                                                   FD_CONNECT | FD_READ))
+               {
+                    EditPrintf (hwndEdit, 
+                                TEXT (&quot;WSAAsyncSelect error #%i.\r\n&quot;),
+                                WSAGetLastError ()) ;
+                    closesocket (sock) ;
+                    WSACleanup () ;
+                    return TRUE ;
+               }
+
+                    // Call &quot;connect&quot; with IP address and time-server port
+
+               sa.sin_family           = AF_INET ;
+               sa.sin_port             = htons (IPPORT_TIMESERVER) ; 
+               sa.sin_addr.S_un.S_addr = inet_addr (szIPAddr) ;
+
+               connect(sock, (SOCKADDR *) &amp;sa, sizeof (sa)) ;
+
+                    // &quot;connect&quot; will return SOCKET_ERROR because even if it
+                    // succeeds, it will require blocking. The following only
+                    // reports unexpected errors.
+
+               if (WSAEWOULDBLOCK != (iError = WSAGetLastError ()))
+               {
+                    EditPrintf (hwndEdit, TEXT (&quot;Connect error #%i.\r\n&quot;), 
+                                          iError) ;
+                    closesocket (sock) ;
+                    WSACleanup () ;
+                    return TRUE ;
+               }
+               EditPrintf (hwndEdit, TEXT (&quot;Connecting to %hs...&quot;), szIPAddr) ;
+     
+                    // The result of the &quot;connect&quot; call will be reported 
+                    // through the WM_SOCKET_NOTIFY message.
+                    // Set timer and change the button to &quot;Cancel&quot;
+
+               SetTimer (hwnd, ID_TIMER, 1000, NULL) ;
+               GetWindowText (hwndButton, szOKLabel, sizeof (szOKLabel) /
+                                                     sizeof (TCHAR)) ;
+               SetWindowText (hwndButton, TEXT (&quot;Cancel&quot;)) ;
+               SetWindowLong (hwndButton, GWL_ID, IDCANCEL) ;
+               return TRUE ;
+
+          case IDCANCEL:
+               closesocket (sock) ;
+               sock = 0 ;
+               WSACleanup () ;
+               SetWindowText (hwndButton, szOKLabel) ;
+               SetWindowLong (hwndButton, GWL_ID, IDOK) ;
+
+               KillTimer (hwnd, ID_TIMER) ;
+               EditPrintf (hwndEdit, TEXT (&quot;\r\nSocket closed.\r\n&quot;)) ;
+               return TRUE ;
+
+          case IDC_CLOSE:
+               if (sock)
+                    SendMessage (hwnd, WM_COMMAND, IDCANCEL, 0) ;
+
+               DestroyWindow (GetParent (hwnd)) ;
+               return TRUE ;
+          }
+          return FALSE ;
+
+     case WM_TIMER:
+          EditPrintf (hwndEdit, TEXT (&quot;.&quot;)) ;
+          return TRUE ;
+
+     case WM_SOCKET_NOTIFY:
+          wEvent = WSAGETSELECTEVENT (lParam) ;   // ie, LOWORD
+          wError = WSAGETSELECTERROR (lParam) ;   // ie, HIWORD
+
+               // Process two events specified in WSAAsyncSelect
+
+          switch (wEvent)
+          {
+               // This event occurs as a result of the &quot;connect&quot; call
+
+          case FD_CONNECT:
+               EditPrintf (hwndEdit, TEXT (&quot;\r\n&quot;)) ;
+
+               if (wError)
+               {
+                    EditPrintf (hwndEdit, TEXT (&quot;Connect error #%i.&quot;), 
+                                          wError) ;
+                    SendMessage (hwnd, WM_COMMAND, IDCANCEL, 0) ;
+                    return TRUE ;
+               }
+               EditPrintf (hwndEdit, TEXT (&quot;Connected to %hs.\r\n&quot;), szIPAddr) ;
+
+                    // Try to receive data. The call will generate an error
+                    // of WSAEWOULDBLOCK and an event of FD_READ
+
+               recv (sock, (char *) &amp;ulTime, 4, MSG_PEEK) ;
+               EditPrintf (hwndEdit, TEXT (&quot;Waiting to receive...&quot;)) ;
+               return TRUE ;
+
+                    // This occurs even when the &quot;recv&quot; call can be made
+               
+          case FD_READ:
+               KillTimer (hwnd, ID_TIMER) ;
+               EditPrintf (hwndEdit, TEXT (&quot;\r\n&quot;)) ;
+
+               if (wError)
+               {
+                    EditPrintf (hwndEdit, TEXT (&quot;FD_READ error #%i.&quot;), 
+                                          wError) ;
+                    SendMessage (hwnd, WM_COMMAND, IDCANCEL, 0) ;
+                    return TRUE ;
+               }
+                    // Get the time and swap the bytes
+
+               iSize = recv (sock, (char *) &amp;ulTime, 4, 0) ;
+               ulTime = ntohl (ulTime) ;
+               EditPrintf (hwndEdit, 
+                           TEXT (&quot;Received current time of %u seconds &quot;)
+                           TEXT (&quot;since Jan. 1 1900.\r\n&quot;), ulTime) ;
+
+                    // Change the system time
+     
+               ChangeSystemTime (hwndEdit, ulTime) ;
+               SendMessage (hwnd, WM_COMMAND, IDCANCEL, 0) ;
+               return TRUE ;
+          }
+          return FALSE ;
+     }
+     return FALSE ;
+}
+
+BOOL CALLBACK ServerDlg (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static char * szServer ;
+     static WORD   wServer = IDC_SERVER1 ;
+     char          szLabel [64] ;
+
+     switch (message)
+     {
+     case WM_INITDIALOG:
+          szServer = (char *) lParam ;
+          CheckRadioButton (hwnd, IDC_SERVER1, IDC_SERVER10, wServer) ;
+          return TRUE ;
+
+     case WM_COMMAND:
+          switch (LOWORD (wParam))
+          {
+          case IDC_SERVER1:
+          case IDC_SERVER2:
+          case IDC_SERVER3:
+          case IDC_SERVER4:
+          case IDC_SERVER5:
+          case IDC_SERVER6:
+          case IDC_SERVER7:
+          case IDC_SERVER8:
+          case IDC_SERVER9:
+          case IDC_SERVER10:
+               wServer = LOWORD (wParam) ;
+               return TRUE ;
+
+          case IDOK:
+               GetDlgItemTextA (hwnd, wServer, szLabel, sizeof (szLabel)) ;
+               strtok (szLabel, &quot;(&quot;) ;
+               strcpy (szServer, strtok (NULL, &quot;)&quot;)) ;
+               EndDialog (hwnd, TRUE) ;
+               return TRUE ;
+
+          case IDCANCEL:
+               EndDialog (hwnd, FALSE) ;
+               return TRUE ;
+          }
+          break ;
+     }
+     return FALSE ;
+}
+
+void ChangeSystemTime (HWND hwndEdit, ULONG ulTime)
+{
+     FILETIME      ftNew ;
+     LARGE_INTEGER li ;
+     SYSTEMTIME    stOld, stNew ;
+
+     GetLocalTime (&amp;stOld) ;
+
+     stNew.wYear         = 1900 ;
+     stNew.wMonth        = 1 ;
+     stNew.wDay          = 1 ;
+     stNew.wHour         = 0 ;
+     stNew.wMinute       = 0 ;
+     stNew.wSecond       = 0 ;
+     stNew.wMilliseconds = 0 ;
+     SystemTimeToFileTime (&amp;stNew, &amp;ftNew) ;
+     li = * (LARGE_INTEGER *) &amp;ftNew ;
+     li.QuadPart += (LONGLONG) 10000000 * ulTime ; 
+     ftNew = * (FILETIME *) &amp;li ;
+     FileTimeToSystemTime (&amp;ftNew, &amp;stNew) ;
+
+     if (SetSystemTime (&amp;stNew))
+     {
+          GetLocalTime (&amp;stNew) ;
+          FormatUpdatedTime (hwndEdit, &amp;stOld, &amp;stNew) ;
+     }
+     else
+          EditPrintf (hwndEdit, TEXT (&quot;Could NOT set new date and time.&quot;)) ;
+}
+
+void FormatUpdatedTime (HWND hwndEdit, SYSTEMTIME * pstOld, SYSTEMTIME * pstNew)
+{
+     TCHAR szDateOld [64], szTimeOld [64], szDateNew [64], szTimeNew [64] ;
+
+     GetDateFormat (LOCALE_USER_DEFAULT, LOCALE_NOUSEROVERRIDE | DATE_SHORTDATE,
+                    pstOld, NULL, szDateOld, sizeof (szDateOld)) ;
+     
+     GetTimeFormat (LOCALE_USER_DEFAULT, LOCALE_NOUSEROVERRIDE | 
+                         TIME_NOTIMEMARKER | TIME_FORCE24HOURFORMAT,
+                    pstOld, NULL, szTimeOld, sizeof (szTimeOld)) ;
+
+     GetDateFormat (LOCALE_USER_DEFAULT, LOCALE_NOUSEROVERRIDE | DATE_SHORTDATE,
+                    pstNew, NULL, szDateNew, sizeof (szDateNew)) ;
+     
+     GetTimeFormat (LOCALE_USER_DEFAULT, LOCALE_NOUSEROVERRIDE | 
+                         TIME_NOTIMEMARKER | TIME_FORCE24HOURFORMAT,
+                    pstNew, NULL, szTimeNew, sizeof (szTimeNew)) ;
+
+     EditPrintf (hwndEdit, 
+                 TEXT (&quot;System date and time successfully changed &quot;)
+                 TEXT (&quot;from\r\n\t%s, %s.%03i to\r\n\t%s, %s.%03i.&quot;), 
+                 szDateOld, szTimeOld, pstOld-&gt;wMilliseconds,
+                 szDateNew, szTimeNew, pstNew-&gt;wMilliseconds) ;
+}
+
+void EditPrintf (HWND hwndEdit, TCHAR * szFormat, ...)
+{
+     TCHAR   szBuffer [1024] ;
+     va_list pArgList ;
+
+     va_start (pArgList, szFormat) ;
+     wvsprintf (szBuffer, szFormat, pArgList) ;
+     va_end (pArgList) ;
+
+     SendMessage (hwndEdit, EM_SETSEL, (WPARAM) -1, (LPARAM) -1) ;
+     SendMessage (hwndEdit, EM_REPLACESEL, FALSE, (LPARAM) szBuffer) ;
+     SendMessage (hwndEdit, EM_SCROLLCARET, 0, 0) ;
+}
+</pre>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<h3>NETTIME.RC (excerpts)</h3>
+
+<p><pre>
+//Microsoft Developer Studio generated resource script.
+
+
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+// Dialog
+
+SERVERS DIALOG DISCARDABLE  20, 20, 274, 202
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION &quot;NIST Time Service Servers&quot;
+FONT 8, &quot;MS Sans Serif&quot;
+BEGIN
+    DEFPUSHBUTTON   &quot;OK&quot;,IDOK,73,181,50,14
+    PUSHBUTTON      &quot;Cancel&quot;,IDCANCEL,150,181,50,14
+    CONTROL         &quot;time
+-a.timefreq.bldrdoc.gov (132.163.135.130) NIST, Boulder, Colorado&quot;,
+                    IDC_SERVER1,&quot;Button&quot;,BS_AUTORADIOBUTTON,9,7,256,16
+    CONTROL         &quot;time
+-b.timefreq.bldrdoc.gov (132.163.135.131) NIST, Boulder, Colorado&quot;,
+                    IDC_SERVER2,&quot;Button&quot;,BS_AUTORADIOBUTTON,9,24,256,16
+    CONTROL         &quot;time
+-c.timefreq.bldrdoc.gov (132.163.135.132) Boulder, Colorado, &quot;,
+                    IDC_SERVER3,&quot;Button&quot;,BS_AUTORADIOBUTTON,9,41,256,16
+    CONTROL         &quot;utcnist.colorado.edu (128.138.140.44) University of Colorado, Boulder&quot;,
+                    IDC_SERVER4,&quot;Button&quot;,BS_AUTORADIOBUTTON,9,58,256,16
+    CONTROL         &quot;time.nist.gov (192.43.244.18) NCAR, Boulder, Colorado&quot;,
+                    IDC_SERVER5,&quot;Button&quot;,BS_AUTORADIOBUTTON,9,75,256,16
+    CONTROL         &quot;time
+-a.nist.gov (129.6.16.35) NIST, Gaithersburg, Maryland&quot;,
+                    IDC_SERVER6,&quot;Button&quot;,BS_AUTORADIOBUTTON,9,92,256,16
+    CONTROL         &quot;time
+-b.nist.gov (129.6.16.36) NIST, Gaithersburg, Maryland&quot;,
+                    IDC_SERVER7,&quot;Button&quot;,BS_AUTORADIOBUTTON,9,109,256,16
+    CONTROL         &quot;time
+-nw.nist.gov (131.107.1.10) Microsoft, Redmond, Washington&quot;,
+                    IDC_SERVER8,&quot;Button&quot;,BS_AUTORADIOBUTTON,9,126,256,16
+    CONTROL         &quot;utcnist.reston.mci.net (204.70.131.13) MCI, Reston, Virginia&quot;,
+                    IDC_SERVER9,&quot;Button&quot;,BS_AUTORADIOBUTTON,9,143,256,16
+    CONTROL         &quot;nist1.data.com (209.0.72.7) Datum, San Jose, California&quot;,
+                    IDC_SERVER10,&quot;Button&quot;,BS_AUTORADIOBUTTON,9,160,256,16
+END
+
+NETTIME DIALOG DISCARDABLE  0, 0, 270, 150
+STYLE WS_CHILD
+FONT 8, &quot;MS Sans Serif&quot;
+BEGIN
+    DEFPUSHBUTTON   &quot;Set Correct Time&quot;,IDOK,95,129,80,14
+    PUSHBUTTON      &quot;Close&quot;,IDC_CLOSE,183,129,80,14
+    PUSHBUTTON      &quot;Select Server...&quot;,IDC_SERVER,7,129,80,14
+    EDITTEXT        IDC_TEXTOUT,7,7,253,110,ES_MULTILINE | ES_AUTOVSCROLL | 
+                    ES_READONLY | WS_VSCROLL | NOT WS_TABSTOP
+END
+</pre>
+</td></tr></table>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<h3>RESOURCE.H (excerpts)</h3>
+
+<p><pre>
+// Microsoft Developer Studio generated include file.
+// Used by NetTime.rc
+
+
+#define IDC_TEXTOUT                     101
+#define IDC_SERVER1                     1001
+#define IDC_SERVER2                     1002
+#define IDC_SERVER3                     1003
+#define IDC_SERVER4                     1004
+#define IDC_SERVER5                     1005
+#define IDC_SERVER6                     1006
+#define IDC_SERVER7                     1007
+#define IDC_SERVER8                     1008
+#define IDC_SERVER9                     1009
+#define IDC_SERVER10                    1010
+#define IDC_SERVER                      1011
+#define IDC_CLOSE                       1012
+</pre>
+</td></tr></table>
+
+<p>Structurally, the NETTIME program creates a modeless dialog box based on the NETTIME template in NETTIME.RC. The program resizes its window so that the modeless dialog box covers the program's entire client area. The dialog box consists of a read-only edit field (into which the program writes textual information), a Select Server button, a Set Correct Time button, and a Close button. The Close button terminates the program.
+
+<p>The <I>szIPAddr</I> variable in <I>MainDlg</I> is used to store the server address. By default, this is the string &quot;132.163.135.130&quot;. The Select Server button invokes a dialog box based on the SERVERS template in NETTIME.RC. The <I>szIPAddr</I> variable is passed as the last argument to <I>DialogBoxParam</I>. The Server dialog box lists the ten servers (copied almost verbatim from the NIST Web site) that provide the time service we're interested in. When the user picks one, <I>ServerDlg</I> parses the button text to obtain the IP address. The new address is stored in the <I>szIPAddr</I> variable.
+
+<p>When the user pushes the Set Correct Time button, the button generates a WM_COMMAND message with a low word of <I>wParam</I> equal to IDOK. The IDOK processing in <I>MainDlg</I> is where most of the initial sockets action takes place.
+
+<p>The first function that must be called by any Windows program using the Windows Sockets API is
+
+<p><pre>
+iError = WSAStartup (wVersion, &amp;WSAData) ;
+</PRE>
+
+<p>NETTIME sets the first argument to 0x0200 (indicating version 2.0). On return, the <I>WSAData</I> structure contains information about the Windows Sockets implementation, and NETTIME displays the <I>szDescription</I> string. This simply provides some version information.
+
+<p>NETTIME next calls the <I>socket</I> function like so:
+
+<p><pre>
+sock = socket (AF_INET, SOCK_STREAM, IPPROTO_TCP) ;
+</PRE>
+
+<p>The first argument is an address family, which is indicated here as being some kind of Internet address. The second argument indicates that data is to be returned in a stream rather than in datagrams. (The data we're expecting is only 4 bytes long; datagrams are used for larger blocks of data.) The final argument is a protocol, which we're indicating is the Internet protocol known as TCP (Transmission Control Protocol). This is one of two protocols specified in RFC-868. The return value of the <I>socket</I> function is stored in a variable of type SOCKET, which is then used for subsequent socket function calls.
+
+<p>NETTIME next calls <I>WSAAsynchSelect</I>, which is another Windows-specific sockets function. The purpose of this function is to avoid having an application hang because of slow Internet response time. In the WinSock documentation, some functions are referred to as &quot;blocking.&quot; What this means is that they are not guaranteed to return control to the program immediately. The <I>WSAAsyncSelect</I> function is intended to force functions that are normally blocking to be non-blocking, that is, to return control to the program before they have completed. The result of the function is then reported to the application in a message. The <I>WSAAsyncSelect</I> function lets an application specify the numeric value of the message and the window that is to receive that message. The function has the following general syntax:
+
+<p><pre>
+WSAAsyncSelect (sock, hwnd, message, iConditions) ;
+</PRE>
+
+<p>NETTIME uses a program-defined message called WM_SOCKET_NOTIFY for this task. It also uses the last argument of <I>WSAAsyncSelect</I> to specify the conditions under which this message is to be sent, specifically when connecting and receiving data (FD_CONNECT | FD_READ).
+
+<p>The next WinSock function that NETTIME calls is <I>connect</I>. This function requires a pointer to a socket address structure, which could be different for different protocols. NETTIME uses the version of this structure designed for TCP/IP:
+
+<p><pre>
+struct sockaddr_in 
+{
+     short          sin_family;
+     u_short        sin_port;
+     struct in_addr sin_addr;
+     char           sin_zero[8];
+} ;
+</PRE>
+
+<p>where <I>in_addr</I> is a union that lets you specify an Internet address using either 4 bytes, 2 unsigned shorts, or an unsigned long.
+
+<p>NETTIME sets the <I>sin_family</I> field equal to AF_INET, indicating the address family. The <I>sin_port</I> field is set to the port number, in this case the port number for the Time Protocol, which RFC-868 indicates is 37. However, don't just set this field to 37 as I originally did. As with most numbers going across the Internet, this port number field of the structure must be &quot;big-endian,&quot; which means that the most-significant byte must be first. Intel microprocessors are little-endian. Fortunately, the <I>htons</I> (&quot;host-to-network short&quot;) function flips the bytes, so NETTIME sets the <I>sin_port</I> field of the <I>sockaddr_in</I> structure to:
+
+<p><pre>
+htons (IPPORT_TIMESERVER)
+</PRE>
+
+<p>The constant is defined in WINSOCK2.H as 37. NETTIME uses the <I>inet_addr</I> function to convert the server address stored in the <I>szIPAddr</I> string to an unsigned long, which it uses to set the <I>sin_addr</I> field of the structure.
+
+<p>If an application calls <I>connect</I> under Windows 98, and Windows is not currently connected to the Internet, the Dial-Up Connection dialog box will appear. This feature is known as AutoDial. AutoDial is not implemented in Windows NT 4.0, so if you're running NT, you'll have to connect to the Internet before running NETTIME.
+
+<p>The <I>connect</I> function is normally blocking because it might take some time before a connection is made. However, because NETTIME called <I>WSAAsyncSelect</I>, <I>connect</I> doesn't wait for the connection, instead returning immediately with a value of SOCKET_ERROR. It isn't really an error&#8212;all the function is doing is indicating that a connection has not been made. NETTIME doesn't even bother to check this return value. Instead it calls <I>WSAGetLastError</I>. If <I>WSAGetLastError</I> returns WSAEWOULDBLOCK (meaning that the function would normally block but isn't blocking) then all is well. NETTIME changes its Set Correct Time button to Cancel and sets a 1-second timer. WM_TIMER processing simply displays periods in the program's window to indicate to a user that something is still going on and the program hasn't crashed the system.
+
+<p>When a connection is finally made, <I>MainDlg</I> is notified by a WM_SOCKET_NOTIFY message&#8212;the program-defined message that NETTIME specified in the <I>WSAAsyncSelect</I> function. The low word of <I>lParam</I> will equal FD_CONNECT, and the high word might indicate an error. An error at this point probably indicates that the program could not connect to the indicated server. NETTIME gives you a choice of nine other servers, so try one of those!
+
+<p>If all is well, NETTIME calls the <I>recv</I> (&quot;receive&quot;) function to read the data:
+
+<p><pre>
+recv (sock, (char *) &amp;ulTime, 4, MSG_PEEK) ;
+</PRE>
+
+<p>This means that it wants 4 bytes to be stored in the <I>ulTime</I> variable. The last argument specifies that it only wants to &quot;peek&quot; at this data and not remove it from the input queue. Like the <I>connect</I> function, <I>recv</I> will return with an error code that indicates that the function normally blocks but in this case will not block. In theory (although it's not very likely), the function could return at least part of the data. Then it would have to be called again to get the rest of the 32-bit value. That's why the <I>recv</I> function is called with the MSG_PEEK option.
+
+<p>Also like the <I>connect</I> function, the <I>recv</I> function generates a WM_SOCKET_NOTIFY message, this time with an event code of FD_READ. NETTIME responds to this by calling <I>recv</I> again, this time with a final argument of 0 to remove the data from the queue. I'll discuss shortly what the program then does with the <I>ulTime</I> value it's received. Notice that NETTIME concludes processing the message by sending itself a WM_COMMAND message with <I>wParam</I> equal to IDCANCEL. The dialog procedure responds to that by calling <I>closesocket</I> and <I>WSACleanup</I>.
+
+<p>Recall that the 32-bit <I>ulTime</I> value that NETTIME receives is the number of seconds since 0:00 UTC on January 1, 1900. But the most significant byte is first, so the value must be processed through the <I>ntohl</I> (&quot;network-to-host long&quot;) function to reorder the bytes so that our Intel microprocessors can deal with them. NETTIME then calls its <I>ChangeSystemTime</I> function.
+
+<p><I>ChangeSystemTime</I> begins by obtaining the current local time&#8212;that is, the current system time adjusted for the user's time zone and daylight saving time. It then sets up a SYSTEMTIME structure for midnight (hour zero) on January 1, 1900. This SYSTEMTIME structure is then passed to <I>SystemTimeToFileTime</I>, which converts it to a FILETIME structure. FILETIME is actually just two 32-bit DWORDs that together constitute a 64-bit integer that indicates the number of 100-nanosecond intervals since January 1, 1601.
+
+<p>The <I>ChangeSystemTime</I> function casts the FILETIME structure to a LARGE_INTEGER, which is a union that allows the 64-bit value to be referenced as two 32-bit values or as a single 64-bit integer based on the <I>__int64</I> data type. (This data type is a Microsoft compiler extension to the ANSI C standard.) Thus, this value is the number of 100-nanosecond intervals between January 1, 1601, and January 1, 1900. To this is added the number of 100-nanosecond intervals from January 1, 1900, to the present&#8212;10,000,000 times <I>ulTime</I>.
+
+<p>The resultant FILETIME value is then converted back to a SYSTEMTIME structure by a call to <I>FileTimeToSystemTime</I>. Because the Time Protocol returns the current UTC time, NETTIME sets the time with a call to <I>SetSystemTime</I>, which is also based on UTC. For display purposes the program then obtains the updated time with a call to <I>GetLocalTime</I>. Both the original local time and the new local time are passed to the <I>FormatUpdatedTime</I> which uses the <I>GetTimeFormat</I> and <I>GetDateFormat</I> functions to convert the times to ASCII strings.
+
+<p>The <I>SetSystemTime</I> function might fail if the program is run under Windows NT and the user does not have privileges to set the time. If <I>SetSystemTime</I> fails, NETTIME indicates the problem with a message that the new time was not set.
+
+</BODY>
+</HTML>
+
+
+
+
+
+

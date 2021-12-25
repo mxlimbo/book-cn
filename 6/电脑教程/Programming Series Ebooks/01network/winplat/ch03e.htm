@@ -1,0 +1,201 @@
+<HTML>
+<HEAD>
+<TITLE>Platform and Performance Considerations</title>
+<link rel="STYLESHEET" type="text/css" href="Library.css">
+
+
+</head>
+<BODY BGCOLOR="#FFFFFF" TEXT="#000000">
+<SCRIPT LANGUAGE="JavaScript">
+<!--
+
+function fullSize(sURL){
+	window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+
+function LibraryHeaderNav(sBackward, sForward, sImgLeftOff, sImgLeftOn, sImgRightOff, sImgRightOn, iH, iW, sImgLeftStyle, sImgRightStyle, sImgRuleStyle, sRuleColor, sRuleSize){
+	var tableStr;
+	//validate questionable args for defs
+	tableStr = "<TABLE BORDER=0 CELLPADDING=0 CELLSPACING=0 border=0 width=100%>";
+	tableStr += "<TR VALIGN=top ALIGN=right>";
+
+	tableStr += "<TD align=right class=" + sImgRuleStyle + ">&nbsp;</TD>";	
+	
+	tableStr += "<TD width=34 align=right class=" + sImgLeftStyle + ">";
+	tableStr += "<A href='" + sBackward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgLeftOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgLeftOff + '\'\"';
+	tableStr += " SRC='" + sImgLeftOff + "' vspace=0 hspace=0></a></TD>";
+	
+	tableStr += "<TD width=34 align=left class=" + sImgRightStyle + ">";
+	tableStr += "<A href='" + sForward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgRightOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgRightOff + '\'\"';
+	tableStr += " SRC='" + sImgRightOff + "' vspace=0 hspace=0></a></TD></TR>";
+
+	tableStr += "<TR VALIGN=top>";
+	tableStr += "<TD height=3 align=center colspan=3 class=" + sImgRuleStyle + ">";
+	tableStr += "<HR color=" + sRuleColor + " size=" + sRuleSize + "></TD></TR></TABLE>";
+	//alert(tableStr);
+	document.write(tableStr);
+}
+
+ 																						     //purple is: #aa22aa   orange is: #ff9900
+LibraryHeaderNav("ch03d.htm" , "ch03f.htm", "images/unit_o_a1.gif", "images/unit_o_a2.gif", "images/unit_o_b1.gif", "images/unit_o_b2.gif", 18, 34, "unit01", "unit02", "headerrule", "#ff9900", "2");
+//--></SCRIPT>
+
+
+
+<A NAME="52"><H1>Platform and Performance Considerations</H1></A>
+
+<p>Mailslots on Windows 95 and Windows 98 have three limitations that you should be aware of: 8.3-character name limits, inability to cancel blocking I/O requests, and timeout memory leaks.</p>
+
+<A NAME="53"><H2>8.3-Character Name Limits</H2></A>
+
+<p>Windows 95 and Windows 98 silently limit mailslot names to an 8.3-character name format. This causes interoperability problems between Windows 95 or Windows 98 and Windows NT or Windows 2000. For example, if you create or open a mailslot with the name \\.\Mailslot\Mymailslot, Windows 95 will actually create and reference the mailslot as \\.\Mailslot\Mymailsl. The <i>CreateMailslot</i> and <i>CreateFile</i> functions succeed even though name truncation occurs. If a message is sent from Windows 2000 to Windows 95 or vice versa, the message will not be received because the mailslot names do not match. If both the client and the server are running on Windows 95 machines, there isn't a problem&#8212;the name is truncated on both the client and the server. An easy way to prevent interoperability problems is to limit mailslot names to eight characters or less.</p>
+
+<A NAME="54"><H2>Inability to Cancel Blocking I/O Requests</H2></A>
+
+<p>Windows 95 and Windows 98 also have a problem with canceling blocking I/O requests. Mailslot servers use the <i>ReadFile</i> function to receive data. If a mailslot is created with the <i>MAILSLOT_WAIT_FOREVER</i> flag, read requests block indefinitely until data is available. If a server application is terminated when there is an outstanding <i>ReadFile</i> request, the application hangs forever. The only way to cancel the application is to reboot Windows. A possible solution is to have the server open a handle to its own mailslot in a separate thread and send data to break the blocking read request. Figure 3-3 demonstrates this solution in detail.</p>
+
+<p><b>Figure 3-3.</b> <i>Revised mailslot server</i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+// Server2.cpp
+
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;conio.h&gt;
+
+BOOL StopProcessing;
+
+DWORD WINAPI ServeMailslot(LPVOID lpParameter);
+void SendMessageToMailslot(void);
+
+void main(void) {
+
+    DWORD ThreadId;
+    HANDLE MailslotThread;
+
+    StopProcessing = FALSE;
+    MailslotThread = CreateThread(NULL, 0, ServeMailslot, NULL,
+        0, &amp;ThreadId);
+
+    printf(&quot;Press a key to stop the server\n&quot;);
+    _getch();
+
+    // Mark the StopProcessing flag to TRUE so that when ReadFile 
+    // breaks, our server thread will end
+    StopProcessing = TRUE;
+
+    // Send a message to our mailslot to break the ReadFile call
+    // in our server
+
+    SendMessageToMailslot();
+
+    // Wait for our server thread to complete
+    if (WaitForSingleObject(MailslotThread, INFINITE) == WAIT_FAILED)
+    {
+        printf(&quot;WaitForSingleObject failed with error %d\n&quot;,
+            GetLastError());
+        return;
+    }
+}
+
+//
+// Function: ServeMailslot
+//
+// Description:
+//     This function is the mailslot server worker function to 
+//     process all incoming mailslot I/O
+//
+DWORD WINAPI ServeMailslot(LPVOID lpParameter)
+{
+    char buffer[2048];
+    DWORD NumberOfBytesRead;
+    DWORD Ret;
+    HANDLE Mailslot;
+
+    if ((Mailslot = CreateMailslot(&quot;\\\\.\\mailslot\\myslot&quot;, 2048,
+        MAILSLOT_WAIT_FOREVER, NULL)) == INVALID_HANDLE_VALUE)
+    {
+        printf(&quot;Failed to create a MailSlot %d\n&quot;, GetLastError());
+        return 0;
+    }
+
+    while((Ret = ReadFile(Mailslot, buffer, 2048,
+        &amp;NumberOfBytesRead, NULL)) != 0)
+    {
+        if (StopProcessing)
+            break;
+
+        printf(&quot;Received %d bytes\n&quot;, NumberOfBytesRead);
+    }
+
+    CloseHandle(Mailslot);
+
+    return 0;
+}
+
+//
+// Function: SendMessageToMailslot
+//
+// Description:
+//     The SendMessageToMailslot function is designed to send a
+//     simple message to our server so we can break the blocking
+//     ReadFile API call
+//
+void SendMessageToMailslot(void)
+{
+    HANDLE Mailslot;
+    DWORD BytesWritten;
+
+    if ((Mailslot = CreateFile(&quot;\\\\.\\mailslot\\myslot&quot;, 
+        GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_EXISTING, 
+        FILE_ATTRIBUTE_NORMAL, NULL)) == INVALID_HANDLE_VALUE)
+    {
+        printf(&quot;CreateFile failed with error %d\n&quot;, GetLastError());
+        return;
+    }
+
+    if (WriteFile(Mailslot, &quot;STOP&quot;, 4, &amp;BytesWritten, NULL) == 0)
+    {
+        printf(&quot;WriteFile failed with error %d\n&quot;, GetLastError());
+        return;
+    }
+
+    CloseHandle(Mailslot);
+}
+</pre>
+</td></tr></table>
+</p>
+
+<A NAME="55"><H2>Timeout Memory Leaks</H2></A>
+
+<p>The final problem with Windows 95 and 98 worth mentioning is memory leaks, which can occur when you're using timeout values on mailslots. When you create a mailslot using the <i>CreateMailslot</i> function with a timeout value greater than 0, the <i>ReadFile</i> function leaks memory when the timeout expires and the function returns <i>FALSE</i>. After many calls to the <i>ReadFile</i> function, the system becomes unstable and subsequent <i>ReadFile</i> calls whose timers expire start returning <i>TRUE</i>. As a result, the system is no longer able to execute other MS-DOS applications. To work around this, create the mailslot with a timeout value of either 0 or <i>MAILSLOT_WAIT_FOREVER</i>. This will prevent an application from using the timeout mechanism, which causes the actual memory leak.</p>
+
+<p>The Microsoft knowledge base documents the following problems and limitations. You can access the knowledge base at <i><A HREF="http://support.microsoft.com/support/search" target="_window2">http://support.microsoft.com/support/search</A></i>. We briefly describe each issue here.</p>
+
+<ul>
+<p><li> <b>Q139715</b> ReadFile Returns Wrong Error Code for Mailslots
+<br>If a server opens a mailslot using <i>CreateMailslot</i>, specifies a timeout, and then uses <i>ReadFile</i> to receive data, the <i>ReadFile</i> fails if no data is available. <i>GetLastError</i> returns an error code of 5 (access denied).</li></p>
+
+<p><li> <b>Q192276</b> <i>GetMailslotInfo Returns Incorrect lpNextSize Value</i>
+<br>If you call the API function <i>GetMailslotInfo</i> under Windows 95 OEM Service Release 2 (OSR2) or Windows 98 without a network client component installed, you receive an incorrect value (usually in the millions) or a negative number for the <i>lpNextSize</i> parameter. If you repeatedly call the function, it usually returns the correct value.</li></p>
+
+<p><li> <b>Q170581</b> <i>Mailslot Created on Win95 Allows Only 4093 Bytes</i>
+<br>If you call the <i>WriteFile</i> API function to write more than 4093 bytes to a mailslot that has been created on a Windows 95 workstation, it fails.</li></p>
+
+<p><li> <b>Q131493</b> <i>CreateFile and Mailslots</i>
+<br>The documentation for the <i>CreateFile</i> API function incorrectly describes the possible values that <i>CreateFile</i> returns when opening a client end of a mailslot.</li></p>
+</ul>
+
+</BODY>
+</HTML>
+
+
+
+

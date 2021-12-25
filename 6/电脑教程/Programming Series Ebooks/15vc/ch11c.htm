@@ -1,0 +1,123 @@
+<HTML>
+<HEAD>
+<LINK REL=StyleSheet HREF="basicIE4.css" TYPE="text/css">
+<TITLE>Using GDI Bitmaps</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY>
+<A NAME="214"><H1>Using GDI Bitmaps</H1></A>
+<P>A GDI bitmap is simply another GDI object, such as a pen or a font. You must somehow create a bitmap, and then you must select it into a device context. When you're finished with the object, you must deselect it and delete it. You know the drill.
+<P>There's a catch, though, because the &quot;bitmap&quot; of the display or printer device is effectively the display surface or the printed page itself. Therefore, you can't select a bitmap into a display device context or a printer device context. You have to create a special <U>memory</U> <U>device</U> <U>context</U> for your bitmaps, using the <I>CDC::CreateCompatibleDC</I> function. You must then use the <I>CDC</I> member function <I>StretchBlt</I> or 
+<I>BitBlt</I> to copy the bits from the memory device context to the &quot;real&quot; device context. These &quot;bit-blitting&quot; functions are generally called in your view class's <I>OnDraw</I> function. Of course, you mustn't forget to clean up the memory device context when you're finished.
+<A NAME="215"><H2>Loading a GDI Bitmap from a Resource</H2></A>
+<P>The easiest way to use a bitmap is to load it from a resource. If you look in ResourceView in the Workspace window, you'll find a list of the project's 
+bitmap resources. If you select a bitmap and examine its properties, you'll see a filename.
+<P>Here's an example entry in an RC (resource script) file, when viewed by a text editor:
+<P><PRE>IDB_REDBLOCKS             BITMAP  DISCARDABLE     &quot;res\\Red Blocks.bmp&quot;</PRE>
+<P><I>IDB_REDBLOCKS</I> is the resource ID, and the file is Red Blocks.bmp in the project's \res subdirectory. (This is one of the Microsoft Windows 95 
+wallpaper bitmaps, normally located in the \WINDOWS directory.) The resource compiler reads the DIB from disk and stores it in the project's RES file. The linker copies the DIB into the program's EXE file. You know that the Red Blocks bitmap must be in device-independent format because the EXE can be run with any display board that Windows supports.
+<P>The <I>CDC::LoadBitmap</I> function converts a resource-based DIB to a GDI bitmap. Below is the simplest possible self-contained <I>OnDraw</I> function that displays the Red Blocks bitmap:
+<P><PRE>CMyView::OnDraw(CDC* pDC)
+{
+    CBitmap bitmap; // Sequence is important
+    CDC dcMemory;
+    bitmap.LoadBitmap(IDB_REDBLOCKS);
+    dcMemory.CreateCompatibleDC(pDC);
+    dcMemory.SelectObject(&amp;bitmap);
+    pDC-&gt;BitBlt(100, 100, 54, 96, &amp;dcMemory, 0, 0, SRCCOPY);
+    // CDC destructor deletes dcMemory; bitmap is deselected
+    // CBitmap destructor deletes bitmap
+}</PRE>
+<P>The <I>BitBlt</I> function copies the Red Blocks pixels from the memory device context to the display (or printer) device context. The bitmap is 54 bits wide by 96 bits high, and on a VGA display it occupies a rectangle of 54-by-96 logical units, offset 100 units down and to the right of the upper-left corner of the window's client area.
+<P><DIV CLASS=note>
+<BLOCKQUOTE>
+<IMG SRC="note.jpg" width=123 height=18 BORDER="0"><P>
+The code above works fine for the display. As you'll see in <A HREF="ch19a.htm">Chapter 19</A>, the application framework calls the <I>OnDraw</I> function for printing, in which case <I>pDC</I> points to a printer device context. The bitmap here, unfortunately, is configured specifically for the display and thus cannot be selected into the printer-compatible memory device context. If you want to print a bitmap, you should look at the <I>CDib</I> class described later in this chapter.
+</BLOCKQUOTE></DIV>
+<P>
+<A NAME="216"><H2>The Effect of the Display Mapping Mode</H2></A>
+<P>If the display mapping mode in the Red Blocks example is <I>MM_TEXT</I>, each bitmap pixel maps to a display pixel and the bitmap fits perfectly. If the mapping mode is <I>MM_LOENGLISH</I>, the bitmap size is 0.54-by-0.96 inch, or 52-by-92 pixels for Windows 95, and the GDI must do some bit crunching to make the bitmap fit. Consequently, the bitmap might not look as good with the <I>MM_LOENGLISH</I> mapping mode. Calling <I>CDC::SetStretchBltMode</I> with a parameter value of <I>COLORONCOLOR</I> will make shrunken bitmaps look nicer.
+<A NAME="217"><H2>Stretching the Bits</H2></A>
+<P>What if we want Red Blocks to occupy a rectangle of exactly 54-by-96 
+pixels, even though the mapping mode is <U>not</U> <I>MM_TEXT</I>? The <I>StretchBlt</I> function is the solution. If we replace the <I>BitBlt</I> call with the following three statements, Red Blocks is displayed cleanly, whatever the mapping mode:
+<P><PRE>CSize size(54, 96);
+pDC-&gt;DPtoLP(&amp;size);
+pDC-&gt;StretchBlt(0, 0, size.cx, -size.cy,
+                &amp;dcMemory, 0, 0, 54, 96, SRCCOPY);</PRE>
+<P>With either <I>BitBlt</I> or <I>StretchBlt</I>, the display update is slow if the GDI has to actually stretch or compress bits. If, as in the case above, the GDI determines that no conversion is necessary, the update is fast.
+<A NAME="218"><H2>The EX11A Example</H2></A>
+<P>The EX11A example displays a resource-based bitmap in a scrolling view with mapping mode set to <I>MM_LOENGLISH</I>. The program uses the <I>StretchBlt</I> logic described above, except that the memory device context and the bitmap are created in the view's <I>OnInitialUpdate </I>member function and last for the life of the program. Also, the program reads the bitmap size through a call to 
+the <I>CGdiObject</I> member function <I>GetObject</I>, so it's not using hard-coded values as in the preceding examples.
+<P>Here are the steps for building the example:<P>
+<OL>
+<B><LI>Run AppWizard to produce \vcpp32\ex11a\ex11a.</B> Accept all the default settings but two: select Single Document, and select the <I>CScrollView</I> view base class, as shown in <A HREF="ch04a.htm">Chapter 4</A>, for <I>CEx11aView.</I> The options and the default class names are shown here.
+
+<P><img src="G11OG01x.gif" width=414 height=423 border=0 ><P>
+
+<B><LI>Import the Gold Weave bitmap.</B> Choose Resource from Visual C++'s Insert menu. Import the bitmap Gold Weave.bmp from the \WINDOWS directory. (If your version of Windows doesn't have this bitmap, load it from this book's companion CD-ROM.) Visual C++ will copy this bitmap file into your project's \res subdirectory. Assign the ID <I>IDB_GOLDWEAVE</I>, and save the changes.
+<P><B><LI>Add the following private data members to the class <I>CEx11aView.</I></B> Edit the file ex11aView.h or use ClassView. The bitmap and the memory device context last for the life of the view. The <I>CSize</I> objects are the source (bitmap) dimensions and the destination (display) dimensions.
+<P><PRE><B>CDC*     m_pdcMemory;
+CBitmap* m_pBitmap;
+CSize    m_sizeSource, m_sizeDest;</B></PRE>
+<P><LI><B>Edit the following member functions in the class <I>CEx11aView.</I></B> Edit the file ex11aView.cpp. The constructor and destructor do C++ housekeeping for the embedded objects. You want to keep the constructor as simple as possible because failing constructors cause problems. The <I>OnInitialUpdate</I> function sets up the memory device context and the bitmap, and it computes output dimensions that map each bit to a pixel. The <I>OnDraw</I> function calls <I>StretchBlt</I> twice&#151;once by using the 
+special computed dimensions and once by mapping each bit to a 0.01-by-0.01-inch square. Add the following boldface code:
+<P><PRE>CEx11aView::CEx11aView()
+{
+<B>    m_pdcMemory = new CDC;
+    m_pBitmap = new CBitmap;</B>
+}
+
+CEx11aView::~CEx11aView()
+{
+<B>    // cleans up the memory device context and the bitmap
+    delete m_pdcMemory; // deselects bitmap
+    delete m_pBitmap;</B>
+}
+void CEx11aView::OnDraw(CDC* pDC)
+{
+<B>    pDC-&gt;SetStretchBltMode(COLORONCOLOR);
+    pDC-&gt;StretchBlt(20, -20, m_sizeDest.cx, -m_sizeDest.cy,
+        m_pdcMemory, 0, 0,
+        m_sizeSource.cx, m_sizeSource.cy, SRCCOPY);
+
+    pDC-&gt;StretchBlt(350, -20, m_sizeSource.cx, -m_sizeSource.cy,
+        m_pdcMemory, 0, 0,
+        m_sizeSource.cx, m_sizeSource.cy, SRCCOPY);</B>
+}
+
+void CEx11aView::OnInitialUpdate()
+{
+    CScrollView::OnInitialUpdate();
+<B>    CSize sizeTotal(800, 1050); // 8-by-10.5 inches
+    CSize sizeLine = CSize(sizeTotal.cx / 100, sizeTotal.cy / 100);
+    SetScrollSizes(MM_LOENGLISH, sizeTotal, sizeTotal, sizeLine);
+
+    BITMAP bm; // Windows BITMAP data structure; see Win32 help
+    if (m_pdcMemory-&gt;GetSafeHdc() == NULL) {
+        CClientDC dc(this);
+        OnPrepareDC(&amp;dc); // necessary
+        m_pBitmap-&gt;LoadBitmap(IDB_GOLDWEAVE);
+        m_pdcMemory-&gt;CreateCompatibleDC(&amp;dc);
+        m_pdcMemory-&gt;SelectObject(m_pBitmap);
+        m_pBitmap-&gt;GetObject(sizeof(bm), &amp;bm);
+        m_sizeSource.cx = bm.bmWidth;
+        m_sizeSource.cy = bm.bmHeight;
+        m_sizeDest = m_sizeSource;
+        dc.DPtoLP(&amp;m_sizeDest);
+    }</B>
+}</PRE>
+<P><B><LI>Build and test the EX11A application.</B> Your screen should look like this.<P>
+
+<P><A HREF="javascript:fullSize('g11og02x.htm')"> <img src="g11og02.jpg" width=404 height=266 border=0 ALT = "Click to view at full size."> </A><P>
+
+<B><LI>Try the Print Preview and Print features.</B> The bitmap prints to scale because the application framework applies the <I>MM_LOENGLISH</I> mapping mode to the printer device context just as it does to the display device context. The output looks great in Print Preview mode, but (depending on your print drivers) the printed output will probably be either blank or microscopic! We'll fix that soon.
+</OL>
+</BODY>
+</HTML>
+
+
+

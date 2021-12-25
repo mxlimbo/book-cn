@@ -1,0 +1,483 @@
+<HTML>
+<HEAD>
+<TITLE>The HWInputMon Sample Application</TITLE>
+<link rel="STYLESHEET" type="text/css" href="prosrvwin.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR = "#ffffff">
+<A HREF="ch07f.htm">[Previous]</A> <A HREF="ch07h.htm">[Next]</A><P>
+
+<A NAME="115"><h1>The HWInputMon Sample Application</h1></A>
+<p>The HWInputMon sample application (&quot;07 HWInputMon.exe&quot;), shown in Listing 7-1 at the end of this section, exposes keystroke and mouse move performance information. It also includes a sample DLL (&quot;07 HWInputMonPerfInfo.dll&quot;), shown in Listing 7-2, that collects and returns the performance information. The source code for the sample application and DLL are in the 07-HWInputMon and the 07-HWInputMonPerfInfo directories on the companion CD.</p>
+
+<p> HWInputMon creates a performance object named Hardware Input and exposes four counters: Keystrokes, Keystrokes/sec, Mouse moves, and Mouse moves/sec, as shown in Figure 7-12. I strongly suggest that you examine this sample application.</p>
+
+<p>
+<A HREF="javascript:fullSize('F07FJ12x.htm')"> <img src="images/F07FJ12.JPG" width=404 height=354 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!-- caption --><b>Figure 7-12.</b> <i>The Add Counters dialog box for the HWInputMon sample application</i><!-- /caption -->
+</p>
+
+<A NAME="116"><h2>The CPerfData Class</h2></A>
+<p>To simplify adding performance objects and counters to HWInputMon, I've created a C++ class named CPerfData. The CPerfData file (PerfData.h) and its supporting files (Optex.h and RegKey.h) are available on the companion CD. CPerfData does all of the really tedious work, such as shared memory management, data structure initialization, memory block construction, addition and removal of object instances, and registry handling. If you use the CPerfData class for your own applications or services, the most difficult part of adding performance information to your code will be deciding which objects and counters to expose.</p>
+
+<p>By referencing the commented source code, you should have no trouble understanding the gritty details of the CPerfData's member functions. However, in order to use this class to add performance counters to your application, you don't need to understand how it works internally; you only need to know how to set up the class.</p>
+
+<A NAME="117"><h3>Using the CPerfData Class</h3></A>
+<p>To create a service (or application) that exposes performance information, you will need two projects: a Win32 Application project that is an executable service or application and a Win32 DLL project that collects and returns the performance information.</p>
+
+<p>Once you have these two projects set up, you create a header file that defines programmatic symbols for the specific objects and counters you want the application to expose. For the HWInputMon sample, this header file is named HWInputPerfDataMap.h and is shown in Listing 7-3.</p>
+
+<p>You define an object's symbol by using the <i>PERFDATA_DEFINE_OBJECT</i> macro (defined in PerfData.h). This macro takes two parameters: a symbolic name that you can use in your application to refer to this object, and an ID that you also define. You must never repeat an ID number, and IDs must never be 0. You define a counter in exactly the same way, this time using the <i>PERFDATA_DEFINE_COUNTER</i> macro. Any source code modules that change or update a performance counter must include this header file.</p>
+
+<p>Now you create a table indicating which objects and counters your service or application supports. For convenience, I also include this information in HWInputPerfDataMap.h. The table is easily created by using macros that are declared in the PerfData.h header file. These macros create what I call a performance data map. This map is similar to the message maps used by MFC programmers.</p>
+
+<p>To create a performance data map, start with the <i>PERFDATA_MAP_BEGIN</i> macro, which instantiates an array of structures that defines your objects and counters. Follow this macro with one or more <i>PERFDATA_MAP_OBJ</i> or <i>PERFDATA_MAP_CTR</i> macros. Note that the order of the entries in the map is important. Declare the first object, followed by its counters, and then declare the next object, followed by its counters, and so forth.</p>
+
+<p>To declare an object, use the <i>PERFDATA_MAP_OBJ</i> macro. This macro requires seven parameters:</p>
+
+<ol>
+<p><li>Programmatic symbol that identifies the object.</li></p>
+
+<p><li>Unicode string name for the object. (This will be added to the registry.)</li></p>
+
+<p><li>Unicode Help text for the object. (This will also be added to the registry.)</li></p>
+
+<p><li>Object's detail level.</li></p>
+
+<p><li>Programmatic symbol name of a counter that should be selected by default when the object is selected in the System Monitor control.</li></p>
+
+<p><li>Maximum number of instances that the object supports. (Pass PERF_NO_INSTANCES if the object doesn't support instances.)</li></p>
+
+<p><li>Maximum number of characters that can appear in an instance's string name. (Pass 0 if the object doesn't support instances.)</li></p>
+</ol>
+
+<p>After you've added an object to the map, use the <i>PERFDATA_MAP_CTR</i> macro to add one or more counters for the object. This macro requires six parameters:</p>
+
+<ol>
+<p><li>Programmatic symbol that identifies the counter.</li></p>
+
+<p><li>Unicode string name for the counter. (This name will be added to the registry.)</li></p>
+
+<p><li>Unicode Help text for the counter. (This will also be added to the registry.)</li></p>
+
+<p><li>Counter's detail level.</li></p>
+
+<p><li>Default scale for the counter.</li></p>
+
+<p><li>Type of counter.</li></p>
+</ol>
+
+<p>After you've added all the objects and counters to the map, finish the map by using the <i>PERFDATA_MAP_END</i> macro. This macro takes just one parameter&#8212;the name of your service or application&#8212;and is used to create counter information in the following registry key:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\<i>ServiceName</i>\
+Performance
+</pre></td></tr></table>
+</p>
+
+<p>This macro terminates the map and creates a global instance of the CPerfData class. This global instance is named g_PerfData, and you'll need to refer to this variable in your code when you want to manipulate the performance objects, instances, or counters.</p>
+
+<p>Notice that the performance data map is placed in a source code file all by itself. This is necessary because both the application and the DLL will have to include this file in their projects.</p>
+
+<p>Let's turn our attention now to some code that demonstrates exactly how to use the CPerfData class's public member functions. Specifically, let's look at the <i>_tWinMain</i> function inside HWInputMon.cpp. (See Listing 7-1.)</p>
+
+<p>In order for the application to expose performance information, the registry must be configured as described earlier in this chapter. CPerfData has a static member function named <i>Install</i>:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+void CPerfData::Install(PCWSTR pszDllPathname);
+</pre></td></tr></table>
+</p>
+
+<p>This function must be passed the full pathname of the DLL that exposes your performance information. In the HWInputMon sample application, <i>_tWinMain</i> calls this function if the user clicks Yes in the Install Performance Counter Data Into Registry message box. To determine the DLL's full pathname, I get the full pathname of the executable file and replace the executable's filename with the DLL's filename&#8212;assuming, of course, that the executable and DLL files are both in the same directory.</p>
+
+<p>To remove the performance counter information from the system's registry, call CPerfData's <i>Uninstall</i> function:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+void CPerfData::Uninstall();
+</pre></td></tr></table>
+</p>
+
+<p>In <i>_tWinMain</i>, I call this function if the user clicks Yes in the Remove Performance Counter Data From The Registry message box. When you are debugging the counters, you might want to have your application install the registry information on startup and uninstall it during shutdown. That way, if you decide to add, delete, or move any of the entries in the performance data map, the registry won't get out of sync.</p>
+
+<p>Once the registry is completely configured, call the CPerfData class's <i>Activate</i> method to tell the CPerfData object to start keeping track of the performance counter information:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+DWORD CPerfData::Activate();
+</pre></td></tr></table>
+</p>
+
+<p>This function allocates the shared memory block and initializes it with the information contained in the performance data map. An application should call this function only if the performance information has already been installed.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+Internally, the CPerfData class implements this shared memory block by using a memory-mapped file kernel object. This memory-mapped file is going to be mapped into the service's address space and will also be mapped into the requesting application's address space (MMC.exe or WinLogon, for example). Because these two processes might very well be executing under different security contexts, steps must be taken so that they can communicate with each other using this kernel object.
+
+<p>So that the two processes can communicate, CPerfData's internal kernel objects are created using a security descriptor that allows Everyone GENERIC_ALL access. Depending on your needs, you might want to alter this descriptor, but I suspect that most developers will find it sufficient.</p>
+</blockquote></div>
+</p>
+
+<p>Once the performance data has been activated, <i>_tWinMain</i> adds instances to one of its objects. Instances are added by simply calling the <i>AddInstance</i> function:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+INSTID CPerfData::AddInstance(BOOL fIgnoreIfExists, OBJID ObjId, 
+   PCTSTR pszInstName, OBJID ObjIdParent = 0, INSTID InstIdParent = 0); 
+</pre></td></tr></table>
+</p>
+
+<p>The <i>fIgnoreIfExists</i> parameter tells the function whether or not to add this instance if an instance with the specified name already exists. The <i>ObjId</i> parameter is the programmatic symbol identifying the object that is to get the new instance. The <i>pszInstName</i> parameter is the string name of the instance. The last two parameters allow you to indicate whether this instance is the child of some other object's instance. Most instances do not have parent instances, so you will usually pass just the first three parameters to this function. If the function is successful, it returns an INSTID. This is my own data type and is simply a handle to the newly created instance. If the function fails, -1 is returned.</p>
+
+<p>The CPerfData class has another version of <i>AddInstance</i>:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+INSTID CPerfData::AddInstance(BOOL fIgnoreIfExists, OBJID ObjId, 
+   LONG lUniqueId, OBJID ObjIdParent = 0, INSTID InstIdParent = 0);
+</pre></td></tr></table>
+</p>
+
+<p>This version is identical to the first with the exception that it allows you to identify the instance by using a unique ID instead of a string.</p>
+
+<p>Because instances can come and go as your application executes, you should feel free to add new instances at any time. You can also remove instances by calling <i>RemoveInstance</i>:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+void CPerfData::RemoveInstance(OBJID ObjId, INSTID InstId);
+</pre></td></tr></table>
+</p>
+
+<p>Now we get to the fun stuff&#8212;changing a counter's value. Two functions exist that allow you to alter a counter's value:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+LONG&amp;    CPerfData::GetCtr32(CTRID CtrId, int nInstId = 0) const;
+__int64&amp; CPerfData::GetCtr64(CTRID CtrId, int nInstId = 0) const;
+</pre></td></tr></table>
+</p>
+
+<p>If the counter value you want to change is 32 bits wide, call <i>GetCtr32</i>; if the counter value is 64 bits wide, call <i>GetCtr64</i>. In debug builds, the source code will raise an assertion if you accidentally call a function that doesn't match the counter value's width. To both of these functions, you pass the programmatic symbol for a counter that you've defined. If this counter is inside an object that doesn't support instances, omit the second parameter. If this counter is contained in an object that does support instances, you must pass the INSTID (returned from <i>AddInstance</i>) as the second parameter.</p>
+
+<p>These functions return either a LONG reference or an __int64 reference that identifies the counter's value inside the shared memory block. With this reference, changing the value of a counter is a trivial undertaking. Here is an example:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+LONG&amp; lCounterValue = g_PerfData.GetCtr32(SOME_COUNTER_SYMBOL);
+lCounterValue = 5;   // Make the counter's value 5
+lCounterValue++;     // Add 1 to the counter's value
+lCounterValue *= 13; // Multiply the counter's current value by 13
+</pre></td></tr></table>
+</p>
+
+<p>What could be simpler! Just sprinkle lines like these through the application's source code whenever you want to change the value of a counter. These lines of code execute very quickly and should not significantly hurt the performance of your application.</p>
+
+<p><b>Listing 7-1.</b> <i>The HWInputMon sample application</i></p>
+
+<p>
+
+<table cellpadding="5" width="95%"><tr><td><pre>
+<p><b>HWInputMon.cpp</b></p>
+/******************************************************************************
+Module:  HWInputMon.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#include &quot;..\CmnHdr.h&quot;                 // See Appendix A.
+#include &lt;WindowsX.h&gt;
+
+#define HWINPUTPERFDATAMAP_IMPL
+#include &quot;HWInputPerfDataMap.h&quot;
+
+///////////////////////////////////////////////////////////////////////////////
+
+LRESULT CALLBACK LowLevelKeyboardProc(int nCode, 
+   WPARAM wParam, LPARAM lParam) {
+
+   if (nCode == HC_ACTION) {
+      switch (wParam) {
+      case WM_KEYDOWN:  case WM_SYSKEYDOWN:
+      case WM_KEYUP:    case WM_SYSKEYUP: 
+         g_PerfData.GetCtr32(HWINPUT_KEYS)++; 
+         g_PerfData.GetCtr32(HWINPUT_KEYSPERSEC)++;
+         break;
+      }
+   }
+   return(CallNextHookEx(NULL, nCode, wParam, lParam));
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+typedef enum { 
+   mciFirst = 0, 
+   mciTotal = mciFirst, 
+   mciLeft, 
+   mciMiddle, 
+   mciRight,
+   mciLast = mciRight
+} MOUSECLCKINST;
+
+CPerfData::INSTID g_MouseClckInstToPrfInstId[mciLast + 1];
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
+
+   if (nCode == HC_ACTION) {
+      if (wParam == WM_MOUSEMOVE) {
+         g_PerfData.GetCtr32(HWINPUT_MOUSEMOVES)++;
+         g_PerfData.GetCtr32(HWINPUT_MOUSEMOVESPERSEC)++;
+      }
+
+      BOOL fDown = ((wParam == WM_LBUTTONDOWN) || 
+         (wParam == WM_MBUTTONDOWN) || (wParam == WM_RBUTTONDOWN));
+      if (fDown) {
+         MOUSECLCKINST mci = mciLeft;
+         if ((wParam == WM_LBUTTONDOWN) || (wParam == WM_LBUTTONUP))
+            mci = mciLeft;
+         if ((wParam == WM_MBUTTONDOWN) || (wParam == WM_MBUTTONUP))
+            mci = mciMiddle;
+         if ((wParam == WM_RBUTTONDOWN) || (wParam == WM_RBUTTONUP))
+            mci = mciRight;
+
+         g_PerfData.GetCtr32(MOUSECLCKS_CLICKS,       
+            g_MouseClckInstToPrfInstId[mciTotal])++;
+         g_PerfData.GetCtr32(MOUSECLCKS_CLICKSPERSEC, 
+            g_MouseClckInstToPrfInstId[mciTotal])++;
+         g_PerfData.GetCtr32(MOUSECLCKS_CLICKS,       
+            g_MouseClckInstToPrfInstId[mci])++;
+         g_PerfData.GetCtr32(MOUSECLCKS_CLICKSPERSEC, 
+            g_MouseClckInstToPrfInstId[mci])++;
+      }
+   }
+   return(CallNextHookEx(NULL, nCode, wParam, lParam));
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+int WINAPI _tWinMain(HINSTANCE hinstExe, HINSTANCE, PTSTR pszCmdLine, int) {
+
+   static TCHAR szAppName[] = TEXT(&quot;Hardware Input Monitor&quot;);
+   
+   if (MessageBox(NULL, 
+      TEXT(&quot;Install Performance Counter Data into Registry?&quot;),
+      szAppName, MB_YESNO) == IDYES) {
+
+      TCHAR szPath[_MAX_PATH];
+      GetModuleFileName(hinstExe, szPath, chDIMOF(szPath));
+      lstrcpy(_tcsrchr(szPath, TEXT(`\\')) + 1, 
+         TEXT(&quot;07 HWInputMonPerfInfo.dll&quot;));
+      g_PerfData.Install(szPath);
+   }
+
+   if (MessageBox(NULL, 
+      TEXT(&quot;Collect Performance Counter Data?&quot;),
+      szAppName, MB_YESNO) == IDYES) {
+      
+      g_PerfData.Activate();
+
+      // Add the four Mouse Click Object Instances
+      g_MouseClckInstToPrfInstId[mciTotal]  = 
+         g_PerfData.AddInstance(TRUE, PERFOBJ_MOUSECLCKS, TEXT(&quot;_Total&quot;));
+      g_MouseClckInstToPrfInstId[mciLeft]   = 
+         g_PerfData.AddInstance(TRUE, PERFOBJ_MOUSECLCKS, TEXT(&quot;Left&quot;));
+      g_MouseClckInstToPrfInstId[mciMiddle] = 
+         g_PerfData.AddInstance(TRUE, PERFOBJ_MOUSECLCKS, TEXT(&quot;Middle&quot;));
+      g_MouseClckInstToPrfInstId[mciRight]  = 
+         g_PerfData.AddInstance(TRUE, PERFOBJ_MOUSECLCKS, TEXT(&quot;Right&quot;));
+
+      // Install the low-level keyboard &amp; mouse hooks
+      HHOOK hhkLowLevelKybd  = SetWindowsHookEx(WH_KEYBOARD_LL, 
+         LowLevelKeyboardProc, hinstExe, 0);
+      HHOOK hhkLowLevelMouse = SetWindowsHookEx(WH_MOUSE_LL, 
+         LowLevelMouseProc, hinstExe, 0);
+
+      // Keep this app running until we're told to stop
+      int x = IDRETRY;
+      while (x == IDRETRY) {
+
+         if (x == IDRETRY) {
+            // Reset all of the counters to zero
+            g_PerfData.LockCtrs();
+            g_PerfData.GetCtr32(HWINPUT_KEYS) = 0;
+            g_PerfData.GetCtr32(HWINPUT_KEYSPERSEC) = 0;
+            g_PerfData.GetCtr32(HWINPUT_MOUSEMOVES) = 0;
+            g_PerfData.GetCtr32(HWINPUT_MOUSEMOVESPERSEC) = 0;
+
+            MOUSECLCKINST mci = mciFirst; 
+            while (mci &lt;= mciLast) {
+               g_PerfData.GetCtr32(MOUSECLCKS_CLICKS,       
+                  g_MouseClckInstToPrfInstId[mci]) = 0;
+               g_PerfData.GetCtr32(MOUSECLCKS_CLICKSPERSEC, 
+                  g_MouseClckInstToPrfInstId[mci]) = 0;
+
+               mci = (MOUSECLCKINST) ((int) mci + 1);
+            }
+            g_PerfData.UnlockCtrs();
+         }
+
+         x = MessageBox(NULL, 
+            TEXT(&quot;Click \&quot;Retry\&quot;  to reset the counters.\n&quot;)
+            TEXT(&quot;Click \&quot;Cancel\&quot; to terminate the application.&quot;),
+            szAppName, MB_RETRYCANCEL);
+      }
+      UnhookWindowsHookEx(hhkLowLevelKybd);
+      UnhookWindowsHookEx(hhkLowLevelMouse);
+
+      // Remove the four Mouse Click Object Instances
+      g_PerfData.RemoveInstance(PERFOBJ_MOUSECLCKS, 
+         g_MouseClckInstToPrfInstId[mciTotal]);
+      g_PerfData.RemoveInstance(PERFOBJ_MOUSECLCKS, 
+         g_MouseClckInstToPrfInstId[mciLeft]);
+      g_PerfData.RemoveInstance(PERFOBJ_MOUSECLCKS, 
+         g_MouseClckInstToPrfInstId[mciMiddle]);
+      g_PerfData.RemoveInstance(PERFOBJ_MOUSECLCKS, 
+         g_MouseClckInstToPrfInstId[mciRight]);
+   }
+
+   if (MessageBox(NULL, 
+      TEXT(&quot;Remove Performance Counter Data from the Registry?&quot;),
+      szAppName, MB_YESNO) == IDYES) {
+      g_PerfData.Uninstall();
+   }
+
+   return(0);
+}
+
+
+///////////////////////////////// End Of File /////////////////////////////////
+</pre></td></tr></table>
+</p>
+
+<p><b>Listing 7-2.</b> <i>The HWInputMonPerfInfo DLL</i></p>
+<p>
+
+<table cellpadding="5" width="95%"><tr><td><pre>
+<p><b>HWInputMonPerfInfo.cpp</b></p>
+/******************************************************************************
+Module:  HWInputMonPerfInfo.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+Description: DLL that exposes HWInputMon's Performance Information
+******************************************************************************/
+
+
+#include &quot;..\CmnHdr.h&quot;                 // See Appendix A.
+
+#define PERFDATA_COLLECT_SUPPORTED
+
+// NOTE: PERFDATA_COLLECT_SUPPORTED must be defined for this project
+#if !defined(PERFDATA_COLLECT_SUPPORTED)
+#error PERFDATA_COLLECT_SUPPORTED must be defined for this project
+#endif
+
+#define HWINPUTPERFDATAMAP_IMPL
+#include &quot;..\07-HWInputMon\HWInputPerfDataMap.h&quot;
+
+
+///////////////////////////////// End Of File /////////////////////////////////
+</pre></td></tr></table>
+</p>
+
+<p><b>Listing 7-3.</b> <i>The HWInput data map</i></p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+<p><b>HWInputPerfDataMap.h</b></p>
+/******************************************************************************
+Module:  HWInputPerfDataMap.h
+Notices: Copyright (c) 2000 Jeffrey Richter
+Description: Definition of performance objects and counters
+******************************************************************************/
+
+#ifdef HWINPUTPERFDATAMAP_IMPL
+#define PERFDATA_IMPL
+#endif
+#include &quot;PerfData.h&quot;
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+PERFDATA_DEFINE_OBJECT(PERFOBJ_HWINPUT,           100);
+PERFDATA_DEFINE_COUNTER(HWINPUT_KEYS,             101);
+PERFDATA_DEFINE_COUNTER(HWINPUT_KEYSPERSEC,       102);
+PERFDATA_DEFINE_COUNTER(HWINPUT_MOUSEMOVES,       103);
+PERFDATA_DEFINE_COUNTER(HWINPUT_MOUSEMOVESPERSEC, 104);
+
+PERFDATA_DEFINE_OBJECT(PERFOBJ_MOUSECLCKS,        200);
+PERFDATA_DEFINE_COUNTER(MOUSECLCKS_CLICKS,        201);
+PERFDATA_DEFINE_COUNTER(MOUSECLCKS_CLICKSPERSEC,  202);
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+#ifdef HWINPUTPERFDATAMAP_IMPL
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+PERFDATA_MAP_BEGIN()
+   PERFDATA_MAP_OBJ(PERFOBJ_HWINPUT, TEXT(&quot;Hardware Input&quot;), 
+      TEXT(&quot;The Hardware Input object type includes those counters &quot;)
+      TEXT(&quot;that apply to keystrokes and mouse moves.&quot;), 
+      PERF_DETAIL_NOVICE, HWINPUT_KEYS, PERF_NO_INSTANCES, 0)
+
+   PERFDATA_MAP_CTR(HWINPUT_KEYS,  TEXT(&quot;Keystrokes&quot;),  
+      TEXT(&quot;The number of down and up keystrokes&quot;),  
+      PERF_DETAIL_NOVICE, 0, PERF_COUNTER_RAWCOUNT)
+   PERFDATA_MAP_CTR(HWINPUT_KEYSPERSEC,  TEXT(&quot;Keystrokes/sec&quot;),  
+      TEXT(&quot;The number of down and up keystrokes per second&quot;),  
+      PERF_DETAIL_NOVICE, 0, PERF_COUNTER_COUNTER)
+   PERFDATA_MAP_CTR(HWINPUT_MOUSEMOVES,  TEXT(&quot;Mouse moves&quot;),  
+      TEXT(&quot;The number of mouse moves&quot;),  
+      PERF_DETAIL_NOVICE, 0, PERF_COUNTER_RAWCOUNT)
+   PERFDATA_MAP_CTR(HWINPUT_MOUSEMOVESPERSEC,  TEXT(&quot;Mouse moves/sec&quot;),  
+      TEXT(&quot;The number of mouse moves per second&quot;),  
+      PERF_DETAIL_NOVICE, 0, PERF_COUNTER_COUNTER)
+
+
+   PERFDATA_MAP_OBJ(PERFOBJ_MOUSECLCKS, TEXT(&quot;Mouse Clicks&quot;), 
+      TEXT(&quot;The Mouse Clicks object type includes those counters &quot;)
+      TEXT(&quot;that apply to mouse button clicks.&quot;), 
+      PERF_DETAIL_NOVICE, MOUSECLCKS_CLICKS, 4, 10)
+
+   PERFDATA_MAP_CTR(MOUSECLCKS_CLICKS,  TEXT(&quot;Clicks&quot;),  
+      TEXT(&quot;The number of down clicks&quot;),  
+      PERF_DETAIL_NOVICE, 0, PERF_COUNTER_RAWCOUNT)
+   PERFDATA_MAP_CTR(MOUSECLCKS_CLICKSPERSEC,  TEXT(&quot;Clicks/sec&quot;),  
+      TEXT(&quot;The number of down clicks per second&quot;),  
+      PERF_DETAIL_NOVICE, 0, PERF_COUNTER_COUNTER)
+PERFDATA_MAP_END(&quot;HWInputMon&quot;)
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+#endif   // HWINPUTPERFDATAMAP_IMPL
+
+
+///////////////////////////////// End Of File /////////////////////////////////
+</pre></td></tr></table>
+</p>
+
+</BODY>
+</HTML>
+
+
+
+

@@ -1,0 +1,532 @@
+<HTML>
+<HEAD>
+<TITLE>Decommitting Physical Storage and Releasing a Region </TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch15e.htm">[Previous]</A> <A HREF="ch15g.htm">[Next]</A><P>
+
+<A NAME="196"><H1>Decommitting Physical Storage and Releasing a Region </H1></A>
+
+<p>To decommit physical storage mapped to a region or release an entire region of address space, call the <i>VirtualFree</i> function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL VirtualFree(
+   LPVOID pvAddress, 
+   SIZE_T dwSize, 
+   DWORD fdwFreeType);
+</pre>
+</td></tr></table></p>
+
+<p>Let's first examine the simple case of calling <i>VirtualFree</i> to release a reserved region. When your process will no longer be accessing the physical storage within a region, you can release the entire reserved region, and all the physical storage committed to the region, by making a single call to <i>VirtualFree</i>.</p>
+
+<p>For this call, the <i>pvAddress</i> parameter must be the base
+address of the region. This address would be the same address that <i>VirtualAlloc</i> returned when the region was reserved. The system knows the size of the region at the specified memory address, so you can pass 0 for the <i>dwSize</i> parameter. In fact, you must pass 0 for the <i>dwSize</i> parameter or the call to <i>VirtualFree</i> will fail. For the third parameter, <i>fdwFreeType</i>, you must pass MEM_RELEASE to tell the system to decommit all physical storage mapped to the region and to release the region. When releasing a region, you must release all the address space that was reserved by the region. For example, you cannot reserve a 128-KB region and then decide to release
+only 64 KB of it. You must release all 128 KB.</p>
+
+<p>When you want to decommit some physical storage from the region without releasing the region, you also call <i>VirtualFree</i>. To decommit some physical storage, you must pass the memory address that identifies the first page to be decommitted in <i>VirtualFree</i>'s <i>pvAddress</i> parameter. You must also specify the number of bytes to free in the <i>dwSize</i> parameter and the MEM_DECOMMIT identifier in the <i>fdwFreeType</i> parameter.</p>
+
+<p>Like committing, decommitting is done with page granularity. That is, specifying a memory address in the middle of a page decommits the entire page. And, of course, if <i>pvAddress + dwSize</i> falls in the middle of a page, the whole page that contains this address is decommitted as well. So all pages that fall within the range of <i>pvAddress</i> to <i>pvAddress + dwSize</i> are decommitted.</p>
+
+<p>If <i>dwSize</i> is 0 and <i>pvAddress</i> is the base address for the allocated region, <i>VirtualFree</i> will decommit the complete range of allocated pages. After the pages of physical storage have been decommitted, the freed physical storage is available to any other process in the system; any attempt to access the decommitted memory results in an access violation.</p>
+
+<A NAME="197"><H2>When to Decommit Physical Storage</H2></A>
+
+<p>In practice, knowing when it's OK to decommit memory is very
+tricky. Consider the spreadsheet example again. If your application is running on an <i>x</i>86 machine, each page of storage is 4 KB and can hold 32 (4096/128) CELLDATA structures. If the user deletes the contents of <i>CellData[0][1]</i>, you might be able to decommit the page of storage as long as cells <i>CellData[0][0]</i> through <i>CellData[0][31]</i> are also not in use. But how do you know? You can tackle this problem in different ways.</p>
+
+<ul>
+<p><li>Without a doubt, the easiest solution is to design a CELLDATA structure that is exactly 1 page in size. Then, because there is always one structure per page, you can simply decommit the page of physical storage when you no longer need the data in the structure. Even if your data structures were, say, multiples of a page 8 KB or 12 KB for <i>x</i>86 CPUs (these would be unusually large structures), decommitting memory would still be pretty easy. Of course, to use this method you must define your data structures to meet the page size of the CPU you're targeting&#8212;not how we usually write our programs.</li></p>
+
+<p><li>A more practical solution is to keep a record of which structures are in use. To save memory, you might use a bitmap. So if you have an array of 100 structures, you also maintain an array of 100 bits. Initially, all the bits are set to 0, indicating that no structures are in use. As you use the structures, you set the corresponding bits to 1.
+Then, whenever you don't need a structure and you change its bit
+back to 0, you check the bits of the adjacent structures that fall into the same page of memory. If none of the adjacent structures is in use, you can decommit the page.</li></p>
+
+<p><li>The last solution implements a garbage collection function. This scheme relies on the fact that the system sets all the bytes in a page to 0 when physical storage is first committed. To use this scheme, you must first set aside a BOOL (perhaps called <i>fInUse</i>) in your structure. Then, every time you put a structure in committed memory, you need to ensure that <i>fInUse</i> is set to TRUE.</li></p>
+
+<p>As your application runs, you'll want to call the garbage
+collection function periodically. This function should traverse all the potential data structures. For each structure, the function first determines whether storage is committed for the structure; if so, the function checks the <i>fInUse</i> member to see whether it is 0. A value of 0 means that the structure is not in use, whereas a value of TRUE means that it is in use. After the garbage collection function has checked all the structures that fall within a given page, it calls <i>VirtualFree</i> to decommit the storage if all the structures are not in use.</p>
+
+<p>You can call the garbage collection function immediately after a structure is no longer considered to be in use, but doing so might take more time than you want to spend because the function cycles through all the possible structures. An excellent way to implement this function is to have it run as part of a lower-priority thread. In this way, you don't take time away from the thread executing the main application. Whenever the main application is idle or the main application's thread is performing file I/O, the system can schedule time to the garbage collection function.</p>
+</ul>
+
+<p>Of all the methods listed above, the first two are my personal
+favorites. However, if your structures are small (less than a page), I recommend using the last method.</p>
+
+<A NAME="198"><H2>The Virtual Memory Allocation Sample Application </H2></A>
+
+<p>The VMAlloc application (&quot;15 VMAlloc.exe&quot;), listed in Figure 15-1 below, demonstrates how to use virtual memory techniques for manipulating an array of structures. The source
+code and resource files for the application are in the 15-VMAlloc
+directory on the companion CD-ROM. When you start the program, the following window appears.</p>
+
+<p>
+<img src="images/G15si01.JPG" width=342 height=183 border="0">
+</p>
+
+<p>Initially, no region of address space has been reserved for the array, and all the address space that would be reserved for it is free, as shown by the memory map. When you click the Reserve Region (50, 2 KB Structures) button, VMAlloc calls <i>VirtualAlloc</i> to reserve the region, and the memory map is updated to reflect this. After <i>VirtualAlloc</i> reserves the region, the remaining buttons become active.</p>
+
+<p>You can now type an index into the edit control to select an index, and then click on the Use button. This has the effect of committing physical storage to the memory address where the array element is to be placed. When a page of storage is committed, the memory map is redrawn to reflect the state of the reserved region for the entire array. So if after reserving the region, you use the Use button to mark array elements 7 and 46 as <i>in use</i>, the window will look like the following window (when you are running the program on a 4-KB page machine).</p>
+
+<p>
+<img src="images/G15si02.JPG" width=342 height=183 border="0">
+</p>
+
+<p>Clicking on the Clear button clears any element that is marked as in use. But doing so does not decommit the physical storage mapped to the array element because each page contains room for multiple structures&#8212;just because one is clear doesn't mean the others are too. If the memory were decommitted, the data in the other structures would be lost. Because clicking on Clear doesn't affect the region's physical storage, the memory map is not updated when an array element is cleared.</p>
+
+<p>However, when a structure is cleared, its <i>fInUse</i> member is set to FALSE. This setting is necessary so the garbage collection routine can make its pass over all the structures and decommit storage that's no longer in use. If you haven't guessed it by now, the Garbage Collect button tells VMAlloc to execute its garbage collection routine. To keep things simple, I have not implemented the garbage collection routine on a separate thread.</p>
+
+<p>To demonstrate the garbage collection function, clear the array element at index 46. Notice that the memory map does not change. Now click on the Garbage Collect button. The program decommits the page of storage containing element 46, and the memory map is updated to reflect this, as shown in the following window. Note that the <i>GarbageCollect</i> function can easily be used in your own applications. I implemented it to work with arrays of any size data structures; the structures do not have to fit exactly in a page. The only requirement is that the first member of your structure must be a BOOL value, which indicates whether the structure is in use.</p>
+
+<p>
+<img src="images/G15si03.JPG" width=342 height=183 border="0">
+</p>
+
+<p>Finally, even though there is no visual display to inform you, all the committed memory is decommitted and the reserved region is freed when the window is destroyed.</p>
+
+<p>This program contains another element that I haven't described
+yet. The program needs to determine the state of memory in the
+region's address space in three places:</p>
+
+<ul>
+<p><li>After changing the index, the program needs to enable the Use button and disable the Clear button or vice versa.</li></p>
+
+<p><li>In the garbage collection function, the program needs to see whether storage is committed before actually testing to see whether the <i>fInUse</i> flag is set.</li></p>
+
+<p><li>When updating the memory map, the program needs to know which pages are free, which are reserved, and which are committed.</li></p>
+</ul>
+
+<p>VMAlloc performs all these tests by calling the <i>VirtualQuery</i> function, discussed in the previous chapter.</p>
+
+<p>
+<b>Figure 15-1.</b> <i>The VMAlloc sample application</i>
+</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<p><b>VMAlloc.cpp</b></p>
+
+<PRE>
+/******************************************************************************
+Module:  VMAlloc.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+#include &quot; ..\CmnHdr.h&quot;     /* See Appendix A. */
+#include &lt;WindowsX.h&gt;
+#include &lt;tchar.h&gt;
+#include &quot;Resource.h&quot;
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+// The number of bytes in a page on this host machine.
+UINT g_uPageSize = 0;
+
+// A dummy data structure used for the array.
+typedef struct {
+   BOOL fInUse;
+   BYTE bOtherData[2048 - sizeof(BOOL)];
+} SOMEDATA, *PSOMEDATA;
+
+
+// The number of structures in the array
+#define MAX_SOMEDATA    (50)
+
+// Pointer to an array of data structures
+PSOMEDATA g_pSomeData = NULL;
+
+
+// The rectangular area in the window occupied by the memory map
+RECT g_rcMemMap;
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL Dlg_OnInitDialog(HWND hwnd, HWND hwndFocus, LPARAM lParam) {
+
+   chSETDLGICONS(hwnd, IDI_VMALLOC);
+
+   // Initialize the dialog box by disabling all the nonsetup controls.
+   EnableWindow(GetDlgItem(hwnd, IDC_INDEXTEXT),      FALSE);
+   EnableWindow(GetDlgItem(hwnd, IDC_INDEX),          FALSE);
+   EnableWindow(GetDlgItem(hwnd, IDC_USE),            FALSE);
+   EnableWindow(GetDlgItem(hwnd, IDC_CLEAR),          FALSE);
+   EnableWindow(GetDlgItem(hwnd, IDC_GARBAGECOLLECT), FALSE);
+
+   // Get the coordinates of the memory map display.
+   GetWindowRect(GetDlgItem(hwnd, IDC_MEMMAP), &amp;g_rcMemMap);
+   MapWindowPoints(NULL, hwnd, (LPPOINT) &amp;g_rcMemMap, 2);
+
+   // Destroy the window that identifies the location of the memory map
+   DestroyWindow(GetDlgItem(hwnd, IDC_MEMMAP));
+
+   // Put the page size in the dialog box just for the user's information.
+   TCHAR szBuf[10];
+   wsprintf(szBuf, TEXT(&quot;(&quot;%d KB&quot;)&quot;), g_uPageSize / 1024);
+   SetDlgItemText(hwnd, IDC_PAGESIZE, szBuf);
+
+   // Initialize the edit control.
+   SetDlgItemInt(hwnd, IDC_INDEX, 0, FALSE);
+
+
+   return(TRUE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnDestroy(HWND hwnd) {
+
+   if (g_pSomeData != NULL)
+      VirtualFree(g_pSomeData, 0, MEM_RELEASE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+VOID GarbageCollect(PVOID pvBase, DWORD dwNum, DWORD dwStructSize) {
+
+   static DWORD s_uPageSize = 0;
+
+   if (s_uPageSize == 0) {
+      // Get the page size used on this CPU.
+      SYSTEM_INFO si;
+      GetSystemInfo(&amp;si);
+      s_uPageSize = si.dwPageSize;
+
+   }
+
+
+   UINT uMaxPages = dwNum * dwStructSize / g_uPageSize;
+
+   for (UINT uPage = 0; uPage &lt; uMaxPages; uPage++) {
+      BOOL fAnyAllocsInThisPage = FALSE;
+      UINT uIndex     = uPage  * g_uPageSize / dwStructSize;
+      UINT uIndexLast = uIndex + g_uPageSize / dwStructSize;
+
+      for (; uIndex &lt; uIndexLast; uIndex++) {
+         MEMORY_BASIC_INFORMATION mbi;
+         VirtualQuery(&amp;g_pSomeData[uIndex], &amp;mbi, sizeof(mbi));
+         fAnyAllocsInThisPage = ((mbi.State == MEM_COMMIT) &amp;&amp; 
+            * (PBOOL) ((PBYTE) pvBase + dwStructSize * uIndex));
+
+         // Stop checking this page, we know we can't decommit it.
+         if (fAnyAllocsInThisPage) break;
+      }
+
+      if (!fAnyAllocsInThisPage) {
+         // No allocated structures in this page; decommit it.
+         VirtualFree(&amp;g_pSomeData[uIndexLast - 1], dwStructSize, MEM_DECOMMIT);
+      }
+   }
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify) {
+
+   UINT uIndex = 0;
+
+   switch (id) {
+      case IDCANCEL:
+         EndDialog(hwnd, id);
+         break;
+
+      case IDC_RESERVE:
+         // Reserve enough address space to hold the array of structures.
+         g_pSomeData = (PSOMEDATA) VirtualAlloc(NULL, 
+            MAX_SOMEDATA * sizeof(SOMEDATA), MEM_RESERVE, PAGE_READWRITE);
+
+         // Disable the Reserve button and enable all the other controls.
+         EnableWindow(GetDlgItem(hwnd, IDC_RESERVE),        FALSE);
+         EnableWindow(GetDlgItem(hwnd, IDC_INDEXTEXT),      TRUE);
+         EnableWindow(GetDlgItem(hwnd, IDC_INDEX),          TRUE);
+         EnableWindow(GetDlgItem(hwnd, IDC_USE),            TRUE);
+         EnableWindow(GetDlgItem(hwnd, IDC_GARBAGECOLLECT), TRUE);
+
+         // Force the index edit control to have the focus.
+         SetFocus(GetDlgItem(hwnd, IDC_INDEX));
+
+         // Force the memory map to update
+         InvalidateRect(hwnd, &amp;g_rcMemMap, FALSE);
+         break;
+
+      case IDC_INDEX:
+         if (codeNotify != EN_CHANGE)
+            break;
+
+         uIndex = GetDlgItemInt(hwnd, id, NULL, FALSE);
+         if ((g_pSomeData != NULL) &amp;&amp; chINRANGE(0, uIndex, MAX_SOMEDATA - 1)) {
+            MEMORY_BASIC_INFORMATION mbi;
+            VirtualQuery(&amp;g_pSomeData[uIndex], &amp;mbi, sizeof(mbi));
+            BOOL fOk = (mbi.State == MEM_COMMIT);
+            if (fOk)
+               fOk = g_pSomeData[uIndex].fInUse;
+
+            EnableWindow(GetDlgItem(hwnd, IDC_USE),  !fOk);
+            EnableWindow(GetDlgItem(hwnd, IDC_CLEAR), fOk);
+
+         } else {
+            EnableWindow(GetDlgItem(hwnd, IDC_USE),   FALSE);
+            EnableWindow(GetDlgItem(hwnd, IDC_CLEAR), FALSE);
+         }
+         break;
+
+      case IDC_USE:
+         uIndex = GetDlgItemInt(hwnd, IDC_INDEX, NULL, FALSE);
+         if (chINRANGE(0, uIndex, MAX_SOMEDATA - 1)) {
+
+            // NOTE: New pages are always zeroed by the system
+            VirtualAlloc(&amp;g_pSomeData[uIndex], sizeof(SOMEDATA), 
+               MEM_COMMIT, PAGE_READWRITE);
+
+            g_pSomeData[uIndex].fInUse = TRUE;
+
+            EnableWindow(GetDlgItem(hwnd, IDC_USE),   FALSE);
+            EnableWindow(GetDlgItem(hwnd, IDC_CLEAR), TRUE);
+
+            // Force the Clear button control to have the focus.
+            SetFocus(GetDlgItem(hwnd, IDC_CLEAR));
+
+            // Force the memory map to update
+            InvalidateRect(hwnd, &amp;g_rcMemMap, FALSE);
+         }
+         break;
+
+      case IDC_CLEAR:
+         uIndex = GetDlgItemInt(hwnd, IDC_INDEX, NULL, FALSE);
+         if (chINRANGE(0, uIndex, MAX_SOMEDATA - 1)) {
+            g_pSomeData[uIndex].fInUse = FALSE;
+            EnableWindow(GetDlgItem(hwnd, IDC_USE),   TRUE);
+            EnableWindow(GetDlgItem(hwnd, IDC_CLEAR), FALSE);
+
+            // Force the Use button control to have the focus.
+            SetFocus(GetDlgItem(hwnd, IDC_USE));
+         }
+         break;
+
+      case IDC_GARBAGECOLLECT:
+         GarbageCollect(g_pSomeData, MAX_SOMEDATA, sizeof(SOMEDATA));
+
+         // Force the memory map to update
+         InvalidateRect(hwnd, &amp;g_rcMemMap, FALSE);
+         break;
+   }
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnPaint(HWND hwnd) {    // Update the memory map
+
+   PAINTSTRUCT ps;
+   BeginPaint(hwnd, &amp;ps);
+
+   UINT uMaxPages = MAX_SOMEDATA * sizeof(SOMEDATA) / g_uPageSize;
+   UINT uMemMapWidth = g_rcMemMap.right - g_rcMemMap.left;
+
+   if (g_pSomeData == NULL) {
+
+      // The memory has yet to be reserved.
+      Rectangle(ps.hdc, g_rcMemMap.left, g_rcMemMap.top,
+         g_rcMemMap.right - uMemMapWidth % uMaxPages, g_rcMemMap.bottom);
+
+   } else {
+
+      // Walk the virtual address space, painting the memory map
+      for (UINT uPage = 0; uPage &lt; uMaxPages; uPage++) {
+
+         UINT uIndex = uPage * g_uPageSize / sizeof(SOMEDATA);
+         UINT uIndexLast = uIndex + g_uPageSize / sizeof(SOMEDATA);
+         for (; uIndex &lt; uIndexLast; uIndex++) {
+
+            MEMORY_BASIC_INFORMATION mbi;
+            VirtualQuery(&amp;g_pSomeData[uIndex], &amp;mbi, sizeof(mbi));
+
+            int nBrush = 0;
+            switch (mbi.State) {
+               case MEM_FREE:    nBrush = WHITE_BRUSH; break;
+               case MEM_RESERVE: nBrush = GRAY_BRUSH;  break;
+               case MEM_COMMIT:  nBrush = BLACK_BRUSH; break;
+            }
+
+            SelectObject(ps.hdc, GetStockObject(nBrush));
+            Rectangle(ps.hdc,
+               g_rcMemMap.left + uMemMapWidth / uMaxPages * uPage,
+               g_rcMemMap.top,
+               g_rcMemMap.left + uMemMapWidth / uMaxPages * (uPage + 1),
+               g_rcMemMap.bottom);
+
+         }
+      }
+   }
+
+   EndPaint(hwnd, &amp;ps);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+INT_PTR WINAPI Dlg_Proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+   
+   switch (uMsg) {
+      chHANDLE_DLGMSG(hwnd, WM_INITDIALOG, Dlg_OnInitDialog);
+      chHANDLE_DLGMSG(hwnd, WM_COMMAND,    Dlg_OnCommand);
+      chHANDLE_DLGMSG(hwnd, WM_PAINT,      Dlg_OnPaint);
+      chHANDLE_DLGMSG(hwnd, WM_DESTROY,    Dlg_OnDestroy);
+   }
+   return(FALSE);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+int WINAPI _tWinMain(HINSTANCE hinstExe, HINSTANCE, LPTSTR pszCmdLine, int) {
+
+   // Get the page size used on this CPU.
+   SYSTEM_INFO si;
+   GetSystemInfo(&amp;si);
+   g_uPageSize = si.dwPageSize;
+
+   DialogBox(hinstExe, MAKEINTRESOURCE(IDD_VMALLOC), NULL, Dlg_Proc);
+   return(0);
+}
+
+
+//////////////////////////////// End of File //////////////////////////////////
+</pre>
+</td></tr></table>
+</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<p><b>VMAlloc.rc</b></p>
+
+<pre>
+//Microsoft Developer Studio generated resource script.
+//
+#include &quot;Resource.h&quot;
+
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+
+/////////////////////////////////////////////////////////////////////////////
+// English (U.S.) resources
+
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+#ifdef _WIN32
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(1252)
+#endif //_WIN32
+
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// TEXTINCLUDE
+//
+
+
+1 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;Resource.h\0&quot;
+END
+
+
+2 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;#include &quot;&quot;afxres.h&quot;&quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+
+3 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+#endif    // APSTUDIO_INVOKED
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
+
+IDD_VMALLOC DIALOG DISCARDABLE  15, 24, 224, 97
+STYLE WS_MINIMIZEBOX | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
+CAPTION &quot;Virtual Memory Allocator&quot;
+FONT 8,  &quot;MS Sans Serif&quot;
+BEGIN
+    LTEXT           &quot;Page size:&quot;,IDC_STATIC,4,6,34,8
+    CONTROL         &quot;16 KB&quot;,IDC_PAGESIZE,&quot;Static&quot;,SS_LEFTNOWORDWRAP | 
+                    SS_NOPREFIX | WS_GROUP,50,6,20,8
+    DEFPUSHBUTTON   &quot;&amp;Reserve region (50, 2KB structures)&quot;,IDC_RESERVE,80,4,
+                    140,14,WS_GROUP
+    LTEXT           &quot;&amp;Index (0 - 49):&quot;,IDC_INDEXTEXT,4,26,45,8
+    EDITTEXT        IDC_INDEX,56,24,16,12
+    PUSHBUTTON      &quot;&amp;Use&quot;,IDC_USE,80,24,32,14
+    PUSHBUTTON      &quot;&amp;Clear&quot;,IDC_CLEAR,116,24,32,14
+    PUSHBUTTON      &quot;&amp;Garbage collect&quot;,IDC_GARBAGECOLLECT,160,24,60,14
+    GROUPBOX        &quot;Memory map&quot;,IDC_STATIC,4,42,216,52
+    CONTROL         &quot;&quot;,IDC_MEMMAP,&quot;Static&quot;,SS_BLACKRECT,8,58,208,16
+    LTEXT           &quot;White: Free&quot;,IDC_STATIC,8,80,39,8
+    CTEXT           &quot;Grey: Reserved&quot;,IDC_STATIC,82,80,52,8
+    RTEXT           &quot;Black: Committed&quot;,IDC_STATIC,155,80,58,8
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+// Icon with lowest ID value placed first to ensure application icon
+// remains consistent on all systems.
+IDI_VMALLOC             ICON    DISCARDABLE     &quot;VMAlloc.Ico&quot;
+#endif    // English (U.S.) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 3 resource.
+//
+
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED
+</pre>
+</td></tr></table>
+</p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

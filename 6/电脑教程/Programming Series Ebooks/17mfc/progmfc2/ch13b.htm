@@ -1,0 +1,511 @@
+<HTML>
+<HEAD>
+	<link rel="STYLESHEET" type="text/css" href="Library.css">
+<TITLE>Printing with Documents and Views</TITLE>
+
+
+</HEAD>
+<BODY BGCOLOR="#FFFFFF" TEXT="#000000">
+<SCRIPT LANGUAGE="JavaScript">
+<!--
+
+function fullSize(sURL){
+	window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+
+function LibraryHeaderNav(sBackward, sForward, sImgLeftOff, sImgLeftOn, sImgRightOff, sImgRightOn, iH, iW, sImgLeftStyle, sImgRightStyle, sImgRuleStyle, sRuleColor, sRuleSize){
+	var tableStr;
+	//validate questionable args for defs
+	tableStr = "<TABLE BORDER=0 CELLPADDING=0 CELLSPACING=0 border=0 width=100%>";
+	tableStr += "<TR VALIGN=top ALIGN=right>";
+
+	tableStr += "<TD align=right class=" + sImgRuleStyle + ">&nbsp;</TD>";	
+	
+	tableStr += "<TD width=34 align=right class=" + sImgLeftStyle + ">";
+	tableStr += "<A href='" + sBackward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgLeftOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgLeftOff + '\'\"';
+	tableStr += " SRC='" + sImgLeftOff + "' vspace=0 hspace=0></a></TD>";
+	
+	tableStr += "<TD width=34 align=left class=" + sImgRightStyle + ">";
+	tableStr += "<A href='" + sForward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgRightOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgRightOff + '\'\"';
+	tableStr += " SRC='" + sImgRightOff + "' vspace=0 hspace=0></a></TD></TR>";
+
+	tableStr += "<TR VALIGN=top>";
+	tableStr += "<TD height=3 align=center colspan=3 class=" + sImgRuleStyle + ">";
+	tableStr += "<HR color=" + sRuleColor + " size=" + sRuleSize + "></TD></TR></TABLE>";
+	//alert(tableStr);
+	document.write(tableStr);
+}
+
+ 																						     //purple is: #aa22aa   orange is: #ff9900
+LibraryHeaderNav("ch13a.htm", "ch13c.htm", "images/unit_o_a1.gif", "images/unit_o_a2.gif", "images/unit_o_b1.gif", "images/unit_o_b2.gif", 18, 34, "unit01", "unit02", "headerrule", "#ff9900", "2");
+//--></SCRIPT>
+
+<A NAME="398"><H1>Printing with Documents and Views</H1></A>
+
+<P>MFC's print architecture is built around a kernel formed by GDI printing functions and virtual <I>CView</I> member functions. To understand what's on the outside, it helps to first understand what's on the inside. Here's the approach we'll take in this chapter as we study the code that enables an MFC application to support printing and print previewing:</P>
+<UL>
+<P><LI>Look at the Windows printing model, and examine the steps an SDK-style application goes through to print a document.</LI></P>
+
+<P><LI>Understand the relationship between the Windows print architecture and the MFC print architecture and the mechanics of printing from MFC applications.</LI></P>
+
+<P><LI>Develop a bare-bones printing program that demonstrates how the same code can be used to send output to either the screen or the printer.</LI></P>
+
+<P><LI>Develop a more ambitious printing program whose printing and previewing capabilities are on a par with those of commercial applications.</LI></P>
+</UL>
+
+<P>As you'll discover, printing from an MFC application isn't altogether different than rendering to the screen except for the fact that printed output must be paginated. Because MFC handles almost everything else, much of the effort you expend 
+writing printing code will be devoted to figuring out where the page breaks go and how to position your output on the printed page.</P>
+
+<A NAME="399"><H2>The Windows Print Architecture</H2></A>
+
+<P>Printing a document from a Windows application without the benefit of MFC involves a number of steps. You begin by obtaining a device context (DC) for the printer that output will go to. Just as an application needs a screen DC to send output to the screen, it needs a printer DC to send output to a printer. If you know the device name of the printer you want to print to, you can create a device context yourself with the Win32 <I>::CreateDC</I> function or MFC's <I>CDC::CreateDC</I>:</P>
+
+<P>
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<PRE>
+CDC dc;
+dc.CreateDC (NULL, _T (&quot;HP LaserJet IIP&quot;), NULL, NULL);
+</PRE>
+</TD></TR></TABLE>
+</P>
+
+<P>If you don't know the device name but would like the application to print to the default printer, you can use MFC's handy <I>CPrintDialog::GetDefaults</I> and <I>CPrintDialog::GetPrinterDC</I> functions to create the device context:</P>
+
+<P>
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<PRE>
+CDC dc;
+CPrintDialog dlg (FALSE);
+dlg.GetDefaults ();
+dc.Attach (dlg.GetPrinterDC ());
+</PRE>
+</TD></TR></TABLE>
+</P>
+
+<P>If you'd like to let the user select a printer, you can use <I>CPrintDialog::DoModal</I> to display a Print dialog (one of the common dialogs supplied by the operating system) and call <I>CPrintDialog::GetPrinterDC</I> to get a DC after the dialog is dismissed:</P>
+
+<P>
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<PRE>
+CDC dc;
+CPrintDialog dlg (FALSE);
+if (dlg.DoModal () == IDOK)
+	dc.Attach (dlg.GetPrinterDC ());    
+</PRE>
+</TD></TR></TABLE>
+</P>
+
+<P>To prevent resource leakage, you should delete a printer DC obtained by any of these methods when it's no longer needed. If the <I>CDC</I> object to which you attach the DC is created on the stack, deletion is automatic.</P>
+
+<P>Once you have a printer DC in hand, you're ready to begin printing. The next step is to call <I>::StartDoc</I> or its MFC equivalent, <I>CDC::StartDoc</I>, to mark the beginning of the print job. <I>CDC::StartDoc</I> accepts just one parameter: a pointer to a DOCINFO structure containing a descriptive name for the document that's about to be printed, the name of the file the output will go to if you're printing to a file rather than a printer, and other information about the print job. The statements</P>
+
+<P>
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<PRE>
+DOCINFO di;
+::ZeroMemory (&amp;di, sizeof (DOCINFO));
+di.cbSize = sizeof (DOCINFO);
+di.lpszDocName = _T (&quot;Budget Figures for the Current Fiscal Year&quot;);
+dc.StartDoc (&amp;di);
+</PRE>
+</TD></TR></TABLE>
+</P>
+
+<P>start a print job on the printer associated with the <I>CDC</I> object <I>dc</I>. If you open a printer window while the document is printing, the string &quot;Budget Figures for the Current Fiscal Year&quot; will identify the print job. If <I>StartDoc</I> fails, it returns a 0 or a less-than-0 value. If it succeeds, it returns a positive integer that equals the print job ID. You can use the print job ID in conjunction with Win32 print control functions such as <I>::GetJob</I> and <I>::SetJob</I>.</P>
+
+<P>Next comes output to the page. Text and graphics are rendered on a printer with GDI functions. If <I>dc</I> refers to a screen device context, the statement</P>
+
+<P>
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<PRE>
+dc.Ellipse (0, 0, 100, 100);
+</PRE>
+</TD></TR></TABLE>
+</P>
+
+<P>draws an ellipse 100 logical units wide and 100 logical units high on the screen. If <I>dc</I> refers to a printer device context, the circle is drawn to the printer instead. Pages of output are framed between calls to <I>CDC::StartPage</I> and <I>CDC::EndPage,</I> which mark the beginning and end of each page. A document that contains <I>nPageCount</I> pages of output could be printed as follows:</P>
+
+<P>
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<PRE>
+for (int i=1; i&lt;=nPageCount; i++) {
+    dc.StartPage ();
+    // Print page i
+    dc.EndPage ();
+}
+</PRE>
+</TD></TR></TABLE>
+</P>
+
+<P>In a simplified sense, calling <I>EndPage</I> is analogous to outputting a form feed character to the printer. In between <I>StartPage</I> and <I>EndPage</I>, you print the page by calling <I>CDC</I> member functions. Your application should call <I>StartPage</I> and <I>EndPage</I> even if the document contains only one page.</P>
+
+<P>A common mistake that programmers make the first time they write printing code is failing to initialize the printer DC for each page. In Windows 95 and Windows 98, the device context's default attributes are restored each time <I>StartPage</I> is called. You can't just select a font or set the mapping mode right after the DC is created and expect those attributes to remain in effect indefinitely as you can for a screen DC. Instead, you must reinitialize the printer DC for each page. (In Microsoft Windows NT 3.5 and later, a printer DC retains its settings across calls to <I>StartPage</I> and <I>EndPage</I>, but even a Windows NT application should reinitialize the device context at the beginning of each page if it's to work under Windows 95 and Windows 98, too.) If you print using the MM_LOENGLISH mapping mode, for example, you should call <I>CDC::SetMapMode</I> at the beginning of each page, like this:</P>
+
+<P>
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<PRE>
+for (int i=1; i&lt;=nPageCount; i++) {
+    dc.StartPage ();
+    dc.SetMapMode (MM_LOENGLISH);
+    // Print page i.
+    dc.EndPage ();
+}
+</PRE>
+</TD></TR></TABLE>
+</P>
+
+<P>If you do it this way instead:</P>
+
+<P>
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<PRE>
+dc.SetMapMode (MM_LOENGLISH);
+for (int i=1; i&lt;=nPageCount; i++) {
+    dc.StartPage ();
+    // Print page i.
+    dc.EndPage ();
+}
+</PRE>
+</TD></TR></TABLE>
+</P>
+
+<P>printing will be performed in the default MM_TEXT mapping mode.</P>
+
+<P>After it prints the final page, an application terminates a print job by calling <I>CDC::EndDoc</I>. Printing is made slightly more complicated by the fact that <I>EndDoc</I> shouldn't be called if a previous call to <I>EndPage</I> returned a code indicating that the print job had already been terminated by the GDI. <I>EndPage</I> returns a signed integer value greater than 0 if the page was successfully output to the printer. A 0 or negative return value indicates either that an error occurred or that the user canceled the print job while the page was being printed. In either of those two events, the return code will equal one of the following values.</P>
+
+<P>
+<table valign="top" cellpadding=5 width="95%">
+<tr><th valign="top"><I>Return Code</I></th>
+<th valign="top"><I>Description</I></th>
+</tr>
+<tr>
+<td valign="top">SP_ERROR</td>
+<td valign="top">The print job was aborted for an unspecified reason.</td>
+</tr>
+<tr>
+<td valign="top">SP_APPABORT</td>
+<td valign="top">The print job was aborted because the user 
+clicked the Cancel button in the dialog box that displays 
+the status of the print job.</td>
+</tr>
+<tr>
+<td valign="top">SP_USERABORT</td>
+<td valign="top">The print job was aborted because the user 
+canceled it through the operating system shell.</td>
+</tr>
+<tr>
+<td valign="top">SP_OUTOFDISK</td>
+<td valign="top">The system is out of disk space, so no 
+further printer data can be spooled.</td>
+</tr>
+<tr>
+<td valign="top">SP_OUTOFMEMORY</td>
+<td valign="top">The system is out of memory, so no further 
+printer data can be spooled.</td>
+</tr>
+</table>
+</P>
+  
+         
+<P>The following loop prints each page of a document and calls <I>EndDoc</I> at the end of the print job if and only if each page was successfully printed:</P>
+
+<P>
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<PRE>
+if (dc.StartDoc (&amp;di) &gt; 0) {
+    BOOL bContinue = TRUE;
+
+    for (int i=1; i&lt;=nPageCount &amp;&amp; bContinue; i++) {
+        dc.StartPage ();
+        // Initialize the device context.
+        // Print page i.
+        if (dc.EndPage () &lt;= 0)
+            bContinue = FALSE;
+    }
+
+    if (bContinue)
+        dc.EndDoc ();
+    else
+        dc.AbortDoc ();
+}
+</PRE>
+</TD></TR></TABLE>
+</P>
+
+<P><I>CDC::AbortDoc</I> signals the end of an uncompleted print job just as <I>EndDoc</I> signals the end of a successful print job. <I>AbortDoc</I> can also be called between calls to <I>StartPage</I> and <I>EndPage</I> to terminate a print job before the final page is printed.</P>
+
+<A NAME="400"><H3>The Abort Procedure and the Abort Dialog</H3></A>
+
+<P>If that's all there was to sending output to a printer under Windows, printing wouldn't be such a formidable task after all. But there's more. Because a large print job can take minutes or even hours to complete, the user should be able to terminate a print job before it's finished. Windows applications traditionally give the user the means to cancel a print job by displaying a print status dialog containing a Cancel button. Clicking the Cancel button cancels printing by forcing <I>EndPage</I> to return SP_APPABORT. The mechanism that links the Cancel button to the printing code in your application is a function that Windows calls an <I>abort procedure</I>.</P>
+
+<P>An abort procedure is an exported callback function that Windows calls repeatedly as it processes printed output. It's prototyped as follows:</P>
+
+<P>
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL CALLBACK AbortProc (HDC hDC, int nCode)
+</PRE>
+</TD></TR></TABLE>
+</P>
+
+<P><I>hDC</I> holds the handle of the printer device context. <I>nCode</I> is 0 if printing is proceeding smoothly or SP_OUTOFDISK if the print spooler is temporarily out of disk space. <I>nCode</I> is usually ignored because the print spooler responds to an SP_OUTOFDISK condition by waiting around for more disk space to come free. The abort procedure's job is twofold:</P>
+
+<UL>
+<P><LI>To check the message queue with <I>::PeekMessage</I> and retrieve and dispatch any waiting messages</LI></P>
+
+<P><LI>To tell Windows whether printing should continue by returning TRUE (to continue printing) or FALSE (to abort)</LI></P>
+</UL>
+
+<P>You pass Windows the address of your abort procedure by calling <I>::SetAbortProc</I> or <I>CDC::SetAbortProc</I>. A very simple abort procedure looks like this:</P>
+
+<P>
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL CALLBACK AbortProc (HDC hDC, int nCode)
+{
+    MSG msg;
+    while (::PeekMessage (&amp;msg, NULL, 0, 0, PM_NOREMOVE))
+        AfxGetThread ()-&gt;PumpMessage ();
+    return TRUE;
+}
+</PRE>
+</TD></TR></TABLE>
+</P>
+
+<P>The message loop inside <I>AbortProc</I> allows the WM_COMMAND message generated when the print status dialog's Cancel button is clicked to make it through to the window procedure even though the application is busy printing. In 16-bit Windows, the message loop plays an important role in multitasking by yielding so that the print spooler and other processes running in the system can get CPU time. In Windows 95 and Windows 98, yielding in the abort procedure enhances multitasking performance when 32-bit applications print to 16-bit printer drivers by reducing contention for the Win16Mutex&#8212;an internal flag that locks 32-bit applications out of the 16-bit kernel while a 16-bit application executes code there.</P>
+
+<P>Before it begins printing (before calling <I>StartDoc</I>), the application calls <I>SetAbortProc</I> to set the abort procedure, disables its own window by calling <I>CWnd::EnableWindow</I> with a FALSE parameter, and displays the print status or &quot;abort&quot; dialog&#8212;a modeless dialog box containing a Cancel button and usually one or more static controls listing the document's file name and the number of the page that's currently being printed. Disabling the main window ensures that no other input will interrupt the printing process. The window is reenabled when printing is finished and the dialog box is destroyed. The dialog, meanwhile, sets a flag&#8212;call it <I>bUserAbort</I>&#8212;from FALSE to TRUE if the Cancel button is clicked. And the abort procedure is modified so that it returns FALSE to shut down printing if <I>bUserAbort</I> is TRUE.</P>
+
+<P>
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL CALLBACK AbortProc (HDC hDC, int nCode)
+{
+    MSG msg;
+    while (!bUserAbort &amp;&amp;
+        ::PeekMessage (&amp;msg, NULL, 0, 0, PM_NOREMOVE))
+        AfxGetThread ()-&gt;PumpMessage ();
+    return !bUserAbort;
+}
+</PRE>
+</TD></TR></TABLE>
+</P>
+
+<P>Thus, printing proceeds unimpeded if the Cancel button isn't clicked because <I>AbortProc</I> always returns a nonzero value. But if Cancel is clicked, <I>bUserAbort</I> changes from FALSE to TRUE, the next call to <I>AbortProc</I> returns 0, and Windows terminates the printing process. <I>EndPage</I> returns SP_APPABORT, and the call to <I>EndDoc</I> is subsequently bypassed.</P>
+
+<A NAME="401"><H3>Print Spooling</H3></A>
+
+<P>Everything I've described up to this point constitutes the &quot;front end&quot; of the printing process&#8212;the part the application is responsible for. Windows handles the back end, which is a joint effort on the part of the GDI, the print spooler, the printer driver, and other components of the 32-bit print subsystem. Windows supports two kinds of print spooling: EMF (enhanced metafile) print spooling and &quot;raw&quot; print spooling. If EMF print spooling is enabled, GDI calls executed through the printer DC are written to an enhanced metafile on the hard disk and stored there until the print spooler, which runs in a separate thread, unspools the commands and &quot;plays&quot; them into the printer driver. If raw print spooling (the only option available on PostScript printers) is selected instead, output is processed through the printer driver and spooled to disk in raw form. Spooling can also be disabled. In that case, GDI commands are transmitted directly to the printer driver each time <I>EndPage</I> is called. Print spooling speeds the return-to-application time by preventing a program from having to wait for the printer to physically print each page of output. Spooling metafile commands instead of raw printer data further improves the return-to-application time by decoupling the performance of the application from the performance of the printer driver.</P>
+
+<P>Fortunately, applications can safely ignore what happens at the back end of the printing process and concentrate on the front end. Still, many details must be attended to before an application can get down to the real business of printing&#8212;paginating the output and executing GDI calls between <I>StartPage</I> and <I>EndPage</I> to render each page on the printer, for example. With this background in mind, let's see what MFC can do to help.</P>
+
+<A NAME="402"><H2>The MFC Print Architecture</H2></A>
+
+<P>MFC's simplified print architecture is just one more reason that Windows programmers are migrating away from the SDK and toward object-oriented development environments. When you add print capabilities to a document/view application, you can forget about most of the code samples in the previous section. The framework creates a printer DC for you and deletes the DC when printing is finished. The framework also calls <I>StartDoc</I> and <I>EndDoc</I> to begin and end the print job and <I>StartPage</I> and <I>EndPage</I> to bracket GDI calls for individual pages. The framework even supplies the dialog box that displays the status of the print job and the abort procedure that shuts down the print operation if the user clicks the Cancel button. And in some cases, the same <I>OnDraw</I> function that renders a document on the screen can render it on the printer and in a print preview window, too.</P>
+
+<P>The key to printing from a document/view application is a set of virtual <I>CView</I> functions the framework calls at various stages during the printing process. These functions are listed in the following table. Which of them you override and what you do in the overrides depend on the content of your printed output. At the very least, you'll always override <I>OnPreparePrinting</I> and call <I>DoPreparePrinting</I> so that the framework will display a Print dialog and create a printer DC for you. A minimal <I>OnPreparePrinting</I> override looks like this:</P>
+
+<P>
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL CMyView::OnPreparePrinting (CPrintInfo* pInfo)
+{
+    return DoPreparePrinting (pInfo);
+}
+</PRE>
+</TD></TR></TABLE>
+</P>
+
+<P>A nonzero return from <I>OnPreparePrinting</I> begins the printing process, and a 0 return cancels the print job before it begins. <I>DoPreparePrinting</I> returns 0 if the user cancels the print job by clicking the Cancel button in the Print dialog, if no printers are installed, or if the framework is unable to create a printer DC.</P>
+
+<P><b>Key <I>CView</I> Print Overridables</b></P>
+
+<P>
+<table valign="top" cellpadding=5 width="95%">
+<tr><th valign="top"><I>Function</I></th>
+<th valign="top"><I>Description</I></th>
+</tr>
+<tr>
+<td valign="top"><I>OnPreparePrinting</I> </td>
+<td valign="top">Called at the onset of a print job. Override to call <I>DoPreparePrinting</I> and to provide the framework with the page count (if known) and other information about the print job.</td>
+</tr>
+<tr>
+<td valign="top"><I>OnBeginPrinting</I></td>
+<td valign="top">Called just before printing begins. Override to allocate fonts and other resources required for printing.</td>
+</tr>
+<tr>
+<td valign="top"><I>OnPrepareDC</I></td>
+<td valign="top">Called before each page is printed. Override to position the viewport origin and set a clipping region before <I>OnDraw</I> prints the next page.</td>
+</tr>
+<tr>
+<td valign="top"><I>OnPrint</I></td>
+<td valign="top">Called before each page is printed. Override to print headers, footers, and other page elements that aren't drawn by <I>OnDraw</I> or to print without relying on <I>OnDraw</I>.</td>
+</tr>
+<tr>
+<td valign="top"><I>OnEndPrinting</I></td>
+<td valign="top">Called when printing is finished. Override to deallocate resources allocated in <I>OnBeginPrinting</I>.</td>
+</tr>
+</table>
+</P>
+   
+<P>Before proceeding, let me take a moment to explain the two basic approaches to printing from an MFC application. The first is to let <I>OnDraw</I> handle both screen output and printed output. The second is to let <I>OnDraw</I> handle screen output and <I>OnPrint</I> handle printed output. Most experienced MFC developers would agree that the let-<I>OnDraw</I>-do-it-all method is highly overrated. It almost inevitably requires you to add print-specific logic to <I>OnDraw</I>, and you usually end up overriding <I>OnPrint</I> anyway to print page numbers, headers, footers, and other page elements that appear only on the printed page. So while it's true that a view's <I>OnDraw</I> function can write to both the screen and the printer, it's usually more practical to put printer output logic in <I>OnPrint</I> and screen output logic in <I>OnDraw</I>. I'll discuss both approaches in this chapter, but I'll emphasize the latter.</P>
+
+<A NAME="403"><H3>More on the <I>OnPreparePrinting</I> Function</H3></A>
+<P>The <I>CPrintInfo</I> object passed to <I>OnPreparePrinting</I> contains information describing the parameters of the print job, including the minimum and maximum page numbers. The minimum and maximum page numbers default to 1 and 0xFFFF, respectively, with 0xFFFF signaling the framework that the maximum page number is unknown. If your application knows how many pages the document contains when <I>OnPreparePrinting</I> is called, it should inform MFC by calling <I>CPrintInfo::SetMaxPage</I> before calling <I>DoPreparePrinting</I>:</P>
+
+<P>
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL CMyView::OnPreparePrinting (CPrintInfo* pInfo)
+{
+    pInfo-&gt;SetMaxPage (10);
+    return DoPreparePrinting (pInfo);
+}
+</PRE>
+</TD></TR></TABLE>
+</P>
+
+<P>MFC, in turn, displays the maximum page number&#8212;in this case, 10&#8212;in the To box of the Print dialog.</P>
+
+<P><I>SetMinPage</I> and <I>SetMaxPage</I> are two of several <I>CPrintInfo</I> member functions you can call to specify print parameters or to query the framework about print options entered by the user. <I>GetFromPage</I> and <I>GetToPage</I> return the starting and ending page numbers the user entered in the Print dialog. Be sure to call them after <I>DoPreparePrinting</I>, because it's <I>DoPreparePrinting</I> that displays the dialog. <I>CPrintInfo</I> also includes several public data members, including an <I>m_pPD</I> variable that points to the initialized <I>CPrintDialog</I> object through which <I>DoPreparePrinting</I> displays the Print dialog. You can use this pointer to customize the Print dialog before it appears on the screen and to extract information from the dialog by calling <I>CPrintDialog</I> functions or accessing <I>CPrintDialog</I> data members directly. Later in the chapter, you'll see an example demonstrating how and why this is done.</P>
+
+<A NAME="404"><H3>The <I>OnBeginPrinting</I> and<I>OnEndPrinting</I> Functions</H3></A>
+<P>Often the maximum page number depends on the size of the printable area of each page output from the printer. Unfortunately, until the user has selected a printer and the framework has created a printer DC, you can only guess what that printable area will be. If you don't set the maximum page number in <I>OnPreparePrinting</I>, you should set it in 
+<I>OnBeginPrinting</I> if possible. <I>OnBeginPrinting</I> receives a pointer to an initialized <I>CPrintInfo</I> structure and a pointer to a <I>CDC</I> object representing the printer DC the framework created when you called <I>DoPreparePrinting</I>. You can determine the dimensions of the printable page area in <I>OnBeginPrinting</I> by calling <I>CDC::GetDeviceCaps</I> twice&#8212;once with a HORZRES parameter and once with a VERTRES parameter. The following <I>OnBeginPrinting</I> override uses <I>GetDeviceCaps</I> to determine the height of the printable page area in pixels and uses that information to inform the framework how many pages the document contains:</P>
+
+<P>
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<PRE>
+void CMyView::OnBeginPrinting (CDC* pDC, CPrintInfo* pInfo)
+{
+    int nPageHeight = pDC-&gt;GetDeviceCaps (VERTRES);
+    int nDocLength = GetDocument ()-&gt;GetDocLength ();
+    int nMaxPage = max (1, (nDocLength + (nPageHeight - 1)) /
+        nPageHeight);
+    pInfo-&gt;SetMaxPage (nMaxPage);
+}
+</PRE>
+</TD></TR></TABLE>
+</P>
+
+<P>In this example, <I>GetDocLength</I> is a document function that returns the length of the document in pixels. <I>CPrintInfo</I> contains a data member named <I>m_rectDraw</I> that describes the printable page area in logical coordinates, but don't try to use <I>m_rectDraw</I> in <I>OnBeginPrinting</I> because it isn't initialized until after <I>OnBeginPrinting</I> returns.</P>
+
+<P>Calling <I>SetMaxPage</I> in either <I>OnPreparePrinting</I> or <I>OnBeginPrinting</I> lets the framework know how many times it should call <I>OnPrint</I> to print a page. If it's impossible (or simply inconvenient) to determine the document length before printing begins, you can perform <I>print-time pagination</I> by overriding <I>OnPrepareDC</I> and setting <I>CPrintInfo::m_bContinuePrinting</I> to TRUE or FALSE each time <I>OnPrepareDC</I> is called. An <I>m_bContinuePrinting</I> value equal to FALSE terminates the print job. If you don't call <I>SetMaxPage</I>, the framework assumes the document is only one page long. Therefore, you must override <I>OnPrepareDC</I> and set <I>m_bContinuePrinting</I> to print documents that are more than one page long if you don't set the maximum page number with <I>SetMaxPage</I>.</P>
+
+<P><I>OnBeginPrinting</I> is also the best place to create fonts and other GDI resources used in the printing process. Suppose that <I>OnDraw</I> uses a GDI font to output text to the screen and that the font height is based on the current screen metrics. To print a WYSIWYG version of that font on the printer, you must create a separate font that's scaled to printer metrics rather than to screen metrics. By creating the font in <I>OnBeginPrinting</I> and deleting it in <I>OnEndPrinting</I>, you ensure that the font exists only for the period of time that it is needed and also avoid the overhead of re-creating it each time a page is printed.</P>
+
+<P><I>OnEndPrinting</I> is the counterpart of <I>OnBeginPrinting</I>. It's a great place to free fonts and other resources allocated in <I>OnBeginPrinting</I>. If there are no resources to free, or if you didn't override <I>OnBeginPrinting</I> to begin with, you probably don't need to override <I>OnEndPrinting</I>, either.</P>
+
+<A NAME="405"><H3>The <I>OnPrepareDC</I> Function</H3></A>
+<P><I>OnPrepareDC</I> is called once for each page of the printed document. One reason to override <I>OnPrepareDC</I> is to perform print-time pagination as described in the previous section. Another reason to override <I>OnPrepareDC</I> is to calculate a new viewport origin from the current page number so that <I>OnDraw</I> can output the current page to the printer. Like <I>OnBeginPrinting</I>, <I>OnPrepareDC</I> receives a pointer to a device context and a pointer to a <I>CPrintInfo</I> object. Unlike <I>OnBeginPrinting</I>, <I>OnPrepareDC</I> is called before screen repaints as well as in preparation for outputting a page to the printer. If the call to <I>OnPrepareDC</I> precedes a screen repaint, the <I>CDC</I> pointer refers to a screen DC and the <I>CPrintInfo</I> pointer is NULL. If <I>OnPrepareDC</I> is called as part of the printing process, the <I>CDC</I> pointer references a printer DC and the <I>CPrintInfo</I> pointer is non-NULL. In the latter case, you can obtain the page number of the page that's about to be printed from the <I>CPrintInfo</I> object's public <I>m_nCurPage</I> data member. You can determine whether <I>OnPrepareDC</I> was called for the screen or the printer by calling <I>CDC::IsPrinting</I> through the <I>CDC</I> pointer passed in the parameter list.</P>
+
+<P>The following implementation of <I>OnPrepareDC</I> moves the viewport origin in the <I>y</I> direction so that the device point (0,0)&#8212;the pixel in the upper left corner of the printed page&#8212;corresponds to the logical point in the upper left corner of the document's current page. <I>m_nPageHeight</I> is a <I>CMyView</I> data member that holds the printable page height:</P>
+
+<P>
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<PRE>
+void CMyView::OnPrepareDC (CDC* pDC, CPrintInfo* pInfo)
+{
+    CView::OnPrepareDC (pDC, pInfo);
+    if (pDC-&gt;IsPrinting ()) { // If printing...
+        int y = (pInfo-&gt;m_nCurPage - 1) * m_nPageHeight;
+        pDC-&gt;SetViewportOrg (0, -y);
+    }
+}
+</PRE>
+</TD></TR></TABLE>
+</P>
+
+<P>Setting the viewport origin this way ensures that an <I>OnDraw</I> function that tries to draw the entire document will actually draw only the part that corresponds to the current page. This example assumes that you want to use the entire printable area of the page. Often it's also necessary to set a clipping region to restrict the part of the document that's printed to something less than the page's full printable area. Rectangular regions are created with <I>CRgn::CreateRectRgn</I> and selected into DCs to serve as clipping regions with <I>CDC::SelectClipRgn</I>.</P>
+
+<P>As a rule, you need to override <I>OnPrepareDC</I> only if you use <I>OnDraw</I> to draw to both the screen and the printed page. If you do all your printing from <I>OnPrint</I>, there's no need to override <I>OnPrepareDC</I>. When you do override it, you should call the base class before doing anything else so that the default implementation will get a chance to do its thing. Calling the base class's <I>OnPrepareDC</I> is especially important when your view class is derived from <I>CScrollView</I> because <I>CScrollView::OnPrepareDC</I> sets the viewport origin for screen DCs to match the current scroll position. When a call to <I>CScrollView::OnPrepareDC</I> returns, the DC's mapping mode is set to the mapping mode specified in the call to <I>SetScrollSizes</I>. If your view class isn't derived from <I>CScrollView</I>, <I>OnPrepareDC</I> is a good place to call <I>SetMapMode</I> to set the device context's mapping mode.</P>
+
+<A NAME="406"><H3>The <I>OnPrint</I> Function</H3></A>
+<P>After calling <I>OnPrepareDC</I> for a given page, the framework calls <I>CView::OnPrint</I>. Like many other <I>CView</I> printing functions, <I>OnPrint</I> receives a pointer to the printer DC and a pointer to a <I>CPrintInfo</I> object. The default implementation in Viewcore.cpp verifies the validity of <I>pDC</I> and calls <I>OnDraw</I>:</P>
+
+<P>
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<PRE>
+void CView::OnPrint(CDC* pDC, CPrintInfo*)
+{
+     ASSERT_VALID(pDC);
+
+     // Override and set printing variables based on page number
+     OnDraw(pDC);                    // Call Draw 
+}
+</PRE>
+</TD></TR></TABLE>
+</P>
+
+<P>What you do when you override <I>OnPrint</I> (and whether you override it at all) depends on how the application does its printing. If <I>OnDraw</I> handles both screen output and printed output, override <I>OnPrint</I> to print page elements that don't appear on the screen. The following <I>OnPrint</I> function calls a local member function named <I>PrintHeader</I> to print a header at the top of the page, another local member function named <I>PrintPageNumber</I> to print a page number at the bottom of the page, and <I>OnDraw</I> to print the body of the page:</P>
+
+<P>
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<PRE>
+void CMyView::OnPrint (CDC* pDC, CPrintInfo* pInfo)
+{
+    PrintHeader (pDC);
+    PrintPageNumber (pDC, pInfo-&gt;m_nCurPage);
+    // Set the viewport origin and/or clipping region before
+    // calling OnDraw...
+    OnDraw (pDC);
+}
+</PRE>
+</TD></TR></TABLE>
+</P>
+
+<P>Any adjustments made to the printer DC with <I>SetViewportOrg</I> or <I>SelectClipRgn</I> so that <I>OnDraw</I> will draw just the part of the document that corresponds to the current page should now be made in <I>OnPrint</I> rather than <I>OnPrepareDC</I> to prevent headers and page numbers from being affected.</P>
+
+<P>If instead you elect to do all your printing from <I>OnPrint</I>, you override <I>OnPrint</I> and include in it code to output one printed page. To determine which page <I>OnPrint</I> has been called to print, check <I>CPrintInfo::m_nCurPage</I>.</P>
+
+<A NAME="407"><H3><I>CView::OnFilePrint</I> and Other Command Handlers</H3></A>
+<P>Printing usually begins when the user selects the Print command from the File menu, so MFC provides a <I>CView::OnFilePrint</I> function you can connect to the ID_FILE_PRINT menu item through the view's message map. Figure 13-1 shows what happens when <I>OnFilePrint</I> is called and when in the printing process each virtual <I>CView</I> printing function is called. It also shows how the MFC print architecture meshes with the Windows print architecture: if you take away the dark rectangles representing the virtual <I>CView</I> functions that the framework calls, you're left with a pretty good schematic of the Windows printing model. Notice that <I>OnPrepareDC</I> is called twice per page when your code executes under Windows 95 or Windows 98. The first call to <I>OnPrepareDC</I> is made to preserve compatibility with 16-bit versions of MFC, which called <I>OnPrepareDC</I> before <I>StartPage</I> and got away with it because in 16-bit Windows <I>EndPage</I>, not <I>StartPage</I>, resets the device context. The second call to <I>OnPrepareDC</I> is made because in Windows 95 and Windows 98, changes made to the device context in the first call to <I>OnPrepareDC</I> are nullified when <I>StartDoc</I> is called.</P>
+
+<P>MFC also provides predefined command IDs and default command handlers for the File menu's Print Preview and Print Setup commands. The File-Print Preview command (ID=ID_FILE_PRINT_PREVIEW) is handled by <I>CView::OnFilePrintPreview</I>, and File-Print Setup (ID=ID_FILE_PRINT_SETUP) is handled by <I>CWinApp::OnFilePrintSetup</I>. Like <I>OnFilePrint</I>, these command handlers are not prewired into the message maps of the classes to which they belong. To enable these handlers, you must do the message mapping yourself. If you use AppWizard to generate the skeleton of an application that prints, the message mapping is done for you. AppWizard also maps ID_FILE_PRINT_DIRECT to <I>CView::OnFilePrint</I> to enable &quot;direct&quot; printing&#8212;printing performed not by the user's selecting Print from the File menu but by the user's selecting Print from a document's context menu or dropping a document icon onto a printer.</P>
+
+<P>
+<A HREF="javascript:fullSize('F13mg01x.htm')"> <img src="images/F13mg01.JPG" width=404 height=457 border=0 ALT="Click to view at full size."> </A>
+</p><p>
+<!-- CAPTION --><B>Figure 13-1.</B> <I>Overview of the MFC print architecture.</I><!-- /CAPTION -->
+</p>
+ 
+<A NAME="408"><H2>Print Previewing</H2></A>
+
+<P>Once a document/view application is endowed with the ability to print, adding print previewing is as simple as adding a Print Preview command to the File menu (ID=ID_FILE_PRINT_PREVIEW) and adding an entry to the message map to connect this command ID to <I>CView::OnFilePrintPreview</I>. A lot of code backs up <I>OnFilePrintPreview</I> (see the MFC source code file Viewprev.cpp for details), but what happens in <I>OnFilePrintPreview</I> is pretty simple. <I>OnFilePrintPreview</I> takes over the frame window and fills it with a view created from a special <I>CScrollView</I>-derived class named <I>CPreviewView</I>. It also adds a toolbar with buttons for going to the next or the previous page, switching between one-page and two-page views, zooming in and out, and so on. <I>CPreviewView::OnDraw</I> draws a white rectangle representing a printed page (or two rectangles if two-page view is selected), sets some scaling parameters so that the printable area of the white rectangle matches the printable area of a real page, and calls <I>OnPrint</I> to draw in the rectangle. As far as your application is concerned, output is being sent to the printer; the same virtual functions that get called during printing also get called during print preview. But in reality, output goes to the print preview window instead.</P>
+
+<P>Part of the magic that makes print previewing work is the fact that the device context referenced in the <I>pDC</I> parameter passed to <I>CView</I> printing functions is actually two device contexts in one. Every <I>CDC</I> object contains two device context handles: one for an &quot;output DC&quot; (<I>m_hDC</I>) and another for an &quot;attribute DC&quot; (<I>m_hAttribDC</I>). MFC uses the output DC for calls that produce physical output and the attribute DC for calls that request information about the device context&#8212;the current text color or current background mode, for example. Most of the time, <I>m_hDC</I> and <I>m_hAttribDC</I> hold the same device context handle. But during print previewing, <I>m_hDC</I> references the screen DC where pages are previewed and <I>m_hAttribDC</I> references the printer DC. The result? If your application uses <I>GetDeviceCaps</I> or other <I>CDC</I> functions to query the GDI about the printer's capabilities or the properties of the printed page, the information it gets back is genuine because it comes from the printer DC. But all physical output goes to the screen DC.</P>
+
+<P>When the user closes the print preview window, the framework calls a virtual <I>CView</I> function named <I>OnEndPrintPreview</I> to notify the application that print preview is about to end. The default implementation of <I>OnEndPrintPreview</I> calls <I>OnEndPrinting</I>, reactivates the original view, and destroys the print preview window. Programmers sometimes override <I>OnEndPrintPreview</I> in order to scroll the view of the document to the last page displayed in print preview mode. (By default, the scroll position in the original view is preserved so that scrolling in print preview mode doesn't affect the original view.) The following <I>OnEndPrintPreview</I> override demonstrates how you can link the scroll position in the original view to the scroll position in the print preview window for a <I>CScrollView</I>:</P>
+
+<P>
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<PRE>
+void CMyView::OnEndPrintPreview (CDC* pDC, CPrintInfo* pInfo,
+    POINT point, CPreviewView* pView)
+{
+    UINT nPage = pInfo-&gt;m_nCurPage;
+    POINT pt;
+    // Convert nPage into a scroll position in pt.
+    ScrollToPosition (pt);
+    CScrollView::OnEndPrintPreview (pDC, pInfo, point, pView); 
+}
+</PRE>
+</TD></TR></TABLE>
+</P>
+
+<P>You'll have to supply the code that converts the current page number into a scroll position yourself. Don't rely on the <I>point</I> parameter passed to <I>OnEndPrintPreview</I> to tell you anything; in current versions of MFC, <I>point</I> always equals (0,0). You should call the base class's <I>OnEndPrintPreview</I> function from the overridden version so that the framework can exit print preview mode and restore the frame window to its original state.</P>
+
+<P>If your printing code needs to discriminate between real printing and printing performed in print preview mode, it can check the <I>m_bPreview</I> data member of the <I>CPrintInfo</I> object referenced in calls to <I>OnBeginPrinting</I>, <I>OnPrint</I>, and other print overridables. <I>m_bPreview</I> is nonzero if the document is being previewed and 0 if it isn't. In addition, <I>CPrintInfo::m_nNumPreviewPages</I> can be inspected to determine whether one or two pages are displayed.</P>
+
+</BODY>
+</HTML>
+
+
+
+

@@ -1,0 +1,200 @@
+<HTML>
+<HEAD>
+<TITLE>A Thread's Execution Times</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch07e.htm">[Previous]</A> <A HREF="ch07g.htm">[Next]</A><P>
+
+<A NAME="101"><H1>A Thread's Execution Times</H1></A>
+
+<p>Sometimes you want to time how long it takes a thread to perform a particular task. What many people do is write code similar to the following:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// Get the current time (start time).
+DWORD dwStartTime = GetTickCount();
+
+// Perform complex algorithm here.
+
+// Subtract start time from current time to get duration.
+DWORD dwElapsedTime = GetTickCount() - dwStartTime;
+</pre></td></tr></table></p>
+
+<p>This code makes a simple assumption: it won't be interrupted.
+However, in a preemptive operating system, you never know when your thread will be scheduled CPU time. When CPU time is taken away from your thread, it becomes more difficult to time how long it takes your thread to perform various tasks. What we need is a function that returns the amount of CPU time that the thread has received. Fortunately, Windows offers a function called <i>GetThreadTimes</i> that returns this information:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL GetThreadTimes(
+   HANDLE hThread,
+   PFILETIME pftCreationTime, 
+   PFILETIME pftExitTime,
+   PFILETIME pftKernelTime,   
+   PFILETIME pftUserTime);
+</pre></td></tr></table></p>
+
+<p><i>GetThreadTimes</i> returns four different time values, as shown in the following table.</p> 
+
+<P>
+	<TABLE CELLPADDING=5 WIDTH="95%">
+		
+		<TR>
+			<TH>Time Value</TH>
+			<TH>Meaning</TH>
+		</TR>
+		
+		<TR>
+			<TD VALIGN="TOP">Creation time</TD>
+			<TD VALIGN="TOP">An absolute value expressed in 100-nanosecond
+intervals past midnight on January 1, 1601, at Greenwich, England,
+indicating when the thread was created.</TD>
+		</TR>
+
+		<TR>
+			<TD VALIGN="TOP">Exit time</TD>
+			<TD VALIGN="TOP">An absolute value expressed in 100-nanosecond intervals past midnight on January 1, 1601, at Greenwich, England, indicating when the thread exited. If the thread is still running, the exit time is undefined.</TD>
+		</TR>
+		
+		<TR>
+			<TD VALIGN="TOP">Kernel time</TD>
+			<TD VALIGN="TOP"> A relative value indicating how many 100-nanosecond intervals of CPU time the thread has spent executing operating system code.</TD>
+		</TR>
+
+		<TR>
+			<TD VALIGN="TOP">User time</TD>
+			<TD VALIGN="TOP"> A relative value indicating how many 100-nanosecond intervals
+of CPU time the thread has spent executing application code.</TD>
+		</TR>
+
+	</TABLE>	
+</P>
+ 
+<p>Using this function, you can determine the amount of time needed to execute a complex algorithm by using code such as this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+_ _int64 FileTimeToQuadWord (PFILETIME pft) {
+   return(Int64ShllMod32(pft-&gt;dwHighDateTime, 32) | pft-&gt;dwLowDateTime);
+}
+
+
+void PerformLongOperation () {
+
+   FILETIME ftKernelTimeStart, ftKernelTimeEnd;
+   FILETIME ftUserTimeStart,   ftUserTimeEnd;
+   FILETIME ftDummy;
+   _ _int64 qwKernelTimeElapsed, qwUserTimeElapsed, 
+      qwTotalTimeElapsed;
+
+   // Get starting times.
+   GetThreadTimes(GetCurrentThread(), &amp;ftDummy, &amp;ftDummy,
+      &amp;ftKernelTimeStart, &amp;ftUserTimeStart);
+
+
+   // Perform complex algorithm here.
+
+
+   // Get ending times.
+   GetThreadTimes(GetCurrentThread(), &amp;ftDummy, &amp;ftDummy,
+      &amp;ftKernelTimeEnd, &amp;ftUserTimeEnd);
+
+   // Get the elapsed kernel and user times by converting the start 
+   // and end times from FILETIMEs to quad words, and then subtract 
+   // the start times from the end times.
+   qwKernelTimeElapsed = FileTimeToQuadWord(&amp;ftKernelTimeEnd) - 
+      FileTimeToQuadWord(&amp;ftKernelTimeStart);
+
+   qwUserTimeElapsed = FileTimeToQuadWord(&amp;ftUserTimeEnd) - 
+      FileTimeToQuadWord(&amp;ftUserTimeStart);
+
+   // Get total time duration by adding the kernel and user times.
+   qwTotalTimeElapsed = qwKernelTimeElapsed + qwUserTimeElapsed;
+
+   // The total elapsed time is in qwTotalTimeElapsed.
+}
+</pre></td></tr></table></p>
+
+<p>Note that <i>GetProcessTimes</i>, a function similar to <i>
+GetThreadTimes</i>, applies to all of the threads in a process:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL GetProcessTimes(
+   HANDLE hProcess,
+   PFILETIME pftCreationTime, 
+   PFILETIME pftExitTime,
+   PFILETIME pftKernelTime,   
+   PFILETIME pftUserTime);
+</pre></td></tr></table></p>
+
+<p><i>GetProcessTimes</i> returns times that apply to all the threads in a specified process (even threads that have terminated). For example, the kernel time returned is the sum of all the elapsed times that all of the process's threads have spent in kernel code.</p>
+
+<P><DIV CLASS="NOTE"><BLOCKQUOTE>
+<B>Windows 98</B><HR>
+Unfortunately, the <i>GetThreadTimes</i> and <i>GetProcessTimes</i> functions are not functional in Windows 98. Under Windows 98, there is no reliable mechanism for an application to determine how much CPU time a thread or process has used.
+</blockquote></div></p>
+
+<p>For high-resolution profiling, the <i>GetThreadTimes</i> function is not good enough. Windows does offer these high-resolution performance functions:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL QueryPerformanceFrequency(LARGE_INTEGER* pliFrequency);
+
+BOOL QueryPerformanceCounter(LARGE_INTEGER* pliCount); 
+</pre>
+</td></tr></table></p>
+
+<p>These functions assume that the executing thread does not get
+preempted, but most high-resolution profiling is done for short-lived blocks of code anyway. To make working with these functions a little easier, I have created the following C++ class:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+class CStopwatch {
+public:
+   CStopwatch() { QueryPerformanceFrequency(&amp;m_liPerfFreq); Start(); }
+
+   void Start() { QueryPerformanceCounter(&amp;m_liPerfStart); }
+
+   _ _int64 Now() const {   // Returns # of milliseconds since Start was called
+      LARGE_INTEGER liPerfNow;
+      QueryPerformanceCounter(&amp;liPerfNow);
+      return(((liPerfNow.QuadPart - m_liPerfStart.QuadPart) * 1000) 
+         / m_liPerfFreq.QuadPart);
+   }
+
+private:
+   LARGE_INTEGER m_liPerfFreq;   // Counts per second
+   LARGE_INTEGER m_liPerfStart;  // Starting count
+};
+</pre></td></tr></table></p>
+
+<p>I use this class as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// Create a stopwatch timer (which defaults to the current time).
+CStopwatch stopwatch;
+
+// Execute the code I want to profile here.
+
+// Get how much time has elapsed up to now.
+ _ _int64 qwElapsedTime = stopwatch.Now();
+
+// qwElapsedTime indicates how long the profiled code
+// executed in milliseconds.
+</pre></td></tr></table></p>
+
+
+</BODY>
+</HTML>
+
+
+
+
+
+

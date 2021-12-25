@@ -1,0 +1,192 @@
+<HTML>
+<HEAD>
+<TITLE>Emulating Top/Bottom <I>N</I> Filtering</TITLE>
+<link rel="STYLESHEET" type="text/css" href="webcomp.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch07g.htm">[Previous]</A> <A HREF="ch07i.htm">[Next]</A><P>
+
+<A NAME="164"><H1>Emulating Top/Bottom <I>N</I> Filtering</H1></A>
+<P>Top or bottom <I>N</I> filtering is a common analysis feature. Unfortunately, the 
+PivotTable component does not yet implement this feature natively. However, you can still 
+provide this functionality in your solutions because the PivotTable component allows 
+you to specify which members you want to include from a given field. Plus, it is 
+fairly easy to retrieve the top or bottom (according to the total of your choice) 
+<I>N</I> members of a field by executing your own MDX query against the OLAP data source. To 
+try this, use the same report you built in the previous section and click the Filter 
+button in the Quick Pivot user interface. Your report should now show only the top 
+10 promotions according to store sales. </P>
+
+<P>To see how I implemented this, let's start at the Filter button's Click event:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Sub btnFilter_onClick()
+    ' Local variables
+    Dim avFieldInfo         ' String array, 0=fieldset unique name,
+                            ' 1=field unique name
+    Dim pfld                ' Temporary PivotField reference
+    
+    ' Ensure that N is an OK value
+    If txtN.value &lt;= 0 Then
+        MsgBox &quot;The number of items value was &quot; &amp; txtN.value &amp; _
+            &quot;! This number must be greater than zero.&quot;, vbCritical
+        Exit Sub
+    End If 'N &lt;= 0
+    
+    ' Ensure that the cellset has the proper connection
+    If (csetOLAP.ActiveConnection Is Nothing) Then
+        csetOLAP.ActiveConnection = dsc.ConnectionString
+    End If
+    
+    ' The Filter Field value is a compound value with
+    ' the fieldset unique name as the first part and
+    ' the field name as the second part, separated by
+    ' a tilde (~)
+    avFieldInfo = Split(cbxFilterField.value, &quot;~&quot;)
+    
+    ' Get the reference to the PivotField object so that
+    ' we can tell it what members to include
+    Set pfld = ptable.ActiveView.FieldSets(avFieldInfo(0)). _
+        Fields(avFieldInfo(1))
+    
+    ' Note: The following line builds a level name using the naming
+    ' convention of OLAP Services ([hierarchy].[level])
+    ' If you are not using OLAP Services, change this to use
+    ' whatever convention your provider uses
+    pfld.FilterMembers = GetTopBottomMems(csetOLAP, ptable.DataMember, _
+        avFieldInfo(0), _
+        avFieldInfo(0) &amp; &quot;.[&quot; &amp; avFieldInfo(1) &amp; &quot;]&quot;, _
+        cbxFilterTotal.value, txtN.value, _
+        (cbxTopBottom.value = &quot;Top&quot;))
+    
+End Sub 'btnFilter_onClick()
+</pre></td></tr></table></p>
+
+
+<P>The code begins by performing a simple check to ensure that the value 
+entered for <I>N</I> is greater than zero. After it has established that, the code accesses an 
+ActiveX Data Objects Multidimensional (ADO MD) Cellset object embedded into the page 
+with an &lt;object&gt; tag. If the Cellset object's Connection property is blank, it is set to 
+the ConnectionString property of the DSC so that it uses the same data source as 
+the PivotTable component.</P>
+
+<p><div class="warning"><blockquote><b>WARNING</b><HR>
+You might have to lower your security settings to use ADO MD. 
+If you try to use top/bottom <I>N</I> filtering in this solution, you might get a cranky 
+error message from Internet Explorer stating that your current security settings 
+prohibit you from running &quot;unsafe&quot; controls. Since ADO MD accesses 
+multidimensional databases using your security credentials, it is naturally unsafe. To 
+run this solution, you might need to lower your security settings or add the 
+current site to your trusted sites list.
+</blockquote></div></p>
+
+
+<P>The next part of the code extracts two values from the Filter Field 
+drop-down list. This list is populated with all fields currently on the Row axis, and I encoded 
+two pieces of information into the list's value property, using the tilde (~) character 
+to separate the values. The two values are the unique name of the fieldset to 
+which the field belongs and the name of the field itself. The code uses these two 
+values to build a unique level name, which I will use in the MDX query to find the top 
+10 members. Although I assume the OLAP Services naming convention in this 
+code, you can use ADO MD to determine the level's unique name, given the 
+fieldset's unique name and the field's name. Unfortunately, the PivotTable control does 
+not expose a UniqueName property on the PivotField object, an oversight that 
+should be corrected in the next version. </P>
+
+<P>The code in the Filter button's Click event handler uses a function called 
+GetTopBottomMems to retrieve the top or bottom<I> 
+N</I> members and copy them to an array, which the handler in turn passes to the field's FilterMembers property. Setting 
+the FilterMembers property causes the PivotTable control to show only the specified 
+members. You can also use the FilterFunction property to exclude these members 
+instead. Let's continue by examining the heart of this feature, the GetTopBottomMems function:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Function GetTopBottomMems(cset, sCubeName, sFieldsetName, _
+                           sFieldName, sTotalName, N, fTop)
+    ' Local variables
+    Dim sMDX            ' MDX query
+    Dim pos             ' Temporary ADOMD.Position reference
+    
+    ' Construct the appropriate MDX statement to 
+    ' get the top N members based on the specified total
+    If fTop Then
+        sMDX = &quot;select non empty {TOPCOUNT(&quot; &amp; _
+               &quot;Filter(&quot; &amp; sFieldName &amp; _
+               &quot;.Members, Not IsEmpty(&quot; &amp; sFieldsetName &amp; _
+               &quot;.CurrentMember))&quot; &amp; _
+               &quot;, &quot; &amp; N &amp; &quot;, &quot; &amp; sTotalName &amp; &quot;)}&quot; &amp; _
+               &quot; on columns&quot; &amp; _
+               &quot; from &quot; &amp; sCubeName &amp; _
+               &quot; where (&quot; &amp; sTotalName &amp; &quot;)&quot;
+    Else
+        sMDX = &quot;select non empty {BOTTOMCOUNT(&quot; &amp; _
+               &quot;Filter(&quot; &amp; sFieldName &amp; _
+               &quot;.Members, Not IsEmpty(&quot; &amp; sFieldsetName &amp; _
+               &quot;.CurrentMember))&quot; &amp; _
+               &quot;, &quot; &amp; N &amp; &quot;, &quot; &amp; sTotalName &amp; &quot;)}&quot; &amp; _
+               &quot; on columns&quot; &amp; _
+               &quot; from &quot; &amp; sCubeName &amp; _
+               &quot; where (&quot; &amp; sTotalName &amp; &quot;)&quot;
+    End If 'Top N
+    
+    ' Open the Cellset object using the MDX query string 
+    ' as the command source
+    cset.Open sMDX
+    
+    ' Redimension the avMems array to be the size
+    ' of the number of returned members in the Cellset object
+    ReDim avMems(cset.Axes(0).Positions.Count - 1)
+    
+    ' Load the avMems array with the unique member names
+    ' returned in the Cellset object
+    For Each pos In cset.Axes(0).Positions
+        avMems(pos.Ordinal) = pos.Members(0).UniqueName
+    Next 'pos 
+    
+    ' Close the Cellset object so that you can use it again later
+    cset.Close
+    
+    ' Return the array of members
+    GetTopBottomMems = avMems
+
+End Function 'GetTopBottomMems
+</pre></td></tr></table></p>
+
+
+<P>The function begins by constructing the appropriate MDX query to retrieve 
+either the top or bottom <I>N</I> members from the specified field based on the specified 
+total. It uses the TopCount and BottomCount MDX functions, and it uses the Filter 
+function to filter out empty members (the ones without any recorded store sales). I 
+filter out empty members because, by default, the PivotTable control does not show 
+empty members returned from a query. For example, although you might have 
+requested the bottom 10, the report might display only 7 because 3 were empty. By 
+excluding the empty members from the MDX query, the function will return the bottom 
+10 members that actually contain data. For a full tutorial on the MDX query 
+language, see the OLE DB for OLAP specification (downloadable from 
+<A HREF="http://www.microsoft.com/data/oledb/olap" TARGET="_window2">http://www.microsoft.com/data/oledb/olap</A>). </P>
+
+<P>After executing the MDX query, I get the list of members returned by 
+walking the positions on the Cellset object's first axis, loading the UniqueName property 
+into the array that will eventually be returned. When I am done loading the unique 
+member names, I close the Cellset object and return the array.</P>
+
+<P>You can use this same sort of technique to expose many other high-end 
+filtering functions permitted in MDX. Because the PivotTable control enables you to 
+specify a set of members to include or exclude, you can emulate advanced filtering 
+functions by obtaining the set of members to include or exclude by executing your own 
+MDX queries. You can also enable users to define sets of members they typically want 
+to include or exclude and reapply those filter definitions at a later time.</P>
+
+</BODY>
+</HTML>
+
+
+
+
+

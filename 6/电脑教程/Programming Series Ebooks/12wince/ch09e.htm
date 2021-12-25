@@ -1,0 +1,765 @@
+<HTML>
+ <HEAD>
+	<LINK REL=StyleSheet HREF="prowice.css" TYPE="text/css">
+<TITLE>The CeChat Example Program</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="362"><H1>The CeChat Example Program</H1></A>
+
+<P>The CeChat program is a simple point-to-point chat program that connects two Windows CE devices using one of the three methods of serial communication covered in this chapter. The CeChat window is shown in Figure 9-3. Most of the window is taken up by the receive text window. Text received from the other device is displayed here. Along the bottom of the screen is the send text window. If you type characters here and either hit the Enter key or tap on the Send button, the text is sent to the other device. The combo box on the command bar selects the serial medium to use: standard serial, raw IR, or IrComm.
+
+<P><A HREF="javascript:fullSize('f09rg03x.htm')"> <img src="f09rg03.jpg" width=404 height=152 border=0 ALT="Click to view at full size."> </A>
+<P><!-- caption --><B>Figure 9-3.</B> <I>The CeChat window.</I><!-- /caption -->
+
+<P>The source code for CeChat is shown in Figure 9-4. CeChat uses three threads to accomplish its work. The primary thread manages the window and the message loop. The two secondary threads handle reading from and writing to the appropriate serial port.
+
+<P><B>Figure 9-4.</B> <I>The CeChat source code.</I>
+
+<TABLE cellpadding=5 width="95%"><TR><td>
+<A NAME="363"><H3>CeChat.rc</H3></A>
+
+<p><pre>
+//======================================================================
+
+
+// Resource file
+//
+
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//======================================================================
+#include &quot;windows.h&quot;
+#include &quot;CeChat.h&quot;                      // Program-specific stuff
+//----------------------------------------------------------------------
+// Icons and bitmaps
+//
+ID_ICON ICON   &quot;CeChat.ico&quot;              // Program icon
+
+//----------------------------------------------------------------------
+// Menu
+//
+ID_MENU MENU DISCARDABLE
+BEGIN
+    POPUP &quot;&amp;File&quot;
+    BEGIN
+        MENUITEM &quot;E&amp;xit&quot;,                       IDM_EXIT
+    END
+    POPUP &quot;&amp;Help&quot;
+    BEGIN
+        MENUITEM &quot;&amp;About...&quot;,                   IDM_ABOUT
+    END
+END
+
+//----------------------------------------------------------------------
+// Accelerator table
+//
+ID_ACCEL ACCELERATORS DISCARDABLE
+BEGIN
+    &quot;S&quot;, ID_SENDBTN, VIRTKEY, ALT
+    VK_RETURN, ID_SENDBTN, VIRTKEY
+END
+
+//----------------------------------------------------------------------
+// About box dialog template
+//
+aboutbox DIALOG discardable 10, 10, 160, 40
+STYLE  WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU | DS_CENTER |
+       DS_MODALFRAME
+CAPTION &quot;About&quot;
+BEGIN
+    ICON  ID_ICON,                    -1,   5,   5,  10,  10
+
+    LTEXT &quot;CeChat - Written for the book Programming Windows \
+
+           CE Copyright 1998 Douglas Boling&quot;
+
+                                      -1,  40,   5, 110,  30
+END
+</PRE>
+</TD></TR></TABLE>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><td>
+<A NAME="364"><H3>CeChat.h</H3></A>
+
+<p><pre>
+//======================================================================
+// Header file
+
+//
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//======================================================================
+// Returns number of elements
+#define dim(x) (sizeof(x) / sizeof(x[0]))
+
+//----------------------------------------------------------------------
+// Generic defines and data types
+//
+struct decodeUINT {                             // Structure associates
+    UINT Code;                                  // messages
+                                                // with a function.
+    LRESULT (*Fxn)(HWND, UINT, WPARAM, LPARAM);
+};
+struct decodeCMD {                              // Structure associates
+    UINT Code;                                  // menu IDs with a
+    LRESULT (*Fxn)(HWND, WORD, HWND, WORD);     // function.
+};
+
+//----------------------------------------------------------------------
+// Generic defines used by application
+#define  ID_ICON             1                  // App icon resource ID
+#define  ID_MENU             2                  // Menu resource ID
+#define  ID_ACCEL            3                  // Accel table ID
+#define  IDC_CMDBAR          4                  // Command band ID
+#define  ID_RCVTEXT          5                  // Receive text box
+#define  ID_SENDTEXT         6                  // Send text box
+#define  ID_SENDBTN          7                  // Send button
+
+// Menu item IDs
+#define  IDM_EXIT            101
+
+#define  IDM_USECOM          110                // Use COM.
+#define  IDM_ABOUT           120                // Help menu
+
+// Command bar IDs
+#define  IDC_COMPORT         150                // COM port combo box
+#define  IDC_BAUDRATE        151                // Baud rate combo box
+
+#define TEXTSIZE 256
+//----------------------------------------------------------------------
+// Function prototypes
+//
+int ReadThread (PVOID pArg);
+int SendThread (PVOID pArg);
+HANDLE InitCommunication (HWND, LPTSTR);
+INT GetIrCommDeviceName (LPTSTR);
+INT GetRawIrDeviceName (LPTSTR);
+int FillComComboBox (HWND);
+
+int InitApp (HINSTANCE);
+HWND InitInstance (HINSTANCE, LPWSTR, int);
+int TermInstance (HINSTANCE, int);
+
+// Window procedures
+LRESULT CALLBACK MainWndProc (HWND, UINT, WPARAM, LPARAM);
+
+// Message handlers
+LRESULT DoCreateMain (HWND, UINT, WPARAM, LPARAM);
+LRESULT DoSizeMain (HWND, UINT, WPARAM, LPARAM);
+LRESULT DoSetFocusMain (HWND, UINT, WPARAM, LPARAM);
+LRESULT DoCommandMain (HWND, UINT, WPARAM, LPARAM);
+LRESULT DoDestroyMain (HWND, UINT, WPARAM, LPARAM);
+
+// Command functions
+LPARAM DoMainCommandExit (HWND, WORD, HWND, WORD);
+LPARAM DoMainCommandComPort (HWND, WORD, HWND, WORD);
+LPARAM DoMainCommandSendText (HWND, WORD, HWND, WORD);
+LPARAM DoMainCommandAbout (HWND, WORD, HWND, WORD);
+
+// Dialog procedures
+BOOL CALLBACK AboutDlgProc (HWND, UINT, WPARAM, LPARAM);
+BOOL CALLBACK EditAlbumDlgProc (HWND, UINT, WPARAM, LPARAM);
+</PRE>
+</td></tr></table>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><td>
+<A NAME="365"><H3>CeChat.c</H3></A>
+<p><pre>
+//======================================================================
+// CeChat - A Windows CE communication demo
+//
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//======================================================================
+#include &lt;windows.h&gt;                 // For all that Windows stuff
+#include &lt;commctrl.h&gt;                // Command bar includes
+#include &quot;CeChat.h&quot;                  // Program-specific stuff
+
+//----------------------------------------------------------------------
+// Global data
+//
+const TCHAR szAppName[] = TEXT (&quot;CeChat&quot;);
+HINSTANCE hInst;                     // Program instance handle.
+
+BOOL fContinue = TRUE;
+HANDLE hComPort = INVALID_HANDLE_VALUE;
+INT nSpeed = CBR_19200;
+int nLastDev = -1;
+
+HANDLE g_hSendEvent = INVALID_HANDLE_VALUE;
+HANDLE hReadThread = INVALID_HANDLE_VALUE;
+
+// Message dispatch table for MainWindowProc
+const struct decodeUINT MainMessages[] = {
+    WM_CREATE, DoCreateMain,
+    WM_SIZE, DoSizeMain,
+    WM_COMMAND, DoCommandMain,
+    WM_SETFOCUS, DoSetFocusMain,
+    WM_DESTROY, DoDestroyMain,
+};
+// Command Message dispatch for MainWindowProc
+const struct decodeCMD MainCommandItems[] = {
+    IDC_COMPORT, DoMainCommandComPort,
+    ID_SENDBTN, DoMainCommandSendText,
+    IDM_EXIT, DoMainCommandExit,
+    IDM_ABOUT, DoMainCommandAbout,
+};
+//======================================================================
+// Program entry point
+//
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    LPWSTR lpCmdLine, int nCmdShow) {
+    HWND hwndMain;
+    HACCEL hAccel;
+    MSG msg;
+    int rc = 0;
+
+    // Initialize application.
+    rc = InitApp (hInstance);
+    if (rc) return rc;
+
+    // Initialize this instance.
+    hwndMain = InitInstance (hInstance, lpCmdLine, nCmdShow);
+    if (hwndMain == 0)
+        return 0x10;
+
+    // Load accelerator table.
+    hAccel = LoadAccelerators (hInst, MAKEINTRESOURCE (ID_ACCEL));
+
+    // Application message loop
+    while (GetMessage (&amp;msg, NULL, 0, 0)) {
+        if (!TranslateAccelerator (hwndMain, hAccel, &amp;msg)) {
+            TranslateMessage (&amp;msg);
+            DispatchMessage (&amp;msg);
+        }
+    }
+    // Instance cleanup
+    return TermInstance (hInstance, msg.wParam);
+}
+//----------------------------------------------------------------------
+// InitApp - Application initialization
+//
+int InitApp (HINSTANCE hInstance) {
+    WNDCLASS wc;
+    INITCOMMONCONTROLSEX icex;
+
+    // Register application main window class.
+    wc.style = 0;                             // Window style
+    wc.lpfnWndProc = MainWndProc;             // Callback function
+    wc.cbClsExtra = 0;                        // Extra class data
+    wc.cbWndExtra = 0;                        // Extra window data
+    wc.hInstance = hInstance;                 // Owner handle
+    wc.hIcon = NULL,                          // Application icon
+    wc.hCursor = NULL;                        // Default cursor
+    wc.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH);
+    wc.lpszMenuName =  NULL;                  // Menu name
+    wc.lpszClassName = szAppName;             // Window class name
+
+    if (RegisterClass (&amp;wc) == 0) return 1;
+
+    // Load the command bar common control class.
+    icex.dwSize = sizeof (INITCOMMONCONTROLSEX);
+    icex.dwICC = ICC_BAR_CLASSES;
+    InitCommonControlsEx (&amp;icex);
+    return 0;
+}
+//----------------------------------------------------------------------
+// InitInstance - Instance initialization
+//
+HWND InitInstance (HINSTANCE hInstance, LPWSTR lpCmdLine, int nCmdShow){
+    HWND hWnd;
+    INT rc;
+    HANDLE hThread;
+
+    // Save program instance handle in global variable.
+    hInst = hInstance;
+
+    // Create unnamed auto-reset event initially false.
+    g_hSendEvent = CreateEvent (NULL, FALSE, FALSE, NULL);
+
+    // Create main window.
+    hWnd = CreateWindow (szAppName, TEXT (&quot;CeChat&quot;),
+                         WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT,
+                         CW_USEDEFAULT, CW_USEDEFAULT, NULL,
+                         NULL, hInstance, NULL);
+    // Return fail code if window not created.
+    if (!IsWindow (hWnd)) return 0;
+
+    // Create write thread. Read thread created when port opened.
+    hThread = CreateThread (NULL, 0, SendThread, hWnd, 0, &amp;rc);
+    if (hThread)
+        CloseHandle (hThread);
+    else {
+        DestroyWindow (hWnd);
+        return 0;
+    }
+    // Standard show and update calls
+    ShowWindow (hWnd, nCmdShow);
+    UpdateWindow (hWnd);
+    return hWnd;
+}
+//----------------------------------------------------------------------
+// TermInstance - Program cleanup
+//
+int TermInstance (HINSTANCE hInstance, int nDefRC) {
+    HANDLE hPort = hComPort;
+
+    fContinue = FALSE;
+
+    hComPort = INVALID_HANDLE_VALUE;
+    if (hPort != INVALID_HANDLE_VALUE)
+        CloseHandle (hPort);
+
+    if (g_hSendEvent != INVALID_HANDLE_VALUE) {
+        PulseEvent (g_hSendEvent);
+        Sleep(100);
+        CloseHandle (g_hSendEvent);
+    }
+    return nDefRC;
+}
+//======================================================================
+// Message handling procedures for MainWindow
+//----------------------------------------------------------------------
+// MainWndProc - Callback function for application window
+//
+LRESULT CALLBACK MainWndProc (HWND hWnd, UINT wMsg, WPARAM wParam,
+                              LPARAM lParam) {
+    INT i;
+    //
+    // Search message list to see if we need to handle this
+    // message.  If in list, call procedure.
+    //
+    for (i = 0; i &lt; dim(MainMessages); i++) {
+        if (wMsg == MainMessages[i].Code)
+             return (*MainMessages[i].Fxn)(hWnd, wMsg, wParam, lParam);
+    }
+    return DefWindowProc (hWnd, wMsg, wParam, lParam);
+}
+//----------------------------------------------------------------------
+// DoCreateMain - Process WM_CREATE message for window.
+//
+LRESULT DoCreateMain (HWND hWnd, UINT wMsg, WPARAM wParam,
+                      LPARAM lParam) {
+    HWND hwndCB, hC1, hC2, hC3;
+    INT  i, j, nHeight;
+    TCHAR szFirstDev[32];
+    LPCREATESTRUCT lpcs;
+
+    // Convert lParam into pointer to create structure.
+    lpcs = (LPCREATESTRUCT) lParam;
+
+    // Create a command bar.
+    hwndCB = CommandBar_Create (hInst, hWnd, IDC_CMDBAR);
+    CommandBar_InsertMenubar (hwndCB, hInst, ID_MENU, 0);
+
+    // Insert the com port combo box.
+    CommandBar_InsertComboBox (hwndCB, hInst, 140, CBS_DROPDOWNLIST,
+                               IDC_COMPORT, 1);
+    FillComComboBox (hWnd);
+
+    // Add exit button to command bar.
+    CommandBar_AddAdornments (hwndCB, 0, 0);
+    nHeight = CommandBar_Height (hwndCB);
+
+    // Create receive text window.
+    hC1 = CreateWindowEx (WS_EX_CLIENTEDGE, TEXT (&quot;edit&quot;),
+                         TEXT (&quot;&quot;), WS_VISIBLE | WS_CHILD |
+                         WS_VSCROLL | ES_MULTILINE | ES_AUTOHSCROLL |
+                         ES_READONLY, 0, nHeight, lpcs-&gt;cx,
+                         lpcs-&gt;cy - nHeight - 25, hWnd,
+                         (HMENU)ID_RCVTEXT, hInst, NULL);
+    // Create send text window.
+    hC2 = CreateWindowEx (WS_EX_CLIENTEDGE, TEXT (&quot;edit&quot;),
+                         TEXT (&quot;&quot;), WS_VISIBLE | WS_CHILD,
+                         0, lpcs-&gt;cy - 25, lpcs-&gt;cx-50, 25,
+                         hWnd, (HMENU)ID_SENDTEXT, hInst, NULL);
+    // Create send text window.
+    hC3 = CreateWindowEx (WS_EX_CLIENTEDGE, TEXT (&quot;button&quot;),
+                         TEXT (&quot;&amp;Send&quot;), WS_VISIBLE | WS_CHILD |
+                         BS_DEFPUSHBUTTON,
+                         lpcs-&gt;cx-50, lpcs-&gt;cy - 25, 50, 25,
+                         hWnd, (HMENU)ID_SENDBTN, hInst, NULL);
+    // Destroy frame if window not created.
+    if (!IsWindow (hC1) || !IsWindow (hC2) || !IsWindow (hC3)) {
+        DestroyWindow (hWnd);
+        return 0;
+    }
+    // Open a com port.
+    for (i = 0; i &lt; 3; i++) {
+        SendDlgItemMessage (hwndCB, IDC_COMPORT, CB_GETLBTEXT, i,
+                            (LPARAM)szFirstDev);
+        j = lstrlen (szFirstDev);
+        // Really bad hack to determine which is the RAW IR port
+        if (InitCommunication (hWnd, szFirstDev) !=
+            INVALID_HANDLE_VALUE) {
+            SendDlgItemMessage (hwndCB, IDC_COMPORT, CB_SETCURSEL, i,
+                                (LPARAM)szFirstDev);
+            break;
+        }
+    }
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoSizeMain - Process WM_SIZE message for window.
+//
+LRESULT DoSizeMain (HWND hWnd, UINT wMsg, WPARAM wParam, LPARAM lParam){
+    RECT rect;
+
+    // Adjust the size of the client rect to take into account
+    // the command bar height.
+
+<P>    GetClientRect (hWnd, &amp;rect);
+    rect.top += CommandBar_Height (GetDlgItem (hWnd, IDC_CMDBAR));
+
+    SetWindowPos (GetDlgItem (hWnd, ID_RCVTEXT), NULL, rect.left,
+                  rect.top, (rect.right - rect.left),
+                  rect.bottom - rect.top - 25, SWP_NOZORDER);
+    SetWindowPos (GetDlgItem (hWnd, ID_SENDTEXT), NULL, rect.left,
+                  rect.bottom - 25, (rect.right - rect.left) - 50,
+                  25, SWP_NOZORDER);
+    SetWindowPos (GetDlgItem (hWnd, ID_SENDBTN), NULL,
+                  (rect.right - rect.left) - 50, rect.bottom - 25,
+                  50, 25, SWP_NOZORDER);
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoFocusMain - Process WM_SETFOCUS message for window.
+//
+LRESULT DoSetFocusMain (HWND hWnd, UINT wMsg, WPARAM wParam,
+                        LPARAM lParam) {
+    SetFocus (GetDlgItem (hWnd, ID_SENDTEXT));
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoCommandMain - Process WM_COMMAND message for window.
+//
+LRESULT DoCommandMain (HWND hWnd, UINT wMsg, WPARAM wParam,
+                       LPARAM lParam) {
+    WORD    idItem, wNotifyCode;
+    HWND hwndCtl;
+    INT  i;
+
+    // Parse the parameters.
+    idItem = (WORD) LOWORD (wParam);
+    wNotifyCode = (WORD) HIWORD (wParam);
+    hwndCtl = (HWND) lParam;
+
+    // Call routine to handle control message.
+    for (i = 0; i &lt; dim(MainCommandItems); i++) {
+        if (idItem == MainCommandItems[i].Code)
+             return (*MainCommandItems[i].Fxn)(hWnd, idItem, hwndCtl,
+                                              wNotifyCode);
+    }
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoDestroyMain - Process WM_DESTROY message for window.
+//
+LRESULT DoDestroyMain (HWND hWnd, UINT wMsg, WPARAM wParam,
+                       LPARAM lParam) {
+    PostQuitMessage (0);
+    return 0;
+}
+//======================================================================
+// Command handler routines
+//----------------------------------------------------------------------
+// DoMainCommandExit - Process Program Exit command.
+//
+LPARAM DoMainCommandExit (HWND hWnd, WORD idItem, HWND hwndCtl,
+                          WORD wNotifyCode) {
+    SendMessage (hWnd, WM_CLOSE, 0, 0);
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoMainCommandComPort - Process the COM port combo box commands.
+//
+LPARAM DoMainCommandComPort (HWND hWnd, WORD idItem, HWND hwndCtl,
+                             WORD wNotifyCode) {
+    INT i;
+    TCHAR szDev[32];
+
+    if (wNotifyCode == CBN_SELCHANGE) {
+        i = SendMessage (hwndCtl, CB_GETCURSEL, 0, 0);
+        if (i != nLastDev) {
+            nLastDev = i;
+            SendMessage (hwndCtl, CB_GETLBTEXT, i, (LPARAM)szDev);
+            InitCommunication (hWnd, szDev);
+            SetFocus (GetDlgItem (hWnd, ID_SENDTEXT));
+        }
+    }
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoMainCommandSendText - Process the Send text button.
+//
+LPARAM DoMainCommandSendText (HWND hWnd, WORD idItem, HWND hwndCtl,
+                              WORD wNotifyCode) {
+
+    // Set event so that sender thread will send the text.
+    SetEvent (g_hSendEvent);
+    SetFocus (GetDlgItem (hWnd, ID_SENDTEXT));
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoMainCommandAbout - Process the Help | About menu command.
+//
+LPARAM DoMainCommandAbout(HWND hWnd, WORD idItem, HWND hwndCtl,
+                          WORD wNotifyCode) {
+    // Use DialogBox to create modal dialog.
+    DialogBox (hInst, TEXT (&quot;aboutbox&quot;), hWnd, AboutDlgProc);
+    return 0;
+}
+//======================================================================
+// About Dialog procedure
+//
+BOOL CALLBACK AboutDlgProc (HWND hWnd, UINT wMsg, WPARAM wParam,
+                            LPARAM lParam) {
+    switch (wMsg) {
+        case WM_COMMAND:
+            switch (LOWORD (wParam)) {
+                case IDOK:
+                case IDCANCEL:
+                    EndDialog (hWnd, 0);
+                    return TRUE;
+            }
+        break;
+    }
+    return FALSE;
+}
+//----------------------------------------------------------------------
+// GetRawIrDeviceName - Returns the device name for the RawIR com port
+//
+INT GetRawIrDeviceName (LPTSTR pDevName) {
+    DWORD dwSize, dwType, dwData;
+    HKEY hKey;
+
+    *pDevName = TEXT (`\0');
+    // Open the IrDA key.
+    if (RegOpenKeyEx (HKEY_LOCAL_MACHINE, TEXT (&quot;Comm\\IrDA&quot;), 0,
+                      0, &amp;hKey) == ERROR_SUCCESS) {
+
+        // Query the device number.
+        dwSize = sizeof (dwData);
+        if (RegQueryValueEx (hKey, TEXT (&quot;Port&quot;), 0, &amp;dwType,
+                             (PBYTE)&amp;dwData, &amp;dwSize) == ERROR_SUCCESS)
+
+            // Check for valid port number. Assume buffer &gt; 5 chars.
+            if (dwData &lt; 10)
+                wsprintf (pDevName, TEXT (&quot;COM%d:&quot;), dwData);
+
+        RegCloseKey (hKey);
+    }
+    return lstrlen (pDevName);
+}
+//----------------------------------------------------------------------
+// GetIrCommDeviceName - Returns the device name for the IrComm port
+//
+INT GetIrCommDeviceName (LPTSTR pDevName) {
+    DWORD dwSize, dwType, dwData;
+    HKEY hKey;
+
+    *pDevName = TEXT (`\0');
+    // Open the IrDA key.
+    if (RegOpenKeyEx (HKEY_LOCAL_MACHINE,
+                      TEXT (&quot;Drivers\\BuiltIn\\IrCOMM&quot;), 0,
+                      0, &amp;hKey) == ERROR_SUCCESS) {
+
+        // Query the device number.
+        dwSize = sizeof (dwData);
+        if (RegQueryValueEx (hKey, TEXT (&quot;Index&quot;), 0, &amp;dwType,
+                             (PBYTE)&amp;dwData, &amp;dwSize) == ERROR_SUCCESS)
+
+            // Check for valid port number. Assume buffer &gt; 5 chars.
+            if (dwData &lt; 10)
+                wsprintf (pDevName, TEXT (&quot;COM%d:&quot;), dwData);
+
+        RegCloseKey (hKey);
+    }
+    return lstrlen (pDevName);
+}
+//----------------------------------------------------------------------
+// FillComComboBox - Fills the com port combo box
+//
+int FillComComboBox (HWND hWnd) {
+    TCHAR szDev[64];
+
+    lstrcpy (szDev, TEXT (&quot;Serial Port   COM1:&quot;));
+    SendDlgItemMessage (GetDlgItem (hWnd, IDC_CMDBAR),
+                        IDC_COMPORT, CB_INSERTSTRING,
+                        -1, (LPARAM)szDev);
+
+    lstrcpy (szDev, TEXT (&quot;IrComm Port   &quot;));
+    GetIrCommDeviceName (&amp;szDev[lstrlen (szDev)]);
+    SendDlgItemMessage (GetDlgItem (hWnd, IDC_CMDBAR),
+                        IDC_COMPORT, CB_INSERTSTRING,
+                        -1, (LPARAM)szDev);
+
+    lstrcpy (szDev, TEXT (&quot;Raw IR Port   &quot;));
+    GetRawIrDeviceName (&amp;szDev[lstrlen (szDev)]);
+    SendDlgItemMessage (GetDlgItem (hWnd, IDC_CMDBAR),
+                        IDC_COMPORT, CB_INSERTSTRING,
+                        -1, (LPARAM)szDev);
+    SendDlgItemMessage (GetDlgItem (hWnd, IDC_CMDBAR), IDC_COMPORT,
+                        CB_SETCURSEL, 0, 0);
+    return 0;
+}
+//----------------------------------------------------------------------
+// InitCommunication - Open and initialize selected COM port.
+//
+HANDLE InitCommunication (HWND hWnd, LPTSTR pszDevName) {
+    DCB dcb;
+    INT i;
+    TCHAR szDbg[128];
+    COMMTIMEOUTS cto;
+    HANDLE hLocal;
+    DWORD dwTStat;
+    hLocal = hComPort;
+    hComPort = INVALID_HANDLE_VALUE;
+
+    if (hLocal != INVALID_HANDLE_VALUE)
+        CloseHandle (hLocal);  // This causes WaitCommEvent to return.
+
+    // The com port name is the last 5 characters of the string.
+    i = lstrlen (pszDevName);
+    hLocal = CreateFile (&amp;pszDevName[i-5], GENERIC_READ | GENERIC_WRITE,
+                           0, NULL, OPEN_EXISTING, 0, NULL);
+
+    if (hLocal != INVALID_HANDLE_VALUE) {
+        // Configure port.
+        GetCommState (hLocal, &amp;dcb);
+        dcb.BaudRate = nSpeed;
+        dcb.fParity = FALSE;
+        dcb.fNull = FALSE;
+        dcb.StopBits = ONESTOPBIT;
+        dcb.Parity = NOPARITY;
+        dcb.ByteSize = 8;
+        SetCommState (hLocal, &amp;dcb);
+
+        // Set the timeouts.  Set infinite read timeout.
+        cto.ReadIntervalTimeout = 0;
+        cto.ReadTotalTimeoutMultiplier = 0;
+        cto.ReadTotalTimeoutConstant = 0;
+        cto.WriteTotalTimeoutMultiplier = 0;
+        cto.WriteTotalTimeoutConstant = 0;
+        SetCommTimeouts (hLocal, &amp;cto);
+
+        wsprintf (szDbg, TEXT (&quot;Port %s opened\r\n&quot;), pszDevName);
+        SendDlgItemMessage (hWnd, ID_RCVTEXT, EM_REPLACESEL, 0,
+                            (LPARAM)szDbg);
+        // Really bad hack to determine which is the raw IR selection.
+        // We need to enable IR on the raw IR port in case port is
+        // shared with the standard serial port.
+        if (*pszDevName == TEXT (`R')) {
+            if (!EscapeCommFunction (hLocal, SETIR)) {
+                wsprintf (szDbg, TEXT (&quot;Set IR failed. rc %d\r\n&quot;),
+                          GetLastError());
+                SendDlgItemMessage (hWnd, ID_RCVTEXT, EM_REPLACESEL,
+                                    0, (LPARAM)szDbg);
+            }
+        }
+        // Start read thread if not already started.
+        hComPort = hLocal;
+        if (!GetExitCodeThread (hReadThread, &amp;dwTStat) ||
+            (dwTStat != STILL_ACTIVE)) {
+            hReadThread = CreateThread (NULL, 0, ReadThread, hWnd,
+                                        0, &amp;dwTStat);
+            if (hReadThread)
+                CloseHandle (hReadThread);
+        }
+    } else {
+        wsprintf (szDbg, TEXT (&quot;Couldn\'t open port %s. rc=%d\r\n&quot;),
+                  pszDevName, GetLastError());
+        SendDlgItemMessage (hWnd, ID_RCVTEXT, EM_REPLACESEL,
+                            0, (LPARAM)szDbg);
+    }
+    return hComPort;
+}
+//======================================================================
+// SendThread - Sends characters to the serial port
+//
+int SendThread (PVOID pArg) {
+    HWND hWnd, hwndSText;
+    INT cBytes, nGoCode;
+    TCHAR szText[TEXTSIZE];
+
+    hWnd = (HWND)pArg;
+    hwndSText = GetDlgItem (hWnd, ID_SENDTEXT);
+    while (1) {
+        nGoCode = WaitForSingleObject (g_hSendEvent, INFINITE);
+        if (nGoCode == WAIT_OBJECT_0) {
+            if (!fContinue)
+                break;
+            GetWindowText (hwndSText, szText, dim(szText));
+            lstrcat (szText, TEXT (&quot;\r\n&quot;));
+            WriteFile (hComPort, szText, lstrlen (szText)*sizeof (TCHAR),
+                       &amp;cBytes, 0);
+            SetWindowText (hwndSText, TEXT (&quot;&quot;));  // Clear out text box
+        } else
+            break;
+    }
+    return 0;
+}
+//======================================================================
+// ReadThread - Receives characters from the serial port
+//
+int ReadThread (PVOID pArg) {
+    HWND hWnd;
+    INT cBytes, i;
+    BYTE szText[TEXTSIZE], *pPtr;
+    TCHAR tch;
+
+    hWnd = (HWND)pArg;
+    while (fContinue) {
+        tch = 0;
+        pPtr = szText;
+        for (i = 0; i &lt; sizeof (szText)-sizeof (TCHAR); i++) {
+
+            while (!ReadFile (hComPort, pPtr, 1, &amp;cBytes, 0))
+                if (hComPort == INVALID_HANDLE_VALUE)
+                    return 0;
+
+            // This syncs the proper byte order for Unicode.
+            tch = (tch &lt;&lt; 8) &amp; 0xff00;
+            tch |= *pPtr++;
+            if (tch == TEXT (`\n'))
+                break;
+        }
+        *pPtr++ = 0;  // Avoid alignment probs by addressing as bytes.
+        *pPtr++ = 0;
+
+        // If out of byte sync, move bytes down one.
+        if (i % 2) {
+            pPtr = szText;
+            while (*pPtr || *(pPtr+1)) {
+                *pPtr = *(pPtr+1);
+                pPtr++;
+            }
+            *pPtr = 0;
+        }
+        SendDlgItemMessage (hWnd, ID_RCVTEXT, EM_REPLACESEL, 0,
+                            (LPARAM)szText);
+    }
+    return 0;
+}
+</pre>
+</td></TR></TABLE>
+
+<P>When the CeChat window is created, it sniffs out the three port names using the methods I described earlier in the chapter. The combo box is then filled and an attempt is made to open one of the COM ports. Once a port is opened, the read thread is created to wait on characters. The read thread isn't as simple as it should be because it must deal with 2-byte Unicode characters. Because it's quite possible to drop a byte or two in a serial IR link, the receive thread must attempt to resync the proper high bytes with their low byte pair to form a correct Unicode character.
+
+<P>The send thread is actually quite simple. All it does is block on an event that was created when CeChat was started. When the event is signaled, it reads the text from the send text edit control and calls <I>WriteFile</I>. Once that has completed, the send thread clears the text from the edit control and loops back to where it blocks again.
+
+<P>In the CeChat window shown in Figure 9-3, the program reports that it can't open COM1; this is because COM1 was being used by PC Link to connect to my PC. One of the problems with debugging serial programs on the H/PC or Palm-size PC is that you're generally using the one port that attaches to the PC. In these situations, it helps to have a secondary communication path from the PC to the Windows CE device. While you could put an additional serial PCMCIA Card into the H/PC to add ports, a faster link can be made with a PCMCIA Ethernet Card. Which brings us right to the next chapter, &quot;Windows Networking and IrSock.&quot;
+
+</BODY>
+</HTML>
+
+
+
+

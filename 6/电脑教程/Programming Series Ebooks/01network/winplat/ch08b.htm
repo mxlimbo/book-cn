@@ -1,0 +1,219 @@
+<HTML>
+<HEAD>
+<TITLE>Socket Modes</title>
+<link rel="STYLESHEET" type="text/css" href="Library.css">
+
+
+</head>
+<BODY BGCOLOR="#FFFFFF" TEXT="#000000">
+<SCRIPT LANGUAGE="JavaScript">
+<!--
+
+function fullSize(sURL){
+	window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+
+function LibraryHeaderNav(sBackward, sForward, sImgLeftOff, sImgLeftOn, sImgRightOff, sImgRightOn, iH, iW, sImgLeftStyle, sImgRightStyle, sImgRuleStyle, sRuleColor, sRuleSize){
+	var tableStr;
+	//validate questionable args for defs
+	tableStr = "<TABLE BORDER=0 CELLPADDING=0 CELLSPACING=0 border=0 width=100%>";
+	tableStr += "<TR VALIGN=top ALIGN=right>";
+
+	tableStr += "<TD align=right class=" + sImgRuleStyle + ">&nbsp;</TD>";	
+	
+	tableStr += "<TD width=34 align=right class=" + sImgLeftStyle + ">";
+	tableStr += "<A href='" + sBackward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgLeftOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgLeftOff + '\'\"';
+	tableStr += " SRC='" + sImgLeftOff + "' vspace=0 hspace=0></a></TD>";
+	
+	tableStr += "<TD width=34 align=left class=" + sImgRightStyle + ">";
+	tableStr += "<A href='" + sForward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgRightOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgRightOff + '\'\"';
+	tableStr += " SRC='" + sImgRightOff + "' vspace=0 hspace=0></a></TD></TR>";
+
+	tableStr += "<TR VALIGN=top>";
+	tableStr += "<TD height=3 align=center colspan=3 class=" + sImgRuleStyle + ">";
+	tableStr += "<HR color=" + sRuleColor + " size=" + sRuleSize + "></TD></TR></TABLE>";
+	//alert(tableStr);
+	document.write(tableStr);
+}
+
+ 																						     //purple is: #aa22aa   orange is: #ff9900
+LibraryHeaderNav("ch08a.htm" , "ch08c.htm", "images/unit_o_a1.gif", "images/unit_o_a2.gif", "images/unit_o_b1.gif", "images/unit_o_b2.gif", 18, 34, "unit01", "unit02", "headerrule", "#ff9900", "2");
+//--></SCRIPT>
+
+
+
+<A NAME="177"><H1>Socket Modes</H1></A>
+
+<p>As we mentioned earlier, Windows sockets perform I/O operations in two socket operating modes: blocking and nonblocking. In blocking mode, Winsock calls that perform I/O&#8212;such as <i>send</i> and <i>recv</i>&#8212;wait until the operation is complete before they return to the program. In nonblocking mode, the Winsock functions return immediately. Applications running on the Windows CE and Windows 95 (with Winsock 1) platforms, which support very few of the I/O models, require you to take certain steps with blocking and nonblocking sockets to handle a variety of situations.</p>
+
+<A NAME="178"><H2>Blocking Mode</H2></A>
+
+<p>Blocking sockets cause concern because any Winsock API call on a blocking socket can do just that&#8212;block for some period of time. Most Winsock applications follow a producer-consumer model in which the application reads (or writes) a specified number of bytes and performs some computation on that data. The code snippet in Figure 8-1 illustrates this model.</p>
+
+<p><b>Figure 8-1.</b> <i>Simple blocking socket sample </i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+SOCKET  sock;
+char    buff[256];
+int     done = 0;
+
+...
+
+while(!done)
+{
+    nBytes = recv(sock, buff, 65);
+    if (nBytes == SOCKET_ERROR)
+
+    {
+        printf(&quot;recv failed with error %d\n&quot;,
+            WSAGetLastError());
+        Return;
+    }
+    DoComputationOnData(buff);
+}
+
+...
+</pre>
+</td></tr></table>
+</p>
+
+<p>The problem with this code is that the <i>recv</i> function might never return if no data is pending because the statement says to return only after reading some bytes from the system's input buffer. Some programmers might be tempted to peek for the necessary number of bytes in the system's buffer by using the <i>MSG_PEEK</i> flag in <i>recv</i> or by calling <i>ioctlsocket</i> with the <i>FIONREAD</i> option. Peeking for data without actually reading the data (reading the data actually removes it from the system's buffer) is considered bad programming practice and should be avoided at all costs. The overhead associated with peeking is great because one or more system calls are necessary just to check the number of bytes available. Then, of course, there is the overhead of making the actual <i>recv</i> call that removes the data from the system buffer. What can be done to avoid this? The idea is to prevent the application from totally freezing because of lack of data (either from network
+problems or from client problems) without continually peeking at the system network buffers. One method is to separate the application into a reading thread and a computation thread. Both threads share a common data buffer. Access to this buffer is protected through the use of a synchronization object, such as an event or a mutex. The purpose of the reading thread is to continually read data from the network and place it in the shared buffer. When the reading thread has read the minimum amount of data necessary for the computation thread to do its work, it can signal an event that notifies the computation thread to begin. The computation thread then removes a chunk of data from the buffer and performs the necessary calculations.</p>
+
+<p>Figure 8-2 illustrates this approach by providing two functions, one responsible for reading network data (<i>ReadThread</i>) and one for performing the computations on the data (<i>ProcessThread</i>).</p>
+
+<p><b>Figure 8-2.</b> <i>Multithreaded blocking sockets example</i> </p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+// Initialize critical section (data) and create 
+// an auto-reset event (hEvent) before creating the
+// two threads
+CRITICAL_SECTION data;
+HANDLE           hEvent;
+TCHAR            buff[MAX_BUFFER_SIZE];
+int              nbytes;
+
+...
+
+// Reader thread
+void ReadThread(void) 
+{
+    int nTotal = 0,
+        nRead = 0,
+        nLeft = 0,
+        nBytes = 0;
+
+    while (!done)   
+    {
+        nTotal = 0;
+        nLeft = NUM_BYTES_REQUIRED;
+        while (nTotal != NUM_BYTES_REQUIRED) 
+        {
+            EnterCriticalSection(&amp;data);
+            nRead = recv(sock, &amp;(buff[MAX_BUFFER_SIZE - nBytes]),
+                nLeft);
+            if (nRead == -1)
+            {
+                printf(&quot;error\n&quot;);
+                ExitThread();
+            }
+            nTotal += nRead;
+            nLeft -= nRead;
+
+            nBytes += nRead;
+            LeaveCriticalSection(&amp;data);
+        }
+        SetEvent(hEvent);
+    }
+}
+
+// Computation thread
+void ProcessThread(void) 
+{
+    WaitForSingleObject(hEvent);
+
+    EnterCriticalSection(&amp;data);
+    DoSomeComputationOnData(buff);
+    
+    // Remove the processed data from the input
+    // buffer, and shift the remaining data to
+    // the start of the array
+    nBytes -= NUM_BYTES_REQUIRED;
+
+    LeaveCriticalSection(&amp;data);
+}
+</pre>
+</td></tr></table>
+</p>
+
+<p>One drawback of blocking sockets is that communicating via more than one connected socket at a time becomes difficult for the application. Using the foregoing scheme, the application could be modified to have a reading thread and a data processing thread per connected socket. This adds quite a bit of housekeeping overhead, but it is a feasible solution. The only drawback is that the solution does not scale well once you start dealing with a large number of sockets.</p>
+
+<A NAME="179"><H2>Nonblocking Mode</H2></A>
+
+<p>The alternative to blocking sockets is nonblocking sockets. Nonblocking sockets are a bit more challenging to use, but they are every bit as powerful as blocking sockets, with a few advantages. Figure 8-3 illustrates how to create a socket and put it into nonblocking mode.</p>
+
+<p><b>Figure 8-3.</b> <i>Making a socket nonblocking</i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+SOCKET        s;
+unsigned long ul = 1;
+int           nRet;
+
+s = socket(AF_INET, SOCK_STREAM, 0);
+nRet = ioctlsocket(s, FIOBIO, (unsigned long *) &amp;ul);
+if (nRet == SOCKET_ERROR)
+{
+    // Failed to put the socket into nonblocking mode
+}
+</pre>
+</td></tr></table>
+</p>
+
+
+<p>Once a socket is placed in nonblocking mode, Winsock API calls return immediately. In most cases, these calls fail with the error <i>WSAEWOULDBLOCK</i>, which means that the requested operation did not have time to complete during the call. For example, a call to <i>recv</i> returns <i>WSAEWOULDBLOCK</i> if no data is pending in the system's input buffer. Often additional calls to the same function are required until a successful return code is encountered. Table 8-2 describes the meaning of <i>WSAEWOULDBLOCK</i> when returned by commonly used Winsock calls.</p>
+
+<p>Because nonblocking calls frequently fail with the <i>WSAEWOULDBLOCK</i> error, you should check all return codes and be prepared for failure at any time. The pitfall many programmers fall into is that of continually calling a function until it returns a success. For example, placing a call to <i>recv</i> in a tight loop to read 200 bytes of data is no better than polling a blocking socket with the <i>MSG_PEEK</i> flag mentioned earlier. Winsock's socket I/O models can help an application determine when a socket is available for reading and writing.</p>
+
+<p><b>Table 8-2.</b> WSAEWOULDBLOCK <i>errors on nonblocking sockets</i></p>
+
+<p>
+<table cellpadding=5 width="95%">
+<tr> 
+<th>Function Name  </th>
+<th>Description  </th></tr>
+<tr>
+<td valign="top"><i>WSAAccept</i> and <i>accept</i>  </td>
+<td valign="top">The application has not received a connection request. Call again to check for a connection.  </td></tr>
+<tr>
+<td valign="top"><i>closesocket</i>  </td>
+<td valign="top">In most cases, this means that <i>setsockopt</i> was called with the <i>SO_LINGER</i> option and a nonzero timeout was set.  </td></tr>
+<tr>
+<td valign="top"><i>WSAConnect</i> and <i>connect</i>  </td>
+<td valign="top">The connection is initiated. Call again to check for completion.  </td></tr>
+<tr>
+<td valign="top"><i>WSARecv</i>, <i>recv</i>,<br><i>WSARecvFrom</i> and <i>recvfrom</i>  </td>
+<td valign="top">No data has been received. Check again later.  </td></tr>
+<tr>
+<td valign="top"><i>WSASend</i>, <i>send</i>,<br><i>WSASendTo</i>, and <i>sendto</i>   </td>
+<td valign="top">No buffer space available for outgoing data. Try again later. </td></tr>
+</table></p>
+
+
+
+<p>Each socket mode&#8212;blocking and nonblocking&#8212;has advantages and disadvantages. Blocking sockets are easier to use from a conceptual standpoint but become difficult to manage when dealing with multiple connected sockets or when data is sent and received in varying amounts and at arbitrary times. On the other hand, nonblocking sockets are more difficult in the sense that more code needs to be written to handle the possibility of receiving a <i>WSAEWOULDBLOCK</i> error on every Winsock call. Socket I/O models help applications manage communications on one or more sockets at a time in an asynchronous fashion.</p>
+
+</BODY>
+</HTML>
+
+
+
+

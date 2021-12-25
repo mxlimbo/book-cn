@@ -1,0 +1,159 @@
+<HTML>
+<HEAD>
+<TITLE>Charting Real-Time Data</TITLE>
+<link rel="STYLESHEET" type="text/css" href="webcomp.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch06g.htm">[Previous]</A> <A HREF="ch06i.htm">[Next]</A><P>
+
+<A NAME="155"><H1>Charting Real-Time Data</H1></A>
+
+<P>The last major technique used in the Helpdesk Reporting solution that I will 
+describe is feeding real-time data into the Chart control. There is no great trick to doing 
+this; however, a few aspects might not be initially obvious.</p>
+ 
+<p>The general approach to feeding real-time data is to allocate arrays into 
+which you will place new values as they become available and to set those arrays into 
+the chart as literal data. Although you cannot dynamically add only one point to the 
+chart, you can reset the entire array into the Chart control so that it will reload the data 
+and refresh its display. The Chart control can keep up amazingly well, and in my 
+personal tests, it loaded and displayed new data as fast as three times a second.</p>
+ 
+<P>The scripts in the RealTimeChart.htm file start by declaring three 
+page-level arrays to hold the categories (time values) and two series worth of values. This 
+file also declares a variable to hold the position in the array that should be filled next:</P>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Dim m_avOnHold(59)      ' Array of values representing people on hold
+Dim m_avBeingHelped(59) ' Array of values representing people being helped
+Dim m_avTime(59)        ' Array of time readings
+Dim m_nCurSlot          ' Current slot in the array to fill
+</pre></td></tr></table></p>
+ 
+<P>I give each of these arrays 60 elements (indexes 0 to 59) because I will 
+show the last 60 real-time values in the chart. In the Window_onLoad event, I initialize 
+these page-level variables by setting the first element of each array and setting the 
+current slot index to 1:</P>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+' Set the first value for each of the arrays
+m_avTime(0) = Time()
+m_avOnHold(0) = GenRandomValue(0, 10)
+m_avBeingHelped(0) = GenRandomValue(0, 20)
+
+' Initialize the current slot variable
+m_nCurSlot = 1
+
+' Start the timer
+window.setInterval &quot;OnTimer&quot;, 1000, &quot;vbscript&quot;
+</pre></td></tr></table></p>
+
+<P>The last line of the script uses the setInterval method to start a timer that 
+will fire every second (1000 milliseconds). When the timer fires, it will call the 
+OnTimer method in my script, which I tell Internet Explorer is a VBScript function. On 
+each timer interval, the OnTimer method will add another value to the page-level 
+arrays and call the SetData method on the chart's series to reload the chart with new 
+data. If you were using another COM control on the page to get your real-time data, 
+you could code that control to raise an event whenever new data arrived, and your 
+script to reload the chart with new data would be in that event's handler:
+</P>
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Sub OnTimer()
+    ' Local variables
+    Dim ser         ' Temporary WCSeries reference
+    Dim c           ' Constants object
+    Dim ct          ' Loop counter
+    
+    If m_nCurSlot &gt; UBound(m_avTime) Then
+        ' Shift the array values down one position
+        For ct = (LBound(m_avTime) + 1) To UBound(m_avTime)
+            m_avTime(ct - 1) = m_avTime(ct)
+            m_avOnHold(ct - 1) = m_avOnHold(ct)
+            m_avBeingHelped(ct - 1) = m_avBeingHelped(ct)
+        Next 'ct
+        
+        m_nCurSlot = UBound(m_avTime)
+    End If 'At the end
+
+    ' Set the next value for each of the arrays
+    m_avTime(m_nCurSlot) = Time()
+    m_avOnHold(m_nCurSlot) = Abs(m_avOnHold(m_nCurSlot - 1) + _
+        GenRandomValue(-2, 2))
+    
+    m_avBeingHelped(m_nCurSlot) = Abs(m_avBeingHelped(m_nCurSlot - 1) + _
+        GenRandomValue(-2, 2))
+    
+    ' Increment the current slot variable
+    m_nCurSlot = m_nCurSlot + 1
+    
+    ' Now set the chart series with the new data
+    Set c = csRealTime.Constants 
+    Set ser = csRealTime.Charts(0).SeriesCollection(0)
+    ser.SetData c.chDimCategories, c.chDataLiteral, m_avTime
+    ser.SetData c.chDimValues, c.chDataLiteral, m_avBeingHelped
+
+    set ser = csRealTime.Charts(0).SeriesCollection(1)
+    ser.SetData c.chDimCategories, c.chDataLiteral, m_avTime
+    ser.SetData c.chDimValues, c.chDataLiteral, m_avOnHold
+
+End Sub 'OnTimer()
+</pre></td></tr></table></p>
+
+<P>The first part of the OnTimer method is fairly straightforward. If the current 
+slot index is at the end of the array, the code quickly shifts the existing values down 
+one position so that the chart appears to scroll backward as new data points appear 
+at the end of the line. The code then adds the new data point, using the VBScript 
+Time function to get the current system time and a random data generator to get the 
+delta values for the two series. In a real system, you would obviously use a COM 
+object or another mechanism to get the new values.</P>
+ 
+<p>The second part of the OnTimer method should look similar to the script 
+we discussed in <A HREF="ch03a.htm">Chapter 3</A>. The code uses the SetData method on each series to pass 
+the Chart control new literal data, and the Chart control automatically refreshes 
+itself, showing the new data values.</p> 
+
+<p>The only trick to this page is how I made the lines appear to grow from left 
+to right, instead of the category axis seeming to compress as it would appear to do 
+by default. I also fix the value axis so that it does not continually change its 
+minimum and maximum as new data points appear. These effects are again done using the 
+axes' Scaling object properties. In the CreateChart method (called from 
+Window_onLoad), I use the following code to accomplish these effects:</p>
+ 
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Set ax = cht.Axes(c.chAxisPositionBottom)
+ax.Scaling.Maximum = 60
+ax.TickLabelSpacing = 10
+
+Set ax = cht.Axes(c.chAxisPositionLeft)
+ax.Scaling.Maximum = 50
+ax.Scaling.Minimum = 0
+</pre></td></tr></table></p>
+ 
+<P>By setting the Maximum property of the category axis's Scaling object to 60, 
+I force the chart to reserve room on the category axis for 60 categories, even 
+though the data I pass to the chart might not yet have 60 distinct categories. I also set 
+the TickLabelSpacing property to 10 so that the Chart control displays only every 
+tenth time value, which is about every 10 seconds because the timer fires every 
+second. The code also sets a manual minimum and maximum value for the value axis 
+scaling so that the value axis does not automatically adjust as new data points arrive 
+or existing data points fall off the left edge when scrolling. Note that if my real-time 
+feed produced a value greater than the maximum I set here, it would not display on 
+the chart. If you do not know the upper limit of your real-time data in advance, you 
+might need to check new values as they arrive and increase the Scaling object's 
+Maximum property to accommodate the new values.</P>
+ 
+</BODY>
+</HTML>
+
+
+
+
+

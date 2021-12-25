@@ -1,0 +1,210 @@
+<HTML>
+ <HEAD>
+	<LINK REL=StyleSheet HREF="prowice.css" TYPE="text/css">
+<TITLE>Exception Handling</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="337"><H1>Exception Handling</H1></A>
+
+<P>Windows CE, along with Visual C++ for Windows CE, supports Microsoft's standard, structured exception handling extensions to the C language, the <I>__try</I>, <I>__except</I> and <I>__try</I>,<I> __finally</I> blocks. Note that Visual C++ for Windows CE doesn't support the full C++ exception handling framework with keywords such as <I>catch</I> and <I>throw</I>.
+
+<P>Windows exception handling is complex and if I were to cover it completely, I could easily write another entire chapter. The following review introduces the concepts to non-Win32 programmers and conveys enough information about the subject for you to get your feet wet. If you want to wade all the way in, the best source for a complete explanation of Win32 exception handling is Jeffrey Richter's <I>Advanced Windows </I>third edition (Microsoft Press, 1997).
+
+<A NAME="338"><H2>The <I>__try, __except</I> Block</H2></A>
+<P>The first construct I'll talk about is the <I>__try</I>,<I> __except</I> block which looks like this:
+
+<p><pre>
+__try {
+
+    // Try some code here that might cause an exception.
+
+}
+__except (exception filter) {
+
+    // This code is depending on the filter on the except line.
+
+} 
+</pre>
+
+<P>Essentially, the <I>try-except</I> pair allows you the ability to anticipate exceptions and handle them locally instead of having Windows terminate the thread or the process because of an unhandled exception.
+
+<P>The exception filter is essentially a return code that tells Windows how to handle the exception. You can hard code one of the three possible values or call a function that dynamically decides how to respond to the exception.
+
+<P>If the filter returns EXCEPTION_EXECUTE_HANDLER, Windows aborts the execution in the <I>try</I> block and jumps to the first statement in the <I>except</I> block. This is helpful if you're expecting the exception and you know how to handle it. In the code that follows, the access to memory is protected by a <I>__try</I>,<I> __except</I> block.
+
+<p><pre>
+BYTE ReadByteFromMemory (LPBYTE pPtr, BOOL *bDataValid) {
+    BYTE ucData = 0;
+
+    *bDataValid = TRUE;
+    __try {
+        ucData = *pPtr;
+    }
+    __except (DecideHowToHandleException ()) {
+        // The pointer isn't valid, clean up.
+        ucData = 0;
+        *bDataValid = FALSE;
+    } 
+    return ucData;
+}
+int DecideHowToHandleException (void) {
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+</pre>
+
+<P>If the memory read line above wasn't protected by a <I>__try</I>,<I> __except</I> block and an invalid pointer was passed to the routine, the exception generated would have been passed up to the system, causing the thread and perhaps the process to be terminated. If you use the <I>__try</I>,<I> __except</I> block, the exception is handled locally and the process continues with the error handled locally.
+
+<P>Another possibility is to have the system retry the instruction that caused the exception. You can do this by having the filter return EXCEPTION_CONTINUE_EXECUTION. On the surface, this sounds like a great option&#8212;simply fix the problem and retry the operation your program was performing. The problem with this approach is that what will be retried isn't the <I>line </I>that caused the exception, but <I>the machine instruction</I> that caused the exception. The difference is illustrated by the following code fragment that looks okay but probably won't work:
+
+<p><pre>
+// An example that doesn't work...
+int DivideIt (int aVal, int bVal) {
+    int cVal;
+    __try {
+        cVal = aVal / bVal;
+    }
+    __except (EXCEPTION_CONTINUE_EXECUTION) {
+        bVal = 1;
+    }
+    return cVal;
+}
+</pre>
+
+<P>The idea in this code is noble; protect the program from a divide-by-zero error by ensuring that if the error occurs, the error is corrected by replacing <I>bVal</I> with 1. The problem is that the line
+
+<p><pre>
+cVal = aVal / bVal;
+</pre>
+
+<P>is probably compiled to something like the following on a MIPS-compatible CPU:
+
+<p><pre>
+lw    t6,aVal(sp)        ;Load aVal
+lw    t7,bVal(sp)        ;Load bVal
+div   t6,t7              ;Perform the divide
+sw    t6,cVal(sp)        ;Save result into cVal
+</pre>
+
+<P>In this case, the third instruction, the <I>div</I>, causes the exception. Restarting the code after the exception results in the restart beginning with the <I>div</I> instruction. The problem is that the execution needs to start at least one instruction earlier to load the new value from <I>bVal</I> into the register. The moral of the story is that attempting to restart code at the point of an exception is risky at best and at worst, unpredictable.
+
+<P>The third option for the exception filter is to not even attempt to solve the problem and to pass the exception up to the next, higher <I>__try</I>,<I> __except</I> block in code. This is accomplished by the exception filter returning EXCEPTION_CONTINUE_SEARCH. Since <I>__try</I>,<I> __except</I> blocks can be nested, it's good practice to handle specific problems in a lower, nested <I>__try</I>,<I> __except</I> block and more global errors at a higher level.
+
+<A NAME="339"><H3>Determining the problem</H3></A>
+
+<P>With these three options available, it would be nice if Windows let you in on why the exception occurred. Fortunately, Windows provides the function
+
+<P>DWORD GetExceptionCode (void);
+
+<P>This function returns a code that indicates why the exception occurred in the first place. The codes are defined in WINBASE.H and range from EXCEPTION_ACCESS_VIOLATION to CONTROL_C_EXIT, with a number of codes in between. Another function allows even more information:
+
+<P>LPEXCEPTION_POINTERS GetExceptionInformation (void);
+
+<P><I>GetExceptionInformation</I> returns a pointer to a structure that contains pointers to two structures: EXCEPTION_RECORD and CONTEXT. EXCEPTION_RECORD is defined as
+
+<p><pre>
+typedef struct _EXCEPTION_RECORD { 
+    DWORD ExceptionCode; 
+    DWORD ExceptionFlags; 
+    struct _EXCEPTION_RECORD *ExceptionRecord; 
+    PVOID ExceptionAddress; 
+    DWORD NumberParameters; 
+    DWORD ExceptionInformation[EXCEPTION_MAXIMUM_PARAMETERS]; 
+} EXCEPTION_RECORD; 
+</pre>
+
+<P>The fields in this structure go into explicit detail about why an exception occurred. To narrow the problem down even further, you can use the CONTEXT structure. The CONTEXT structure is different for each CPU and essentially defines the exact state of the CPU when the exception occurred.
+
+<P>There are limitations on when these two exception information functions can be called. <I>GetExecptionCode</I> can only be called from inside an <I>except</I> block or from within the exception filter function. The <I>GetExceptionInformation</I> function can be called only from within the exception filter function.
+
+<A NAME="340"><H2>The <I>__try, __finally</I> Block</H2></A>
+<P>Another tool of the structured exception handling features of the Win32 API is the <I>__try</I>,<I> __finally </I>block. It looks like this:
+
+<p><pre>
+__try {
+
+    // Do something here.
+
+}
+__finally {
+
+    // This code is executed regardless of what happens in the try block.
+
+}
+</pre>
+
+<P>The goal of the <I>__try</I>,<I> __finally </I>block is to provide a block of code, the <I>finally </I>block, that always executes regardless of how the other code in the <I>try</I> block attempts to leave the block. If there's no <I>return</I>, <I>break</I> or <I>goto</I> in the <I>try</I> block, the code in the <I>finally</I> block executes immediately following the last statement in the <I>try</I> block. If the <I>try</I> block has a <I>return</I> or a <I>goto</I> or some other statement that transfers execution out of the <I>try</I> block, the compiler insures that the code in the <I>finally</I> block will get executed before execution leaves the <I>try</I> block. Take, for example, the following code:
+
+<p><pre>
+int ClintSimFunc (int TodaysTask) {
+
+    __try {
+        switch (TodaysTask) {
+        case THEGOOD:
+            //Do the good stuff.
+            return 1;
+        case THEBAD:
+            //Do the bad stuff.
+            return 2;
+        case THEUGLY:
+            //Do the ugly stuff.
+            break;
+        }
+        // Climb the Eiger.
+        return 0; 
+    }
+    __finally {
+        // Reload the .44.
+    }
+}
+</pre>
+
+<P>In this example, the <I>try</I> block can be left three ways: returning after executing the Good case or the Bad case or after executing the Ugly case, which breaks and executes the Eiger code. However the code exits the <I>try</I> block, Clint's gun is always reloaded because the <I>finally</I> block is always executed.
+
+<P>It works out that having the compiler build the code to protect the <I>try</I> block exits tends to create a fair amount of extra code. To help, you can use another statement, <I>__leave</I>, which makes it easier for the compiler to recognize what's happening and make a code-efficient path to the <I>finally</I> block. Using the <I>__leave</I> statement, the code above becomes
+
+<p><pre>
+int ClintSimFunc (int TodaysTask) {
+    int nFistfull;
+
+    __try {
+        switch (TodaysTask) {
+        case THEGOOD:
+            //Do the good stuff.
+            nFistfull = 1;
+            
+__leave;
+        case THEBAD:
+            //Do the bad stuff.
+            nFistfull = 2;
+            
+__leave;
+        case THEUGLY:
+            //Do the ugly stuff.
+            break;
+        }
+        // Climb the Eiger.
+        nFistFull = 0; 
+    }
+    // The code falls into the 
+__finally block.
+    __finally {
+        // Reload the .44.
+    }
+    return nFistfull;
+}
+</pre>
+
+<P>The <I>__try</I>,<I> __finally </I>block is helpful for writing clean code because you can use the <I>__leave</I> statement to jump out of a sequence of statements that build upon one another and put all the cleanup code in the <I>finally</I> block. The <I>finally</I> block also has a place in structured exception handling since the <I>finally </I>code is executed if an exception in the <I>try</I> block causes a premature exit of the block.
+
+<P>In the past three chapters, I've covered the basics of the Windows CE kernel from memory to files to processes and threads. Now it's time to break from this low-level stuff and starting looking outward. The next section covers the different communication aspects of Windows CE. I start at the low level, with explanations of basic serial and I/R communication and TAPI. <A HREF="ch10a.htm">Chapter 10</a> covers networking from a Windows CE perspective. Finally, <A HREF="ch11a.htm">Chapter 11</a> covers Windows CE to PC communications. That's a fair amount of ground to cover. Let's get started.
+</BODY>
+</HTML>
+
+
+
+

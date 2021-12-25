@@ -1,0 +1,318 @@
+<HTML>
+<HEAD>
+<TITLE>The Auto Buffer Template C++ Class (AutoBuf.h)</TITLE>
+<link rel="STYLESHEET" type="text/css" href="prosrvwin.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR = "#ffffff">
+<A HREF="chabc.htm">[Previous]</A> <A HREF="chabe.htm">[Next]</A><P>
+
+<A NAME="318"><h1>The Auto Buffer Template C++ Class (AutoBuf.h)</h1></A>
+<p>Many Windows functions fill buffers that you must allocate. Quite commonly, you have no idea what the proper buffer size is before you call a function. So for many of these Windows functions, you must call the function once to get the required buffer size, then allocate the buffer, and then call the function a second time to actually get the data into the buffer. This, of course, is quite inconvenient. Plus, the buffer requirement might change between calls to the function because Windows is a preemptive multithreading operating system. In such a case, your second call to the function would fail. The likelihood of such a failure is quite rare, but a well-written application should certainly take this into consideration and handle the situation with style and grace. For example, here is the code necessary to properly retrieve a registry value using <i>RegQueryValueEx</i>:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+ULONG uValSize = 1;
+PTSTR pszValue = NULL;
+LONG lErr;
+do {
+   if (uValSize != 0) {
+      if (pszValue != NULL) {
+         HeapFree(GetProcessHeap(), 0, pszValue);
+      }
+      pszValue = (PTSTR) HeapAlloc(GetProcessHeap(), 0, uValSize);
+      if (pszValue == NULL) {
+         // Error: Proper handling not shown
+      }
+   }
+   // Assume that hkey was initialized earlier
+   lErr = RegQueryValueEx(hkey, TEXT(&quot;SomeValueName&quot;), NULL,
+      NULL, (PBYTE) pszValue, &amp;uValSize);
+} while (lErr == ERROR_MORE_DATA);
+if (lErr != ERROR_SUCCESS){
+   // Error: Proper handling not shown
+}
+</pre></td></tr></table>
+</p>
+
+<p>The next code fragment performs the same functionality but makes use of the CAutoBuf class for allocating the buffer. A bonus feature is that the buffer is automatically freed when the object goes out of scope.</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+CAutoBuf&lt;PTSTR, sizeof(TCHAR)&gt; pszValue;
+pszValue = 1;
+LONG lErr;
+do {
+   lErr = RegQueryValueEx(hkey, TEXT(&quot;SomeValueName&quot;), NULL, NULL,
+      pszValue, pszValue);
+} while (lErr == ERROR_MORE_DATA);
+if (lErr != ERROR_SUCCESS){
+   // Error: Proper handling not shown
+}
+</pre></td></tr></table>
+</p>
+
+<p>The CAutoBuf C++ class, shown in Listing B-3, makes working with functions that require buffers a cinch. A CAutoBuf object allocates a data buffer whose size is determined automatically by whatever the Windows function tells it. In addition, a CAutoBuf object automatically frees its data buffer when the object goes out of scope.</p>
+
+<p>The CAutoBuf C++ class is a template class, so it supports buffers holding data of any type. To use the class, you simply declare an instance by indicating the type of data you want it to hold. Here is an example of a CAutoBuf that should contain a QUERY_SERVICE_CONFIG structure (which is variable in length):</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+CAutoBuf&lt;QUERY_SERVICE_CONFIG&gt; pServiceConfig;
+</pre></td></tr></table>
+</p>
+
+<p>Now, to fill this buffer, you make a call to <i>QueryServiceConfig</i> as follows:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+BOOL fOk;
+fOk = QueryServiceConfig(
+   hService,          // hService       (SC_HANDLE)
+   pServiceConfig,    // pServiceConfig (QUERY_SERVICE_CONFIG*)
+   pServiceConfig,    // cbBufferSize   (DWORD)
+   pServiceConfig);   // pcbBytesNeeded (PDWORD) 
+</pre></td></tr></table>
+</p>
+
+<p>You'll notice that I'm passing the pServiceConfig object for three of the parameters. This works because the CAutoBuf class exposes three cast methods on the objects: a cast method that returns the address of the data buffer, a DWORD cast method that returns the size of the data buffer in bytes, and a PDWORD cast method that returns the address of a DWORD member variable that will be filled in with the required size of the buffer.</p>
+
+<p>If the size passed to <i>cbBufferSize</i> is too small, <i>QueryServiceConfig</i> returns FALSE and a subsequent call to <i>GetLastError</i> returns ERROR_ INSUFFICIENT_BUFFER. In this case, all you have to do is call <i>QueryServiceConfig</i> again and the buffer will automatically adjust its size to the value returned in the <i>pcbBytesNeeded</i> parameter. This time, <i>QueryServiceConfig</i> should successfully fill the buffer and return nonzero.</p>
+
+<p>However, <i>QueryServiceConfig</i> still might fail because another thread could have changed the service's status
+information. So a well-written application should call <i>QueryServiceConfig</i> repeatedly until it succeeds. To make this easy, the <i>GROWUNTIL</i> macro is included at the bottom of the AutoBuf.h file. This macro calls the desired function in a loop until the function succeeds or until it fails with an error other than ERROR_INSUFFICIENT_BUFFER or ERROR_ MORE_DATA. Here is an example of how to use this macro:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+BOOL fOk;
+GROWUNTIL(FALSE,
+   fOk = QueryServiceConfig(
+      hService,          // hService       (SC_HANDLE)
+      pServiceConfig,    // pServiceConfig (QUERY_SERVICE_CONFIG*)
+      pServiceConfig,    // cbBufferSize   (DWORD)
+      pServiceConfig));  // pcbBytesNeeded (DWORD*) 
+</pre></td></tr></table>
+</p>
+
+<p><b>Listing B-3.</b> <i>The AutoBuf.h header file</i></p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+<p><b>AutoBuf.h</b></p>
+/******************************************************************************
+Module:  AutoBuf.h
+Notices: Copyright (c) 2000 Jeffrey Richter
+Purpose: This class manages an auto-sizing data buffer.
+         See Appendix B.
+******************************************************************************/
+
+
+#pragma once   // Include this header file once per compilation unit
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+#include &quot;..\CmnHdr.h&quot;              // See Appendix A.
+
+
+/////////////////// CAutoBuf Template C++ Class Description ///////////////////
+
+
+/*
+The CAutoBuf template C++ class implements type safe buffers that
+automatically grow to meet the needs of your code.  Memory is also
+automatically freed when the object is destroyed (typically when your
+code goes out of frame and it is popped off of the stack).
+
+Examples of use:
+
+   // Create a buffer with no explicit data type, 
+   // the buffer grown in increments of a byte
+   CAutoBuf&lt;PVOID&gt; buf;
+
+   // Create a buffer of TCHARs, 
+   // the buffer grows in increments of sizeof(TCHAR)
+   CAutoBuf&lt;PTSTR, sizeof(TCHAR)&gt; buf; 
+
+   // Force the buffer to be 10 bytes big
+   buf = 10;
+
+*/
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+// This class is only ever used as a base class of the CAutoBuf template class.
+// The base class exists so that all instances of the template class share
+// a single instance of the common code.
+class CAutoBufBase {
+public:
+   UINT  Size() { return(* (PDWORD) PSize()); }
+   UINT  Size(UINT uSize);
+   
+   PUINT PSize() { 
+      AdjustBuffer(); 
+      m_uNewSize = m_uCurrentSize; 
+      return(&amp;m_uNewSize); 
+   }
+   void  Free() { Reconstruct(); }
+   
+protected:
+   CAutoBufBase(PBYTE *ppbData, int nMult) {
+      m_nMult = nMult;
+      m_ppbBuffer = ppbData; // Derived class holds address of buffer to allow
+                             // debugger's Quick Watch to work with typed data.
+      Reconstruct(TRUE);
+   }
+
+   virtual ~CAutoBufBase() { Free(); }
+
+   void Reconstruct(BOOL fFirstTime = FALSE);
+
+   PBYTE Buffer() { 
+      AdjustBuffer(); 
+      return(*m_ppbBuffer); 
+   }
+
+private:
+   void AdjustBuffer();   
+
+private:
+   PBYTE* m_ppbBuffer;    // Address of address of data buffer
+   int    m_nMult;        // Multiplier (in bytes) used for buffer growth
+   UINT   m_uNewSize;     // Requested buffer size (in m_nMult units)
+   UINT   m_uCurrentSize; // Actual size (in m_nMult units)
+};
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+template &lt;class TYPE, int MULT = 1&gt; 
+class CAutoBuf : private CAutoBufBase {
+public:
+   CAutoBuf() : CAutoBufBase((PBYTE*) &amp;m_pData, MULT) {}
+   void Free() { CAutoBufBase::Free(); }
+
+public:
+   operator TYPE*()  { return(Buffer()); }
+   
+   UINT operator=(UINT uSize) { return(CAutoBufBase::Size(uSize)); }
+   operator UINT()   { return( Size()); }
+   operator ULONG()  { return( Size()); }
+
+   operator PUINT()  { return( PSize()); }
+   operator PLONG()  { return((PLONG) PSize()); }
+   operator PULONG() { return((PULONG) PSize()); }
+
+   operator PBYTE()  { return((PBYTE) Buffer()); }
+   operator PVOID()  { return((PVOID) Buffer()); }
+
+   TYPE&amp; operator[](int nIndex) { return(*(Buffer() + nIndex)); }
+
+private:
+   TYPE* Buffer() { return((TYPE*) CAutoBufBase::Buffer()); }
+
+private:
+   TYPE* m_pData;
+};
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+#define GROWUNTIL(fail, func)                        \
+   do {                                              \
+      if ((func) != (fail))                          \
+         break;                                      \
+   } while ((GetLastError() == ERROR_MORE_DATA) ||   \
+            (GetLastError() == ERROR_INSUFFICIENT_BUFFER));
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+#ifdef AUTOBUF_IMPL
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void CAutoBufBase::Reconstruct(BOOL fFirstTime) {
+
+   if (!fFirstTime) {
+      if (*m_ppbBuffer != NULL)
+         HeapFree(GetProcessHeap(), 0, *m_ppbBuffer);
+   }
+
+   *m_ppbBuffer = NULL; // Derived class doesn't point to a data buffer
+   m_uNewSize = 0;      // Initially, buffer has no bytes in it
+   m_uCurrentSize = 0;  // Initially, buffer has no bytes in it
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+UINT CAutoBufBase::Size(UINT uSize) {
+
+   // Set buffer to desired number of m_nMult bytes.
+   if (uSize == 0) {
+      Reconstruct();
+   } else {
+      m_uNewSize = uSize;
+      AdjustBuffer();      
+   }
+   return(m_uNewSize);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void CAutoBufBase::AdjustBuffer() {
+   
+if (m_uCurrentSize &lt; m_uNewSize) {
+
+      // We're growing the buffer
+      HANDLE hHeap = GetProcessHeap();
+
+      if (*m_ppbBuffer != NULL) {
+         // We already have a buffer, re-size it
+         PBYTE pNew = (PBYTE) 
+            HeapReAlloc(hHeap, 0, *m_ppbBuffer, m_uNewSize * m_nMult);
+         if (pNew != NULL) {
+            m_uCurrentSize = m_uNewSize;
+            *m_ppbBuffer = pNew;
+         } 
+      } else {
+         // We don't have a buffer, create new one.
+         *m_ppbBuffer = (PBYTE) HeapAlloc(hHeap, 0, m_uNewSize * m_nMult);
+         if (*m_ppbBuffer != NULL) 
+            m_uCurrentSize = m_uNewSize;
+      }
+   }
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+#endif   // AUTOBUF_IMPL
+
+
+///////////////////////////////// End of File /////////////////////////////////
+</pre></td></tr></table>
+</p>
+
+</BODY>
+</HTML>
+
+
+
+

@@ -1,0 +1,443 @@
+<HTML>
+<HEAD>
+<TITLE>Additional Power Management Details</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch08c.htm">[Previous]</A> <A HREF="ch08e.htm">[Next]</a>
+</p>
+
+<A NAME="285"><H1>Additional Power Management Details</H1></A>
+
+<p>In this section, I'll describe some additional details about power management, including
+flags you might need to set in your device object, controlling your device's wake-up
+feature, arranging for power-down requests after your device has been idle for a predetermined
+time, and optimizing context restore operations.</p>
+
+<A NAME="286"><H2>Flags to Set in AddDevice</H2></A>
+
+<p>Three flag bits in a device object&#8212;see Table 8-6&#8212;control various aspects of power
+management. After you call <b>IoCreateDevice</b> in your <b>AddDevice</b> function, all three
+of these bits will be set to 0, and you can set one or more of them depending on
+circumstances.</p>
+
+<p><b>Table 8-6.</b> <i>Power-management flags in DEVICE_OBJECT.</i></p>
+
+<p><table cellpadding=5 width="95%"><tr>
+<th><i>Flag</i></th>
+<th><i>Brief Description</i></th>
+</tr><tr>
+<td valign="top">DO_POWER_PAGABLE</td>
+<td valign="top">Driver's IRP_MJ_POWER dispatch routine must run at PASSIVE_LEVEL</td>
+</tr><tr>
+<td valign="top">DO_POWER_INRUSH</td>
+<td valign="top">Powering on this device requires a large amount of current</td>
+</tr><tr>
+<td valign="top">DO_POWER_NOOP</td>
+<td valign="top">Device doesn't participate in power management</td>
+</tr></table></p>
+
+
+
+<p>Set the DO_POWER_PAGABLE flag if your dispatch function for IRP_MJ_POWER requests must run
+at PASSIVE_LEVEL. The flag has the name it does because, as you know, paging is allowed at
+PASSIVE_LEVEL only. If you leave this flag set to 0, the Power Manager is free to send you
+power requests at DISPATCH_LEVEL. In fact, it always will do so in the current release of
+Windows 2000.</p>
+
+<p>Set the DO_POWER_INRUSH flag if your device draws so much current when powering up that
+other devices should not be allowed to power up simultaneously. The problem solved by this flag
+is familiar to people who've experienced multiple simultaneous spikes of electricity demand
+at the end of a power outage&#8212;having all your appliances trying to cycle on at the same
+time can blow the main breaker. The Power Manager guarantees that only one inrush device at a
+time will be powered up. Furthermore, it sends power requests to inrush devices at
+DISPATCH_LEVEL, which implies that you may not also set the DO_POWER_PAGABLE flag.</p>
+
+<p>The system's ACPI filter driver will set the INRUSH flag in the PDO automatically if the
+ASL description of the device so indicates. All that's required for the system to properly
+serialize inrush power is that some device object in the stack have the INRUSH flag set, so you
+won't need to set the flag in your own device object too. If the system can't
+automatically determine that you require inrush treatment, however, you would need to set the
+flag yourself.</p>
+
+<p>Set the DO_POWER_NOOP flag if your driver isn't managing hardware and needn't
+participate in power management. When PoCallDriver sees this flag set in a device object, it
+simply completes the IRP with STATUS_SUCCESS without even calling the corresponding
+driver's dispatch routine.</p>
+
+<p>The settings of the PAGABLE and INRUSH flags need to be consistent in all the device objects
+for a particular device. If the PDO has the PAGABLE flag set, every device object should also
+have PAGABLE set. Otherwise, a bug check with the code DRIVER_POWER_STATE_FAILURE may occur.
+(It's legal for a PAGABLE device to be layered on top of a non-PAGABLE device, just not the
+other way around.) If a device object has the INRUSH flag set, neither it nor any lower device
+objects should be PAGABLE, or else an INTERNAL_POWER_ERROR bug check will occur. If you're
+writing a disk driver, don't forget that you may change back and forth from time to time
+between pagable and nonpagable status in response to device usage PnP notifications about
+paging files.</p>
+
+<A NAME="287"><H2>Device Wake-Up Features</H2></A>
+
+<p>Some devices have a hardware wake-up feature, which allows them to wake up a sleeping
+computer when an external event occurs. See Figure 8-15. The power switch on the current crop
+of PCs is such a device. So are many modems and network cards, which are able to listen for
+incoming calls and packets, respectively.</p>
+
+<p>
+<A HREF="javascript:fullSize('F08wi15x.htm')"> <img src="images/F08wi15.JPG" width=404 height=195 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 8-15.</b> <i>Examples of devices that wake the system.</i><!--/caption-->
+</p>
+
+
+<p>If your device has a wake-up feature, your function driver has additional power management
+responsibilities beyond the ones we've already discussed. The first additional
+responsibility is to handle the IRP_MN_WAIT_WAKE flavor of IRP_MJ_POWER. Most devices don't need to do any processing in their dispatch functions for
+WAIT_WAKE requests beyond installing a standard I/O completion routine and passing the IRP down
+the driver stack. The bus drivers for the USB and Peripheral Component Interconnect (PCI) bus,
+for example, implement the bus specifications for arming, disarming, and detecting wake-up.
+More explicitly, if your device doesn't have additional features related to device wake-up
+beyond the ones prescribed by the relevant bus specification, you don't need any special
+processing.</p>
+
+<p>You want to fail IRP_MN_QUERY_POWER requests that specify a power state incompatible with
+your wake-up feature. If the query is for a system state, compare the proposed new state with
+the SystemWake field in the device capabilities structure, which gives the lowest system state
+from which your device can wake up the system. If the query is for a device state, compare the
+proposed new state with the DeviceWake field, which gives the lowest device state from which
+your device can issue the wake-up signal. If the result of the comparison shows that the
+proposed power state is too low, fail the query with STATUS_INVALID_DEVICE_STATE. Otherwise,
+process the query in the way I've already discussed.</p>
+
+<p>You need to <i>originate</i> an IRP_MN_WAIT_WAKE at appropriate times. To do this, call
+PoRequestPowerIrp as illustrated by this code fragment:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>typedef struct _DEVICE_EXTENSION {
+  PIRP WaitWakeIrp;
+  };
+
+NTSTATUS SomeFunction(...)
+  {
+  ...
+  POWER_STATE junk;
+  junk.SystemState = pdx-&gt;devcaps.SystemWake;
+  status = PoRequestPowerIrp(pdx-&gt;Pdo, IRP_MN_WAIT_WAKE,
+    junk, (PREQUEST_POWER_COMPLETE) WaitWakeCallback,
+    pdx, &amp;pdx-&gt;WaitWakeIrp);
+  ...
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The last extra responsibility related to wake-up is to cancel the WAIT_WAKE IRP when
+it's no longer needed using code like this:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>PIRP Irp = (PIRP) InterlockedExchangePointer(&amp;pdx-&gt;WaitWakeIrp, NULL);
+if (Irp)
+  IoCancelIrp(Irp);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>For most devices, you need to perform three tasks when the WAIT_WAKE completes. You should
+nullify the member of the device extension structure that points to the active WAIT_WAKE IRP.
+That will prevent some other part of your driver from thinking that the WAIT_WAKE is still
+active. You should initiate a device set-power IRP to restore power to your device. Some
+devices might need to perform some sort of device-specific operation to disarm the device's
+wake-up feature at this point, too. Finally, you might want to automatically reissue a
+WAIT_WAKE so that your device's wake-up feature remains armed for the future. The first of
+these tasks&#8212;nullifying the WAIT_WAKE IRP pointer&#8212;ought to be done in a standard I/O
+completion routine that your dispatch routine installs. The other two tasks&#8212;repowering
+your device and requesting a new WAIT_WAKE IRP&#8212;should be done in the callback routine
+(<b>WaitWakeCallback</b> in my fragment) that you specify in your call to
+PoRequestPowerIrp.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+It looks to me as though it's very difficult to be 100 percent sure that
+you're calling <b>IoCancelIrp</b> for your WAIT_WAKE request with a valid pointer. You
+could decide to cancel the IRP a nanosecond before your I/O completion routine nullifies your
+cached pointer to the IRP. The completion process could run its course, ending with a call to
+IoFreeIrp from inside the Power Manager as soon as your callback routine returns. Thereafter,
+IoCancelIrp or the bus driver's cancel routine could try to work with the now-invalid IRP.
+This is the same &quot;tiger on Main Street&quot; problem that I discussed in <A HREF="ch05a.htm">Chapter 5</A>.
+Between us, I and one of the Microsoft developers who reviewed this code came up with an
+elegant solution that's unfortunately too big to fit in the margin. Please refer to the
+GENERIC sample on the companion disc.</blockquote></div>
+</p>
+
+<A NAME="288"><H3>When to Launch WAIT_WAKE</H3></A>
+
+<p>In the preceding section, I showed you how to launch a WAIT_WAKE IRP, how to cancel one, and
+what to do when one completes. You should be wondering <i>when</i> you should launch this IRP
+in the first place.</p>
+
+<p>The first part of the answer to &quot;when?&quot; is that you need a way to know whether the
+end user wants your device's wake-up feature to be armed. Your driver should arm the
+wake-up feature unless the end user says not to. The end user will interact with some sort of
+user interface element (such as a control panel applet similar to POWCPL.DLL) to indicate
+whether your wake-up feature should be armed when the system powers down. The user interface
+element communicates in turn with your driver, either by using a private IOCTL interface or by
+setting a WMI control. You then remember the arm/disarm setting. At some point in the evolution
+of Windows 2000, user-mode programs will perhaps be able to use the so far unimplemented <b>
+RequestDeviceWakeup</b> and <b>CancelDeviceWakeupRequest</b> APIs to trigger WMI calls to your
+driver.</p>
+
+<p>The second part of the answer concerns when you invoke PoRequestPowerIrp to request the
+WAIT_WAKE. The DDK indicates that you <i>may</i> request a WAIT_WAKE at any time when your
+device is in the D0 state and a device power transition is not in progress. Good times are when
+you're told by the end user to enable your wake-up feature and when you process a system
+power query that will reduce the device power state.</p>
+
+<p>You should disable wake-up (and cancel an outstanding WAIT_WAKE) whenever you're told to
+do so by the end user and also when you process an IRP_MN_STOP_DEVICE request.</p>
+
+<A NAME="289"><H2>Idle Detection</H2></A>
+
+<p>As a general matter, the end user would prefer that your device not draw any power if it
+isn't being used. You can register with the Power Manager to be sent a low-power device IRP
+when your device remains idle for a specified period. The mechanics of the idle detection
+scheme involve two service functions: <b>PoRegisterDeviceForIdleDetection</b> and <b>
+PoSetDeviceBusy</b>.</p>
+
+<p>To register for idle detection, make this service function call:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>pdx-&gt;idlecount = PoRegisterDeviceForIdleDetection(pdx-&gt;Pdo,
+  ulConservationTimeout, ulPerformanceTimeout, PowerDeviceD3);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The first argument to PoRegisterDeviceForIdleDetection is the address of the PDO for your
+device. The second and third arguments specify timeout periods measured in seconds. The
+conservation period will apply when the system is trying to conserve power, such as when
+running on battery power. The performance period will apply when the system is trying to
+maximize performance, such as when running on AC power. The fourth argument specifies the
+device power state into which you want your device to be forced if it's idle for longer
+than whichever of the timeout periods applies.</p>
+
+<A NAME="290"><H3>Indicating That You're Not Idle</H3></A>
+
+<p>The return value from PoRegisterDeviceForIdleDetection is the address of a long integer that
+the system uses as a counter. Every second, the Power Manager increments that integer. If it
+reaches the appropriate timeout value, the Power Manager sends you a device set-power IRP
+indicating the power state you registered. At various places in your driver, you'll reset
+this counter to 0 to restart the idle detection period:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>if (pdx-&gt;idlecount)
+  PoSetDeviceBusy(pdx-&gt;idlecount);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>PoSetDeviceBusy is a macro in the WDM.H header file that uncritically dereferences its
+pointer argument to store a 0. It turns out that PoRegisterDeviceForIdleDetection can return a
+NULL pointer, so you should check for NULL before calling PoSetDeviceBusy.</p>
+
+<p>Now that I've described what PoSetDeviceBusy does, you can see that its name is slightly
+misleading. It doesn't tell the Power Manager that your device is &quot;busy,&quot; in
+which case you'd expect to have to make another call later to indicate that your device is
+no longer &quot;busy.&quot; Rather, it indicates that, at the particular instant you use the
+macro, your device is not idle. I'm not making this point as a mere semantic quibble. If
+your device is busy with some sort of active request, you'll want to have logic that
+forestalls idle detection. So, you might want to call PoSetDeviceBusy from many places in your
+driver: from various dispatch routines, from your <b>StartIo</b> routine, and so on. Basically,
+you want to make sure that the detection period is longer than the longest time that can elapse
+between the calls to PoSetDeviceBusy that you make during the normal processing of a
+request.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+<b>PoRegisterSystemState</b> allows you to prevent the Power Manager from
+changing the system power state, but you can't use it to forestall idle timeouts. Besides,
+it isn't implemented in Windows 98, so calling it is contraindicated for drivers that need
+to be portable between Windows 2000 and Windows 98.</blockquote></div>
+</p>
+
+<A NAME="291"><H3>Choosing Idle Timeouts</H3></A>
+
+<p>Picking the idle timeout values isn't necessarily simple. Certain kinds of devices can
+specify -1 to indicate the standard power policy timeout for their class of device. At the time
+of this writing, only FILE_DEVICE_DISK and FILE_DEVICE_MASS_STORAGE devices are in this
+category. While you'll probably want to have default values for the timeout constants,
+their values should ultimately be under end user control. Underlying the method by which a user
+gives you these values is a tale of considerable complexity.</p>
+
+<p>Unless your device is one for which the system designers planned a generic idle detection
+scheme, you'll need to provide a user-mode component that allows the end user to specify
+timeout values. To fit in best with the rest of the operating system, that piece should be a
+property page extension to the Power control panel applet. That is, you should provide a
+user-mode DLL that implements the <b>IShellPropSheetExt</b> and <b>IShellExtInit</b> COM
+interfaces. This DLL would fit the general description of a shell extension DLL, which is the
+topic you would research if you wanted to learn all the ins and outs of writing this particular
+piece of user interface software.</p>
+
+<p>Learning about COM in general and shell extension DLLs in particular seems to me like a case
+of the tail wagging the dog insofar as driver programming goes. So the WDMIDLE sample on the
+companion disc includes a shell extension DLL (POWCPL.DLL) that you can copy and adapt. If you
+install this sample, you'll start noticing a new property page in the Power Options
+property sheet. See Figure 8-16. POWCPL.DLL uses the user-mode functions we discussed in
+Chapter 2, &quot;<A HREF="ch02a.htm#30">Basic Structure of a WDM Driver</A>,&quot; to enumerate all the devices that have
+registered a GUID_WDMIDLE interface, and it presents their &quot;friendly&quot; names in a list box. It uses a
+private I/O control (IOCTL) scheme&#8212;see Chapter 9, &quot;<A HREF="ch09a.htm#299">Specialized Topics</A>&quot;&#8212; to
+query and alter the idle timeout constants used by WDMIDLE.SYS. Using IOCTLs for this purpose
+gives you a workable scheme for both Windows 2000 and Windows 98. Another possible method uses
+the COM interfaces that are part of WMI. (See Chapter 10, &quot;<A HREF="ch10a.htm#330">Windows Management Instrumentation</A>.&quot;) This method is a great deal more cumbersome and doesn't work in the
+original release of Windows 98, which is why I didn't code POWCPL.DLL to use it.</p>
+
+<p>
+<img src="images/F08wi16.JPG" width=404 height=448 border="0">
+</p><p>
+<!--caption--><b>Figure 8-16.</b> <i>The property page for idle devices.</i><!--/caption-->
+</p>
+
+
+<p>On the driver side of the user interface is a handler for IRP_MJ_DEVICE_CONTROL to answer queries and honor requests to alter power management settings. The end
+user expects that settings, once specified, will remain in effect in subsequent sessions. The
+driver therefore needs to record the current values of the constants in the registry by using
+the functions I discussed in Chapter 3, &quot;<A HREF="ch03a.htm#65">Basic Programming Techniques</A>.&quot; Furthermore,
+at <b>StartDevice</b> time, the driver needs to read those persistent settings from the
+registry to initialize the driver according to the user's expectations.</p>
+
+<p>All of these details, though important to delivering a polished product, are rather
+tangential to the issues of power management that I'm discussing in this chapter, so I
+won't discuss the code here.</p>
+
+<A NAME="292"><H3>Waking Up from an Idle State</H3></A>
+
+<p>If you implement idle detection, you'll also have to provide a way to restore power to
+your device at some later time&#8212;no one else will do it for you. I wrote a function named
+<b>SendDeviceSetPower</b> to deal with this detail. You would have code like this in the
+dispatch function for an IRP that needs power:</p>
+
+
+<table width="95%" cellpadding="5" valign="TOP" border=0>
+<tr><td valign=top>
+<pre>
+
+
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+
+2 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+
+3 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+
+
+4 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+</pre>
+</td>
+<td valign=top>
+<pre>
+NTSTATUS DispatchWrite(IN PDEVICE_OBJECT fdo, IN PIRP Irp)
+  {
+  PDEVICE_EXTENSION pdx = 
+    (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+  if (pdx-&gt;idlecount)
+    PoSetDeviceBusy(pdx-&gt;idlecount);
+
+  if (pdx-&gt;powerstate &gt; PowerDeviceD0)
+    {
+    NTSTATUS status = SendDeviceSetPower(fdo, PowerDeviceD0, FALSE);
+    if (!NT_SUCCESS(status))
+      return CompleteRequest(Irp, status, 0);
+    }
+
+  IoMarkIrpPending(Irp);
+  StartPacket(&amp;pdx-&gt;dqReadWrite, fdo, Irp, OnCancel);
+  return STATUS_PENDING;
+  }</pre>
+</td></tr>
+</table>
+
+
+<ol>
+<p><li> This is the dispatch routine for IRP_MJ_WRITE requests in some driver. At the
+beginning of the routine is one of the places you should call <b>PoSetDeviceBusy</b> to reset
+the idle countdown that's occurring once each second.</li></p>
+
+<p><li> You might have powered down your device after a period of inactivity, or you
+might simply have left it off when the system resumed from standby. Whatever the reason, no one
+else in the system will realize that your device needs power right now, and so you have to
+initiate the power-on sequence.</li></p>
+
+<p><li> If the device set-power request should fail for some reason, you should fail the
+write request.</li></p>
+
+<p><li> The rest of this dispatch routine is the same as I've discussed in earlier
+chapters. We mark the IRP pending, put it into the queue of write requests, and return
+STATUS_PENDING to tell our caller that we didn't finish the IRP in our dispatch
+routine.</li></p>
+</ol>
+
+<p>In general, we get read and write requests in an arbitrary thread context, so we should not
+block that thread. When we power ourselves back on, therefore, we return without waiting for
+the power-up operation to finish. The DEVQUEUE takes care of starting the request when power is
+finally back.</p>
+
+<p>The SendDeviceSetPower helper routine calls PoRequestPowerIrp directly. The resulting device
+IRP gets handled in the same way as we've already discussed.</p>
+
+<A NAME="293"><H2>Using Sequence Numbers to Optimize State Changes</H2></A>
+
+<p>You might want to use an optimization technique in connection with removing and restoring
+power to your device. Two background facts will help you make sense of the optimization
+technique. First, the bus driver doesn't always power down a device even when it receives a
+device set-power IRP. This particular bit of intransigence arises because of the way computers
+are wired together. There might be one or more power channels, and there might be any random
+collection of devices wired to any given channel. These devices are said to share a <i>power
+relation</i>. A particular device can't be powered down unless all the other devices on the
+same power channel are powered down as well. So, to use the macabre example that I sometimes
+give my seminar students, suppose the modem <i>you</i> want to power down happens to share a
+power channel with your computer's heart-lung machine&#8212;the system can't power down
+your modem until the bypass operation is over.</p>
+
+<p>The second background fact is that some devices require a great deal of time to change
+power. To return to the previous example, suppose that your modem were such a device. At some
+point, you received and passed along a device set-power request to put your modem to sleep.
+Unbeknownst to you, however, the bus driver didn't actually power down the modem. When the
+time comes to restore power, you could save some time if you knew that your modem hadn't
+lost power. That's where this particular optimization comes into play.</p>
+
+<p>At the time you remove power, you can create and send a power request with the minor
+function code IRP_MN_POWER_SEQUENCE to the drivers underneath yours. Even though this IRP is
+technically an IRP_MJ_POWER, you use IoAllocateIrp instead of PoRequestPowerIrp to create it.
+You still use PoStartNextPowerIrp and PoCallDriver when you handle it, though. The request
+completes after the bus driver stores three sequence numbers in an array you provide. The
+sequence numbers indicate how many times your device has been put into the D1, D2, and D3
+states. When you're later called upon to restore power, you create and send another
+IRP_MN_POWER_SEQUENCE request to obtain a new set of sequence numbers. If the new set is the same
+as the set you captured at power-down time, you know that no state change has occurred and that
+you can bypass whatever expensive process would be required to restore power.</p>
+
+<p>Since IRP_MN_POWER_SEQUENCE simply optimizes a process that will work without the
+optimization, you needn't use it. Furthermore, the bus driver needn't support it, and
+you shouldn't treat failure of a power-sequence request as indicative of any sort of error.
+The GENERIC sample on disc actually includes code to use the optimization, but I didn't
+want to further complicate the textual discussion of the state machine by showing it here.</p>
+
+</BODY>
+</HTML>
+
+
+
+
+

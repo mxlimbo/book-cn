@@ -1,0 +1,817 @@
+<HTML>
+ <HEAD>
+	<LINK REL=StyleSheet HREF="prowice.css" TYPE="text/css">
+<TITLE>It's Still Windows Programming</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="13"><H1>It's Still Windows Programming</H1></A>
+
+<P>While differences between Windows CE and the other versions of Windows do exist, they shouldn't be overstated. Programming a Windows CE application is programming a Windows application. It has the same message loop, the same windows, and for the most part, the same resources and the same controls. The differences don't hide the similarities. For those who aren't familiar with Windows programming, here's a short introduction.
+
+<P>Windows programming is far different from MS-DOS-based or Unix-based programming. An MS-DOS or Unix program uses <I>getc</I>- and <I>putc</I>-style functions to read characters from the keyboard and write them to the screen whenever the program needs to do so. This is the classic &quot;pull&quot; style used by MS-DOS and Unix programs, which are procedural. A Windows program, on the other hand, uses a &quot;push&quot; model, in which the program must be written to react to notifications from the operating system that a key has been pressed or a command has been received to repaint the screen.
+
+<P>Windows applications don't ask for input from the operating system; the operating system notifies the application that input has occurred. The operating system achieves these notifications by sending <I>messages</I> to an application window. All windows are specific instances of a <I>window class</I>. Before we go any further, let's be sure we understand these terms.
+
+
+<A NAME="14"><H2>The Window Class</H2></A>
+
+<P>A window is a region on the screen, rectangular in all but the most contrived of cases, that has a few basic parameters, such as position&#8212;<I>x</I>, <I>y</I>, and <I>z</I> (a window is over or under other windows on the screen)&#8212;visibility, and hierarchy&#8212;the window fits into a parent/child window relationship on the system <I>desktop</I>, which also happens to be a window.
+
+<P>Every window created is a specific instance of a window class. A window class is a template that defines a number of attributes common to all the windows of that class. In other words, windows of the same class have the same attributes. The most important of the shared attributes is the <I>window procedure</I>.
+
+<A NAME="15"><H3>The window procedure</H3></A>
+
+<P>The behavior of all windows belonging to a class is defined by the code in its window procedure for that class. The window procedure handles all notifications and requests sent to the window. These notifications are sent either by the operating system, indicating that an event has occurred to which the window must respond, or by other windows querying the window for information.
+
+<P>These notifications are sent in the form of messages. A message is nothing more than a call being made to a window procedure, with a parameter indicating the nature of the notification or request. Messages are sent for events such as a window being moved or resized or to indicate a key press. The values used to indicate messages are defined by Windows. Applications use predefined constants, such as WM_CREATE or WM_MOVE, when referring to messages. Since hundreds of messages can be sent, Windows conveniently provides a default processing function to which a message can be passed when no special processing is necessary by the window class for that message.
+
+<A NAME="16"><H3>The life of a message</H3></A>
+
+<P>Stepping back for a moment, let's look at how Windows coordinates all of the messages going to all of the windows in a system. Windows monitors all the sources of input to the system, such as the keyboard, mouse, touch screen, and any other hardware that could produce an event that might interest a window. As an event occurs, a message is composed and directed to a specific window. Instead of Windows directly calling the window procedure, the system imposes an intermediate step. The message is placed in a message queue for the application that owns the window. When the application is prepared to receive the message, it pulls it out of the queue and tells Windows to dispatch that message to the proper window in the application.
+
+<P>If it seems to you that a number of indirections are involved in that process, you're right. Let's break it down.
+
+<OL>
+<P><LI>An event occurs, so a message is composed by Windows and placed in a message queue for the application that owns the destination window. In Windows CE, as in Windows 95 and Windows NT, each application has its own unique message queue<SUP>1</SUP>. (This is a break from Windows 3.1 and earlier versions of Windows, where there was only one, systemwide message queue.) Events can occur, and therefore messages can be composed, faster than an application can process them. The queue allows an application to process messages at its own rate, although the application had better be responsive or the user will see a jerkiness in the application. The message queue also allows Windows to set a notification in motion and continue with other tasks without having to be limited by the responsiveness of the application to which the message is being sent.
+
+<P><LI>The application removes the message from its message queue and calls Windows back to dispatch the message. While it may seem strange that the application gets a message from the queue and then simply calls Windows back to process the message, there's a method to this madness. Having the application pull the message from the queue allows it to preprocess the message before it asks Windows to dispatch the message to the appropriate window. In a number of cases, the application might call different functions in Windows to process specific kinds of messages.
+
+<P><LI>Windows dispatches the message; that is, it calls the appropriate window procedure. Instead of having the application directly call the window procedure, another level of indirection occurs, allowing Windows to coordinate the call to the window procedure with other events in the system. The message doesn't stand in another queue at this point, but Windows might need to make some preparations before calling the window procedure. In any case, the scheme relieves the application of the obligation to determine the proper destination window&#8212;Windows does this instead.
+
+<P><LI>The window procedure processes the message. All window procedures have the same calling parameters: the handle of the specific window instance being called, the message, and two generic parameters that contain data specific to each message type. The window handle differentiates each instance of a window for the window procedure. The message parameter, of course, indicates the event that the window must react to. The two generic parameters contain data specific to the message being sent. For example, in a WM_MOVE message indicating that the window is about to be moved, one of the generic parameters points to a structure containing the new coordinates of the window.
+</OL>
+
+<P><div class="sidebar"><blockquote><ol>
+<p><li>Technically, each thread in a Windows CE application can have a message queue.  I'll talk about threads later in the book.
+</ol></blockquote></div>
+
+<A NAME="17"><H2>Your First Program</H2></A>
+
+<P>Enough small talk. It's time to jump into the first example, Hello Windows CE. While the entire program files for this and all examples in the book are available on the companion CD-ROM, I suggest that, at least in this one case, you avoid simply loading the project file from the CD and instead type in the entire example by hand. By performing this somewhat tedious task, you'll see the differences in the development process as well as the subtle program differences between standard Win32 programs and Windows CE programs. Figure 1-1 contains the complete source for HelloCE, my version of a hello, world program.
+
+<P><B>Figure 1-1.</B> <I>The HelloCE program.</I>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><td>
+<A NAME="18"><H3>HelloCE.h</H3></A>
+<p><pre>
+//======================================================================
+// Header file
+//
+
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//
+//================================================================
+// Returns number of elements
+#define dim(x) (sizeof(x) / sizeof(x[0])) 
+
+//----------------------------------------------------------------------
+// Generic defines and data types
+//
+struct decodeUINT {                            // Structure associates
+    UINT Code;                                 // messages 
+                                               // with a function. 
+    LRESULT (*Fxn)(HWND, UINT, WPARAM, LPARAM);
+}; 
+struct decodeCMD {                             // Structure associates
+    UINT Code;                                 // menu IDs with a 
+    LRESULT (*Fxn)(HWND, WORD, HWND, WORD);    // function
+};
+
+//----------------------------------------------------------------------
+// Generic defines used by application
+#define  IDC_CMDBAR 1                          // Command bar ID
+
+//----------------------------------------------------------------------
+// Function prototypes
+//
+int InitApp (HINSTANCE);
+HWND InitInstance (HINSTANCE, LPWSTR, int);
+int TermInstance (HINSTANCE, int);
+
+// Window procedures
+LRESULT CALLBACK MainWndProc (HWND, UINT, WPARAM, LPARAM);
+
+// Message handlers
+LRESULT DoCreateMain (HWND, UINT, WPARAM, LPARAM);
+LRESULT DoPaintMain (HWND, UINT, WPARAM, LPARAM);
+LRESULT DoHibernateMain (HWND, UINT, WPARAM, LPARAM);
+LRESULT DoActivateMain (HWND, UINT, WPARAM, LPARAM);
+LRESULT DoDestroyMain (HWND, UINT, WPARAM, LPARAM);
+</pre>
+</td></tr></table>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><td>
+<A NAME="19"><H3>HelloCE.c</H3></A>
+<p><pre>
+//======================================================================
+// HelloCE - A simple application for Windows CE
+//
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//
+//======================================================================
+#include &lt;windows.h&gt;                 // For all that Windows stuff
+#include &lt;commctrl.h&gt;                // command bar includes
+#include &quot;helloce.h&quot;                 // Program-specific stuff
+
+//----------------------------------------------------------------------
+// Global data
+//
+const TCHAR szAppName[] = TEXT(&quot;HelloCE&quot;);
+HINSTANCE hInst;                     // Program instance handle
+
+// Message dispatch table for MainWindowProc
+const struct decodeUINT MainMessages[] = {
+    WM_CREATE, DoCreateMain,
+    WM_PAINT, DoPaintMain,
+    WM_HIBERNATE, DoHibernateMain,
+    WM_ACTIVATE, DoActivateMain,
+    WM_DESTROY, DoDestroyMain,
+};
+
+//======================================================================
+//
+// Program entry point
+//
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    LPWSTR lpCmdLine, int nCmdShow) {
+    MSG msg;
+    int rc = 0;
+    HWND hwndMain;
+
+    // Initialize application.
+    rc = InitApp (hInstance);
+    if (rc) return rc;
+
+    // Initialize this instance.
+    hwndMain = InitInstance (hInstance, lpCmdLine, nCmdShow);
+    if (hwndMain == 0)
+        return 0x10;
+
+    // Application message loop
+    while (GetMessage (&amp;msg, NULL, 0, 0)) {
+        TranslateMessage (&amp;msg);
+        DispatchMessage (&amp;msg);
+    }
+    // Instance cleanup
+    return TermInstance (hInstance, msg.wParam);
+
+}
+//---------------------------------------------------------------
+// InitApp - Application initialization
+//
+int InitApp (HINSTANCE hInstance) {
+    WNDCLASS wc;
+
+    // Register application main window class.
+    wc.style = 0;                             // Window style
+    wc.lpfnWndProc = MainWndProc;             // Callback function
+    wc.cbClsExtra = 0;                        // Extra class data
+    wc.cbWndExtra = 0;                        // Extra window data
+    wc.hInstance = hInstance;                 // Owner handle
+    wc.hIcon = NULL,                          // Application icon
+    wc.hCursor = NULL;                        // Default cursor
+    wc.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH);
+    wc.lpszMenuName =  NULL;                  // Menu name
+    wc.lpszClassName = szAppName;             // Window class name
+
+    if (RegisterClass (&amp;wc) == 0) return 1;
+
+    return 0;
+}
+//------------------------------------------------------------------
+// InitInstance - Instance initialization
+//
+HWND InitInstance (HINSTANCE hInstance, LPWSTR lpCmdLine, int nCmdShow) {
+    HWND hWnd;
+
+    // Save program instance handle in global variable.
+    hInst = hInstance;
+
+    // Create main window.
+    hWnd = CreateWindow (szAppName,           // Window class
+                         TEXT(&quot;Hello&quot;),       // Window title
+                         WS_VISIBLE,          // Style flags
+                         CW_USEDEFAULT,       // x position
+                         CW_USEDEFAULT,       // y position
+                         CW_USEDEFAULT,       // Initial width
+                         CW_USEDEFAULT,       // Initial height
+                         NULL,                // Parent
+                         NULL,                // Menu, must be null
+                         hInstance,           // Application instance
+                         NULL);               // Pointer to create
+                                              // parameters
+    // Return fail code if window not created.
+    if (!IsWindow (hWnd)) return 0;
+
+    // Standard show and update calls
+    ShowWindow (hWnd, nCmdShow);
+    UpdateWindow (hWnd);
+    return hWnd;
+}
+//----------------------------------------------------------------------
+// TermInstance - Program cleanup
+//
+int TermInstance (HINSTANCE hInstance, int nDefRC) {
+
+    return nDefRC;
+}
+//======================================================================
+// Message handling procedures for main window
+//
+
+//----------------------------------------------------------------------
+// MainWndProc - Callback function for application window
+//
+LRESULT CALLBACK MainWndProc (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                              LPARAM lParam) {
+    INT i;
+    //
+    // Search message list to see if we need to handle this
+    // message.  If in list, call procedure.
+    //
+    for (i = 0; i &lt; dim(MainMessages); i++) {
+        if (wMsg == MainMessages[i].Code)
+            return (*MainMessages[i].Fxn)(hWnd, wMsg, wParam, lParam);
+    }
+    return DefWindowProc (hWnd, wMsg, wParam, lParam);
+}
+//----------------------------------------------------------------------
+// DoCreateMain - Process WM_CREATE message for window.
+//
+LRESULT DoCreateMain (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                      LPARAM lParam) {
+    HWND hwndCB;
+
+    // Create a command bar.
+    hwndCB = CommandBar_Create (hInst, hWnd, IDC_CMDBAR);
+
+    // Add exit button to command bar. 
+    CommandBar_AddAdornments (hwndCB, 0, 0);
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoPaintMain - Process WM_PAINT message for window.
+//
+LRESULT DoPaintMain (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                     LPARAM lParam) {
+    PAINTSTRUCT ps;
+    RECT rect;
+    HDC hdc;
+
+    // Adjust the size of the client rectangle to take into account
+    // the command bar height.
+    GetClientRect (hWnd, &amp;rect);
+    rect.top += CommandBar_Height (GetDlgItem (hWnd, IDC_CMDBAR));
+
+    hdc = BeginPaint (hWnd, &amp;ps); 
+    DrawText (hdc, TEXT (&quot;Hello Windows CE!&quot;), -1, &amp;rect, 
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+    EndPaint (hWnd, &amp;ps); 
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoHibernateMain - Process WM_HIBERNATE message for window.
+//
+LRESULT DoHibernateMain (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                         LPARAM lParam) {
+
+    // If not the active window, nuke the command bar to save memory.
+    if (GetActiveWindow() != hWnd)
+        CommandBar_Destroy (GetDlgItem (hWnd, IDC_CMDBAR));
+
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoActivateMain - Process WM_ACTIVATE message for window.
+//
+LRESULT DoActivateMain (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                        LPARAM lParam) {
+    HWND hwndCB;
+    // If activating and no command bar, create it.
+    if ((LOWORD (wParam) != WA_INACTIVE) &amp;&amp;
+        (GetDlgItem (hWnd, IDC_CMDBAR) == 0)) {
+
+        // Create a command bar.
+        hwndCB = CommandBar_Create (hInst, hWnd, IDC_CMDBAR);
+
+        // Add exit button to command bar.
+        CommandBar_AddAdornments (hwndCB, 0, 0);
+    }
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoDestroyMain - Process WM_DESTROY message for window.
+//
+LRESULT DoDestroyMain (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                       LPARAM lParam) {
+    PostQuitMessage (0);
+    return 0;
+}
+</pre>
+</td></tr></table>
+
+
+<p>If you look over the source code for HelloCE, you'll see the standard boilerplate for all programs in this book. I'll talk at greater length about a few of the characteristics, such as Hungarian notation and the somewhat different method I use to construct my window procedures later, in their own sections, but at this point I'll make just a few observations about them.
+
+<p>Just after the comments, you see the include of windows.h. You can find this file in all Windows programs; it lists the definitions for the special variable types and function defines needed for a typical program. Windows.h and the include files it contains make an interesting read because the basics for all windows programs come from the functions, typedefs, and structures defined there. The include of commctrl.h provides, among other things, the definitions for the command bar functions that are part of almost all Windows CE programs. Finally, the include of HelloCE.h gives you the boilerplate definitions and function prototypes for this specific program.
+
+<p>A few variables defined globally follow the defines and includes. I know plenty of good arguments why no global variables should appear in a program, but I use them as a convenience that shortens and clarifies the example programs in the book. Each program defines an <I>szAppName</I> Unicode string to be used in various places in that program. I also use the <I>hInst</I> variable a number of places and I'll mention it when I cover the <I>InitApp</I> procedure. The final global structure is a list of messages along with associated procedures to process the messages. This structure is used by the window procedure to associate messages with the procedure that handles them. Now, on to a few other characteristics common to all the programs in this book.
+
+<A NAME="20"><H2>Hungarian Notation</H2></A>
+
+<P>A tradition, and a good one, of almost all Windows programs since Charles Petzold wrote <I>Programming Windows</I> is Hungarian notation. This programming style, developed years ago by Charles Simonyi at Microsoft, prefixes all variables in the program usually with one or two letters indicating the variable type. For example, a string array called <I>Name</I> would instead be called <I>szName</I>, with the <I>sz</I> prefix indicating that the variable type is a zero-terminated string. The value of Hungarian notation is the dramatic improvement in readability of the source code. Another programmer, or you after not looking at a piece of code for a while, won't have to look repeatedly at a variable's declaration to determine its type. The following are typical Hungarian prefixes for variables:
+
+<P>
+<TABLE cellpadding=5 width="95%">
+<tr>
+<td valign="top">
+<b><I>Variable Type</I></b>
+</td>
+<td valign="top">
+<b><I>Hungarian Prefix</I></b>
+</td>
+</tr>
+<tr>
+<td valign="top">
+Integer
+</td>
+<td valign="top">
+<I>i</I> or <I>n</I>
+</td>
+</tr>
+<tr>
+<td valign="top">
+Word (16-bit)
+</td>
+<td valign="top">
+<I>w</I> or <I>s</I>
+</td>
+</tr>
+<tr>
+<td valign="top">
+Double word (32-bit unsigned)
+</td>
+<td valign="top">
+<I>dw</I>
+</td>
+</tr>
+<tr>
+<td valign="top">
+Long (32-bit signed)
+</td>
+<td valign="top">
+<I>l</I>
+</td>
+</tr>
+<tr>
+<td valign="top">
+Char
+</td>
+<td valign="top">
+<I>c</I>
+</td>
+</tr>
+<tr>
+<td valign="top">
+String
+</td>
+<td valign="top">
+<I>sz</I>
+</td>
+</tr>
+<tr>
+<td valign="top">
+Pointer
+</td>
+<td valign="top">
+<I>p</I>
+</td>
+</tr>
+<tr>
+<td valign="top">
+Long pointer
+</td>
+<td valign="top">
+<I>lp</I>
+</td>
+</tr>
+<tr>
+<td valign="top">
+Handle
+</td>
+<td valign="top">
+<I>h</I>
+</td>
+</tr>
+<tr>
+<td valign="top">
+Window handle
+</td>
+<td valign="top">
+<I>hwnd</I>
+</td>
+</tr>
+<tr>
+<td valign="top">
+Struct size
+</td>
+<td valign="top">
+<I>cb</I>
+</td>
+</tr>
+</table>
+
+
+<P>You can see a few vestiges of the early days of Windows. The <I>lp</I>, or long pointer, designation refers to the days when, in the Intel 16-bit programming model, pointers were either short (a 16-bit offset) or long (a segment plus an offset). Other prefixes are formed from the abbreviation of the type. For example, a handle to a brush is typically specified as <I>hbr</I>. Prefixes can be combined, as in <I>lpsz</I>, which designates a long pointer to a zero-terminated string. Most of the structures defined in the Windows API use Hungarian notation in their field names. I use this notation as well throughout the book, and I encourage you to use this notation in your programs.
+
+<A NAME="21"><H2>My Programming Style </H2></A>
+
+<P>One criticism of the typical SDK style of Windows programming has always been the huge <I>switch</I> statement in the window procedure. The <I>switch</I> statement parses the message to the window procedure so that each message can be handled independently. This standard structure has the one great advantage of enforcing a similar structure across almost all Windows applications, making it much easier for one programmer to understand the workings of another programmer's code. The disadvantage is that all the variables for the entire window procedure typically appear jumbled at the top of the procedure.
+
+<P>Over the years, I've developed a different style for my Windows programs. The idea is to break up the <I>WinMain</I> and <I>WinProc</I> procedures into manageable units that can be easily understood and easily transferred to other Windows programs. <I>WinMain</I> is broken up into procedures that perform application initialization, instance initialization, and instance termination. Also in <I>WinMain</I> is the ubiquitous message loop that's the core of all Windows programs.
+
+<P>I break the window procedure into individual procedures, with each handling a specific message. What remains of the window procedure itself is a fragment of code that simply looks up the message that's being passed to see whether a procedure has been written to handle that message. If so, that procedure is called. If not, the message is passed to the default window procedure.
+
+<P>This structure divides the handling of messages into individual blocks that can be more easily understood. Also, with greater isolation of one message-handling code fragment from another, you can more easily transfer the code that handles a specific message from one program to the next. I first saw this structure described a number of years ago by Ray Duncan in one of his old &quot;Power Programming&quot; columns in <I>PC Magazine</I>. Ray is one of the legends in the field of MS-DOS and OS/2 programming. I've since modified the design a bit to fit my needs, but Ray should get the credit for this program structure.
+
+<A NAME="22"><H2>Building HelloCE</H2></A>
+
+<P>To create HelloCE from scratch on your system, start Microsoft Visual C++ and create a new Win32 application. The first change from standard Win32 programming becomes evident when you create the new project. You'll have the opportunity to select a new platform specific to Windows CE, as shown in Figure 1-2. These platforms have a WCE prefix followed by the target CPU. For example, selecting Win32 (WCE MIPS) enables compiling to a Windows CE platform with a MIPS CPU. No matter what target device you have, be sure to check the WCE x86em target. This allows you to run the sample program in the emulator under Windows NT.
+
+<P><A HREF="javascript:fullSize('f01rg02x.htm')"> <img src="f01rg02.jpg" width=404 height=262 border="0" ALT="Click to view at full size."></a>
+<P><!-- caption --><B>Figure 1-2.</B> <I>The Platforms list box allows Visual C++ 5.0 to target Windows CE platforms.</I><!-- /caption -->
+
+<P>After you have created the proper source files for HelloCE or copied them from the CD, select the target Win32 (WCE x86em) Debug and then build the program. This step compiles the source and, assuming you have no compile errors, automatically launches the emulator and inserts the EXE into the emulator file system; you can then launch HelloCE. If you're running Windows 95 or Windows 98, the system displays an error message because the emulator runs only under Windows NT.
+
+<P>If you have a Windows CE system available, such as an H/PC, attach the H/PC to the PC the same way you would to sync the contents of the H/PC with the PC. Open the Mobile Devices folder and establish a connection between the H/PC and the PC. While it's not strictly necessary to have the Mobile Devices connection to your Windows CE device running because the SDK tools inside Visual C++ are supposed to make this connection automatically, I've found that having it running makes for a more stable connection between the development environment and the Windows CE system.
+
+<P>Once the link between the PC and the Windows CE device is up and running, switch back to Visual C++, select the compile target appropriate for the target device (for example, Win32 [WCE SH] Debug for an HP 360 HPC), and rebuild. As in the case of building for the emulator, if there are no errors Visual C++ automatically downloads the compiled program to the remote device. The program is placed in the root directory of the object store.
+
+<A NAME="23"><H3>Running the program</H3></A>
+
+<P>To run HelloCE on an H/PC, simply click on the My Handheld PC icon to bring up the files in the root directory. At that point, a double-tap on the application's icon launches the program.
+
+<P>Running the program on a Palm-size PC is somewhat more complex. Because the Palm-size PC doesn't come with an Explorer program that allows users to browse through the files on the system, you can't launch HelloCE without a bit of preparatory work. You can launch the program from Visual C++ by selecting Execute from the Build menu. Or you can have Visual C++ automatically copy the executable file into the \windows\start menu\programs directory of the Palm-size PC. This automatically places the program in the Programs submenu under the Start menu. You can tell Visual C++ to automatically copy the file by setting the remote target path in the Debug tab of the Project Settings dialog box. Figure 1-3 shows this dialog box. When you've set this path, you can easily start the program by selecting it in the Start menu.
+
+<P><A HREF="javascript:fullSize('f01rg03x.htm')"> <img src="f01rg03.jpg" width=404 height=266 border="0" ALT="Click to view at full size."></a>
+<P><!-- caption --><B>Figure 1-3.</B> <I>The Project Settings dialog box in Visual C++ with the Debug tab selected.</I><!-- /caption -->
+
+<p>One &quot;gotcha&quot; to look out for here. If you're debugging and recompiling the program, it can't be downloaded again if an earlier version of the program is still running on the target system. That is, make sure HelloCE isn't running on the remote system when you start a new build in Visual C++ or the auto download part of the compile process will fail. If this happens, close the application and choose the Update Remote File menu command in Visual C++ to download the newly compiled file.
+
+<P>Palm-size PC users will notice that unlike almost all Palm-size PC programs, HelloCE has a Close button in the upper right corner of the window. By convention, the user doesn't close Palm-size PC applications; they're closed only when the system needs more memory space. The lack of a Close button in Palm-size PC applications is only a user interface guideline, not a lack of function of the version of Windows CE in the Palm-size PC. For development, you might want to keep a Close button in your application because you'll need to close the program to download a new version. You can then remove the Close button before you ship your application.
+
+<P>If you don't have access to an H/PC or if you want to check out Windows CE programming without the hassle of connecting to a remote device, the emulation environment is a great place to start. It's the perfect place for stepping though the code just as you would were you debugging a standard PC-based Windows program. You can set breakpoints and step though code running on a remote system, but the slow nature of the serial link as well as the difficulty in single-stepping a program on the remote system make debugging on the emulator much less painful. On the other hand, debugging on the remote system is the only way to truly test your program. While the emulator is a good first step in the debug process, nothing replaces testing on the target system.
+
+<A NAME="24"><H3>The code</H3></A>
+
+<P>Now that you have the program up and running either in the emulator or on a Windows CE device, it's time to look at the code itself. The program entry point, <I>WinMain</I>, is the same place any Windows program begins. Under Windows CE, however, some of the parameters for <I>WinMain </I>have limits to the allowable values. <I>WinMain</I> is defined as the following:
+
+<p><pre>
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    LPWSTR lpCmdLine, int nCmdShow);
+</pre>					
+
+<P>The first of the four parameters passed, <I>hInstance,</I> identifies the specific instance of the program to other applications and to Windows API functions that need to identify the EXE. The <I>hPrevInstance</I> parameter is left over from the old Win16 API (Windows 3.1 and earlier). In those versions of Windows, the <I>hPrevInstance</I> parameter was nonzero if there were any other instances of the program currently running. In all Win32 operating systems, including Windows CE, the <I>hPrevInstance</I> is always 0 and can be ignored.
+
+<P>The <I>lCmdLine</I> parameter points to a Unicode string that contains the text of the command line. Applications launched from Microsoft Windows Explorer usually have no command line parameters. But in some instances, such as when the system automatically launches a program, the system includes a command line parameter to indicate why the program was started. The <I>lCmdLine </I>parameter provides us with one of the first instances in which Windows CE differs from Windows NT or Windows 98. Under Windows CE, the command line string is a Unicode string. In Windows NT and Windows 98, the string is always ASCII.
+
+<P>The final parameter, <I>nShowCmd,</I> specifies the initial state of the program's main window. In a standard Win32 program, this parameter might specify that the window be initially displayed as an icon (SW_SHOWMINIMIZE), maximized (SW_SHOWMAXIMIZED) to cover the entire desktop, or normal (SW_RESTORE), indicating that the window is placed on the screen in the standard resizable state. Other values specify that the initial state of the window should be invisible to the user or that the window be visible but incapable of becoming the active window. Under Windows CE, the values for this parameter are limited to only three allowable states: normal (SW_SHOW), hidden (SW_HIDE), or show without activate (SW_SHOWNOACTIVATE). Unless an application needs to force its window to a predefined state, this parameter is simply passed without modification to the <I>ShowWindow</I> function after the program's main window has been created.
+
+<p>On entry into <I>WinMain</I>, a call is made to <I>InitApp</I>, where the window class for the main window is registered. After that, a call to <I>InitInstance</I> is made; the main window is created in this function. I'll talk about how these two routines operate shortly, but for now I'll continue with <I>WinMain,</I> proceeding on the assumption that at the return from <I>InitInstance</I> the program's main window has been created.
+
+<A NAME="25"><H3>The message loop</H3></A>
+
+<P>After the main window has been created, <I>WinMain</I> enters the message loop, which is the heart of every Windows application. HelloCE's message loop is shown here:
+
+<P><pre>
+while (GetMessage (&amp;msg, NULL, 0, 0)) {
+    TranslateMessage (&amp;msg);
+    DispatchMessage (&amp;msg);
+}
+</pre>
+
+<p>The loop is simple: <I>GetMessage</I> is called to get the next message in the application's message queue. If no message is available, the call waits, blocking that application's thread until one is available. When a message is available, the call returns with the message data contained in a MSG structure. The MSG structure itself contains fields that identify the message, provide any message-specific parameters, and identify the last point on the screen touched by the pen before the message was sent. This location information is different from the standard Win32 message point data in that in Windows 9<I>x</I> or Windows NT the point returned is the current mouse position instead of the last point clicked (or tapped, as in Windows CE).
+
+<P>The <I>TranslateMessage</I> function translates each key-up or key-down message into a character message. (I'll talk about others of these filter type messages, such as <I>IsDialogMsg,</I> later.) The <I>DispatchMessage</I> function then tells Windows to forward the message to the appropriate window in the application.
+
+<P>This <I>GetMessage</I>, <I>TranslateMessage</I>, <I>DispatchMessage</I> loop continues until <I>GetMessage</I> receives a WM_QUIT message which, unlike all other messages causes <I>GetMessage</I> to return 0. As can be seen from the <I>while</I> clause, a return value of 0 by <I>GetMessage</I> causes the loop to terminate.
+
+<P>After the message loop terminates, the program can do little else but clean up and exit. In the case of HelloCE, the program calls <I>TermInstance</I> to perform any necessary cleanup. HelloCE is a simple program and no cleanup is required. In more complex programs, <I>TermInstance</I> would free any system resources that aren't automatically freed when the program terminates.
+
+<P>The value returned by <I>WinMain</I> becomes the return code of the program. Traditionally, the return value is the value in the <I>wParam</I> parameter of the last message (WM_QUIT). The <I>wParam</I> value of WM_QUIT is set when that message is sent in response to a <I>PostQuitMessage</I> call made by the application.
+
+<A NAME="26"><H3><I>InitApp</I></H3></A>
+
+<P>The goal of <I>InitApp</I> is to perform global initialization for all instances of the application that might run. In practice, <I>InitApp</I> is a holdover from Win16 days when window classes were registered on an applicationwide basis instead of for every instance, as is done under Win32. Still, having a place for global initialization can have its uses in some applications. For a program as simple as HelloCE, the entire task of <I>InitApp</I> can be reduced to registering the application's main window class. The entire procedure is listed below:
+
+<p><pre>
+int InitApp (HINSTANCE hInstance) {
+    WNDCLASS wc;
+
+    // Register App Main Window class.
+    wc.style = 0;                      // Class style flags
+    wc.lpfnWndProc = MainWndProc;      // Callback function
+    wc.cbClsExtra = 0;                 // Extra class data
+    wc.cbWndExtra = 0;                 // Extra window data
+    wc.hInstance = hInstance;          // Owner handle
+    wc.hIcon = NULL;                   // Application icon 
+    wc.hCursor = NULL;                 // Default cursor 
+    wc.hbrBackground = (HBRUSH) = GetStockObject (WHITE_BRUSH);
+    wc.lpszMenuName =  NULL;           // Must be NULL 
+    wc.lpszClassName = szAppName;      // Class name
+
+    if (RegisterClass (&amp;wc) == 0) return 1;
+
+    return 0;
+}
+</pre>
+
+<P>Registering a window class is simply a matter of filling out a rather extensive structure describing the class and calling the <I>RegisterClass</I> function. The parameters assigned to the fields of the WNDCLASS structure define how all instances of the main window for HelloCE will behave. The initial field, <I>style</I>, sets the class style for the window. In Windows CE the class styles are limited to the following:
+
+<UL>
+<P><LI>CS_GLOBALCLASS indicates that the class is global. This flag is provided only for compatibility because all window classes in Windows CE are process global.
+<P><LI>CS_HREDRAW tells the system to force a repaint of the window if the window is sized horizontally.
+<P><LI>CS_VREDRAW tells the system to force a repaint of the window if the window is sized vertically.
+<P><LI>CS_NOCLOSE disables the Close button if one is present on the title bar.
+<P><LI>CS_PARENTDC causes a window to use its parent's device context.
+<P><LI>CS_DBLCLKS enables notification of double-clicks (double-taps under Windows CE) to be passed to the parent window.
+</UL>
+
+<P>The <I>lpfnWndProc</I> field should be loaded with the address of the window's window procedure. Because this field is typed as a pointer to a window procedure, the declaration to the procedure must be defined in the source code before the field is set. Otherwise, the compiler's type-checker will flag this line with a warning.
+
+<P>The <I>cbClsExtra</I> field allows the programmer to add extra space in the class structure to store class-specific data known only to the application. The <I>cbWndExtra</I> field is much handier. This field adds space to the Windows internal structure responsible for maintaining the state of each instance of a window. Instead of storing large amounts of data in the window structure itself, an application should store a pointer to an application-specific structure that contains the data unique to each instance of the window. Under Windows CE, both the <I>cbClsExtra</I> and <I>cbWndExtra</I> fields must be multiples of 4 bytes.
+
+<P>The <I>hInstance</I> field must be filled with the program's instance handle, which specifies the owning process of the window. The <I>hIcon</I> field is set to the handle of the window's default icon. The <I>hIcon</I> field isn't supported under Windows CE and should be set to NULL. (In Windows CE, the icon for the class is set after the first window of this class is created. For HelloCE, however, no icon is supplied and unlike other versions of Windows, Windows CE doesn't have any predefined icons that can be loaded.)
+
+<P>Unless the application being developed is designed for a Windows CE system with a mouse, the next field, <I>hCursor</I>, must be set to NULL. Almost all Windows CE systems use a touch panel instead of a mouse, so you find no cursor support in those systems. For those special systems that do have cursor support, the Windows CE doesn't support animated cursors or colored cursors.
+
+<P>The <I>hbrBackground</I> field specifies how Windows CE draws the background of the window. Windows uses the <I>brush</I>, a small predefined array of pixels, specified in this field to draw the background of the window. Windows CE provides a number of predefined brushes that you can load using the <I>GetStockObject</I> function. If the <I>hbrBackground</I> field is NULL, the window must handle the WM_ERASEBKGND message sent to the window telling it to redraw the background of the window.
+
+<P>The <I>lpszMenuName</I> field must be set to NULL because Windows CE doesn't support windows directly having a menu. In Windows CE, menus are provided by command bar or command band controls that can be created by the main window.
+
+<P>Finally the <I>lpszClassName</I> parameter is set to a programmer-defined string that identifies the class name to Windows. HelloCE uses the <I>szAppName</I> string, which is defined globally.
+
+<P>After the entire WNDCLASS structure has been filled out, the <I>RegisterClass</I> function is called with a pointer to the WNDCLASS structure as its only parameter. If the function is successful, a value identifying the window class is returned. If the function fails, the function returns 0.
+
+<A NAME="27"><H3><I>InitInstance</I></H3></A>
+
+<P>The main task of <I>InitInstance</I> is to create the application's main window and display it in the form specified in the <I>nShowCmd</I> parameter passed to <I>WinMain</I>. The code for <I>InitInstance</I> is shown below:
+
+<p><pre>
+HWND InitInstance (HINSTANCE hInstance, LPWSTR lpCmdLine, int nCmdShow) {
+    HWND hWnd;
+    HICON hIcon;
+
+    // Save program instance handle in global variable.
+    hInst = hInstance;
+
+    // Create main window.
+    hWnd = CreateWindow (szAppName,           // Window class
+                         TEXT(&quot;Hello&quot;),       // Window title
+                         WS_VISIBLE,          // Style flags
+                         0, 0,                // x, y position
+                         CW_USEDEFAULT,       // Initial width
+                         CW_USEDEFAULT,       // Initial height
+                         NULL,                // Parent                
+                         NULL,                // Menu, must be null
+                         hInstance,           // App instance
+                         NULL);               // Ptr to create params
+    // Return fail code if window not created.
+    if (!IsWindow (hWnd)) return 0;
+
+    // Standard show and update calls
+    ShowWindow (hWnd, nCmdShow);
+    UpdateWindow (hWnd);
+
+    return hWnd;
+}
+</pre>
+
+<p>The first task performed by <I>InitInstance</I> is to save the program's instance handle <I>hInstance</I> in a global variable named <I>hInst</I>. The instance handle for a program is useful at a number of points in a Windows application. I save the value here because the instance handle is known, and this is a convenient place in the program to store it.
+
+<p>All Windows programmers learn early in their Windows programming lives the <I>CreateWindow</I> function call. Although the number of parameters looks daunting, the parameters are fairly logical once you learn them. The first parameter is the name of the window class of which our window will be an instance. In the case of HelloCE, the class name is a string constant, <I>szAppName,</I> which was also used in the WNDCLASS structure.
+
+<p>The next field is referred to as the <I>window text</I>. In other versions of Windows, this is the text that would appear on the title bar of a standard window. However, since Windows CE main windows rarely have title bars, this text is used only on the taskbar button for the window. The text is couched in a TEXT macro, which insures that the string will be converted to Unicode under Windows CE.
+
+<P>The style flags specify the initial styles for the window. The style flags are used both for general styles that are relevant to all windows in the system and for class-specific styles, such as those that specify the style of a button or a list box. In this case, all we need to specify is that the window be created initially visible with the WS_VISIBLE flag. Experienced Win32 programmers should refer to the documentation for <I>CreateWindow</I> because there are a number of window style flags that aren't supported under Windows CE.
+
+<P>The next four fields specify the initial position and size of the window. Since most applications under Windows CE are maximized (that is, they take up the entire screen above the taskbar), the size and position fields are set to default values, which are indicated by the CW_USEDEFAULT flag in each of the fields. The default value settings create a window that's maximized under the current versions of Windows CE but also compatible with future versions of the operating system, which might not maximize every window. Be careful not to assume any particular screen size for a Windows CE device because different implementations have different screen sizes.
+
+<P>The next field is set to the handle of the parent window. Because this is the top-level window, the parent window field is set to NULL. The menu field is also set to NULL because Windows CE supports menus through the command bar and command bands controls.
+
+<P>The <I>hInstance</I> parameter is the same instance handle that was passed to the program. Creating windows is one place where that instance handle, saved at the start of the routine, comes in handy. The final parameter is a pointer that can be used to pass data from the <I>CreateWindow</I> call to the window procedure during the WM_CREATE message. In this example, no additional data needs to be passed, so the parameter is set to NULL.
+
+<P>If successful, the <I>CreateWindow</I> call returns the handle to the window just created, or it returns 0 if an error occurred during the function. That window handle is then used in the two statements (<I>ShowWindow</I> and <I>UpdateWindow</I>) just after the error-checking <I>if</I> statement. The <I>ShowWindow</I> function modifies the state of the window to conform with the state given in the <I>nCmdShow</I> parameter passed to <I>WinMain</I>. The <I>UpdateWindow</I> function forces Windows to send a WM_PAINT message to the window that has just been created.
+
+<P>That completes the <I>InitApp</I> function. At this point, the application's main window has been created and updated. So even before we have entered the message loop, messages have been sent to the main window's window procedure. It's about time to look at this part of the program.
+
+<A NAME="28"><H3><I>MainWndProc</I></H3></A>
+
+<P>You spend most of your programming time with the window procedure when you're writing a Windows program. <I>WinMain</I> contains mainly initialization and cleanup code that, for the most part, is boilerplate. The window procedure, on the other hand, is the core of the program, the place where the actions of the program's windows create the personality of the program.
+
+<p><pre>
+LRESULT CALLBACK MainWndProc(HWND hWnd, UINT wMsg, WPARAM wParam, 
+                             LPARAM lParam) {
+    INT i;
+    //
+    // Search message list to see if we need to handle this
+    // message.  If in list, call procedure.
+    //
+    for (i = 0; i &lt; dim(MainMessages); i++) {
+        if (wMsg == MainMessages[i].Code)
+            return (*MainMessages[i].Fxn)(hWnd, wMsg, wParam, lParam);
+    }
+    return DefWindowProc(hWnd, wMsg, wParam, lParam);
+}
+</pre>
+
+<P>All window procedures, regardless of their window class, are declared with the same parameters. The LRESULT return type is actually just a long (a <I>long</I> is a 32-bit value under Windows) but is typed this way to provide a level of indirection between the source code and the machine. While you can easily look into the include files to determine the real type of variables that are used in Windows programming, this can cause problems when you're attempting to move your code across platforms. Though it can be useful to know the size of a variable type for memory-use calculations, there is no good reason, and there are plenty of bad ones, not to use the type definitions provided by windows.h.
+
+<P>The CALLBACK type definition specifies that this function is an external entry point into the EXE, necessary because Windows calls this procedure directly, and that the parameters will be put in a Pascal-like right-to-left push onto the program stack, which is the reverse of the standard C-language method. The reason for using the Pascal language stack frame for external entry points goes back to the very earliest days of Windows development. The use of a fixed-size, Pascal stack frame meant that the called procedure cleaned up the stack instead of leaving it for the caller to do. This reduced the code size of Windows and its bundled accessory programs sufficiently so that the early Microsoft developers thought it was a good move.
+
+<P>The first of the parameters passed to the window procedure is the window handle, which is useful when you need to define the specific instance of the window. The <I>wMsg</I> parameter indicates the message being sent to the window. This isn't the MSG structure used in the message loop in <I>WinMain</I>, but a simple, unsigned integer containing the message value. The remaining two parameters, <I>wParam</I> and <I>lParam</I>, are used to pass message-specific data to the window procedure. The names <I>wParam</I> and <I>lParam</I> come to us from the Win16 days, when the <I>wParam</I> was a 16-bit value and <I>lParam</I> was a 32-bit value. In Windows CE, as in other Win32 operating systems, both the <I>wParam</I> and <I>lParam</I> parameters are 32 bits wide.
+
+<p>It's in the window procedure that my programming style differs significantly from most Windows programs written without the help of a class library such as MFC. For almost all of my programs, the window procedure is identical to the one shown above. Before continuing, I repeat: this program structure isn't specific to Windows CE. I use this style for all my Windows applications, whether they are for Windows 3.1, Windows 95, Windows NT, or Windows CE.
+
+<p>This style reduces the window procedure to a simple table look-up function. The idea is to scan the <I>MainMessages</I> table defined early in the C file for the message value in one of the entries. If the message is found, the associated procedure is then called, passing the original parameters to the procedure processing the message. If no match is found for the message, the <I>DefWindowProc</I> function is called. <I>DefWindowProc</I> is a Windows function that provides a default action for all messages in the system, which frees a Windows program from having to process every message being passed to a window.
+
+
+<P>The message table associates message values with a procedure to process it. The table is listed below:
+
+<p><pre>
+// Message dispatch table for MainWindowProc
+const struct decodeUINT MainMessages[] = {
+    WM_CREATE, DoCreateMain,
+    WM_PAINT, DoPaintMain,
+    WM_HIBERNATE, DoHibernateMain,
+    WM_DESTROY, DoDestroyMain,
+};
+</pre>
+
+<p>The table is defined as a constant, not just as good programming practice but also because it's helpful for memory conservation. Since Windows CE programs can be executed in place in ROM, data that doesn't change should be marked constant. This allows the Windows CE program loader to leave such constant data in ROM instead of loading a copy into RAM so that it can be modified later by the program.
+
+<p>The table itself is an array of a simple two-element structure. The first entry is the message value, followed by a pointer to the function that processes the message. While the functions could be named anything, I'm using a consistent structure throughout the book to help you keep track of them. The names are composed of a <I>Do</I> prefix (as a bow to object-oriented practice), followed by the message name and a suffix indicating the window class associated with the table. So, <I>DoCreateMain</I> is the name of the function that processes WM_CREATE messages for the main window of the program.
+
+<A NAME="29"><H3><I>DoCreateMain</I></H3></A>
+
+<P>The WM_CREATE message is the first message sent to a window. WM_CREATE is unique among messages in that Windows sends it while processing the <I>CreateWindow</I> function, and therefore the window has yet to be completely created. This is a good place in the code to perform any data initialization for the window. But since the window is still being created, some Windows functions, such as <I>GetWindow,</I> used to query the size and position of the window, return inaccurate values. For our purposes, the procedure shown in the following code performs only one function: it creates a command bar for the window.
+
+<p><pre>
+LRESULT DoCreateMain (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                      LPARAM lParam) {
+    HWND hwndCB;
+
+    // Create a command bar.
+    hwndCB = CommandBar_Create (hInst, hWnd, IDC_CMDBAR);
+
+    // Add exit button to command bar. 
+    CommandBar_AddAdornments (hwndCB, 0, 0);
+    return 0;
+}
+</pre>
+
+<P>Because Windows CE windows don't support standard menus attached to windows, a command bar is necessary for menus. While HelloCE doesn't have a menu, it does require a Close button, also provided by the command bar, so the program can be terminated by the user. For this reason, the simplest form of command bar, one with only a Close button, is created. You create the command bar by calling <I>CommandBar_Create</I> and passing the program's instance handle, the handle to the window, and a constant that will be used to identify this specific command bar. (This constant can be any integer value as long as it is unique among the other child windows in the window.) Once you've created the command bar, you add a Close button by calling <I>CommandBar_AddAdornments</I>. Since all we want to do is perform the default action for this function, the parameters passed are basic: the command bar handle and two zeros. That completes the processing of the WM_CREATE message. I'll examine the command bar in depth in <A HREF="ch05a.htm">Chapter 5</a>.
+
+<A NAME="30"><H3><I>DoPaintMain</I></H3></A>
+
+<P>Painting the window, and therefore processing the WM_PAINT message, is one of the critical functions of any Windows program. As a program processes the WM_PAINT message, the look of the window is achieved. Aside from painting the default background with the brush you specified when you registered the window class, Windows provides no help for processing this message. In HelloCE, the task of the <I>DoPaintMain</I> procedure is to display one line of text in the center of the window.
+
+<p><pre>
+LRESULT DoPaintMain (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                     LPARAM lParam) {
+    PAINTSTRUCT ps;
+    RECT rect;
+    HDC hdc;
+
+    // Adjust the size of the client rect to take into account
+    // the command bar height.
+    GetClientRect (hWnd, &amp;rect);
+    rect.top += CommandBar_Height (GetDlgItem (hWnd, IDC_CMDBAR));
+
+    hdc = BeginPaint (hWnd, &amp;ps); 
+    DrawText (hdc, TEXT (&quot;Hello Windows CE!&quot;), -1, &amp;rect, 
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+    EndPaint (hWnd, &amp;ps); 
+    return 0;
+}
+</pre>
+
+<P>Before the drawing can be performed, the routine must determine the size of the window. In a Windows program, a standard window is divided into two areas, the nonclient area and the client area. A window's title bar and its sizing border commonly comprise the nonclient area of a window, and Windows is responsible for drawing it. The client area is the interior part of the window, and the application is responsible for drawing that. An application determines the size and location of the client area by calling the <I>GetClientRect</I> function. The function returns a RECT structure that contains left, top, right, and bottom elements that delineate the boundaries of the client rectangle. The advantage of the client vs. nonclient area concept is that an application doesn't have to account for drawing such standard elements of a window as the title bar.
+
+<P>When you're computing the size of the client area, you must remember that the command bar resides in the client area of the window. So, even though the <I>GetClientRect</I> function works identically in Windows CE as in other versions of Windows, the application needs to compensate for the height of the command bar, which is always placed across the top of the window. Windows CE gives you a convenient function, <I>CommandBar_Height</I>, which returns the height of the command bar and can be used in conjunction with the <I>GetClientRect</I> call to get the true client area of the window that needs to be drawn by the application.
+
+<P>Other versions of Windows supply a series of WM_NC<I>xxx</I> messages that enable your applications to take over the drawing of the nonclient area. In Windows CE, windows seldom have title bars and at the present time, none of them have a sizing border. Because there's so little nonclient area, the Windows CE developers decided not to expose the nonclient messages.
+
+<P>All drawing performed in a WM_PAINT message must be enclosed by two functions, <I>BeginPaint</I> and <I>EndPaint</I>. The <I>BeginPaint</I> function returns an <I>HDC</I>, or handle to a device context. A <I>device context</I> is a logical representation of a physical display device such as a video screen or a printer. Windows programs never modify the display hardware directly. Instead, Windows isolates the program from the specifics of the hardware with, among other tools, device contexts.
+
+<P><I>BeginPaint</I> also fills in a PAINTSTRUCT structure that contains a number of useful parameters.
+
+<p><pre>
+typedef struct tagPAINTSTRUCT {
+    HDC  hdc;
+    BOOL fErase;
+    RECT rcPaint;
+    BOOL fRestore;
+    BOOL fIncUpdate;
+    BYTE rgbReserved[32];
+} PAINTSTRUCT;
+</pre>
+
+<P>The <I>hdc</I> field is the same handle that's returned by the <I>BeginPaint</I> function. The <I>fErase</I> field indicates whether the background of the window needs to be redrawn by the window procedure. The <I>rcPaint</I> field is a RECT structure that defines the client area that needs repainting. HelloCE ignores this field and assumes that the entire client window needs repainting for every WM_PAINT message, but this field is quite handy when performance is an issue because only a part of the window might need repainting. Windows actually prevents repainting outside of the <I>rcPaint</I> rectangle even when a program attempts to do so. The other fields in the structure, <I>fRestore</I>, <I>fIncUpdate</I>, and <I>rgbReserved</I>, are used internally by Windows and can be ignored by the application.
+
+<P>The only painting that takes place in HelloCE occurs in one line of text in the window. To do the painting, HelloCE calls the <I>DrawText</I> function. I cover the details of <I>DrawText</I> in the next chapter, but if you look at the function it's probably obvious to you that this call draws the string &quot;Hello Windows CE&quot; on the window. After <I>DrawText</I> returns, <I>EndPaint</I> is called to inform Windows that the program has completed its update of the window.
+
+<P>Calling <I>EndPaint </I>also validates any area of the window you didn't paint. Windows keeps a list of areas of a window that are <I>invalid</I> (areas that need to be redrawn) and <I>valid</I> (areas that are up to date). By calling the <I>BeginPaint </I>and <I>EndPaint </I>pair, you tell Windows that you've taken care of any invalid areas in your window, whether or not you've actually drawn anything in the window. In fact, you must call <I>BeginPaint</I> and <I>EndPaint</I>, or validate the invalid areas of the window by other means, or Windows will simply continue to send WM_PAINT messages to the window until those invalid areas are validated.
+
+<A NAME="31"><H3><I>DoHibernateMain</I></H3></A>
+
+<P>You need<I> DoHibernateMain</I> because the WM_HIBERNATE message, unique to Windows CE, should be handled by every Windows CE program. A WM_HIBERNATE message is sent to a window to instruct it to reduce its memory use to the absolute minimum.
+
+<p><pre>
+LRESULT DoHibernateMain (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                         LPARAM lParam) {
+
+    // If not the active window, destroy the cmd bar to save memory.
+    if (GetActiveWindow () != hWnd)
+        CommandBar_Destroy (GetDlgItem (hWnd, IDC_CMDBAR));
+
+    return 0;
+}
+</pre>
+
+<p>In the case of HelloCE, the only real way to reduce memory use is to destroy the command bar control. This is done by means of a call to <I>CommandBar_Destroy</I>.The only case in which one should not destroy the command bar is when the window is the active window, the window through which the user is interacting with the program at the current time.
+
+<P>More complex Windows CE applications have a much more elaborate procedure for handling the WM_HIBERNATE messages. Applications should free up as much memory and system resources as possible without losing currently unsaved data. In a choice between performance and lower memory use, an application is better reactivating slowly after a WM_HIBERNATE message than it is consuming more memory.
+
+<A NAME="32"><H3><I>DoActivateMain</I></H3></A>
+
+<P>While the WM_ACTIVATE message is common to all Windows platforms, it takes on new significance for Windows CE applications because among its duties is to indicate that the window should restore any data structures or window controls that were freed by a WM_HIBERNATE message.
+
+<p><pre>
+LRESULT DoActivateMain (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                        LPARAM lParam) {
+    HWND hwndCB;
+
+    // If activating and no command bar, create it.
+    if ((LOWORD (wParam) != WA_INACTIVE) &amp;&amp;
+        (GetDlgItem (hWnd, IDC_CMDBAR) == 0)) {
+
+        // Create a command bar.
+        hwndCB = CommandBar_Create (hInst, hWnd, IDC_CMDBAR);
+
+        // Add exit button to command bar.
+        CommandBar_AddAdornments (hwndCB, 0, 0);
+    }
+    return 0;
+}
+</pre>
+
+<p>The lower word of the <I>wParam</I> parameter is a flag that tells why the WM_ACTIVATE message was sent to the window. The flag can be one of three values: WA_INACTIVE, indicating that the window is being deactivated after being the active window; WA_ACTIVE, indicating that the window is about to become the active window; and WA_CLICKACTIVE, indicating that the window is about to become the active window after having been clicked on by the user.
+
+<p>HelloCE processes this message by checking to see whether the window remains active and whether the command bar no longer exists. If both conditions are true, the command bar is re-created using the same calls used for the WM_CREATE message. The <I>GetDlgItem</I> function is convenient because it returns the handle of a child window of another window using its window ID. Remember that when the command bar, a child of HelloCE's main window, was created, I used an ID of IDC_CMDBAR (defined in HelloCE.h). That ID value is passed to <I>GetDlgItem</I> to get the command bar window handle. However, if the command bar window doesn't exist, the value returned is 0, indicating that HelloCE needs to re-create the command bar.
+
+<A NAME="33"><H3><I>DoDestroyMain</I></H3></A>
+
+<P>The final message that HelloCE must process is the WM_DESTROY message sent when a window is about to be destroyed. Because this window is the main window of the application, the application should terminate when the window is destroyed. To make this happen, the <I>DoDestroyMain</I> function calls <I>PostQuitMessage</I>. This function places a WM_QUIT message in the message queue. The one parameter of this function is the return code value that will be passed back to the application in the <I>wParam</I> parameter of the WM_QUIT message.
+
+<p><pre>
+LRESULT DoDestroyMain (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                       LPARAM lParam) {
+    PostQuitMessage (0);
+    return 0;
+}
+</pre>
+
+<p>Notice that the <I>DoDestroyMain</I> function doesn't destroy the command bar control created in <I>DoCreateMain</I>. Since the command bar is a child window of the main window, it's automatically destroyed when its parent window is destroyed.
+
+<p>As I've mentioned, when the message loop sees a WM_QUIT message, it exits the loop. The <I>WinMain</I> function then calls <I>TermInstance</I>, which in the case of HelloCE, does nothing but return. <I>WinMain</I> then returns, terminating the program.
+
+<A NAME="34"><H3>Running HelloCE</H3></A>
+
+<P>After you've entered the program into Visual C++ and built it, it can be executed by a double-tap on the HelloCE icon. The program displays the Hello Windows CE text in the middle of an empty window, as shown in Figure 1-4. Figure 1-5 shows HelloCE running on a Palm-size PC. The command bar is placed by Windows CE across the top of the window. Tapping on the Close button on the command bar causes Windows CE to send a WM_CLOSE message to the window. Although HelloCE doesn't explicitly process the WM_CLOSE message, the <I>DefWindowProc</I> procedure enables default processing by destroying the main window. As the window is being destroyed, a WM_DESTROY message is sent, which causes <I>PostQuitMessage</I> to be called.
+
+<P><A HREF="javascript:fullSize('f01rg04x.htm')"> <img src="f01rg04.jpg" width=404 height=203 border="0" ALT="Click to view at full size."></a>
+<P><!-- caption --><B>Figure 1-4.</B> <I>The HelloCE window on an H/PC.</I><!-- /caption -->
+
+<P><img src="f01rg05.gif" width=242 height=322 border="0">
+<P><!-- caption --><B>Figure 1-5.</B> <I>The HelloCE window on a Palm-size PC.</I><!-- /caption -->
+
+<P>As I said, HelloCE is a very basic Windows CE program but it does gives you a skeleton of a Windows CE application upon which you can build. If you look at HelloCE.EXE using Explorer, the program is represented by a generic icon. When HelloCE is running, the button on the task bar representing HelloCE has no icon displayed next to the text. How to add a program's icon as well as how the <I>DrawText</I> function works are a couple of the topics I'll address in the next few chapters.
+
+</BODY>
+</HTML>
+
+
+
+

@@ -1,0 +1,230 @@
+<HTML>
+<HEAD>
+<TITLE>Local Input State</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch27b.htm">[Previous]</A> <A HREF="ch27d.htm">[Next]</A><P>
+
+<A NAME="361"><H1>Local Input State</H1></A>
+
+<p>Having threads independently handle input&#8212;preventing one thread from adversely affecting another thread&#8212;is just part of what makes the input model robust. However, this feature alone is not enough to keep threads isolated from one another, so the system has additional infrastructure. This additional infrastructure is called <i>local input state</i>.</p>
+
+<p>Each thread has its own local input state, which is managed inside a thread's THREADINFO structure (discussed in <A HREF="ch26a.htm">Chapter 26</A>). This input state consists of the thread's virtualized input queue as well as a set of variables. These variables keep track of the following input state management information:</p>
+
+<p>Keyboard input and window focus information, such as</p>
+
+<ul>
+<p><li>Which window has keyboard focus</li></p>
+<p><li>Which window is active</li></p>
+<p><li>Which keys are considered pressed down</li></p>
+<p><li>The state of the caret</li></p>
+</ul>
+
+<p>The variables also keep track of mouse cursor management
+information, such as</p>
+
+<ul>
+<p><li>Which window has mouse capture</li></p>
+<p><li>The shape of the mouse cursor</li></p>
+<p><li>The visibility of the mouse cursor</li></p>
+</ul>
+
+<p>Because each thread gets its very own set of input state variables, each thread has a different notion of focus window, mouse capture window, and so on. From a thread's perspective, either one of its windows has keyboard focus or no window in the system has keyboard focus, either one of its windows has mouse capture or no window has mouse capture, and so on. As you might expect, this separatism has some ramifications, which we'll discuss in this chapter.</p>
+
+<A NAME="362"><H2>Keyboard Input and Focus</H2></A>
+
+<p>As we know, the RIT directs the user's keyboard input to a
+thread's virtualized input queue&#8212;not to a window. The RIT
+places the keyboard events into the thread's virtualized input
+queue without referring to a particular window. When the thread calls <i>GetMessage</i>, the keyboard event is removed from the queue and assigned to the window (created by the thread) that currently has input focus. Figure 27-2 illustrates this process.</p>
+
+<p>
+<A HREF="javascript:fullSize('F27si02x.htm')"> <img src="images/F27si02.JPG" width=404 height=162 border=0 ALT="Click to view at full size."> </A>
+</p><p>
+<!-- CAPTION --><b>Figure 27-2.</b> <i>The RIT directs the user's keyboard input to one thread's virtualized input queue at a time.</i><!-- /CAPTION -->
+</p>
+
+<p>To instruct a different window to accept keyboard input, you need to specify to which thread's virtualized input queue the RIT should direct keyboard input <i>and</i> you need to tell the thread's input state variables which window will have keyboard focus. Calling <i>SetFocus</i> alone does not accomplish both tasks. If Thread 1 is currently receiving input from the RIT, a call to <i>SetFocus</i>&#8212;passing the handle of Window A, Window B, or Window C&#8212;causes the focus to change. The window losing focus removes its focus rectangle or hides its caret, and the window gaining focus draws a focus rectangle or shows its caret.</p>
+
+<p>However, let's say that Thread 1 is still receiving input from
+the RIT, and it calls <i>SetFocus</i>, passing the handle of Window E. In this case, the system prevents the call to <i>SetFocus</i> from doing anything because the window for which you are trying to set focus is not using the virtualized input queue that is currently &quot;connected&quot; to the RIT. After Thread 1 executes this call, there is no change in focus, and the appearance of the screen doesn't change.</p>
+
+<p>In another situation, Thread 1 might be connected to the RIT and Thread 2 might call <i>SetFocus</i>, passing the handle of Window E. In this case, Thread 2's local input state variables are updated to reflect that Window E is the window to receive keyboard input the next time the RIT directs keystrokes to Thread 2. The call doesn't cause the RIT to direct input to Thread 2's virtualized input queue.</p>
+
+<p>Because Window E now has focus for Thread 2, it receives a WM_SETFOCUS message. If Window E is a pushbutton, it draws a focus rectangle for itself, so two windows with focus rectangles (Window A and Window E) might appear on the screen. This can be quite disconcerting to an end user. You should be careful when you call <i>SetFocus</i> so that this situation doesn't occur. Call <i>SetFocus</i> only if your thread is connected to the RIT.</p>
+
+<p>By the way, if you give focus to a window that displays a caret when it receives a WM_SETFOCUS message, you can produce several windows on the screen that simultaneously display flashing carets. This can be a bit bewildering to a user.</p>
+
+<p>When focus is transferred from one window to another using
+conventional methods (such as clicking on a window with the mouse), the window losing focus receives a WM_KILLFOCUS message. If the window receiving focus belongs to a thread other than the thread associated with the window losing focus, the local input state variables of the thread that created the window losing focus are updated to reflect that no window has focus. Calling <i>GetFocus</i> at this time returns NULL, which makes the thread think that no window currently has the focus.</p>
+
+<p>The <i>SetActiveWindow</i> function activates a top-level window in the system and sets focus to that window:</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<PRE>
+HWND SetActiveWindow(HWND hwnd);
+</PRE>
+</TD></TR></TABLE></P>
+
+<p>Like the <i>SetFocus</i> function, this function does nothing if the calling thread did not create the window passed to it.</p>
+
+<p>The complement of <i>SetActiveWindow</i> is the <i>
+GetActiveWindow</i> function:</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<PRE>
+HWND GetActiveWindow();
+</PRE>
+</TD></TR></TABLE></P>
+
+<p>This function works just like the <i>GetFocus</i> function except that it returns the handle of the active window indicated by the calling thread's local input state variables. So if the active window is owned by another thread, <i>GetActiveWindow</i> returns NULL.</p>
+
+<p>Other functions that can alter a window's z-order, activation
+status, and focus status include <i>BringWindowToTop</i> and <i>SetWindowPos</i>:</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<PRE>
+BOOL BringWindowToTop(HWND hwnd);
+
+BOOL SetWindowPos(
+   HWND hwnd, 
+   HWND hwndInsertAfter,
+   int x, 
+   int y, 
+   int cx, 
+   int cy, 
+   UINT fuFlags);
+</PRE>
+</TD></TR></TABLE></P>
+
+<p>These two functions work identically (in fact, <i>BringWindowToTop</i> calls <i>SetWindowPos</i> internally, passing HWND_TOP as the second parameter). If the thread calling these functions is not connected to the RIT, the functions do nothing. However, if the thread calling these functions is connected to the RIT, the system activates the specified window. Note that this works even if the calling thread did not create the specified window. This means that the window becomes active and the thread that created the specified window is connected to the RIT. This also causes the calling thread's and the newly connected thread's local input state variables to be updated.</p>
+
+<p>At times, a thread wants to have its window come to the foreground. For example, you might have a meeting scheduled using Microsoft Outlook. About a half hour before the meeting time, Outlook pops up a dialog box reminding you that the meeting is coming up soon. If Outlook's thread is not connected to the RIT, this dialog box will come up behind another window and you will not see it. There needs to be some way to draw the user's attention to windows even if the user is using another application's window.</p>
+
+<p>The following function brings a window to the foreground and
+connects its thread to the RIT:</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<PRE>
+BOOL SetForegroundWindow(HWND hwnd);
+</PRE>
+</TD></TR></TABLE></P>
+
+<p>The system also activates the window and gives it the focus. The complementary function is <i>GetForegroundWindow</i>:</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<PRE>
+HWND GetForegroundWindow();
+</PRE>
+</TD></TR></TABLE></P>
+
+<p>This function returns the window handle that is currently in the foreground.</p>
+
+<p>In earlier versions of windows, the <i>SetForegroundWindow</i>
+function always worked. That is, the thread calling this function could always bring the specified window to the foreground (even if the window was not created by the calling thread). However, developers started abusing this capability and were popping up windows on top of each other. For example, I would be writing a magazine article and all of a sudden the Print Job Finished dialog box would pop up on the screen. If I wasn't looking at the screen, I wouldn't even see the dialog box and I'd be typing text into it instead of into my document. Even more annoying is when you try to select a menu item and suddenly another window pops up, closing the menu.</p>
+
+<p>To stop these annoyances, Microsoft has added a lot more
+intelligence to the <i>SetForegroundWindow</i> function. In particular, the function only works if the thread calling the function is already connected to the RIT or if the thread currently connected to the RIT has not received any input in a certain amount of time (the time is controlled using the <i>SystemParametersInfo</i> function and the SPI_SETFOREGROUNDLOCKTIMEOUT value). In addition, the function fails if a menu is active.</p>
+
+<p>If <i>SetForegroundWindow</i> is not allowed to bring the window to the foreground, it flashes the window's caption and the
+window's button on the taskbar. The user will see the taskbar
+button flashing and know that the window is trying to get the
+user's attention. The user will have to manually activate the
+window to see what information it has to report. The <i>SystemParametersInfo</i> function is also used to control the flashing using the SPI_SETFOREGROUNDFLASHCOUNT value.</p>
+
+<p>Because of this new behavior, the system offers some additional functions. The first function (listed below) allows a thread in the specified process to successfully call <i>SetForegroundWindow</i> if the thread calling <i>AllowSetForegroundWindow</i> can successfully call <i>SetForegroundWindow</i>. To allow any process to pop a window
+up over your thread's windows, pass ASFW_ANY (defined as -1) for
+the <i>dwProcessId</i> parameter:</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<PRE>
+BOOL AllowSetForegroundWindow(DWORD dwProcessId); 
+</PRE>
+</TD></TR></TABLE></P>
+
+<p>In addition, a thread can lock the <i>SetForegroundWindow</i>
+function so that it always fails by calling <i>
+LockSetForegroundWindow</i>:</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<PRE>
+BOOL LockSetForegroundWindow(UINT uLockCode); 
+</PRE>
+</TD></TR></TABLE></P>
+
+<p>You can pass either LSFW_LOCK or LSFW_UNLOCK for the <i>uLockCode</i> parameter. This function is called by the system
+internally when a menu is activated so that a window attempting to come to the foreground does not close the menu. Windows Explorer needs to call these functions explicitly when it displays the Start menu, since this is not a built-in menu.</p>
+
+<p>The system automatically unlocks the <i>SetForegroundWindow</i> function when the user presses the Alt key or if the user explicitly brings a window to the foreground. This prevents an application from keeping <i>SetForegroundWindow</i> locked all the time.</p>
+
+<p>Another aspect of keyboard management and the local input state is that of the synchronous key state array. Every thread's local input state variables include a synchronous key state array, but all threads share a single asynchronous key state array. These arrays reflect the state of all keys on a keyboard at any given time. The <i>GetAsyncKeyState</i> function determines whether the user is currently pressing a key on the keyboard:</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<PRE>
+SHORT GetAsyncKeyState(int nVirtKey);
+</PRE>
+</TD></TR></TABLE></P>
+
+<p>The <i>nVirtKey</i> parameter identifies the virtual key code of the key to check. The high bit of the result indicates whether the key is currently pressed (1) or not (0). I have often used this function during the processing of a single message to check whether the user has released the primary mouse button. I pass the virtual key value VK_LBUTTON and wait for the high bit of the return value to be 0. Note that <i>GetAsyncKeyState</i> always returns 0 (not pressed) if the thread calling the function did not create the window that currently has the input focus.</p>
+
+<p>The <i>GetKeyState</i> function, which follows, differs from the <i>GetAsyncKeyState</i> function because it returns the keyboard state at the time the most recent keyboard message was removed from the thread's queue:</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<PRE>
+SHORT GetKeyState(int nVirtKey);
+</PRE>
+</TD></TR></TABLE></P>
+
+<p>This function is not affected by which window has input focus and can be called at any time.</p>
+
+<A NAME="363"><H2>Mouse Cursor Management</H2></A>
+
+<p>Mouse cursor management is another component of the local input state. Because the mouse, like the keyboard, must be shared among all the different threads, Windows must not allow a single thread to monopolize the mouse cursor by altering its shape or confining it to a small area of the screen. In this section, we'll take a look at how the mouse cursor is managed by the system.</p>
+
+<p>One aspect of mouse cursor management is the cursor's hide/show capability. If a thread calls <i>ShowCursor(FALSE)</i>, the mouse cursor is hidden when it is over any window created by this thread. If the mouse cursor is moved over a window created by another thread, the mouse cursor is visible.</p>
+
+<p>Another aspect of mouse cursor management is the ability to clip the cursor to a rectangular region of the screen using the <i>ClipCursor</i> function:</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<PRE>
+BOOL ClipCursor(CONST RECT *prc);
+</PRE>
+</TD></TR></TABLE></P>
+
+<p>This function causes the mouse to be constrained within the screen coordinates specified in the rectangle pointed to by the <i>prc</i> parameter. When a thread calls <i>ClipCursor</i>, what should the system do? Allowing the cursor to be clipped could adversely affect other threads, and preventing the cursor from being clipped would adversely affect the calling thread. Microsoft has implemented a compromise. When a thread calls this function, the system does clip the mouse cursor to the specified rectangle. However, if an asynchronous activation event occurs (when the user clicks on another application's window, when a call to <i>SetForegroundWindow</i> is made, or when Ctrl+Esc is pressed), the system stops clipping the cursor's movement, allowing the cursor to move freely across the entire screen.</p>
+
+<p>Now we move to the issue of mouse capture. When a window
+&quot;captures&quot; the mouse (by calling <i>SetCapture</i>), it
+requests that all mouse messages be directed from the RIT to the
+thread's virtualized input queue and that all mouse messages from
+the virtualized input queue be directed to the window that set capture. This capturing of mouse messages continues until the application later calls <i>ReleaseCapture</i>.</p>
+
+<p>Again, capturing the mouse compromises the robustness of the
+system&#8212;there must be a compromise. When an application calls <i>SetCapture</i>, the RIT is directed to place all mouse messages in the thread's virtualized input queue. <i>SetCapture</i> also sets the local input state variables for the thread that called <i>SetCapture</i>.</p>
+
+<p>Usually an application calls <i>SetCapture</i> when the user presses a mouse button. However, there is no reason why a thread could not call <i>SetCapture</i> even if a mouse button is not down. If <i>SetCapture</i> is called when a mouse button is down, capture is performed system-wide. However, when the system detects that no mouse buttons are down, the RIT no longer directs mouse messages solely to the thread's virtualized input queue. Instead, the RIT directs mouse messages to the input queue associated with the window that is directly beneath the mouse cursor. This is normal behavior when the mouse is not captured.</p>
+
+<p>However, the thread that originally called <i>SetCapture</i> still thinks that mouse capture is in effect. Thus whenever the mouse is positioned over any window created by the thread that has capture set, the mouse messages will be directed to the capture window for that thread. In other words, when the user releases all mouse buttons, mouse capture is no longer performed on a system-wide level&#8212;it is now performed on a thread-local level.</p>
+
+<p>In addition, if the user attempts to activate a window created by another thread, the system automatically sends mouse button down and mouse button up messages to the thread that sets capture. Then the system updates the thread's local input state variables to indicate that the thread no longer has mouse capture. It is clear from this implementation that Microsoft expects mouse clicking and dragging to be the most common reason for using mouse capture.</p>
+
+<p>The final local input state variable pertaining to the mouse is its cursor shape. Whenever a thread calls <i>SetCursor</i> to change the shape of the mouse cursor, the local input state variables are updated to reflect the mouse cursor shape. In other words, the local input state variables always remember the most recent shape of the mouse cursor set by the thread.</p>
+
+<p>Let's say that the user moves the mouse over your window, your
+window receives a WM_SETCURSOR message, and you call <i>SetCursor</i> to change the mouse cursor to an hourglass. After the call to <i>SetCursor</i>, you have code that enters into a lengthy process. (An infinite loop is a good example of a lengthy process.) Now the user moves the mouse cursor out of your window and over a window belonging to another application. When the mouse moves over the other window, that window can control the cursor's shape.</p>
+
+<p>Local input state variables are not required for accomplishing this change. But now let's move the mouse cursor back into your window, which is still executing its lengthy procedure. The system wants to send WM_SETCURSOR messages to the window, but the window is unable to retrieve them because it is still looping. So the system looks at the most recently set mouse cursor shape (contained in the thread's local input state variables) and automatically sets the mouse cursor back to this shape (the hourglass, in this example). This gives the user visual feedback that the process is still working and that the user must wait.</p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

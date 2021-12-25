@@ -1,0 +1,110 @@
+<HTML>
+<HEAD>
+<TITLE>Scenario 4: Call Functions When Asynchronous I/O Requests Complete</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch11d.htm">[Previous]</A> <A HREF="ch12a.htm">[Next]</A><P>
+
+<A NAME="157"><H1>Scenario 4: Call Functions When Asynchronous I/O Requests Complete</H1></A>
+
+<p>The last scenario is a common one: your server application issues
+some asynchronous I/O requests. When these requests complete, you want
+to have a pool of threads ready to process the completed I/O requests.
+This is the architecture that I/O completion ports were originally
+designed for. If you were managing your own thread pool, you would
+create an I/O completion port and create a pool of threads that wait on
+this port. You would also open a bunch of I/O devices and associate
+their handles with the completion port. As asynchronous I/O requests
+complete, the device drivers would queue the &quot;work items&quot; to
+the completion port.</p>
+ 
+<p>This is a great architecture that allows for a few threads to
+efficiently handle several work items, and it's fantastic that the
+thread pooling functions have this built in, saving you a lot of time
+and effort. To take advantage of this architecture, all you have to do
+is open your device and associate it with the non-I/O component of the
+thread pool. Remember that the non-I/O component's threads all wait
+on an I/O completion port. To associate a device with this component,
+you call this function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL BindIoCompletionCallback(
+   HANDLE hDevice,
+   POVERLAPPED_COMPLETION_ROUTINE pfnCallback,
+   ULONG dwFlags); 
+</pre></td></tr></table></p>
+
+<p>Internally, this function calls <i>CreateIoCompletionPort</i>,
+passing it <i>hDevice</i> and the handle of the internal completion
+port. Calling <i>BindIoCompletionCallback</i> also guarantees that at
+least one thread is always in the non-I/O component. The completion key
+associated with this device is the address of the overlapped completion
+routine. This way, when I/O to this device completes, the non-I/O
+component knows which function to call so that it can process the
+completed I/O request. The completion routine must have the following
+prototype:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+VOID WINAPI OverlappedCompletionRoutine(
+   DWORD dwErrorCode,
+   DWORD dwNumberOfBytesTransferred,
+   POVERLAPPED pOverlapped); 
+</pre></td></tr></table></p>
+
+<p>You'll notice that you do not pass an OVERLAPPED structure to
+<i>BindIoCompletionCallback</i>. The OVERLAPPED structure is passed to
+functions such as <i>ReadFile</i> and <i>WriteFile</i>. The system
+keeps track of this overlapped structure internally with the pending
+I/O request. When the request completes, the system places the address
+of the structure in the completion port so that it can be passed to
+your <i>OverlappedCompletionRoutine</i>. Also, because the address of
+the completion routine is the completion key, to get additional context
+information into the <i>OverlappedCompletionRoutine</i> function, you
+should use the traditional trick of placing the context information at
+the end of the OVERLAPPED structure.</p>
+
+<p>You should also be aware that closing a device causes all of its pending I/O 
+requests to complete immediately with an error code. Be prepared to handle this 
+in your callback function. If, after closing the device, you want to make sure 
+that no callbacks are executed, you must do reference counting in your application. 
+In other words, you must increment a counter every time you issue an I/O request 
+and decrement the counter each time an I/O request completes.</p>
+
+<p>Currently, there are no special flags that you can pass to 
+<i>BindIoCompletionCallback’s dwFlags</i> parameter, so you must pass 0. I believe 
+that one flag you should be able to pass is WT_EXECUTEINIOTHREAD. If an I/O request 
+completes, this gets queued to a non-I/O component thread. In your 
+<i>OverlappedCompletionRoutine</i> function, you’ll probably issue another asynchronous 
+I/O request. But remember that if a thread that issues I/O requests terminates, the 
+I/O requests are also destroyed. Also, the threads in the non-I/O component are 
+created or destroyed depending on the workload. If the workload is low, a thread 
+in this component might terminate with outstanding I/O requests pending. If 
+<i>BindIoCompletionCallback</i> supported the WT_EXECUTEINIOTHREAD flag, a thread waiting 
+on the completion port would wake up and post the result to an I/O component 
+thread. Since these threads never die if any I/O requests are pending, you could 
+issue I/O requests without the fear of them being destroyed.</p>
+
+<p>While the WT_EXECUTEINIOTHREAD flag would be nice, you can easily emulate the 
+behavior I just described. In your <i>OverlappedCompletionRoutine</i> function, you simply 
+call <i>QueueUserWorkItem</i>, passing the WT_EXECUTEINIOTHREAD flag and whatever data 
+you need (at least the overlapped structure, probably). This is all that the thread 
+pooling functions would do for you anyway.</p>
+
+
+</body>
+
+</html>
+
+
+
+
+
+
+

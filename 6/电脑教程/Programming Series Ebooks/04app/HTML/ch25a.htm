@@ -1,0 +1,168 @@
+<html>
+<head>
+<title>Chapter 25 -- Unhandled Exceptions and C++ Exceptions</title>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<A HREF="ch24h.htm">[Previous]</A> <A HREF="ch25b.htm">[Next]</A><P>
+
+
+
+<FONT SIZE="+3">Chapter 25</FONT>
+
+
+<A NAME="335"><H1>Unhandled Exceptions and C++ Exceptions</H1></A>
+
+<p>In the previous chapter, we discussed what happens when a filter
+returns EXCEPTION_CONTINUE_SEARCH. Returning this tells the system to
+continue walking up the call tree looking for additional exception
+filters. But what happens if every filter returns
+EXCEPTION_CONTINUE_SEARCH? In this case, we have what's called an
+<i>unhandled exception</i>.</p>
+
+<p>Remember from <A HREF="ch06a.htm">Chapter 6</A> that every thread truly begins executing
+with a function inside Kernel32.dll called <i>BaseProcessStart</i> or
+<i>BaseThreadStart</i>. These two functions are practically identical;
+the only difference is that one function is used for a process's
+primary thread:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+VOID BaseProcessStart(PPROCESS_START_ROUTINE pfnStartAddr) {
+   _ _try {
+      ExitThread((pfnStartAddr)());
+   }
+   _ _except (UnhandledExceptionFilter(GetExceptionInformation())) {
+      ExitProcess(GetExceptionCode());
+   }
+   // NOTE: We never get here
+}
+</pre></td></tr></table></p>
+
+<p>The other function is used for all of a process's secondary
+threads:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+VOID BaseThreadStart(PTHREAD_START_ROUTINE pfnStartAddr, PVOID pvParam) {
+   _ _try {
+      ExitThread((pfnStartAddr)(pvParam));
+   }
+   _ _except (UnhandledExceptionFilter(GetExceptionInformation())) {
+      ExitProcess(GetExceptionCode());
+   }
+   // NOTE: We never get here
+}
+</pre></td></tr></table></p>
+
+<p>Notice that both of these functions contain an SEH frame. Both
+functions enter a <i>try</i> block and from within the <i>try</i> block
+call your primary or secondary thread's entry-point function. So,
+if your thread raises an exception and if all your filters return
+EXCEPTION_CONTINUE_SEARCH, the system has provided a special filter
+function that will be called for you automatically: <i>
+UnhandledExceptionFilter</i>.</p>
+
+<p><table cellpadding=5><tr><td>
+<PRE>
+LONG UnhandledExceptionFilter(PEXCEPTION_POINTERS pExceptionInfo); 
+</pre></td></tr></table></p>
+
+<p>This function is responsible for displaying the message box that
+indicates that a thread in your process has an unhandled exception and
+allows the user to terminate or debug the process. This message box
+looks similar to the following in Windows 98.</p>
+
+<p>
+<img src="images/G25si01.JPG" width=404 height=269 border=0>
+</p>
+
+<p>In Windows 2000, it looks like this.</p>
+
+<p>
+<A HREF="javascript:fullSize('G25si02x.htm')"> <img src="images/G25si02.JPG" width=404 height=142 border=0 ALT="Click to view at full size."> </A>
+</p>
+
+<p>In the Windows 2000 message box, the first paragraph of text
+indicates which exception occurred and the address of the instruction
+in the process's address space that generated the exception. It
+just so happens that a memory access violation caused this message box
+to appear, so the system can report the invalid memory address that was
+accessed and specify that an attempt to read the memory caused the
+exception. The <i>UnhandledExceptionFilter</i> function gets this
+additional information from the <i>ExceptionInformation</i> member of
+the EXCEPTION_RECORD structure generated for this exception.</p>
+
+<p>Following the description of the exception, the message box
+indicates the user's two choices. The first choice is to click on
+the OK button, which causes <i>UnhandledExceptionFilter</i> to return
+EXCEPTION_EXECUTE_HANDLER. This, of course, causes a global unwind to
+occur so that any <i>finally</i> blocks that you have are executed, and
+then the handler in <i>BaseProcessStart or BaseThreadStart</i>
+executes. Both of these handlers call <i>ExitProcess,</i> which is why
+your process terminates. Note that the process's exit code will be
+the exception code. Also note that it is your process's thread that
+is killing your process&#8212;the operating system is not doing it! This
+means that you have control over this behavior and can alter it.</p>
+
+<p>The second choice, clicking on the Cancel button, is a
+developer's dream come true. When you click on the Cancel button,
+<i>UnhandledExceptionFilter</i> attempts to load a debugger and
+attaches the debugger to the process. With the debugger attached to the
+process, you can examine the state of global, local, and static
+variables, set breakpoints, examine the call tree, restart the process,
+and do anything else you would normally do when you debug a
+process.</p>
+
+<p>The real boon is that you can handle the failure of your application
+when it occurs. Under most other operating systems, you must invoke
+your application through the debugger to debug it. If an exception
+occurs in a process on one of these other operating systems, you have
+to terminate the process, start a debugger, and invoke the
+application&#8212;again using the debugger. The problem is that you
+would have to try to reproduce the bug before you could fix it. And who
+knows what the values of the different variables were when the problem
+originally occurred? It's much harder to resolve a bug this way.
+The ability to dynamically attach a debugger to a process as it runs is
+one of the best features in Windows.</p>
+
+<p><div class="note"><blockquote><b>Windows 2000</b><hr>
+
+<p>This book concentrates solely on user-mode application development. However,
+you might find it interesting to know what happens when a thread
+running in kernel-mode raises an unhandled exception. Exceptions in
+kernel mode are handled exactly the same as exceptions in user mode. If
+a low-level virtual memory function generates an exception, the system
+checks whether any kernel-mode exception filters are prepared to handle
+the exception. If the system cannot find an exception 
+filter to handle the exception, the exception is unhandled. In the
+case of a kernel-mode exception, the unhandled exception is in the
+operating system or (more likely) in a device driver and not in an
+application. Such an unhandled exception identifies a serious bug!</p>
+
+<p>It isn't safe for the system to continue running if an unhandled
+exception occurs in kernel mode, so the system doesn't call the <i>
+UnhandledExceptionFilter</i> function in such a case; instead, the
+system shows what is typically called the Blue Screen of Death. The
+display switches video mode to a blue screen containing nothing but
+text and the computer is halted. The text displays which device drivers
+are loaded and the module containing the code that raised the unhandled
+violation. You should jot down this information and send it to
+Microsoft or to the device driver vendor so that the bug can be fixed.
+Since the computer is halted, you'll need to reboot your machine
+before you can do anything else; any unsaved work is lost.</p>
+</blockquote></div></p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

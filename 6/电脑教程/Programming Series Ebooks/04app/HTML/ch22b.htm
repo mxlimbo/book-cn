@@ -1,0 +1,134 @@
+<HTML>
+<HEAD>
+<TITLE>DLL Injection: An Example</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch22a.htm">[Previous]</A> <A HREF="ch22c.htm">[Next]</A><P>
+
+<A NAME="286"><H1>DLL Injection: An Example</H1></A>
+
+<p>Let's say that you want to subclass an instance of a window
+created by another process. You might recall that subclassing allows
+you to alter the behavior of a window. To do this, you simply call <i>
+SetWindowLongPtr</i> to change the window procedure address in the
+window's memory block to point to a new (your own) <i>WndProc</i>.
+The Platform SDK documentation states that an application cannot
+subclass a window created by another process. This is not exactly true.
+The problem with subclassing another process's window really has to
+do with process address space boundaries.</p>
+
+<p>When you call <i>SetWindowLongPtr</i> to subclass a window, as shown
+below, you tell the system that all messages sent or posted to the
+window specified by <i>hwnd</i> should be directed to <i>
+MySubclassProc</i> instead of the window's normal window
+procedure.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+SetWindowLongPtr(hwnd, GWLP_WNDPROC, MySubclassProc);
+</pre></td></tr></table></p>
+
+<p>In other words, when the system needs to dispatch a message to the
+specified window's <i>WndProc</i>, it looks up the address and then
+makes a direct call to <i>WndProc</i>. In this example, the system sees
+that the address of the <i>MySubclassProc</i> function is associated
+with the window and makes a direct call to <i>MySubclassProc</i>
+instead.</p>
+
+<p>The problem with subclassing a window created by another process is
+that the subclass procedure is in another address space. Figure 22-1
+shows a simplified view of how a window procedure receives messages.
+Process A is running and has created a window. The User32.dll file is
+mapped into the address space of Process A. This mapping of User32.dll
+is responsible for receiving and dispatching all sent and posted
+messages destined for any window created by any thread running in
+Process A. When this mapping of User32.dll detects a message, it first
+determines the address of the window's <i>WndProc</i> and then
+calls it, passing the window handle, the message, and the <i>wParam</i>
+and <i>lParam</i> values. After <i>WndProc</i> processes the message,
+User32.dll loops back around and waits for another window message to be
+processed.</p>
+
+<p>
+<A HREF="javascript:fullSize('F22si01x.htm')"> <img src="images/F22si01.JPG" width=404 height=260 border=0 ALT="Click to view at full size."> </A>
+</p><p>
+<!-- CAPTION --><b>Figure 22-1.</b> <i>A thread in Process B attempting to subclass a window created by a thread in Process A</i><!-- /CAPTION -->
+</p>
+
+<p>Now suppose that your process is Process B and you want to subclass
+a window created by a thread in Process A. Your code in Process B must
+first determine the handle to the window you want to subclass. This can
+happen in a variety of ways. The example shown in Figure 22-1 simply
+calls <i>FindWindow</i> to obtain the desired window. Next, the thread
+in Process B calls <i>SetWindowLongPtr</i> in an attempt to change the
+address of the window's <i>WndProc</i>. Notice that I said
+&quot;attempt.&quot; This call does nothing and simply returns NULL.
+The code in <i>SetWindowLongPtr</i> checks to see whether one process
+is attempting to change the <i>WndProc</i> address for a window created
+by another process and simply ignores the call.</p>
+
+<p>What if the <i>SetWindowLongPtr</i> function could change the
+window's <i>WndProc</i>? The system would associate the address of
+<i>MySubclassProc</i> with the specified window. Then, when this window
+was sent a message, the User32 code in Process A would retrieve the
+message, get the address of <i>MySubclassProc</i>, and attempt to call
+this address. But then you'd have a big problem. <i>
+MySubclassProc</i> would be in Process B's address space, but
+Process A would be the active process. Obviously, if User32 were to
+call this address, it would be calling an address in Process A's
+address space, and this would probably result in a memory access
+violation.</p>
+
+<p>To avoid this problem, you want the system to know that <i>
+MySubclassProc</i> is in Process B's address space and then have
+the system perform a context switch before calling the subclass
+procedure. Microsoft did not implement this additional functionality
+for several reasons:</p>
+
+<ul>
+<p><li>Applications rarely need to subclass windows created by threads
+in other processes. Most applications subclass windows that they
+create, and the memory architecture of Windows does not hinder
+this.</li></p>
+
+<p><li>Switching active processes is very expensive in terms of CPU
+time.</li></p>
+
+<p><li>A thread in Process B would have to execute the code in <i>
+MySubclassProc</i>. Which thread should the system try to use? An
+existing thread or a new thread?</li></p>
+
+<p><li>How would User32.dll be able to tell whether the address
+associated with the window was for a procedure in another process or in
+the same process?</li></p>
+</ul>
+
+
+
+<p>Because there are no great solutions to these problems, Microsoft
+decided not to allow <i>SetWindowLongPtr</i> to change the window
+procedure of a window created by another process.</p>
+
+<p>However, you can subclass a window created by another
+process&#8212;you simply go about it in a different way. The question
+isn't really about subclassing&#8212;it's about process address
+space boundaries. If you could somehow get the code for your subclass
+procedure into Process A's address space, you could easily call <i>
+SetWindowLongPtr</i> and pass Process A's address to <i>
+MySubclassProc</i>. I call this technique &quot;injecting&quot; a DLL
+into a process's address space. I know several ways to do this.
+We'll discuss each of these in turn.</p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

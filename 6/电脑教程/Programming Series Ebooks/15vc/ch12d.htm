@@ -1,0 +1,269 @@
+<HTML>
+<HEAD>
+<LINK REL=StyleSheet HREF="basicIE4.css" TYPE="text/css">
+<TITLE>Multithreaded Programming</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY>
+<A NAME="243"><H1>Multithreaded Programming</H1></A>
+<P>As you'll recall from <A HREF="ch10a.htm">Chapter 10</A>, a <U>process</U> is a running program that owns its own memory, file handles, and other system resources. An individual process can contain separate execution paths, called <U>threads</U>. Don't look for separate code for separate threads, however, because a single function can be called from many threads. For the most part, all of a process's code and data space is available to all of the threads in the process. Two threads, for example, can access the same global variables. Threads are managed by the operating system, and each thread has its own stack.
+<P>Windows offers two kinds of threads, <U>worker</U> <U>threads</U> and <U>user</U> <U>interface threads</U>. The Microsoft Foundation Class (MFC) Library supports both. A user interface thread has windows, and therefore it has its own message loop. A worker thread doesn't have windows, so it doesn't need to process messages. Worker threads are easier to program and are generally more useful. The remaining examples in this chapter illustrate worker threads. At the end of the chapter, however, an application for a user interface thread is described.
+<P>Don't forget that even a single-threaded application has one thread&#151;the main thread. In the MFC hierarchy, <I>CWinApp</I> is derived from <I>CWinThread</I>. Back in <A HREF="ch02a.htm">Chapter 2</A>, I told you that <I>InitInstance</I> and <I>m_pMainWnd</I> are members of <I>CWinApp</I>. Well, I lied. The members are declared in <I>CWinThread</I>, but of course they're inherited by <I>CWinApp</I>. The important thing to remember here is that an application <U>is</U> a thread.
+<A NAME="244"><H2>Writing the Worker Thread Function and Starting the Thread</H2></A>
+<P>If you haven't guessed already, using a worker thread for a long computation is more efficient than using a message handler that contains a <I>PeekMessage</I> call. Before you start a worker thread, however, you must write a global function for your thread's main program. This global function should return a <I>UINT</I>, and it should take a single 32-bit value (declared 
+<I>LPVOID</I>) as a parameter. You can use the parameter to pass anything at all to your thread when you start it. The thread does its computation, and when the global function returns, the thread terminates. The thread would also be terminated if the process terminated, but it's preferable to ensure that the worker thread terminates first, which will guarantee that you'll have no memory leaks.
+<P>To start the thread (with function name <I>ComputeThreadProc</I>), your program makes the following call:
+<P>
+<PRE>CWinThread* pThread =
+    AfxBeginThread(ComputeThreadProc, GetSafeHwnd(),
+                   THREAD_PRIORITY_NORMAL);
+</pre><P>The compute thread code looks like this:<pre>
+<P>UINT ComputeThreadProc(LPVOID pParam)
+{
+    // Do thread processing
+    return 0;
+}
+</PRE>
+<P>The <I>AfxBeginThread</I> function returns immediately; the return value is a pointer to the newly created thread object. You can use that pointer to suspend and resume the thread (<I>CWinThread::SuspendThread</I> and <I>ResumeThread</I>), but the thread object has no member function to terminate the thread. The second parameter is the 32-bit value that gets passed to the global function, and the third parameter is the thread's priority code. Once the worker thread starts, both threads run independently. Windows divides the time between the two threads (and among the threads that belong to other processes) according to their priority. If the main thread is waiting for a message, the compute thread can still run.
+<A NAME="245"><H2>How the Main Thread Talks to a Worker Thread</H2></A>
+<P>The main thread (your application program) can communicate with the subsidiary worker thread in many different ways. One option that will <U>not</U> work, however, is a Windows message; the worker thread doesn't have a message loop. The simplest means of communication is a global variable because all the threads in the process have access to all the globals. Suppose the worker thread increments and tests a global integer as it computes and then exits when the value reaches 100. The main thread could force the worker thread to terminate by setting the global variable to 100 or higher.
+<P>The code below looks as though it should work, and when you test it, it probably will:
+<P>
+<PRE>UINT ComputeThreadProc(LPVOID pParam)
+{
+    g_nCount = 0;
+    while (g_nCount++ &lt; 100) {
+        // Do some computation here
+    }
+    return 0;
+}
+</PRE><P>There's a problem, however, that you could detect only by looking at 
+the generated assembly code. The value of <I>g_nCount</I> gets loaded into a register, the register is incremented, and then the register value is stored back in <I>g_nCount</I>. Suppose <I>g_nCount</I> is 40 and Windows interrupts the worker thread just after the worker thread loads 40 into the register. Now the main thread gets control and sets <I>g_nCount</I> to 100. When the worker thread resumes, it increments the register value and stores 41 back into 
+<I>g_nCount</I>, obliterating the previous value of 100. The thread loop doesn't terminate!
+<P>If you turn on the compiler's optimization switch, you'll have an additional problem. The compiler uses a register for <I>g_nCount</I>, and the register stays loaded for the duration of the loop. If the main thread changes the value of <I>g_nCount</I> in memory, it will have no effect on the worker thread's compute loop. (You can ensure that the counter isn't stored in a register, however, by declaring <I>g_nCount </I>as <I>volatile</I>.)
+<P>But suppose you rewrite the thread procedure as shown here:
+<P><PRE>UINT ComputeThreadProc(LPVOID pParam)
+{
+    g_nCount = 0;
+    while (g_nCount &lt; 100) {
+        // Do some computation here
+        ::InterlockedIncrement((long*) &amp;g_nCount);
+    }
+    return 0;
+}</PRE>
+<P>The <I>InterlockedIncrement</I> function blocks other threads from accessing 
+the variable while it is being incremented. The main thread can safely stop the 
+worker thread.
+<P>Now you've seen some of the pitfalls of using global variables for communication. Using global variables is sometimes appropriate, as the next 
+example illustrates, but there are alternative methods that are more flexible, as you'll see later in this chapter.
+<A NAME="246"><H2>How the Worker Thread Talks to the Main Thread</H2></A>
+<P>It makes sense for the worker thread to check a global variable in a loop, but what if the main thread did that? Remember the pig function? You definitely don't want your main thread to enter a loop because that would waste CPU cycles and stop your program's message processing. A Windows message is the preferred way for a worker thread to communicate with the main thread because the main thread always has a message loop. This implies, however, that the main thread has a window (visible or invisible) and that the worker thread has a handle to that window.
+<P>How does the worker thread get the handle? That's what the 32-bit thread function parameter is for. You pass the handle in the <I>AfxBeginThread</I> call. Why not pass the C++ window pointer instead? Doing so would be dangerous because you can't depend on the continued existence of the object and you're not allowed to share objects of MFC classes among threads. (This rule does not apply to objects derived directly from <I>CObject</I> or to simple classes such as <I>CRect</I> and <I>CString</I>.)
+<P>Do you send the message or post it? Better to post it, because sending it could cause reentry of the main thread's MFC message pump code, and that would create problems in modal dialogs. What kind of message do you post? Any user-defined message will do.
+<A NAME="247"><H2>The EX12B Program</H2></A>
+<P>The EX12B program looks exactly like the EX12A program when you run it. When you look at the code, however, you'll see some differences. The computation is done in a worker thread instead of in the main thread. The count value is stored in a global variable <I>g_nCount</I>, which is set to the maximum value in the dialog window's Cancel button handler. When the thread exits, it posts a message to the dialog, which causes <I>DoModal</I> to exit.
+<P>The document, view, frame, and application classes are the same except for their names, and the dialog resource is the same. The modal dialog class is still named <I>CComputeDlg</I>, but the code inside is quite different. The 
+constructor, timer handler, and data exchange functions are pretty much the same. The following code fragment shows the global variable definition and the 
+global thread function as given in the \ex12b\ComputeDlg.cpp file on the companion CD-ROM. Note that the function exits (and the thread terminates) when <I>g_nCount</I> is greater than a constant maximum value. Before it exits, however, the function posts a user-defined message to the dialog window.
+<P><PRE><B>int g_nCount = 0; 
+
+UINT ComputeThreadProc(LPVOID pParam)
+{
+    volatile int nTemp; // volatile else compiler optimizes too much
+
+    for (g_nCount = 0; g_nCount &lt; CComputeDlg::nMaxCount;
+                       ::InterlockedIncrement((long*) &amp;g_nCount)) {
+        for (nTemp = 0; nTemp &lt; 10000; nTemp++) {
+            // uses up CPU cycles
+        }
+    }
+    // WM_THREADFINISHED is user-defined message
+    ::PostMessage((HWND) pParam, WM_THREADFINISHED, 0, 0);
+    g_nCount = 0;
+    return 0; // ends the thread
+}</B>
+</PRE>
+<P>The <I>OnStart</I> handler below is mapped to the dialog's Start button. Its 
+job is to start the timer and the worker thread. You can change the worker thread's priority by changing the third parameter of <I>AfxBeginThread</I>&#151;for example, the computation runs a little more slowly if you set the priority to <I>THREAD_PRIORITY_LOWEST</I>.
+<P><PRE>void CComputeDlg::OnStart()
+{
+<B>    m_nTimer = SetTimer(1, 100, NULL); // 1/10 second
+    ASSERT(m_nTimer != 0);
+    GetDlgItem(IDC_START)-&gt;EnableWindow(FALSE);
+    AfxBeginThread(ComputeThreadProc, GetSafeHwnd(),
+                   THREAD_PRIORITY_NORMAL);</B>
+}
+</PRE><P>The <I>OnCancel </I>handler below is mapped to the dialog's Cancel 
+button. It sets the <I>g_nCount</I> variable to the maximum value, causing the thread to terminate.
+<P><PRE>void CComputeDlg::OnCancel()
+{
+<B>    if (g_nCount == 0) { // prior to Start button
+        CDialog::OnCancel();
+    }
+    else { // computation in progress
+        g_nCount = nMaxCount; // Force thread to exit
+    }</B>
+}
+</PRE><P>The <I>OnThreadFinished </I>handler below is mapped to the dialog's 
+WM_THREADFINISHED user-defined message. It causes the dialog's 
+<I>DoModal</I> function to exit.
+<P><PRE><B>LRESULT CComputeDlg::OnThreadFinished(WPARAM wParam, LPARAM lParam)
+{
+    CDialog::OnOK();
+    return 0;
+}</B></PRE>
+<A NAME="248"><H2>Using Events for Thread Synchronization</H2></A><P>The global variable is a crude but effective means of interthread communication. Now let's try something more sophisticated. We want to think in terms of thread <U>synchronization</U> instead of simple communication. Our threads must carefully synchronize their interactions with one another.
+<P>An <U>event</U> is one type of kernel object (processes and threads are also 
+kernel objects) that Windows provides for thread synchronization. An event is identified by a unique 32-bit handle within a process. It can be identified by name, or its handle can be duplicated for sharing among processes. An event can be either in the signaled (or true) state or in the unsignaled (or false) state. Events come in two types: manual reset and autoreset. We'll be looking at autoreset events here because they're ideal for the synchronization of two processes.
+<P>Let's go back to our worker thread example. We want the main (user interface) thread to &quot;signal&quot; the worker thread to make it start or stop, so we'll need a &quot;start&quot; event and a &quot;kill&quot; event. MFC provides a handy <I>CEvent</I> class that's derived from <I>CSyncObject</I>. By default, the constructor creates a Win32 <U>autoreset</U> event object in the unsignaled state. If you declare your events as global objects, any thread can easily access them. When the main thread wants to start or terminate the worker thread, it sets the appropriate event to the signaled state by calling <I>CEvent::SetEvent</I>.
+<P>Now the worker thread must monitor the two events and respond when one of them is signaled. MFC provides the <I>CSingleLock</I> class for this purpose, but it's easier to use the Win32 <I>WaitForSingleObject</I> function. This function suspends the thread until the specified object becomes signaled. When the thread is suspended, it's not using any CPU cycles&#151;which is good. The first <I>WaitForSingleObject</I> parameter is the event handle. You can use a 
+<I>CEvent</I> object for this parameter; the object inherits from <I>CSyncObject</I> an operator <I>HANDLE</I> that returns the event handle it has stored as a public data member. The second parameter is the time-out interval. If you set this parameter to <I>INFINITE</I>, the function waits forever until the event becomes signaled. If you set the time-out to 0, <I>WaitForSingleObject</I> returns immediately, with a return value of 
+<I>WAIT_OBJECT_0</I> if the event was signaled.
+<A NAME="249"><H2>The EX12C Program</H2></A><P>The EX12C program uses two events to synchronize the worker thread with the main thread. Most of the EX12C code is the same as EX12B, but the <I>CComputeDlg</I> class is quite different. The StdAfx.h file contains the following line for the <I>CEvent</I> class:
+<P><PRE><B>#include &lt;afxmt.h&gt;</B></PRE>
+<P>There are two global event objects, as shown below. Note that the constructors create the Windows events prior to the execution of the main program.
+<P><PRE><B>CEvent g_eventStart; // creates autoreset events
+CEvent g_eventKill;</B></PRE>
+<P>It's best to look at the worker thread global function first. The function increments <I>g_nCount</I> just as it did in EX12B. The worker thread is started by the <I>OnInitDialog</I> function instead of by the Start button handler. The first <I>WaitForSingleObject</I> call waits for the start event, which is signaled by the Start button handler. The <I>INFINITE</I> parameter means that the thread waits as long as necessary. The second <I>WaitForSingleObject</I> call is different&#151;it has a 0 time-out value. It's located in the main compute loop and simply makes a quick test to see whether the kill event was signaled by the Cancel button handler. If the event was signaled, the thread terminates.
+<P><PRE><B>UINT ComputeThreadProc(LPVOID pParam)
+{
+    volatile int nTemp;
+
+    ::WaitForSingleObject(g_eventStart, INFINITE);
+    TRACE(&quot;starting computation\n&quot;);
+    for (g_nCount = 0; g_nCount &lt; CComputeDlg::nMaxCount;
+                       g_nCount++) {
+        for (nTemp = 0; nTemp &lt; 10000; nTemp++) {
+            // Simulate computation
+        }
+        if (::WaitForSingleObject(g_eventKill, 0) == WAIT_OBJECT_0) {
+            break;
+        }
+    }
+    // Tell owner window we're finished
+    ::PostMessage((HWND) pParam, WM_THREADFINISHED, 0, 0);
+    g_nCount = 0;
+    return 0; // ends the thread
+}</B></PRE>
+<P>Here is the <I>OnInitDialog</I> function that's called when the dialog is 
+initialized. Note that it starts the worker thread, which doesn't do anything until the start event is signaled.
+<P><PRE>BOOL CComputeDlg::OnInitDialog()
+{
+    CDialog::OnInitDialog();
+<B>    AfxBeginThread(ComputeThreadProc, GetSafeHwnd());</B>
+    return TRUE;  // Return TRUE unless you set the focus to a control
+                  // EXCEPTION: OCX Property Pages should return FALSE
+}
+</PRE><P>The following Start button handler sets the start event to the signaled state, thereby starting the worker thread's compute loop:
+<P><PRE>void CComputeDlg::OnStart()
+{
+<B>    m_nTimer = SetTimer(1, 100, NULL); // 1/10 second
+    ASSERT(m_nTimer != 0);
+    GetDlgItem(IDC_START)-&gt;EnableWindow(FALSE);
+    g_eventStart.SetEvent();</B>
+}</pre>
+<P>The following Cancel button handler sets the kill event to the signaled 
+state, causing the worker thread's compute loop to terminate:
+<P><pre>void CComputeDlg::OnCancel()
+{
+<B>    if (g_nCount == 0) { // prior to Start button
+        // Must start it before we can kill it
+        g_eventStart.SetEvent();
+    }
+    g_eventKill.SetEvent();</B>
+}
+</PRE><P>Note the awkward use of the start event when the user cancels without 
+starting the compute process. It might be neater to define a new cancel event 
+and then replace the first <I>WaitForSingleObject</I> call with a <I>WaitForMultipleObjects</I> call in the <I>ComputeThreadProc</I> function. If <I>WaitForMultipleObjects</I> detected a cancel event, it could cause an immediate thread termination.
+<A NAME="250"><H2>Thread Blocking</H2></A>
+<P>The first <I>WaitForSingleObject</I> call in the <I>ComputeThreadProc</I> function above is an example of thread blocking. The thread simply stops executing until an event becomes signaled. A thread could be blocked in many other ways. You could call the Win32 <I>Sleep</I> function, for example, to put your thread to &quot;sleep&quot; for 500 milliseconds. Many functions block threads, particularly those functions that access hardware devices or Internet hosts. Back in the Win16 days, those functions took over the CPU until they were finished. In Win32, they allow other processes and threads to run.
+<P>You should avoid putting blocking calls in your main user interface thread. Remember that if your main thread is blocked, it can't process its messages, and that makes the program appear sluggish. If you have a task that requires 
+heavy file I/O, put the code in a worker thread and synchronize it with your 
+main thread.
+<P>Be careful of calls in your worker thread that could block indefinitely. Check the online documentation to determine whether you have the option of 
+setting a time-out value for a particular I/O operation. If a call <U>does</U> block forever, the thread will be terminated when the main process exits, but then you'll have some memory leaks. You could call the Win32 <I>TerminateThread</I> function from your main thread, but you'd still have the memory-leak problem.
+<A NAME="251"><H2>Critical Sections</H2></A>
+<P>Remember the problems with access to the <I>g_nCount</I> global variable? If you want to share global data among threads and you need more flexibility than simple instructions like <I>InterlockedIncrement</I> can provide, <U>critical</U> <U>sections</U> might be the synchronization tools for you. Events are good for signaling, but critical sections (sections of code that require exclusive access to shared data) are good for controlling access to data.
+<P>MFC provides the <I>CCriticalSection</I> class that wraps the Windows critical section handle. The constructor calls the Win32 <I>InitializeCriticalSection</I> function, the <I>Lock</I> and <I>Unlock</I> member functions call <I>EnterCriticalSection</I> and <I>LeaveCriticalSection</I>, and the destructor calls <I>DeleteCriticalSection</I>. Here's how you use the class to protect global data:
+<P><PRE>CCriticalSection g_cs;    // global variables accessible from all threads
+int g_nCount;
+void func()
+{
+    g_cs.Lock();
+    g_nCount++;
+    g_cs.Unlock();
+}
+</PRE><P>Suppose your program tracks time values as hours, minutes, and seconds, each stored in a separate integer, and suppose two threads are sharing time values. Thread A is changing a time value but is interrupted by thread B after it has updated hours but before it has updated minutes and seconds. Thread B will have an invalid time value.
+<P>If you write a C++ class for your time format, it's easy to control data 
+access by making the data members private and providing public member functions. The <I>CHMS</I> class, shown in Figure 12-2, does exactly that. Notice that the class has a data member of type <I>CCriticalSection</I>. Thus, a critical section object is associated with each <I>CHMS</I> object.
+<P>Notice that the other member functions call the <I>Lock</I> and <I>Unlock</I> member functions. If thread A is executing in the middle of 
+<I>SetTime</I>, thread B will be blocked by the <I>Lock</I> call in <I>GetTotalSecs</I> until thread A calls <I>Unlock</I>. The <I>IncrementSecs</I> function calls <I>SetTime</I>, resulting in nested locks on the critical section. That's okay because Windows keeps track of the nesting level.
+<P>The <I>CHMS</I> class works well if you use it to construct global objects. If you share pointers to objects on the heap, you have another set of problems. 
+Each thread must determine whether another thread has deleted the object, and 
+that means you must synchronize access to the pointers.
+<P>
+
+<TABLE cellpadding=5 width="9%"><TR><TD>
+<P><B>HMS.H</B>
+<P><PRE>#include &quot;StdAfx.h&quot;
+
+class CHMS
+{
+private:
+    int m_nHr, m_nMn, m_nSc;
+    CCriticalSection m_cs;
+public:
+    CHMS() : m_nHr(0), m_nMn(0), m_nSc(0) {}
+
+    ~CHMS() {}
+
+    void SetTime(int nSecs)
+    {
+        m_cs.Lock();
+        m_nSc = nSecs % 60;
+        m_nMn = (nSecs / 60) % 60;
+        m_nHr = nSecs / 3600;
+        m_cs.Unlock();
+    }
+    
+    int GetTotalSecs()
+    {
+        int nTotalSecs;
+        m_cs.Lock();
+        nTotalSecs = m_nHr * 3600 + m_nMn * 60 + m_nSc;
+        m_cs.Unlock();
+        return nTotalSecs;
+    }
+    
+    void IncrementSecs()
+    {
+        m_cs.Lock();
+        SetTime(GetTotalSecs() + 1);
+        m_cs.Unlock();
+    }
+};
+</PRE>
+
+</TD></TR></TABLE>
+
+<B>Figure 12-2.</B> <I>The </I>CHMS<I> class listing.</I>
+
+<P>No sample program is provided that uses the <I>CHMS</I> class, but the file hms.h is included in the \vcpp32\ex12c subdirectory on the companion CD-ROM. 
+If you write a multithreaded program, you can share global objects of the class. You don't need any other calls to the thread-related functions.
+<A NAME="252"><H2>Mutexes and Semaphores</H2></A>
+<P>As I mentioned, I'm leaving these synchronization objects to Jeffrey Richter's <I>Advanced Windows</I>. You might need a mutex or a semaphore if you're controlling access to data across different processes because a critical section is accessible only within a single process. Mutexes and semaphores (along with events) are shareable by name.
+<A NAME="253"><H2>User Interface Threads</H2></A>
+<P>The MFC library provides good support for UI threads. You derive a class from <I>CWinThread</I>, and you use an overloaded version of <I>AfxBeginThread</I> to start the thread. Your derived <I>CWinThread</I> class has its own <I>InitInstance</I> function, and most important, it has its own message loop. You can construct windows and map messages as required.
+<P>Why might you want a user interface thread? If you want multiple top-level windows, you can create and manage them from your main thread. Suppose you allow the user to run multiple instances of your application, but you want all instances to share memory. You can configure a single process to run multiple UI threads such that users think they are running separate processes. That's exactly what Windows Explorer does. Check it out with SPY++.
+<P>Starting the second and subsequent threads is a little tricky because the 
+user actually launches a new process for each copy of Windows Explorer. When the second process starts, it signals the first process to start a new thread, 
+and then it exits. The second process can locate the first process either by calling the Win32 <I>FindWindow</I> function or by declaring a shared data section. Shared data sections are explained in detail in Jeffrey Richter's book.
+</BODY>
+</HTML>
+
+
+

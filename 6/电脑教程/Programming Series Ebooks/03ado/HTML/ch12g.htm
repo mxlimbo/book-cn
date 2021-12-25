@@ -1,0 +1,166 @@
+<html>
+<head>
+<TITLE>If at First You Don't Succeed, Try, Try Again...Intelligently</title>
+<link rel="STYLESHEET" type="text/css" href="progado.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor = "#ffffff" text="#000000">
+<A HREF="ch12f.htm">[Previous]</A> <A HREF="ch12h.htm">[Next]</A><P>
+
+<A NAME="351"><H1>If at First You Don't Succeed, Try, Try Again...Intelligently</H1></A>
+
+<p>So far, you've learned how to detect which records contain
+updates that failed because of optimistic updating conflicts, what type
+of modifications are contained in each of those records, and why those
+conflicts occurred. The only problem left is determining how to resolve
+those conflicts.</p>
+
+<p>Actually, the way in which you resolve conflicts will depend on your
+application. One solution is to resubmit changes for records in your
+Recordset, which ADO allows you to do.</p>
+
+<A NAME="352"><H2>Attempting to Update After Resynchronizing Your Data</H2></A>
+
+<p>It's time to go back to our original optimistic updating
+conflict example. We retrieved data about a particular customer.
+Let's say that the customer's balance due was initially $75 and
+we tried to add $50:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+strSQL = &quot;SELECT CustomerID, CompanyName, BalanceDue &quot; &amp; _
+         &quot;FROM Customers WHERE CustomerID = 7&quot;
+rsCustomers.Open strSQL, cnDatabase, adOpenStatic, _
+                 adLockBatchOptimistic, adCmdText
+rsCustomers.Properties(&quot;Update Resync&quot;) = adResyncConflicts
+rsCustomers!BalanceDue = rsCustomers!BalanceDue + 50
+rsCustomers.Update
+rsCustomers.UpdateBatch
+</pre>
+</td></tr></table>
+</p>
+
+<p>Based on this code, the ADO Cursor Engine built the following action
+query to update the data in the database:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+UPDATE Customers SET BalanceDue = 125
+       WHERE CustomerID = 7 AND BalanceDue = 75
+</pre>
+</td></tr></table>
+</p>
+
+<p>Meanwhile, back in the jungle&#8230;Between the time this user
+retrieved the customer's balance due and the time the user
+submitted the information for the new order, another user entered a $65
+order for the same customer. The first user's update attempt
+failed, and with a little code, we figured out why the conflict
+occurred.</p>
+
+<p>In this situation, the best way to handle the problem is to let the
+user know that a conflict occurred and why, and then ask the user if he
+or she wants to change the balance due to the newly retrieved balance
+due plus the cost of the order. Even if your code didn't store the
+cost of the order, you can calculate it by subtracting the amount in
+the OriginalValue property from the amount in the Value property on the
+BalanceDue field. Then you simply add the result to the value in the
+UnderlyingValue property and assign that result to be the new Value of
+the BalanceDue field:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+Dim curCostOfOrder As Currency
+With rsCustomers.Fields(&quot;BalanceDue&quot;)
+    curCostOfOrder = .Value - .OriginalValue
+    .Value = .UnderlyingValue + curCostOfOrder
+End With
+rsCustomers.Update
+</pre>
+</td></tr></table>
+</p>
+
+<p>Now the Recordset contains the data you want to submit to the
+database. If only you could simply call <i>Recordset.UpdateBatch</i> at
+this point and submit that data to the database.</p>
+
+<p>Actually, it's that simple. Most of the time, that's all you
+need to do. Let's look at why calling <i>UpdateBatch</i> at this
+point usually succeeds and why it might fail.</p>
+
+<A NAME="353"><H3>Why the update usually succeeds</H3></A>
+
+<p>In the previous example, we used the Update Resync dynamic property
+to automatically resynchronize the record when a conflict occurred.
+When we changed the value of the BalanceDue field, and then called <i>
+Update</i> and <i>UpdateBatch</i>, the ADO Cursor Engine built and
+submitted the following action query:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+UPDATE Customers SET BalanceDue = 190
+       WHERE CustomerID = 7 AND BalanceDue = 140
+</pre>
+</td></tr></table>
+</p>
+
+<p>You know where the new value for the BalanceDue field came from.
+That's the field you calculated using the contents of the Value,
+OriginalValue, and UnderlyingValue properties on the Field object. The
+other difference between this action query and the one that the ADO
+Cursor Engine built when you attempted to submit your initial changes
+to the database is the value of the BalanceDue field in the WHERE
+clause. Where did this information come from?</p>
+
+<p>In the initial action query, the ADO Cursor Engine used the contents
+of the OriginalValue property on the modified field in the WHERE
+clause. This time the ADO Cursor Engine uses the data stored in the
+UnderlyingValue property. This isn't really a change in the Cursor
+Engine's logic. In each case, it uses the most recently retrieved
+value for the modified field. Thus, your second attempt to update this
+record in the database will probably succeed.</p>
+
+<A NAME="354"><H3>Why the update might fail</H3></A>
+
+<p>Why might the second attempt to update this record in the database
+fail? That's still part of the nature of optimistic updating. When
+you resynchronize the record with the pending changes, you aren't
+preventing other users from changing the contents of that corresponding
+record in the database. It's possible that another user could
+modify that record between the time you retrieve its contents and the
+time you make another attempt to update it. It's unlikely, but it
+is possible.</p>
+
+<A NAME="355"><H2>No Error Handling Is Still Better than Bad Error Handling</H2></A>
+
+<p>There's one small drawback to the fact that the ADO Cursor
+Engine makes it fairly easy to resubmit a pending change to the
+database.</p>
+
+<p>Think back to the example I've used throughout the chapter. You
+can trap for the error that occurs when you call the <i>UpdateBatch</i>
+method. If you resynchronize the conflicting record by calling the <i>
+Recordset.Resync</i> method or by using the Update Resync property, the
+next attempt to submit your update will likely succeed for reasons we
+just discussed. Make sure you determine the cause of the conflict in
+order to plot the proper course of action, before making another
+attempt to submit the pending change to the database. Why? In our
+example we adjusted the BalanceDue field before we resubmitted the
+update based on data we retrieved when we resynchronized the record.
+Had we not adjusted the Value property of the BalanceDue field first,
+we would have lost the change made by the other user that caused the
+conflict, and the BalanceDue field in the database would not reflect
+that user's order.</p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

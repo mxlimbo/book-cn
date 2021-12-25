@@ -1,0 +1,1151 @@
+<HTML>
+<HEAD>
+<TITLE>I/O Control Operations</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch09c.htm">[Previous]</A> <A HREF="ch09e.htm">[Next]</a>
+</p>
+
+<A NAME="307"><H1>I/O Control Operations</H1></A>
+
+<p>If you look at the various types of requests that come to a device, most of them involve
+reading or writing data. On occasion, however, an application needs to perform an IOCTL
+operation on a device. An application uses the standard Microsoft Win32 API function <b>
+DeviceIoControl</b> to perform such an operation. On the driver side, an application's call
+to DeviceIoControl turns into an IRP with the major function code IRP_MJ_DEVICE_CONTROL.</p>
+
+<A NAME="308"><H2>The DeviceIoControl API</H2></A>
+
+<p>The user-mode DeviceIoControl API has the following prototype:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>result = DeviceIoControl(Handle, Code, InputData, InputLength,
+  OutputData, OutputLength, &amp;Feedback, &amp;Overlapped);</pre>
+</td></tr>
+</table>
+</p>
+
+<p><b>Handle</b> (HANDLE) is an open handle open to the device. You obtain this handle by
+calling <b>CreateFile</b> in the following manner:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>Handle = CreateFile(&quot;\\\\.\\IOCTL&quot;, GENERIC_READ | GENERIC_WRITE, 
+  0, NULL, OPEN_EXISTING, flags, NULL);
+if (Handle == INVALID_HANDLE_VALUE)
+  <i>&lt;error&gt;</i>
+...
+CloseHandle(Handle);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The <b>flags</b> argument to CreateFile is either FILE_FLAG_OVERLAPPED or zero to indicate
+whether or not you'll be performing asynchronous operations with this file handle. While
+you have the handle open, you can make calls to <b>ReadFile</b>, <b>WriteFile</b>, or <b>
+DeviceIoControl</b>. When you're done accessing the device, you should explicitly close the
+handle by calling <b>CloseHandle</b>. Bear in mind, though, that the operating system
+automatically closes any handles that are left open when your process terminates.</p>
+
+<p>The <b>Code</b> (DWORD) argument to DeviceIoControl is a control code that indicates what
+control operation you want to perform. I'll discuss how you define these codes a bit
+further on (in &quot;<A HREF="ch09d.htm#310">Defining I/O Control Codes</A>&quot;). The <b>InputData</b> (PVOID) and <b>
+InputLength</b> (DWORD) arguments describe a data area that you are sending <i>to</i> the
+device driver. (That is, this data is input from the perspective of the driver.) The <b>
+OutputData</b> (PVOID) and <b>OutputLength</b> (DWORD) arguments describe a data area that the
+driver can completely or partially fill with information that it wants to send back to you.
+(That is, this data is output from the perspective of the driver.) The driver will update the
+<b>Feedback</b> variable (a DWORD) to indicate how many bytes of output data it gave you back.
+Figure 9-8 illustrates the relationship of these buffers with the application and driver. The
+<b>Overlapped</b> (OVERLAPPED) structure is used to help control an asynchronous operation,
+which is the subject of the next section. If you specified FILE_FLAG_OVERLAPPED in the call to
+CreateFile, you must specify the OVERLAPPED structure pointer. If you didn't specify
+FILE_FLAG_OVERLAPPED, you might as well supply NULL for this last argument because the system
+is going to ignore it anyway.</p>
+
+<p>
+<img src="images/F09wi08.JPG" width=333 height=400 border="0">
+</p><p>
+<!--caption--><b>Figure 9-8.</b> <i>Input and output buffers for DeviceIoControl.</i><!--/caption-->
+</p>
+
+
+<p>Whether a particular control operation requires an input buffer or an output buffer depends on
+the function being performed. For example, an IOCTL that retrieves the driver's version
+number would probably require an output buffer only. An IOCTL that merely notifies the driver
+of some fact pertaining to the application would probably require only an input buffer. You can
+imagine still other operations that would require either both or neither of the input and
+output buffers&#8212;it all depends on what the control operation does.</p>
+
+<p>The return value from DeviceIoControl is a Boolean value that indicates success (if TRUE) or
+failure (if FALSE). In a failure situation, the application can call <b>GetLastError</b> to
+find out why the call failed.</p>
+
+<A NAME="309"><H2>Synchronous and Asynchronous Calls to DeviceIoControl</H2></A>
+
+<p>When you make a synchronous call to DeviceIoControl, the calling thread blocks until the
+control operation completes. For example:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>HANDLE Handle = CreateFile(&quot;\\\\.\\IOCTL&quot;, ..., 0, NULL);
+DWORD version, junk;
+if (DeviceIoControl(Handle, IOCTL_GET_VERSION_BUFFERED,
+  NULL, 0, &amp;version, sizeof(version), &amp;junk, NULL))
+  printf(&quot;IOCTL.SYS version %d.%2d\n&quot;, HIWORD(version),
+    LOWORD(version));
+else
+  printf(&quot;Error %d in IOCTL_GET_VERSION_BUFFERED call\n&quot;,
+    GetLastError());</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Here, we open the device handle without the FILE_FLAG_OVERLAPPED flag. Our subsequent call
+to DeviceIoControl therefore doesn't return until the driver supplies the answer we're
+asking for.</p>
+
+<p>When you make an asynchronous call to DeviceIoControl, the calling thread does not block
+immediately. Instead, it continues processing until it reaches the point where it requires the
+result of the control operation. At that point, it calls some API that will block the thread
+until the driver completes the operation. For example:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>HANDLE Handle = CreateFile(&quot;\\\\.\\IOCTL&quot;, ...,
+  FILE_FLAG_OVERLAPPED, NULL);
+DWORD version, junk;
+OVERLAPPED Overlapped;
+
+Overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+DWORD code;
+
+if (DeviceIoControl(Handle, ..., &amp;Overlapped))
+  code = 0;
+else
+  code = GetLastError();
+
+<i>&lt;continue processing&gt;</i>
+
+if (code == ERROR_IO_PENDING)
+  {
+  if (GetOverlappedResult(Handle, &amp;Overlapped, &amp;junk, TRUE))
+    code = 0;
+  else
+    code = GetLastError();
+  }
+CloseHandle(Overlapped.hEvent);
+if (code != 0)
+  <i>&lt;error&gt;</i></pre>
+</td></tr>
+</table>
+</p>
+
+<p>Two major differences exist between this asynchronous example and the earlier synchronous
+example. First, we specify the FILE_FLAG_OVERLAPPED flag in the call to CreateFile. Second, the
+call to DeviceIoControl specifies the address of an OVERLAPPED structure, within which
+we've initialized the <b>hEvent</b> event handle to describe a manual reset event. (For
+more information about events and thread synchronization in general, see Jeffrey Richter's
+<i>Programming Applications for Microsoft Windows, Fourth Edition</i> [Microsoft Press,
+1999].)</p>
+
+<p>The asynchronous call to DeviceIoControl will have one of three results. First, it might return
+TRUE, meaning that the device driver's dispatch routine was able to complete the request
+right away. Second, it might return FALSE, and GetLastError might retrieve the special error
+code ERROR_IO_PENDING. This result indicates that the driver's dispatch routine returned
+STATUS_PENDING and will complete the control operation later. Note that ERROR_IO_PENDING
+isn't really an error&#8212;it's one of the two ways in which the system indicates that
+everything is proceeding normally. The third possible result from the asynchronous call to
+DeviceIoControl is a FALSE return value coupled with a GetLastError value other than
+ERROR_IO_PENDING. Such a result would be a real error.</p>
+
+<p>At the point at which the application needs the result of the control operation, it calls one
+of the Win32 synchronization primitives, such as <b>GetOverlappedResult</b>, <b>
+WaitForSingleObject</b>, or the like. GetOverlappedResult, the synchronization primitive I use
+in this example, is especially convenient because it also retrieves the bytes-transferred
+feedback value and sets the GetLastError result to indicate the result of the I/O operation.
+Although you could call WaitForSingleObject or a related API&#8212;passing the <b>
+Overlapped.hEvent</b> event handle as an argument&#8212;you wouldn't be able to learn the
+results of the DeviceIoControl operation; you'd just learn that the operation had
+finished.</p>
+
+<A NAME="310"><H2>Defining I/O Control Codes</H2></A>
+
+<p>The <b>Code</b> argument to DeviceIoControl is a 32-bit numeric constant that you define
+using the CTL_CODE preprocessor macro that's part of both the DDK and the Platform SDK.
+Figure 9-9 illustrates the way in which the operating system partitions one of these 32-bit
+codes into subfields.</p>
+
+<p>
+<A HREF="javascript:fullSize('F09wi09x.htm')"> <img src="images/F09wi09.JPG" width=404 height=35 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 9-9.</b> <i>Fields in an I/O control code.</i><!--/caption-->
+</p>
+
+
+<p>The fields have the following interpretation:</p>
+
+<ul>
+<p><li> The device type (16 bits, first argument to CTL_CODE) is supposed to indicate what type
+of device implements this control operation. I'm unaware of any &quot;IOCTL police&quot;
+inside either Microsoft Windows 98 or Microsoft Windows 2000, however, and I believe that the
+content of the field is actually pretty arbitrary. It is customary, though, to use the same
+value (for example, FILE_DEVICE_UNKNOWN) that you use in the driver when you call
+IoCreateDevice.</li></p>
+
+<p><li> The access code (2 bits, fourth argument to CTL_CODE) indicates the access rights an
+application needs to its device handle to issue this control operation.</li></p>
+
+<p><li> The function code (12 bits, second argument to CTL_CODE) indicates precisely which
+control operation this code describes. Microsoft reserves the first half of the range of this
+field&#8212;that is, values 0 through 2047. You and I therefore assign values in the range 2048
+through 4095. I'm pretty sure I'll never feel cramped by being able to define only 2048
+IOCTLs for one of my devices.</li></p>
+
+<p><li> The buffering method (2 bits, third argument to CTL_CODE) indicates how the I/O Manager
+is to handle the input and output buffers supplied by the application. I'll have a great
+deal to say about this field in the next section when I describe how to implement
+IRP_MJ_DEVICE_CONTROL in a driver.</li></p>
+</ul>
+
+
+<p>I want to clarify one point of possible confusion. When you create your driver, you're
+free to design a series of IOCTL operations that applications can use in talking to your
+driver. Although some other driver author might craft a set of IOCTL operations that uses
+exactly the same numeric values for control codes, the system will never be confused by the
+overlap because IOCTL codes are interpreted by only the driver to which they're addressed.
+Mind you, if you opened a handle to a device belonging to that hypothetical other driver and
+then tried to send what you thought was one of your own IOCTLs to it, confusion would
+definitely ensue.</p>
+
+<p>Mechanically, your life and the life of application programmers who need to call your driver
+will be easier if you place all of your IOCTL definitions in a dedicated header file. In the
+samples on the companion disc, the projects each have a header named IOCTLS.H that contains
+these definitions. For example:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>#ifndef CTL_CODE
+  #pragma message (&quot;CTL_CODE undefined. Include winioctl.h or wdm.h&quot;)
+#endif
+
+#define IOCTL_GET_VERSION_BUFFERED \
+  CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_GET_VERSION_DIRECT \
+  CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_OUT_DIRECT, FILE_ANY_ACCESS)
+#define IOCTL_GET_VERSION_NEITHER \
+  CTL_CODE(FILE_DEVICE_UNKNOWN, 0x802, METHOD_NEITHER, FILE_ANY_ACCESS)</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The reason for the message #pragma, by the way, is that I'm forever forgetting to
+include the header file (WINIOCTL.H) that defines CTL_CODE for user-mode programs, and I also
+tend to forget the name. Better a message that will tell me what I'm doing wrong than a few
+minutes grep'ing through the include directory, I always say.</p>
+
+<A NAME="311"><H2>Handling IRP_MJ_DEVICE_CONTROL</H2></A>
+
+<p>Each user-mode call to DeviceIoControl causes the I/O Manager to create an IRP with the
+major function code IRP_MJ_DEVICE_CONTROL and to send that IRP to the driver dispatch routine
+at the top of the stack for the addressed device. The top stack location contains the
+parameters listed in Table 9-1. Filter drivers might interpret some private codes themselves
+but will&#8212;if correctly coded, that is&#8212;pass all others down the stack. A dispatch
+function that understands how to handle the IOCTL will reside somewhere in the driver
+stack&#8212;most likely in the function driver, in fact.</p>
+
+<p><b>Table 9-1.</b> <i>Stack location parameters for IRP_MJ_DEVICE_CONTROL.</i></p>
+
+<p>
+<table valign="top" cellpadding="5" width="95%">
+<tr>
+<th><i>Parameters.DeviceIoControl field</i></th>
+<th><i>Description</i></th>
+</tr>
+<tr>
+<td valign="top">OutputBufferLength</td>
+<td valign="top">Length of the output buffer&#8212;sixth argument to DeviceIoControl</td>
+</tr>
+<tr>
+<td valign="top">InputBufferLength</td>
+<td valign="top">Length of the input buffer&#8212;fourth argument to DeviceIoControl</td>
+</tr>
+<tr>
+<td valign="top">IoControlCode</td>
+<td valign="top">Control code&#8212;second argument to DeviceIoControl</td>
+</tr>
+<tr>
+<td valign="top">Type3InputBuffer</td>
+<td valign="top">User-mode virtual address of input buffer for METHOD_NEITHER</td>
+</tr>
+</table>
+</p>
+
+
+<p>A skeletal dispatch function for control operations looks like this:</p>
+
+
+<p>
+<table cellpadding=5 width="95%"><tr>
+<td valign=top>
+<pre>
+
+
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+2 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+3 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+
+
+
+4 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+5 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+</pre>
+</td>
+
+<td>
+<pre>#pragma PAGEDCODE
+
+NTSTATUS DispatchControl(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  PAGED_CODE();
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+  NTSTATUS status = IoAcquireRemoveLock(&amp;pdx-&gt;RemoveLock, Irp);
+  if (!NT_SUCCESS(status))
+    return CompleteRequest(Irp, status, 0);
+  ULONG info = 0;
+
+  PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
+  ULONG cbin = stack-&gt;Parameters.DeviceIoControl.InputBufferLength;
+  ULONG cbout = stack-&gt;Parameters.DeviceIoControl.OutputBufferLength;
+  ULONG code = stack-&gt;Parameters.DeviceIoControl.IoControlCode;
+
+  switch (code)
+    {
+
+    ...
+
+  default:
+    status = STATUS_INVALID_DEVICE_REQUEST;
+    break;
+
+    }
+
+  IoReleaseRemoveLock(&amp;pdx-&gt;RemoveLock, Irp);
+  return CompleteRequest(Irp, status, info);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> You can be sure of being called at PASSIVE_LEVEL, so there's no particular
+reason for a simple dispatch function to be anywhere but paged memory.</li></p>
+
+<p><li> Like other dispatch functions, this one needs to claim the remove lock while it
+does its work. That prevents the device object from disappearing out from underneath us because
+of a PnP event.</li></p>
+
+<p><li> The next few statements extract the function code and buffer sizes from the
+parameters union in the I/O stack. You often need these values no matter which specific IOCTL
+you're processing, so I find it easier to always include these statements in the
+function.</li></p>
+
+<p><li> This is where you get to exercise your own creativity by inserting <b>case</b> 
+labels for the various IOCTL operations you support.</li></p>
+
+<p><li> It's a good idea to return a meaningful status code if you're given an
+IOCTL operation you don't understand.</li></p>
+</ol>
+
+<p>The way you handle each IOCTL depends on two factors. The first, and most important, of
+these is the actual purpose of the IOCTL in your scheme of things. (Duh.) The second factor,
+which is critically important to the mechanics of your code, is the method you selected for
+buffering user-mode data.</p>
+
+<p>In Chapter 7, &quot;<A HREF="ch07a.htm#226">Reading and Writing Data</A>,&quot; I discussed how you work with a user-mode
+program sending you a buffer load of data for output to your device or filling a buffer with
+input from your device. As I indicated there, when it comes to read and write requests, you
+have to make up your mind at AddDevice time whether you're going to use the so-called
+buffered method or direct method (or neither of them) for accessing user-mode buffers in all
+read and write requests. Control requests also utilize one of these addressing methods, but
+they work a little differently. Rather than specify a global addressing method via
+device-object flags, you specify the addressing method for each IOCTL by means of the two
+low-order bits of the function code. Consequently, you can have some IOCTLs that use the
+buffered method, some that use a direct method, and some that use neither method. Moreover, the
+methods you pick for IOCTLs don't affect in any way how you address buffers for read and
+write IRPs.</p>
+
+<p>You choose one or the other buffering method based on several factors. Most IOCTL operations
+transfer much less than a page worth of data in either direction and therefore use the
+METHOD_BUFFERED method. Operations that will transfer more than a page of data should use one
+of the direct methods. The names of the direct methods seem to oppose common sense: you use
+METHOD_IN_DIRECT if the application is sending data to the driver and METHOD_OUT_DIRECT if
+it's the other way around. If you know that you'll get control in the same thread
+context as the application&#8212;usually true for IOCTL operations because no filter driver
+above you should be pending these and calling you later in an arbitrary thread context&#8212;you
+could use METHOD_NEITHER and decide on the fly how to access user-mode data.</p>
+
+<A NAME="312"><H3>METHOD_BUFFERED</H3></A>
+
+<p>With METHOD_BUFFERED, the I/O Manager creates a kernel-mode copy buffer big enough for the
+larger of the user-mode input and output buffers. When your dispatch routine gets control, the
+user-mode input data is sitting in the copy buffer. Before completing the IRP, you fill the
+copy buffer with the output data you want to send back to the application. When you complete
+the IRP, you set the <b>IoStatus.Information</b> field equal to the number of output bytes you
+put into the copy buffer. The I/O Manager then copies that many bytes of data back to user mode
+and sets the feedback variable equal to that same count. Figure 9-10 illustrates these copy
+operations.</p>
+
+<p>
+<img src="images/F09wi10.JPG" width=329 height=400 border="0">
+</p><p>
+<!--caption--><b>Figure 9-10.</b> <i>Buffer management with METHOD_BUFFERED.</i><!--/caption-->
+</p>
+
+
+<p>Inside the driver, you access both buffers at the same address&#8212;namely, the <b>
+AssociatedIrp.SystemBuffer</b> pointer in the IRP. Once again, this is a kernel-mode virtual
+address that points to a copy of the input data. It obviously behooves you to finish processing
+the input data before you overwrite this buffer with output data. (I hardly need to tell
+you&#8212;it's the kind of mistake you'll make only once.)</p>
+
+<p>Here's a simple example, drawn from the IOCTL sample program, of the code-specific handling
+for a METHOD_BUFFERED operation:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>case IOCTL_GET_VERSION_BUFFERED:
+  {
+  if (cbout &lt; sizeof(ULONG))
+    {
+    status = STATUS_INVALID_BUFFER_SIZE;
+    break;
+    }
+  PULONG pversion = (PULONG) Irp-&gt;AssociatedIrp.SystemBuffer;
+  *pversion = 0x0004000A;
+  info = sizeof(ULONG);
+  break;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>We first verify that we've been given an output buffer at least long enough to hold the
+doubleword we're going to store there. Then we use the SystemBuffer pointer to address the
+system copy buffer, into which we store the result of this simple operation. The <b>info</b> 
+local variable ends up as the IoStatus.Information field when the surrounding dispatch routine
+completes this IRP. The I/O Manager copies that much data from the system copy buffer back to
+the user-mode buffer.</p>
+
+<p><div class="sidebar"><blockquote>
+<b>A Security Hole?</b>
+
+<p>I always get a slight nervous feeling when I think about the importance of the buffering and
+access-control flags in an IOCTL function code. Suppose some malicious application were to
+submit an IOCTL that used flag values other than the ones I intended. Would that cause a driver
+to crash or do something else it shouldn't? Well, usually not.</p>
+
+<p>Most of the time, you code the dispatch function for IOCTL requests with a <b>switch</b> 
+statement. The case labels reference numeric constants that must match exactly with all 32 bits
+of whatever code the application supplies. So, if an application were to change any of the bits
+in an IOCTL code, none of the case labels in the driver would match and some (presumably
+benign) default action would occur.</p>
+</blockquote></div>
+</p>
+
+
+<A NAME="313"><H3>The DIRECT Buffering Methods</H3></A>
+
+<p>Both METHOD_IN_DIRECT and METHOD_OUT_DIRECT are handled the same way in the driver. They
+differ only in the access rights required for the user-mode buffer. METHOD_IN_DIRECT needs read
+access; METHOD_OUT_DIRECT needs read and write access. With both of these methods, the I/O
+Manager provides a kernel-mode copy buffer (at AssociatedIrp.SystemBuffer) for the input data
+and an MDL for the output data buffer. Refer to <A HREF="ch07a.htm">Chapter 7</A> for all the gory details about MDLs
+and to Figure 9-11 for an illustration of this method of managing the buffers.</p>
+
+<p>
+<img src="images/F09wi11.JPG" width=329 height=400 border="0">
+</p><p>
+<!--caption--><b>Figure 9-11.</b> <i>Buffer management with METHOD_XXX_DIRECT.</i><!--/caption-->
+</p>
+
+
+<p>Here's an example of a simple handler for a METHOD_<i>XXX</i>_DIRECT request:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>case IOCTL_GET_VERSION_DIRECT:
+  {
+  if (cbout &lt; sizeof(ULONG))
+    {
+    status = STATUS_INVALID_BUFFER_SIZE;
+    break;
+    }
+  PULONG pversion = (PULONG)
+<b>   MmGetSystemAddressForMdl(Irp-&gt;MdlAddress);</b> 
+  *pversion = 0x0004000B;
+  info = sizeof(ULONG);
+  break;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The only substantive difference between this example and the previous one is the bold line.
+(I also altered the reported version number so that I could easily know I was invoking the
+correct IOCTL from the test program.) With either DIRECT-method request, we use the MDL pointed
+to by the <b>MdlAddress</b> field of the IRP to access the user-mode output buffer. You can do
+direct memory access (DMA) using this address. In this example, I just called <b>
+MmGetSystemAddressForMdl</b> to get a kernel-mode alias address pointing to the physical memory
+described by the MDL.</p>
+
+<A NAME="314"><H3>METHOD_NEITHER</H3></A>
+
+<p>With METHOD_NEITHER, the I/O Manager doesn't try to translate the user-mode virtual
+addresses in any way. You get (in the <b>Type3InputBuffer</b> parameter in the stack location)
+the user-mode virtual address of the input buffer, and you get (in the <b>UserBuffer</b> field
+of the IRP) the user-mode virtual address of the output buffer. Neither address is of any use
+unless you know you're running in the same process context as the user-mode caller. If you
+<i>do</i> know you're in the right process context, you can just directly dereference the
+pointers:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>case IOCTL_GET_VERSION_NEITHER:
+  {
+  if (cbout &lt; sizeof(ULONG))
+    {
+    status = STATUS_INVALID_BUFFER_SIZE;
+    break;
+    }
+  PULONG pversion = (PULONG) Irp-&gt;UserBuffer;
+  <b>if (Irp-&gt;RequestorMode != KernelMode)
+    {</b> 
+  <b>  _ _try
+      {
+      ProbeForWrite(pversion, sizeof(ULONG), 1);
+      *pversion = 0x0004000A;
+      }
+    _ _except(EXCEPTION_EXECUTE_HANDLER)
+      {
+      status = GetExceptionCode();
+      break;
+      }
+    }
+  else
+    </b> *pversion = 0x0004000A;
+  info = sizeof(ULONG);
+  break;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>As shown in the previous code in boldface, the only real glitch here is that you want to
+make sure that it's OK to write into any buffer you get from an untrusted source. Refer to
+Chapter 3 (&quot;<A HREF="ch03a.htm#65">Basic Programming Techniques</A>&quot;) if you're rusty about structured
+exceptions. <b>ProbeForWrite</b> is a standard kernel-mode service routine for testing whether
+a given user-mode virtual address can be written. The second argument indicates the length of
+the data area you want to probe, and the third argument indicates the alignment you require for
+the data area. In this example, we want to be sure that we can access four bytes for writing,
+but we're willing to tolerate single-byte alignment for the data area itself. What
+ProbeForWrite (and its companion function <b>ProbeForRead</b>) actually tests is whether the
+given address range has the correct alignment and occupies the user-mode portion of the address
+space&#8212;it doesn't actually try to write to (or read from) the memory in question.</p>
+
+<p>Conventional wisdom holds that you should never access user-mode memory directly in the way I
+just showed you for fear that some other thread in the same process might call <b>
+VirtualFree</b> to release memory in between the time of the <b>ProbeFor</b> <i>Xxx</i> call and
+the time you make the access. According to this conventional wisdom, you should therefore
+always create an MDL and call MmGetSystemAddressForMdl to obtain a safe virtual address. In
+fact, however, it's perfectly safe to directly access the user-mode pointer if three things
+are true: First, you must be running in the process context to which the buffer belongs.
+Second, you must have done a ProbeFor<i>Xxx</i>. Finally, you must perform the access within a
+structured exception frame. If any portion of the buffer happens to belong to non-existent
+pages at the time of the access, the memory manager will raise an exception instead of
+immediately bug-checking. Your exception handler will backstop the exception and prevent the
+system from crashing.</p>
+
+<A NAME="315"><H3>Internal I/O Control Operations</H3></A>
+
+<p>The system uses IRP_MJ_DEVICE_CONTROL to implement a DeviceIoControl call from user mode.
+Drivers sometimes need to talk to each other too, and they use the related
+IRP_MJ_INTERNAL_DEVICE_CONTROL to do so. A typical code sequence is as follows:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>ASSERT(KeGetCurrentIrql() == PASSIVE_LEVEL);
+KEVENT event;
+KeInitializeEvent(&amp;event, NotificationEvent, FALSE);
+IO_STATUS_BLOCK iostatus;
+PIRP Irp = IoBuildDeviceIoControlRequest(IoControlCode,
+  DeviceObject, pInBuffer, cbInBuffer, pOutBuffer, cbOutBuffer,
+  TRUE, &amp;event, &amp;iostatus);
+if (IoCallDriver(DeviceObject, Irp) == STATUS_PENDING)
+  KeWaitForSingleObject(&amp;event, Executive, KernelMode, FALSE, NULL);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Being at PASSIVE_LEVEL is a requirement for calling <b>KeInitializeEvent</b> and <b>
+IoBuildDeviceIoControlRequest</b> as well as for blocking on the event object as shown
+here.</p>
+
+<p>The <b>IoControlCode</b> argument to IoBuildDeviceIoControlRequest is a control code expressing
+the operation you want the target device driver to perform. This code is the same kind of code
+as you use with regular control operations. <b>DeviceObject</b> is a pointer to the
+DEVICE_OBJECT whose driver will perform the indicated operation. The input and output buffer
+parameters serve the same purpose as their counterparts in a user-mode DeviceIoControl call.
+The seventh argument, which I specified as TRUE in this fragment, indicates that you're
+building an internal control operation. (You could say FALSE here to create an
+IRP_MJ_DEVICE_CONTROL instead.) I'll describe the purpose of the <b>event</b> and <b>
+iostatus</b> arguments in a bit.</p>
+
+<p>IoBuildDeviceIoControlRequest builds an IRP and initializes the first stack location to
+describe the operation code and buffers you specify. It returns the IRP pointer to you so that
+you can do any additional initialization that might be required. In <A HREF="ch11a.htm">Chapter 11</A>, for example,
+I'll show you how to use an internal control request to submit a URB to the USB bus driver.
+Part of that process involves setting a stack parameter field to point to the URB. You then
+call <b>IoCallDriver</b> to send the IRP to the target device. Whatever the return value, you
+wait on the <b>event</b> object you specified as the eighth argument to
+IoBuildDeviceIoControlRequest. The I/O Manager will set the event when the IRP finishes, and it
+will also fill in your <b>iostatus</b> structure with the ending status and information values.
+Finally, it will call <b>IoFreeIrp</b> to release the IRP. Consequently, you don't want to
+access the IRP pointer at all after you call IoCallDriver.</p>
+
+<p>Since internal control operations require cooperation between two drivers, fewer rules about
+sending them exist than you'd guess from what I've just described. You don't have
+to use IoBuildDeviceIoControlRequest to create one of them, for example: you could just call
+<b>IoAllocateIrp</b> and perform your own initialization. Provided that the target driver
+isn't expecting to handle internal control operations solely at PASSIVE_LEVEL, you could
+also send one of these IRPs at DISPATCH_LEVEL, say from inside an I/O completion or deferred
+procedure call (DPC) routine. (Of course, you couldn't use IoBuildDeviceIoControlRequest in
+such a case, and you couldn't wait for the IRP to finish. But you could <i>send</i> it
+because IoAllocateIrp and IoCallDriver can run at DISPATCH_LEVEL or below.) You don't even
+have to use the I/O stack parameter fields exactly like you would for a regular IOCTL. In fact,
+calls to the USB bus driver use the field that would ordinarily be the output buffer length to
+hold the URB pointer. So, if you're designing an internal control protocol for two of your
+own drivers, just think of IRP_MJ_INTERNAL_DEVICE_CONTROL as being an envelope for whatever
+kind of message you want to send.</p>
+
+<p>It's not a good idea to use the same dispatch routine for internal and external control
+operations, by the way, at least not without checking the major function code of the IRP.
+Here's an example of why not. Suppose that your driver has an external control interface
+that allows an application to query the version number of your driver <i>and</i> an internal
+control interface that allows a trusted kernel-mode caller to determine some vital secret that
+you don't want to share with user-mode programs. Then suppose that you use one routine to
+handle both interfaces, as in this example:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>NTSTATUS DriverEntry(...)
+  {
+  DriverObject-&gt;MajorFunction[IRP_MJ_DEVICE_CONTROL] =
+    DispatchControl;
+  DriverObject-&gt;MajorFunction[IRP_MJ_INTERNAL_DEVICE_CONTROL] =
+    DispatchControl;
+  ...
+  }
+
+NTSTATUS DispatchControl(...)
+  {
+  ...
+  switch (code)
+    {
+  case IOCTL_GET_VERSION:
+    ...
+  case IOCTL_INTERNAL_GET_SECRET:
+    ...           // <img src="images/tlarrow.jpg" width=13 height=12 border="0"> exposed for user-mode calls
+    }
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>If an application is able to somehow determine the numeric value of IOCTL_INTERNAL_GET_SECRET, it can issue a regular DeviceIoControl call and bypass the intended
+security on that function.</p>
+
+<A NAME="316"><H2>Notifying Applications of Interesting Events</H2></A>
+
+<p>One extremely important use of IOCTL operations is to give a WDM driver a way to notify an
+application that an interesting event has occurred. To motivate this discussion, suppose you
+had an application that needed to work closely with your driver in such a way that whenever a
+certain kind of hardware event occurred your driver would alert the application so that it
+could take some sort of user-visible action. For example, a button press on a medical
+instrument might trigger an application to begin collecting and displaying data. Whereas
+Windows provides a couple of ways for a driver to signal an application in this kind of
+situation&#8212;namely, asynchronous procedure calls or posted window messages&#8212;those
+methods don't work in Windows 2000 because the operating system lacks the necessary
+infrastructure to make them work. A method that does work, though, is having the application
+issue an IOCTL operation that the driver completes when the interesting event, whatever it
+might be, occurs. Implementing this scheme requires excruciating care on the driver side, so
+I'll explain the mechanics in detail.</p>
+
+<p>The central idea in this section is that when the application wants to receive event
+notifications from the driver, it calls DeviceIoControl:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>HANDLE hDevice = CreateFile(&quot;\\\\.\\&lt;driver-name&gt;&quot;, ...);
+BOOL okay = DeviceIoControl(hDevice, IOCTL_WAIT_NOTIFY,
+  ...);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>(IOCTL_WAIT_NOTIFY, by the way, is the control code I used in the NOTIFY sample on the
+companion disc.)</p>
+
+<p>The driver will pend this IOCTL and complete it later. If other considerations didn't
+intrude, the code in the driver might be as simple as this:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>NTSTATUS DispatchControl(...)
+  {
+  ...
+  switch (code)
+    {
+  case IOCTL_WAIT_NOTIFY:
+    pdx-&gt;NotifyIrp = Irp;
+    IoMarkIrpPending(Irp);
+    return STATUS_PENDING;
+    ...
+    }
+  }
+
+VOID OnInterestingEvent(...)
+  {
+  ...
+  CompleteRequest(pdx-&gt;NotifyIrp, STATUS_SUCCESS, 0);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+
+<p><div class="sidebar"><blockquote>
+<b>Application Notification by Using Events</b>
+<p>Sometimes all you need to do in a driver is notify an application that an event has occurred,
+without passing any explanatory data to the application. A standard technique for doing so
+involves an ordinary Win32 event that the driver signals. To use this method, the application
+first calls <b>CreateEvent</b> or <b>OpenEvent</b> to open a handle to an event object, which
+it then passes to the driver via DeviceIoControl. The driver can convert the user-mode handle
+to an object pointer by making this call:</p>
+
+<p>
+<table cellpadding=5><tr><td>
+<pre>PKEVENT pEvent;
+status = ObReferenceObjectByHandle(hEvent, EVENT_MODIFY_STATE,
+  *ExEventObjectType, Irp-&gt;RequestorMode, (PVOID*) &amp;pEvent, NULL);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Note that the IOCTL must be handled at PASSIVE_LEVEL and in the context of the
+process that owns the <b>hEvent</b> handle.</p>
+
+<p>At this point, the driver has a pointer to a KEVENT object, which it can use as an argument to
+<b>KeSetEvent</b> at an auspicious moment. The driver also owns a reference to the event
+object, and it must call <b>ObDereferenceObject</b> at some point. The right time to
+dereference the object depends on the exact way the application and the driver fit together. A
+good guideline might be to dereference the event as part of handling the IRP_MJ_CLOSE for the
+handle used in the IRP_MJ_DEVICE_CONTROL that supplied the event handle in the first place. The
+EVWAIT driver sample on the companion disc illustrates this particular method.</p>
+
+<p>The kernel service routines <b>IoCreateNotificationEvent</b> and <b>
+IoCreateSynchronizationEvent</b> create event objects that can also be shared by user-mode
+programs. They are unavailable in Windows 98 and, therefore, unavailable to true WDM
+drivers.</p>
+</blockquote></div>
+</p>
+
+<p>The &quot;other considerations&quot; I just so conveniently tucked under the rug are, of
+course, all important in crafting a working driver. The originator of the IRP might decide to
+cancel it. The application might call <b>CancelIo</b>, or termination of the application thread
+might cause a kernel-mode component to call <b>IoCancelIrp</b>. In either case, we must provide
+a cancel routine so that the IRP gets completed. If power is removed from our device, or if our
+device is suddenly removed from the computer, we need to abort any outstanding IOCTL requests.
+In general, any number of IOCTLs might need to be aborted. Consequently, we'll need a
+linked list of them. Since multiple threads might be trying to access this linked list,
+we'll also need a spin lock so that we can access the list safely.</p>
+
+<A NAME="317"><H3>Working with an Asynchronous IOCTL</H3></A>
+
+<p>To simplify my own life, I wrote a set of helper routines for managing asynchronous IOCTLs.
+The two most important of these routines are named <b>CacheControlRequest</b> and <b>
+UncacheControlRequest</b>. They assume that you're willing to accept only one asynchronous
+IOCTL having a particular control code per device object and that you can, therefore, reserve a
+pointer cell in the device extension to point to the IRP that's currently outstanding. In
+NOTIFY, I call this pointer cell <b>NotifyIrp</b>. You accept the asynchronous IRP this
+way:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>IoAcquireRemoveLock(...);
+switch (code)
+  {
+case IOCTL_WAIT_NOTIFY:
+  if (<i>&lt;parameters invalid in some way&gt;</i>)
+    status = STATUS_INVALID_PARAMETER;
+  else
+   <b>status = CacheControlRequest(pdx, Irp, &amp;pdx-&gt;NotifyIrp);</b> 
+  break;
+  }
+
+IoReleaseRemoveLock(...);
+return status == STATUS_PENDING ? status :
+  CompleteRequest(Irp, status, info);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The important statement here is the call to CacheControlRequest, which registers this IRP in
+such a way that we'll be able to cancel it later, if necessary. It also records the address
+of this IRP in the NotifyIrp member of our device extension. We expect it to return
+STATUS_PENDING, in which case we avoid completing the IRP and simply return STATUS_PENDING to
+our caller.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+You could easily generalize the scheme I'm describing to permit an
+application to have an IRP of each type outstanding for each open handle. Instead of putting
+the current IRP pointers in your device extension, put them instead into a structure that you
+associate with the FILE_OBJECT that corresponds to the handle. You'll get a pointer to this
+FILE_OBJECT in the I/O stack location for IRP_MJ_CREATE, IRP_MJ_CLOSE, and, in fact, all other
+IRPs generated for the file handle. You can use either the <b>FsContext</b> or <b>
+FsContext2</b> field of the file object for any purpose you choose.</blockquote></div>
+</p>
+
+<p>Later, when whatever event the application is waiting for occurs, we execute code like
+this:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>PIRP nfyirp = UncacheControlRequest(pdx, &amp;pdx-&gt;NotifyIrp);
+if (nfyirp)
+  {
+  <i>&lt;do something&gt;</i>
+  CompleteRequest(nfyirp, STATUS_SUCCESS, <i>&lt;info value&gt;</i>);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>This logic retrieves the address of the pending IOCTL_WAIT_NOTIFY request, does something to
+provide data back to the application, and then completes the pending I/O request packet.</p>
+
+<A NAME="318"><H3>How the Helper Routines Work</H3></A>
+
+<p>I hid a wealth of complications inside the CacheControlRequest and UncacheControlRequest
+functions. These two functions provide a thread-safe and multiprocessor-safe mechanism for
+keeping track of asynchronous IOCTL requests. They use a variation on the techniques we've
+discussed elsewhere in the book for safely queuing and dequeuing IRPs at times when someone
+else might be flitting about trying to cancel the IRP. There's a little bit of extra code
+to show you, though (refer to CONTROL.CPP in the NOTIFY sample on the companion disc):</p>
+
+
+<p>
+<table cellpadding=5 width="95%"><tr>
+<td valign=top>
+<pre>
+
+
+
+
+
+
+
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+2 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+3 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+4 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+5 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+6 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+7 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+8 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+
+
+
+
+
+9 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+10 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+</pre>
+</td>
+<td>
+<pre>typedef struct _DEVICE_EXTENSION {
+  KSPIN_LOCK IoctlListLock;
+  LIST_ENTRY PendingIoctlList;
+  } DEVICE_EXTENSION, *PDEVICE_EXTENSION;
+
+NTSTATUS CacheControlRequest(PDEVICE_EXTENSION pdx, PIRP Irp,
+  PIRP* pIrp)
+  {
+  KIRQL oldirql;
+  KeAcquireSpinLock(&amp;pdx-&gt;IoctlListLock, &amp;oldirql);
+  NTSTATUS status;
+  if (*pIrp)
+    status = STATUS_UNSUCCESSFUL;
+  else if (pdx-&gt;IoctlAbortStatus)
+    status = pdx-&gt;IoctlAbortStatus;
+  else
+    {
+  IoSetCancelRoutine(Irp, OnCancelPendingIoctl);
+  if (Irp-&gt;Cancel &amp;&amp; IoSetCancelRoutine(Irp, NULL))
+    status = STATUS_CANCELLED;
+    else
+       {
+       IoMarkIrpPending(Irp);
+       status = STATUS_PENDING;
+       PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
+       stack-&gt;Parameters.Others.Argument1 = (PVOID) *pIrp;
+       IoSetCompletionRoutine(Irp, (PIO_COMPLETION_ROUTINE)
+         OnCompletePendingIoctl, (PVOID) pdx, TRUE, TRUE, TRUE);
+       PFILE_OBJECT fop = stack-&gt;FileObject;
+       IoSetNextIrpStackLocation(Irp);
+       stack = IoGetCurrentIrpStackLocation(Irp);
+       stack-&gt;DeviceObject = pdx-&gt;DeviceObject;
+       stack-&gt;FileObject = fop;
+
+       *pIrp = Irp;
+       InsertTailList(&amp;pdx-&gt;PendingIoctlList,
+         &amp;Irp-&gt;Tail.Overlay.ListEntry);
+       }
+    }
+  KeReleaseSpinLock(&amp;pdx-&gt;IoctlListLock, oldirql);
+  return status;
+  }
+
+VOID OnCancelPendingIoctl(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  KIRQL oldirql = Irp-&gt;CancelIrql;
+  IoReleaseCancelSpinLock(DISPATCH_LEVEL);
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+  KeAcquireSpinLockAtDpcLevel(&amp;pdx-&gt;IoctlListLock);
+  RemoveEntryList(&amp;Irp-&gt;Tail.Overlay.ListEntry);
+  KeReleaseSpinLock(&amp;pdx-&gt;IoctlListLock, oldirql);
+  Irp-&gt;IoStatus.Status = STATUS_CANCELLED;
+  IoCompleteRequest(Irp, IO_NO_INCREMENT);
+  }
+
+NTSTATUS OnCompletePendingIoctl(PDEVICE_OBJECT junk, PIRP Irp,
+  PDEVICE_EXTENSION pdx)
+  {
+  KIRQL oldirql;
+  KeAcquireSpinLock(&amp;pdx-&gt;IoctlListLock, &amp;oldirql);
+  PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
+  PIRP* pIrp = (PIRP*) stack-&gt;Parameters.Others.Argument1;
+  if (*pIrp == Irp)
+    *pIrp = NULL;
+  KeReleaseSpinLock(&amp;pdx-&gt;IoctlListLock, oldirql);
+  return STATUS_SUCCESS;
+  }
+
+PIRP UncacheControlRequest(PDEVICE_EXTENSION pdx, PIRP* pIrp)
+  {
+  KIRQL oldirql;
+  KeAcquireSpinLock(&amp;pdx-&gt;IoctlListLock, &amp;oldirql);
+  PIRP Irp = (PIRP) InterlockedExchangePointer(pIrp, NULL);
+  if (Irp)
+    {
+   if (IoSetCancelRoutine(Irp, NULL))
+      {
+      RemoveEntryList(&amp;Irp-&gt;Tail.Overlay.ListEntry);
+      }
+    else
+      Irp = NULL;
+    }
+  KeReleaseSpinLock(&amp;pdx-&gt;IoctlListLock, oldirql);
+  return Irp;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> We use a spin lock to guard the list of pending IOCTLs and also to guard all of
+the pointer cells that are reserved to point to the current instance of each different type of
+asynchronous IOCTL request.</li></p>
+
+<p><li> This is where we enforce the rule&#8212;it's more of a design decision,
+really&#8212;that only one IRP of each type can be outstanding at one time.</li></p>
+
+<p><li> This <b>if</b> statement accommodates the fact that we may need to start failing
+incoming IRPs at some point because of PnP or power events.</li></p>
+
+<p><li> Since we'll pend this IRP for what might be a long time, we need to have a
+cancel routine for it. I've discussed cancel logic so many times in this book that I feel
+sure you'd rather not read about it once more.</li></p>
+
+<p><li> Here, we've decided to go ahead and cache this IRP so that we can complete it
+later. Since we're going to end up returning STATUS_PENDING from our <b>DispatchControl</b> 
+function, we need to call <b>IoMarkIrpPending</b>.</li></p>
+
+<p><li> We need to have a way to NULL out the cache pointer cell when we cancel the IRP.
+It's very difficult to get context parameters into a cancel routine, so I decided to set up
+an I/O completion routine instead. I use the <b>Parameters.Others.Argument1</b> slot in the
+stack to record the cache pointer address.</li></p>
+
+<p><li> In order for the completion routine we've just installed to get called, we
+must advance the I/O stack pointer by calling <b>IoSetNextIrpStackLocation</b>. In this
+particular driver, we know there must be at least one more stack location for us to use because
+our AddDevice function would have failed if there hadn't been a driver object underneath
+ours. The device and file object pointers that later routines need come from the then-current
+stack location, so we must initialize them as well.</li></p>
+
+<p><li> This statement is the point of installing a completion routine. If the IRP gets
+cancelled, we'll eventually gain control to nullify the cache pointer.</li></p>
+
+<p><li> In the normal course of events, this statement uncaches an IRP.</li></p>
+
+<p><li> Now that we've uncached our IRP, we don't want it to be cancelled any
+more. If <b>IoSetCancelRoutine</b> returns NULL, however, we know that this IRP is currently in
+the process of being cancelled. We return a NULL IRP pointer in that case.</li></p>
+</ol>
+
+<p>NOTIFY also has an IRP_MJ_CLEANUP handler for pending IOCTLs that looks just about the same
+as the cleanup handlers I've discussed for read and write operations. Finally, it includes
+an <b>AbortPendingIoctls</b> helper function for use at power-down or surprise removal time, as
+follows:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>VOID AbortPendingIoctls(PDEVICE_EXTENSION pdx, NTSTATUS status)
+  {
+  InterlockedExchange(&amp;pdx-&gt;IoctlAbortStatus, status);
+  CleanupControlRequests(pdx, status, NULL);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p><b>CleanupControlRequests</b> is the handler for IRP_MJ_CLEANUP. I wrote it in such a way
+that it cancels <i>all</i> outstanding IRPs if the third argument&#8212;normally a file object
+pointer&#8212;is NULL.</p>
+
+<p>NOTIFY is a bit too simple to serve as a complete model for a real-world driver. Here are some
+additional considerations for you to mull over in your own design process:</p>
+
+<ul>
+<p><li> A driver might have several types of events that trigger notifications. You could
+decide to deal with these by using a single IOCTL code, in which case you'd indicate the
+type of event by some sort of output data, or by using multiple IOCTL codes.</li></p>
+
+<p><li> You might want to allow multiple threads to register for events. If that's the
+case, you certainly can't have a single IRP pointer in the device extension&#8212;you need a
+way of keeping track of all the IRPs that relate to a particular type of event. If you use only
+a single type of IOCTL for all notifications, one way to keep track is to rely on the
+PendingIoctlList I've already discussed. Then, when an event occurs, you execute a loop in
+which you call <b>ExInterlockedRemoveHeadList</b> and <b>IoCompleteRequest</b> to empty the
+pending list. (I avoided this complexity in NOTIFY by fiat&#8212;I decided I'd run only one
+instance of the test program at a time.)</li></p>
+
+<p><li> Your IOCTL dispatch routine might be in a race with the activity that generates
+events. For example, in the USBINT sample I'll discuss in <A HREF="ch11a.htm">Chapter 11</A>, we have a potential
+race between the IOCTL dispatch routine and the pseudointerrupt routine that services an
+interrupt endpoint on a USB device. To avoid losing events or taking inconsistent actions, you
+need a spin lock. Refer to the USBINT sample on the companion disc for an illustration of how
+to use the spin lock appropriately. (Synchronization wasn't an issue in NOTIFY because by
+the time a human being is able to perform the keystroke that unleashes the event signal, the
+notification request is almost certainly pending. If not, the signal request gets an
+error.)</li></p>
+</ul>
+
+<p><div class="sidebar"><blockquote>
+<b>More About the NOTIFY Sample</b>
+
+<p>NOTIFY consists of a WDM device driver (in the SYS subdirectory) and a Win32 console-mode test
+program (in the TEST subdirectory). You can install the driver via the Add New Hardware wizard
+or the FASTINST utility. Then you can launch the test program. It will spawn a separate thread
+to issue the IOCTL_WAIT_NOTIFICATION I/O control request. Then it prompts you to execute a keystroke or to press
+Ctrl+Break to end the test. If you type a key, the test program performs an
+IOCTL_GENERATE_EVENT, passing the scan code of your keystroke as input data. The driver then
+completes the pending notification IRP after storing this scan code as output data.
+Alternatively, if you hit Ctrl+Break at the point at which TEST is prompting you for a
+keystroke, this will eventually cause the I/O Manager to cancel the outstanding notification
+IRP.</p>
+</blockquote></div>
+</p>
+
+</BODY>
+</HTML>
+
+
+
+
+

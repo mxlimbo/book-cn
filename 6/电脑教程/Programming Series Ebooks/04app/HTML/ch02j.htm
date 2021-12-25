@@ -1,0 +1,582 @@
+<HTML>
+<HEAD>
+<TITLE>Making Your Application ANSI- and Unicode-Ready</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch02i.htm">[Previous]</A> <A HREF="ch03a.htm">[Next]</A><P>
+
+<A NAME="20"><H1>Making Your Application ANSI- and Unicode-Ready</H1></A>
+
+<p>It's a good idea to start converting your application to be
+Unicode-ready even if you don't plan to use Unicode right away.
+Here are the basic guidelines you should follow:</p>
+
+<ul>
+<p><li>Start thinking of text strings as arrays of characters, not as
+arrays of <i>char</i>s or arrays of bytes.</li></p>
+
+<p><li>Use generic data types (such as TCHAR and PTSTR) for text
+characters and strings.</li></p>
+
+<p><li>Use explicit data types (such as BYTE and PBYTE) for bytes, byte
+pointers, and data buffers.</li></p>
+
+<p><li>Use the TEXT macro for literal characters and strings.</li></p>
+
+<p><li>Perform global replaces. (For example, replace PSTR with
+PTSTR.)</li></p>
+
+<p><li>Modify string arithmetic problems. For example, functions usually
+expect you to pass a buffer's size in characters, not bytes. This
+means that you should not pass <i>sizeof(szBuffer)</i> but should
+instead pass <i>(sizeof(szBuffer) / sizeof(TCHAR))</i>. Also, if you
+need to allocate a block of memory for a string and you have the number
+of characters in the string, remember that you allocate memory in
+bytes. This means that you must call <i>malloc(nCharacters *
+sizeof(TCHAR))</i> and not call <i>malloc(nCharacters)</i>. Of all the
+guidelines I've just listed, this is the most difficult one to
+remember, and the compiler offers no warnings or errors if you make a
+mistake.</li></p>
+</ul>
+
+<p>When I was developing the sample programs for the first edition of
+this book, I originally wrote them so that they compiled natively as
+ANSI-only. Then, when I began to write this chapter, I knew that I
+wanted to encourage the use of Unicode and was going to create sample
+programs to demonstrate how easy it is to create programs that can be
+compiled in both Unicode and ANSI. I decided that the best course of
+action was to convert all the sample programs in the book so that they
+could be compiled in both Unicode and ANSI.</p>
+
+<p>I converted all the programs in about four hours, which isn't
+bad, considering that I didn't have any prior conversion
+experience.</p>
+
+<A NAME="21"><H2>Windows String Functions</H2></A>
+
+<p>Windows also offers a set of functions for manipulating Unicode
+strings, as described in the following table.</p>
+
+<p><table cellpadding=5 width="95%"><tr>
+<th>Function</th>
+<th>Description</th>
+</tr><tr>
+<td valign="top"><i>lstrcat</i></td>
+<td valign="top">Concatenates one string onto the end of another</td>
+</tr><tr>
+<td valign="top"><i>lstrcmp</i></td>
+<td valign="top">Performs case-sensitive comparison of two strings</td>
+</tr><tr>
+<td valign="top"><i>lstrcmpi</i></td>
+<td valign="top">Performs case-insensitive comparison of two strings</td>
+</tr><tr>
+<td valign="top"><i>lstrcpy</i></td>
+<td valign="top">Copies one string to another location in memory</td>
+</tr><tr>
+<td valign="top"><i>lstrlen</i></td>
+<td valign="top">Returns the length of a string in characters</td>
+</tr></table></p>
+
+<p>These functions are implemented as macros that call either the
+Unicode version of the function or the ANSI version of the function,
+depending on whether UNICODE is defined when the source module is
+compiled. For example, if UNICODE is not defined, <i>lstrcat</i> will
+expand to <i>lstrcatA</i>. If UNICODE is defined, <i>lstrcat</i> will
+expand to <i>lstrcatW</i>.</p>
+
+<p>Two string functions, <i>lstrcmp</i> and <i>lstrcmpi</i>, behave
+differently from their equivalent C run-time functions. The C run-time
+functions <i>strcmp</i>, <i>strcmpi</i>, <i>wcscmp</i>, and <i>
+wcscmpi</i> simply compare the values of the code points in the
+strings; that is, the functions ignore the meaning of the actual
+characters and simply check the numeric value of each character in the
+first string with the numeric value of the character in the second
+string. The Windows functions <i>lstrcmp</i> and <i>lstrcmpi</i>, on
+the other hand, are implemented as calls to the Windows function <i>
+CompareString</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+int CompareString(
+   LCID lcid, 
+   DWORD fdwStyle,
+   PCWSTR pString1, 
+   int cch1, 
+   PCTSTR pString2, 
+   int cch2);
+</pre></td></tr></table></p>
+
+<p>This function compares two Unicode strings. The first parameter to
+<i>CompareString</i> specifies a locale ID (LCID), a 32-bit value that
+identifies a particular language. <i>CompareString</i> uses this LCID
+to compare the two strings by checking the meaning of the characters as
+they apply to a particular language. This action is much more
+meaningful than the simple number comparison performed by the C
+run-time functions. </p>
+<p>When any of the <i>lstrcmp</i> family of functions calls <i>
+CompareString</i>, the function passes the result of calling the
+Windows <i>GetThreadLocale</i> function as the first parameter:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+LCID GetThreadLocale();
+</pre></td></tr></table></p>
+
+<p>Every time a thread is created, it is assigned a locale. This
+function returns the current locale setting for the thread.</p>
+
+<p>The second parameter of <i>CompareString</i> identifies flags that
+modify the method used by the function to compare the two strings. The
+following table shows the possible flags.</p>
+
+<p><table cellpadding=5 width="95%"><tr>
+<th>Flag</th>
+<th>Meaning</th>
+</tr><tr>
+<td valign="top">NORM_IGNORECASE</td>
+<td valign="top">Ignore case differences</td>
+</tr><tr>
+<td valign="top">NORM_IGNOREKANATYPE</td>
+<td valign="top">Do not differentiate between hiragana and
+katakana characters</td>
+</tr><tr>
+<td valign="top">NORM_IGNORENONSPACE</td>
+<td valign="top">Ignore nonspacing characters</td>
+</tr><tr>
+<td valign="top">NORM_IGNORESYMBOLS</td>
+<td valign="top">Ignore symbols</td>
+</tr><tr>
+<td valign="top">NORM_IGNOREWIDTH</td>
+<td valign="top">Do not differentiate between a single-byte
+character and the same character as a double-byte character</td>
+</tr><tr>
+<td valign="top">SORT_STRINGSORT</td>
+<td valign="top">Treat punctuation the same as symbols</td>
+</tr></table></p>
+
+<p>When <i>lstrcmp</i> calls <i>CompareString</i>, it passes 0 for the
+<i>fdwStyle</i> parameter. But when <i>lstrcmpi</i> calls <i>
+CompareString</i>, it passes NORM_IGNORECASE. The remaining four
+parameters of <i>CompareString</i> specify the two strings and their
+respective lengths. If you pass -1 for the <i>cch1</i> parameter, the
+function assumes that the <i>pString1</i> string is zero-terminated and
+calculates the length of the string. This also is true for the <i>
+cch2</i> parameter with respect to the <i>pString2</i> string.</p>
+
+<p>Other C run-time functions don't offer good support for
+manipulating Unicode strings. For example, the <i>tolower</i> and <i>
+toupper</i> functions don't properly convert characters with accent
+marks. To compensate for these deficiencies in the C run-time library,
+you'll need to call the following Windows functions to convert the
+case of a Unicode string. These functions also work correctly for ANSI
+strings.</p>
+
+<p>The first two functions,</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+PTSTR CharLower(PTSTR pszString);
+</pre></td></tr></table></p>
+
+<p>and</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+PTSTR CharUpper(PTSTR pszString);
+</pre></td></tr></table></p>
+
+<p>convert either a single character or an entire zero-terminated
+string. To convert an entire string, simply pass the address of the
+string. To convert a single character, you must pass the individual
+character as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+TCHAR cLowerCaseChar = CharLower((PTSTR) szString[0]);
+</pre></td></tr></table></p>
+
+<p>Casting the single character to a PTSTR calls the function, passing
+it a value in which the low 16 bits contain the character and the high
+16 bits contain 0. When the function sees that the high bits are 0, the
+function knows that you want to convert a single character rather than
+a whole string. The value returned will be a 32-bit value with the
+converted character in the low 16 bits.</p>
+
+<p>The next two functions are similar to the previous two except that
+they convert the characters contained inside a buffer (which does not
+need to be zero-terminated):</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+DWORD CharLowerBuff(
+   PTSTR pszString, 
+   DWORD cchString);
+DWORD CharUpperBuff(
+   PTSTR pszString, 
+   DWORD cchString);
+</pre></td></tr></table></p>
+
+<p>Other C run-time functions, such as <i>isalpha</i>, <i>islower</i>,
+and <i>isupper</i>, return a value that indicates whether a given
+character is alphabetic, lowercase, or uppercase. The Windows API
+offers functions that return this information as well, but the Windows
+functions also consider the language indicated by the user in the
+Control Panel:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL IsCharAlpha(TCHAR ch);
+BOOL IsCharAlphaNumeric(TCHAR ch);
+BOOL IsCharLower(TCHAR ch);
+BOOL IsCharUpper(TCHAR ch);
+</pre></td></tr></table></p>
+
+<p>The <i>printf</i> family of functions is the last group of C
+run-time functions we'll discuss. If you compile your source module
+with _UNICODE defined, the <i>printf</i> family of functions expects
+that all the character and string parameters represent Unicode
+characters and strings. However, if you compile without defining
+_UNICODE, the <i>printf</i> family expects that all the characters and
+strings passed to it are ANSI. </p>
+<p>Microsoft has added some special field types to their C run-time's
+<i>printf</i> family of functions. Some of these field types have not
+been adopted by ANSI C. The new types allow you to easily mix and match
+ANSI and Unicode characters and strings. The operating system's <i>
+wsprintf</i> function has also been enhanced. Here are some examples
+(note the use of capital <i>S</i> and lowercase <i>s</i>):</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+char  szA[100];    // An ANSI string buffer
+WCHAR szW[100];    // A Unicode string buffer
+
+// Normal sprintf: all strings are ANSI 
+sprintf(szA,   &quot;%s&quot;,   &quot;ANSI Str&quot;);
+
+// Converts Unicode string to ANSI
+sprintf(szA,   &quot;%S&quot;,  L&quot;Unicode Str&quot;);
+
+// Normal swprintf: all strings are Unicode
+swprintf(szW, L&quot;%s&quot;,  L&quot;Unicode Str&quot;);
+
+// Converts ANSI string to Unicode
+swprintf(szW, L&quot;%S&quot;,   &quot;ANSI Str&quot;);
+</pre></td></tr></table></p>
+
+<A NAME="22"><H2>Resources</H2></A>
+
+<p>When the resource compiler compiles all your resources, the output
+file is a binary representation of the resources. String values in your
+resources (string tables, dialog box templates, menus, and so on) are
+always written as Unicode strings. Under both Windows 98 and Windows
+2000, the system performs internal conversions if your application
+doesn't define the UNICODE macro. For example, if UNICODE is not
+defined when you compile your source module, a call to <i>
+LoadString</i> will actually call the <i>LoadStringA</i> function. <i>
+LoadStringA</i> will then read the string from your resources and
+convert the string to ANSI. The ANSI representation of the string will
+be returned from the function to your application.</p>
+
+<A NAME="23"><H2>Determining If Text Is ANSI or Unicode</H2></A>
+
+<p>To date, there have been very few Unicode text files. In fact, most
+of Microsoft's own products do not ship with any Unicode text
+files. However, I expect that this trend could change in the future
+(albeit a long way into the future). Certainly, the Windows 2000
+Notepad application allows you to open both Unicode and ANSI files as
+well as create them. In fact, Figure 2-2 shows Notepad's File Save
+As dialog box. Notice the different ways that you can save a text
+file. </p>
+
+<p>
+<A HREF="javascript:fullSize('F02SI02x.htm')"> <img src="images/F02SI02.JPG" width=404 height=275 border=0 ALT="Click to view at full size."> </A>
+</p><p>
+<!-- CAPTION --><b>Figure 2-2.</b> <i>The Windows 2000 Notepad File Save As dialog box</i><!-- /CAPTION --> 
+</p>
+
+<p>For many applications that open text files and process them, such as
+compilers, it would be convenient if, after opening a file, the
+application could determine whether the text file contained ANSI
+characters or Unicode characters. The <i>IsTextUnicode</i> function can
+help make this distinction:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+DWORD IsTextUnicode(CONST PVOID pvBuffer, int cb, PINT pResult);
+</pre></td></tr></table></p>
+
+<p>The problem with text files is that there are no hard and fast rules
+as to their content. This makes it extremely difficult to determine
+whether the file contains ANSI or Unicode characters. <i>
+IsTextUnicode</i> uses a series of statistical and deterministic
+methods in order to guess at the content of the buffer. Because this is
+not an exact science, it is possible that <i>IsTextUnicode</i> will
+return an incorrect result.</p>
+
+<p>The first parameter, <i>pvBuffer</i>, identifies the address of a
+buffer that you want to test. The data is a void pointer because you
+don't know whether you have an array of ANSI characters or an array
+of Unicode characters.</p>
+
+<p>The second parameter, <i>cb</i>, specifies the number of bytes that
+<i>pvBuffer</i> points to. Again, because you don't know what's
+in the buffer, <i>cb</i> is a count of bytes rather than a count of
+characters. Note that you do not have to specify the entire length of
+the buffer. Of course, the more bytes <i>IsTextUnicode</i> can test,
+the more accurate a response you're likely to get.</p>
+
+<p>The third parameter, <i>pResult</i>, is the address of an integer
+that you must initialize before calling <i>IsTextUnicode</i>. You
+initialize this integer to indicate which tests you want <i>
+IsTextUnicode</i> to perform. You can also pass NULL for this
+parameter, in which case <i>IsTextUnicode</i> will perform every test
+it can. (See the Platform SDK documentation for more details.)</p>
+
+<p>If <i>IsTextUnicode</i> thinks that the buffer contains Unicode
+text, TRUE is returned; otherwise, FALSE is returned. That's right,
+the function actually returns a Boolean even though Microsoft
+prototyped it as returning a DWORD. If specific tests were requested in
+the integer pointed to by the <i>pResult</i> parameter, the function
+sets the bits in the integer before returning to reflect the results of
+each test.</p>
+
+<p><div class="note"><blockquote><b>Windows 98</b><HR>
+Under Windows 98, the <i>IsTextUnicode</i> function has no
+useful implementation and simply returns FALSE; calling <i>
+GetLastError</i> returns ERROR_CALL_NOT_IMPLEMENTED.</blockquote></div></p>
+
+<p>The FileRev sample application presented in <A HREF="ch17a.htm">Chapter 17</A> demonstrates
+the use of the <i>IsTextUnicode</i> function.</p>
+
+<A NAME="24"><H2>Translating Strings Between Unicode and ANSI</H2></A>
+
+<p>The Windows function <i>MultiByteToWideChar</i> converts
+multibyte-character strings to wide-character strings. <i>
+MultiByteToWideChar</i> is shown below.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+int MultiByteToWideChar(
+   UINT uCodePage, 
+   DWORD dwFlags,
+   PCSTR pMultiByteStr, 
+   int cchMultiByte,
+   PWSTR pWideCharStr, 
+   int cchWideChar);
+</pre></td></tr></table></p>
+
+<p>The <i>uCodePage</i> parameter identifies a code page number that is
+associated with the multibyte string. The <i>dwFlags</i> parameter
+allows you to specify additional control that affects characters with
+diacritical marks such as accents. Usually the flags aren't used,
+and 0 is passed in the <i>dwFlags</i> parameter. The <i>
+pMultiByteStr</i> parameter specifies the string to be converted, and
+the <i>cchMultiByte</i> parameter indicates the length (in bytes) of
+the string. The function determines the length of the source string if
+you pass -1 for the <i>cchMultiByte</i> parameter.</p> 
+<p>The Unicode version of the string resulting from the conversion is
+written to the buffer located in memory at the address specified by the
+<i>pWideCharStr</i> parameter. You must specify the maximum size of
+this buffer (in characters) in the <i>cchWideChar</i> parameter. If you
+call <i>MultiByteToWideChar</i>, passing 0 for the <i>cchWideChar</i>
+parameter, the function doesn't perform the conversion and instead
+returns the size of the buffer required for the conversion to succeed.
+Typically, you will convert a multibyte-character string to its Unicode
+equivalent by performing the following steps: </p>
+
+<ol>
+
+<p><li>Call <i>MultiByteToWideChar</i>, passing NULL for the <i>
+pWideCharStr</i> parameter and 0 for the <i>cchWideChar</i>
+parameter.</li></p>
+
+<p><li>Allocate a block of memory large enough to hold the converted
+Unicode string. This size is returned by the previous call to <i>
+MultiByteToWideChar</i>.</li></p>
+
+<p><li>Call <i>MultiByteToWideChar</i> again, this time passing the
+address of the buffer as the <i>pWideCharStr</i> parameter and passing the
+size returned by the first call to <i>MultiByteToWideChar</i> as the
+<i>cchWideChar</i> parameter.</li></p>
+
+<p><li>Use the converted string.</li></p>
+
+<p><li>Free the memory block occupying the Unicode string.</li></p>
+</ol>
+
+<p>The function <i>WideCharToMultiByte</i> converts a wide-character
+string to its multibyte string equivalent, as shown here:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+int WideCharToMultiByte(
+   UINT uCodePage, 
+   DWORD dwFlags,
+   PCWSTR pWideCharStr, 
+   int cchWideChar,
+   PSTR pMultiByteStr, 
+   int cchMultiByte,
+   PCSTR pDefaultChar, 
+   PBOOL pfUsedDefaultChar);
+</pre></td></tr></table></p>
+
+<p>This function is similar to the <i>MultiByteToWideChar</i> function.
+Again, the <i>uCodePage</i> parameter identifies the code page to be
+associated with the newly converted string. The <i>dwFlags</i>
+parameter allows you to specify additional control over the conversion.
+The flags affect characters with diacritical marks and characters that
+the system is unable to convert. Usually you won't need this degree
+of control over the conversion, and you'll pass 0 for the <i>
+dwFlags</i> parameter. </p>
+<p>The <i>pWideCharStr</i> parameter specifies the address in memory of
+the string to be converted, and the <i>cchWideChar</i> parameter
+indicates the length (in characters) of this string. The function
+determines the length of the source string if you pass -1 for the <i>
+cchWideChar</i> parameter. </p>
+<p>The multibyte version of the string resulting from the conversion is
+written to the buffer indicated by the <i>pMultiByteStr</i> parameter.
+You must specify the maximum size of this buffer (in bytes) in the <i>
+cchMultiByte</i> parameter. Passing 0 as the <i>cchMultiByte</i>
+parameter of the <i>WideCharToMultiByte</i> function causes the
+function to return the size required by the destination buffer.
+You'll typically convert a wide-byte character string to a
+multibyte-character string using a sequence of events similar to those
+discussed when converting a multibyte string to a wide-byte string. </p>
+<p>You'll notice that the <i>WideCharToMultiByte</i> function accepts
+two parameters more than the <i>MultiByteToWideChar</i> function: <i>
+pDefaultChar</i> and <i>pfUsedDefaultChar</i> . These parameters are
+used by the <i>WideCharToMultiByte</i> function only if it comes across
+a wide character that doesn't have a representation in the code
+page identified by the <i>uCodePage</i> parameter. If the wide
+character cannot be converted, the function uses the character pointed
+to by the <i>pDefaultChar</i> parameter. If this parameter is NULL,
+which is most common, the function uses a system default character.
+This default character is usually a question mark. This is dangerous
+for filenames because the question mark is a wildcard character. </p>
+<p>The <i>pfUsedDefaultChar</i> parameter points to a Boolean variable
+that the function sets to TRUE if at least one character in the
+wide-character string could not be converted to its multibyte
+equivalent. The function sets the variable to FALSE if all the
+characters convert successfully. You can test this variable after the
+function returns to check whether the wide-character string was
+converted successfully. Again, you usually pass NULL for this
+parameter. </p>
+<p>For a more complete description of how to use these functions, please
+refer to the Platform SDK documentation. </p>
+<p>You could use these two functions to easily create both Unicode and
+ANSI versions of functions. For example, you might have a dynamic-link
+library containing a function that reverses all the characters in a
+string. You could write the Unicode version of the function as shown
+here:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL StringReverseW(PWSTR pWideCharStr) {
+
+   // Get a pointer to the last character in the string.
+   PWSTR pEndOfStr = pWideCharStr + wcslen(pWideCharStr) - 1;
+   wchar_t cCharT;
+   // Repeat until we reach the center character in the string.
+   while (pWideCharStr &lt; pEndOfStr) {
+      // Save a character in a temporary variable.
+      cCharT = *pWideCharStr;
+
+      // Put the last character in the first character.
+      *pWideCharStr = *pEndOfStr;
+
+      // Put the temporary character in the last character.
+      *pEndOfStr = cCharT;
+
+      // Move in one character from the left.
+      pWideCharStr++;
+
+      // Move in one character from the right.
+      pEndOfStr--;
+   }
+
+   // The string is reversed; return success.
+   return(TRUE);
+}
+</pre></td></tr></table></p>
+
+<p>And you could write the ANSI version of the function so that it
+doesn't perform the actual work of reversing the string at all.
+Instead, you could write the ANSI version so that it converts the ANSI
+string to Unicode, passes the Unicode string to the <i>
+StringReverseW</i> function, and then converts the reversed string back
+to ANSI. The function would look like this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL StringReverseA(PSTR pMultiByteStr) {
+   PWSTR pWideCharStr;
+   int nLenOfWideCharStr;
+   BOOL fOk = FALSE;
+
+   // Calculate the number of characters needed to hold
+   // the wide-character version of the string.
+   nLenOfWideCharStr = MultiByteToWideChar(CP_ACP, 0,
+      pMultiByteStr, -1, NULL, 0);
+
+   // Allocate memory from the process's default heap to
+   // accommodate the size of the wide-character string.
+   // Don't forget that MultiByteToWideChar returns the 
+   // number of characters, not the number of bytes, so
+   // you must multiply by the size of a wide character.
+   pWideCharStr = HeapAlloc(GetProcessHeap(), 0,
+      nLenOfWideCharStr * sizeof(WCHAR));
+
+   if (pWideCharStr == NULL)
+      return(fOk);
+
+   // Convert the multibyte string to a wide-character string.
+   MultiByteToWideChar(CP_ACP, 0, pMultiByteStr, -1,
+      pWideCharStr, nLenOfWideCharStr);
+
+   // Call the wide-character version of this
+   // function to do the actual work.
+   fOk = StringReverseW(pWideCharStr);
+
+   if (fOk) {
+      // Convert the wide-character string back
+      // to a multibyte string.
+      WideCharToMultiByte(CP_ACP, 0, pWideCharStr, -1,
+         pMultiByteStr, strlen(pMultiByteStr), NULL, NULL);
+   }
+
+   // Free the memory containing the wide-character string.
+   HeapFree(GetProcessHeap(), 0, pWideCharStr);
+
+   return(fOk);
+}
+</pre></td></tr></table></p>
+
+<p>Finally, in the header file that you distribute with the
+dynamic-link library, you would prototype the two functions as
+follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL StringReverseW(PWSTR pWideCharStr);
+BOOL StringReverseA(PSTR pMultiByteStr);
+
+#ifdef UNICODE
+#define StringReverse StringReverseW
+#else
+#define StringReverse StringReverseA
+#endif // !UNICODE
+</pre></td></tr></table></p>
+</body>
+</html>
+
+
+
+
+
+
+

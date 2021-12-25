@@ -1,0 +1,919 @@
+<HTML>
+<HEAD>
+<TITLE>Sharing Kernel Objects Across Process Boundaries</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch03c.htm">[Previous]</A> <A HREF="ch04a.htm">[Next]</A><P>
+
+<A NAME="32"><H1>Sharing Kernel Objects Across Process Boundaries</H1></A>
+
+<p>Frequently, threads running in different processes need to share
+kernel objects. Here are some of the reasons why:</p>
+
+<ul>
+<p><li>File-mapping objects allow you to share blocks of data between
+two processes running on a single machine.</li></p>
+
+<p><li>Mailslots and named pipes allow applications to send blocks of
+data between processes running on different machines connected to the
+network.</li></p>
+
+<p><li>Mutexes, semaphores, and events allow threads in different
+processes to synchronize their continued execution, as in the case of
+an application that needs to notify another application when it has
+completed some task.</li></p>
+</ul>
+
+<p>Because kernel object handles are process-relative, performing these
+tasks is difficult. However, Microsoft had several good reasons for
+designing the handles to be process-relative. The most important reason
+was robustness. If kernel object handles were system-wide values, one
+process could easily obtain the handle to an object that another
+process was using and wreak havoc on that process. Another reason for
+process-relative handles is security. Kernel objects are protected with
+security, and a process must request permission to manipulate an object
+before attempting to manipulate it. The creator of the object can
+prevent an unauthorized user from touching the object simply by denying
+access to it.</p>
+
+<p>In the following section, we'll look at the three different
+mechanisms that allow processes to share kernel objects.</p>
+
+<A NAME="33"><H2>Object Handle Inheritance</H2></A>
+
+<p>Object handle inheritance can be used only when processes have a
+parent-child relationship. In this scenario, one or more kernel object
+handles are available to the parent process, and the parent decides to
+spawn a child process, giving the child access to the parent's
+kernel objects. For this type of inheritance to work, the parent
+process must perform several steps.</p>
+
+<p>First, when the parent process creates a kernel object, the parent
+must indicate to the system that it wants the object's handle to be
+inheritable. Keep in mind that although kernel object <i>handles</i>
+are inheritable, kernel objects themselves are not.</p>
+
+<p>To create an inheritable handle, the parent process must allocate
+and initialize a SECURITY_ATTRIBUTES structure and pass the
+structure's address to the specific <i>Create</i> function. The
+following code creates a mutex object and returns an inheritable handle
+to it:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+SECURITY_ATTRIBUTES sa;
+sa.nLength = sizeof(sa);
+sa.lpSecurityDescriptor = NULL;
+sa.bInheritHandle = TRUE;   // Make the returned handle inheritable.
+
+HANDLE hMutex = CreateMutex(&amp;sa, FALSE, NULL);
+
+<img src="images/grayvellip.JPG" width=3 height=13 border="0">
+</pre></td></tr></table></p>
+
+<p>This code initializes a SECURITY_ATTRIBUTES structure indicating
+that the object should be created using default security (ignored in
+Windows 98) and that the returned handle should be inheritable.</p>
+
+<p><div class="note"><blockquote><b>Windows 98</b><HR>
+Even though Windows 98 does not have complete security
+support, it does support inheritance; therefore, Windows 98 correctly
+uses the value of the <i>bInheritHandle</i> member.</blockquote></div></p>
+
+<p>Now we come to the flags that are stored in a process's handle
+table entry. Each handle table entry has a flag bit indicating whether
+the handle is inheritable. If you pass NULL as the PSECURITY_ATTRIBUTES
+parameter when you create a kernel object, the handle returned is not
+inheritable and this bit is zero. Setting the <i>bInheritHandle</i>
+member to TRUE causes this flag bit to be set to 1.</p>
+
+<p>Imagine a process's handle table that looks like the one shown
+in Table 3-2.</p>
+
+<p><b>Table 3-2.</b> <i>A process's handle table containing
+two valid entries</i></p>
+
+<table cellpadding=5 width="95%">
+<tr><th>Index</th>
+<th>Pointer to Kernel Object Memory Block</th> 
+<th>Access Mask (DWORD of Flag Bits)</th>
+<th>Flags (DWORD of Flag Bits)</th></tr>
+
+<tr><td vAlign=top>1</td><td vAlign=top>0xF0000000</td><td vAlign=top>0x????????</td><td vAlign=top>0x00000000</td></tr>
+
+<tr><td vAlign=top>2</td><td vAlign=top>0x00000000</td><td vAlign=top>(N/A)</td><td vAlign=top>(N/A)</td></tr> 
+
+<tr><td vAlign=top>3</td><td vAlign=top>0xF0000010</td><td vAlign=top>0x????????</td><td vAlign=top>0x00000001</td></tr> 
+</table>
+
+<p>Table 3-2 indicates that this process has access to two kernel
+objects (handles 1 and 3). Handle 1 is not inheritable and handle 3 is
+inheritable.</p>
+
+<p>The next step to perform when using object handle inheritance is for
+the parent process to spawn the child process. This is done using the
+<i>CreateProcess</i> function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL CreateProcess(
+   PCTSTR pszApplicationName, 
+   PTSTR pszCommandLine,
+   PSECURITY_ATTRIBUTES psaProcess, 
+   PSECURITY_ATTRIBUTES pszThread, 
+   BOOL bInheritHandles, 
+   DWORD dwCreationFlags, 
+   PVOID pvEnvironment, 
+   PCTSTR pszCurrentDirectory, 
+   LPSTARTUPINFO pStartupInfo,
+   PPROCESS_INFORMATION pProcessInformation);
+</pre></td></tr></table></p>
+
+<p>We'll examine this function in detail in the <a href="ch04a.htm">next chapter</a>, but
+for now I want to draw your attention to the <i>bInheritHandles</i>
+parameter. Usually, when you spawn a process, you will pass FALSE for
+this parameter. This value tells the system that you do not want the
+child process to inherit the inheritable handles that are in the parent
+process's handle table.</p>
+ 
+<p>If you pass TRUE for this parameter, however, the child will inherit
+the parent's inheritable handle values. When you pass TRUE, the
+operating system creates the new child process but does not allow the
+child process to begin executing its code right away. Of course, the
+system creates a new, empty process handle table for the child
+process&#8212;just as it would for any new process. But because you
+passed TRUE to <i>CreateProcess</i>'s <i>bInheritHandles</i>
+parameter, the system does one more thing: it walks the parent
+process's handle table, and for each entry it finds that contains a
+valid inheritable handle, the system copies the entry exactly into the
+child process's handle table. The entry is copied to the exact same
+position in the child process's handle table as in the parent's
+handle table. This fact is important because it means that the handle
+value that identifies a kernel object is identical in both the parent
+and the child processes.</p> 
+
+<p>In addition to copying the handle table entry, the system increments
+the usage count of the kernel object because two processes are now
+using the object. For the kernel object to be destroyed, both the
+parent process and the child process must either call <i>
+CloseHandle</i> on the object or terminate. The child does not have to
+terminate first&#8212;but neither does the parent. In fact, the parent
+process can close its handle to the object immediately after the <i>
+CreateProcess</i> function returns without affecting the child's
+ability to manipulate the object.</p> 
+
+<p>Table 3-3 shows the child process's handle table immediately before
+the process is allowed to begin execution. You can see that entries 1
+and 2 are not initialized and are therefore invalid handles for the
+child process to use. However, index 3 does identify a kernel object.
+In fact, it identifies the kernel object at address 0xF0000010, the
+same object as in the parent process's handle table. The access
+mask is identical to the mask in the parent, and the flags are also
+identical. This means that if the child process were to spawn its own
+child process (a grandchild process of the parent), this grandchild
+process would also inherit this kernel object handle with the same
+handle value, same access, and same flags, and the usage count on the
+object would again be incremented.</p>
+
+<p><b>Table 3-3.</b> <i>A child process's handle table after inheriting the parent process's inheritable handle</i></p>
+
+<table cellpadding=5 width="95%">
+<tr>
+<th>Index</th>
+<th>Pointer to Kernel Object Memory Block</th>
+<th>Access Mask (DWORD of Flag Bits)</th>
+<th>Flags (DWORD of Flag Bits)</th>
+</tr>   
+
+<tr><td vAlign=top>1</td><td vAlign=top>0x00000000</td><td vAlign=top>(N/A)</td><td vAlign=top>(N/A)</td></tr> 
+
+<tr><td vAlign=top>2</td><td vAlign=top>0x00000000</td><td vAlign=top>(N/A)</td><td vAlign=top>(N/A)</td></tr>
+ 
+<tr><td vAlign=top>3</td><td vAlign=top>0xF0000010</td><td vAlign=top>0x????????</td><td vAlign=top>0x00000001</td></tr>
+</table>
+
+
+<p>Be aware that object handle inheritance applies only at the time the
+child process is spawned. If the parent process were to create any new
+kernel objects with inheritable handles, an already-running child
+process would not inherit these new handles.</p>
+
+<p>Object handle inheritance has one very strange characteristic: when
+you use it, the child has no idea that it has inherited any handles.
+Kernel object handle inheritance is useful only when the child process
+documents the fact that it expects to be given access to a kernel
+object when spawned from another process. Usually, the parent and child
+applications are written by the same company; however, a different
+company can write the child application if that company documents what
+the child application expects.</p>
+
+<p>By far the most common way for a child process to determine the
+handle value of the kernel object that it's expecting is to have
+the handle value passed as a command-line argument to the child
+process. The child process's initialization code parses the command
+line (usually by calling <i>sscanf</i>) and extracts the handle value.
+Once the child has the handle value, it has unlimited access to the
+object. Note that the only reason handle inheritance works is because
+the handle value of the shared kernel object is identical in both the
+parent process and the child process; this is why the parent process is
+able to pass the handle value as a command-line argument.</p>
+
+<p>Of course, you can use other forms of interprocess communication to
+transfer an inherited kernel object handle value from the parent
+process into the child process. One technique is for the parent to wait
+for the child to complete initialization (using the <i>
+WaitForInputIdle</i> function discussed in <A HREF="ch09a.htm">Chapter 9</A>); then the parent
+can send or post a message to a window created by a thread in the child
+process.</p>
+
+<p>Another technique is for the parent process to add an environment
+variable to its environment block. The variable's name would be
+something that the child process knows to look for, and the
+variable's value would be the handle value of the kernel object to
+be inherited. Then when the parent spawns the child process, the child
+process inherits the parent's environment variables and can easily
+call <i>GetEnvironmentVariable</i> to obtain the inherited object's
+handle value. This approach is excellent if the child process is going
+to spawn another child process, because the environment variables can
+be inherited again.</p>
+
+<A NAME="34"><H3>Changing a Handle's Flags</H3></A>
+
+<p>Occasionally, you might encounter a situation in which a parent
+process creates a kernel object retrieving an inheritable handle and
+then spawns two child processes. The parent process wants only one
+child to inherit the kernel object handle. In other words, you might at
+times want to control which child processes inherit kernel object
+handles. To alter the inheritance flag of a kernel object handle, you
+can call the <i>SetHandleInformation</i> function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL SetHandleInformation(
+   HANDLE hObject, 
+   DWORD dwMask,
+   DWORD dwFlags);
+</pre></td></tr></table></p>
+
+<p>As you can see, this function takes three parameters. The first, <i>
+hObject</i>, identifies a valid handle. The second parameter, <i>
+dwMask</i>, tells the function which flag or flags you want to change.
+Currently, two flags are associated with each handle:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+#define HANDLE_FLAG_INHERIT    0x00000001
+#define HANDLE_FLAG_PROTECT_FROM_CLOSE 0x00000002
+</pre></td></tr></table></p>
+
+<p>You can bitwise OR both of these flags together if you want to
+change both of the object's flags simultaneously. <i>
+SetHandleInformation</i>'s third parameter, <i>dwFlags</i>,
+indicates what you want to set the flags to. For example, to turn on
+the inheritance flag for a kernel object handle, do the following:</p>
+
+<p><table cellpadding=5><tr><td>
+<PRE>
+SetHandleInformation(hobj, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+</pre></td></tr></table></p>
+
+<p>To turn off this flag, do this:</p>
+
+<p><table cellpadding=5><tr><td>
+<PRE>
+SetHandleInformation(hobj, HANDLE_FLAG_INHERIT, 0);
+</pre></td></tr></table></p>
+
+<p>The HANDLE_FLAG_PROTECT_FROM_CLOSE flag tells the system that this
+handle should not be allowed to close:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+SetHandleInformation(hobj, HANDLE_FLAG_PROTECT_FROM_CLOSE,
+   HANDLE_FLAG_PROTECT_FROM_CLOSE);
+CloseHandle(hobj);   // Exception is raised
+</pre></td></tr></table></p>
+
+<p>If a thread attempts to close a protected handle, <i>CloseHandle</i>
+raises an exception. You rarely want to protect a handle from being
+closed. However, this flag might be useful if you had a process that
+spawned a child that in turn spawned a grandchild process. The parent
+process might be expecting the grandchild to inherit the object handle
+given to the immediate child. It is possible, however, that the
+immediate child might close the handle before spawning the grandchild.
+If this were to happen, the parent might not be able to communicate
+with the grandchild because the grandchild did not inherit the kernel
+object. By marking the handle as &quot;protected from close,&quot; the
+grandchild will inherit the object.</p>
+
+<p>This approach has one flaw, however: the immediate child process
+might call the following code to turn off the HANDLE_FLAG_PROTECT_ 
+FROM_CLOSE flag and then close the handle.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+SetHandleInformation(hobj, HANDLE_FLAG_PROTECT_FROM_CLOSE, 0);
+CloseHandle(hobj);
+</pre></td></tr></table></p>
+
+<p>The parent process is gambling that the child process will not
+execute this code. Of course, the parent is also gambling that the
+child process will spawn the grandchild, so this bet is not that
+risky.</p>
+
+<p>For the sake of completeness, I'll also mention the <i>
+GetHandleInformation</i> function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL GetHandleInformation(
+   HANDLE hObj, 
+   PDWORD pdwFlags);
+</pre></td></tr></table></p>
+
+<p>This function returns the current flag settings for the specified
+handle in the DWORD pointed to by <i>pdwFlags</i>. To see if a handle
+is inheritable, do the following:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+DWORD dwFlags;
+GetHandleInformation(hObj, &amp;dwFlags);
+BOOL fHandleIsInheritable = (0 != (dwFlags &amp; HANDLE_FLAG_INHERIT));
+</pre></td></tr></table></p>
+
+<A NAME="35"><H2>Named Objects</H2></A>
+
+<p>The second method available for sharing kernel objects across
+process boundaries is to name the objects. Many&#8212;though not
+all&#8212;kernel objects can be named. For example, all of the following
+functions create named kernel objects:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HANDLE CreateMutex(
+   PSECURITY_ATTRIBUTES psa,
+   BOOL bInitialOwner, 
+   PCTSTR pszName);
+
+HANDLE CreateEvent(
+   PSECURITY_ATTRIBUTES psa,
+   BOOL bManualReset, 
+   BOOL bInitialState, 
+   PCTSTR pszName);
+
+HANDLE CreateSemaphore(
+   PSECURITY_ATTRIBUTES psa,
+   LONG lInitialCount, 
+   LONG lMaximumCount, 
+   PCTSTR pszName);
+
+HANDLE CreateWaitableTimer(
+   PSECURITY_ATTRIBUTES psa,
+   BOOL bManualReset, 
+   PCTSTR pszName);
+
+HANDLE CreateFileMapping(
+   HANDLE hFile,
+   PSECURITY_ATTRIBUTES psa, 
+   DWORD flProtect,
+   DWORD dwMaximumSizeHigh, 
+   DWORD dwMaximumSizeLow, 
+   PCTSTR pszName); 
+
+HANDLE CreateJobObject(
+   PSECURITY_ATTRIBUTES psa, 
+   PCTSTR pszName);
+</pre></td></tr></table></p>
+
+<p>All of these functions have a common last parameter, <i>pszName</i>.
+When you pass NULL for this parameter, you are indicating to the system
+that you want to create an unnamed (anonymous) kernel object. When you
+create an unnamed object, you can share the object across processes by
+using either inheritance (as discussed in the previous section) or <i>
+DuplicateHandle</i> (discussed in the next section). To share an object
+by name, you must give the object a name.</p> 
+
+<p>If you don't pass NULL for the <i>pszName</i> parameter, you should
+pass the address of a zero-terminated string name. This name can be up
+to MAX_PATH (defined as 260) characters long. Unfortunately, Microsoft
+offers no guidance for assigning names to kernel objects. For example,
+if you attempt to create an object called &quot;JeffObj,&quot;
+there's no guarantee that an object called &quot;JeffObj&quot;
+doesn't already exist. To make matters worse, all of these objects
+share a single name space. Because of this, the following call to <i>
+CreateSemaphore</i> will always return NULL:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HANDLE hMutex = CreateMutex(NULL, FALSE, &quot;JeffObj&quot;);
+HANDLE hSem = CreateSemaphore(NULL, 1, 1, &quot;JeffObj&quot;);
+DWORD dwErrorCode = GetLastError();
+</pre></td></tr></table></p>
+
+<p>If you examine the value of <i>dwErrorCode</i> after executing the
+code above, you'll see a return code of 6 (ERROR_INVALID_HANDLE).
+This error code is not very descriptive, but what can you do?</p> 
+
+<p>Now that you know how to name an object, let's see how to share
+objects this way. Let's say that Process A starts up and calls the
+following function:</p>
+
+<p><table cellpadding=5><tr><td>
+<PRE>
+HANDLE hMutexProcessA = CreateMutex(NULL, FALSE, &quot;JeffMutex&quot;); 
+</pre></td></tr></table></p>
+
+<p>This function call creates a brand new mutex kernel object and
+assigns it the name &quot;JeffMutex&quot;. Notice that in Process
+A's handle, <i>hMutexProcessA</i> is not an inheritable
+handle&#8212;and it doesn't have to be when you're only naming
+objects.</p>
+
+<p>Some time later, some process spawns Process B. Process B does not
+have to be a child of Process A; it might be spawned from the Explorer
+or any other application. The fact that Process B need not be a child
+of Process A is an advantage of using named objects instead of
+inheritance. When Process B starts executing, it executes the following
+code:</p>
+
+<p><table cellpadding=5><tr><td>
+<PRE>
+HANDLE hMutexProcessB = CreateMutex(NULL, FALSE, &quot;JeffMutex&quot;); 
+</pre></td></tr></table></p>
+
+<p>When Process B's call to <i>CreateMutex</i> is made, the system
+first checks to find out whether a kernel object with the name
+&quot;JeffMutex&quot; already exists. Because an object with this name
+does exist, the kernel then checks the object type. Since we are
+attempting to create a mutex and the object with the name
+&quot;JeffMutex&quot; is also a mutex, the system then makes a security
+check to see if the caller has full access to the object and if so, the
+system locates an empty entry in Process B's handle table and
+initializes the entry to point to the existing kernel object. If the
+object types don't match or if the caller is denied access, <i>
+CreateMutex</i> fails (returns NULL).</p>
+ 
+<p>When Process B's call to <i>CreateMutex</i> is successful, a mutex
+is not actually created. Instead, Process B is simply assigned a
+process-relative handle value that identifies the existing mutex object
+in the kernel. Of course, because a new entry in Process B's handle
+table references this object, the mutex object's usage count is
+incremented; the object will not be destroyed until both Process A and
+Process B have closed their handles to the object. Notice that the
+handle values in the two processes are most likely going to be
+different values. This is OK: Process A will use its handle value, and
+Process B will use its own handle value to manipulate the one mutex
+kernel object.</p>
+
+<p><div class="note"><blockquote><b>NOTE</b><HR>
+When you have kernel objects sharing names, be aware of one
+extremely important detail. When Process B calls <i>CreateMutex</i>, it
+passes security attribute information and a second parameter to the
+function. These parameters are ignored if an object with the specified
+name already exists! An application can determine if it did, in fact,
+create a new kernel object versus simply opening an existing object by
+calling <i>GetLastError</i> immediately after the call to the <i>
+Create*</i> function:
+
+<p><table cellpadding=5><tr><td>
+<PRE>
+HANDLE hMutex = CreateMutex(&amp;sa, FALSE, &quot;JeffObj&quot;);
+if (GetLastError() == ERROR_ALREADY_EXISTS) {
+   // Opened a handle to an existing object.
+   // sa.lpSecurityDescriptor and the second parameter 
+   // (FALSE) are ignored. 
+} else {
+   // Created a brand new object.
+   // sa.lpSecurityDescriptor and the second parameter 
+   // (FALSE) are used to construct the object.
+}
+</pre></td></tr></table></p>
+</blockquote></div></p>
+
+<p>An alternative method exists for sharing objects by name. Instead of
+calling a <i>Create*</i> function, a process can call one of the <i>
+Open*</i> functions shown here:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HANDLE OpenMutex(
+   DWORD dwDesiredAccess, 
+   BOOL bInheritHandle, 
+   PCTSTR pszName);
+
+HANDLE OpenEvent(
+   DWORD dwDesiredAccess, 
+   BOOL bInheritHandle, 
+   PCTSTR pszName);
+
+HANDLE OpenSemaphore(
+   DWORD dwDesiredAccess, 
+   BOOL bInheritHandle,
+   PCTSTR pszName);
+
+HANDLE OpenWaitableTimer(
+   DWORD dwDesiredAccess, 
+   BOOL bInheritHandle,
+   PCTSTR pszName);
+
+HANDLE OpenFileMapping(
+   DWORD dwDesiredAccess, 
+   BOOL bInheritHandle, 
+   PCTSTR pszName);
+
+HANDLE OpenJobObject(
+   DWORD dwDesiredAccess, 
+   BOOL bInheritHandle, 
+   PCTSTR pszName);
+</pre></td></tr></table></p>
+
+<p>Notice that all of these functions have the same prototype. The last
+parameter, <i>pszName</i>, indicates the name of a kernel object. You
+cannot pass NULL for this parameter; you must pass the address of a
+zero-terminated string. These functions search the single name space of
+kernel objects attempting to find a match. If no kernel object with the
+specified name exists, the functions return NULL and <i>
+GetLastError</i> returns 2 (ERROR_FILE_NOT_FOUND). However, if a kernel
+object with the specified name does exist, and if it is the same type
+of object, the system then checks to see if the requested access (via
+the <i>dwDesiredAccess</i> parameter) is allowed; if it is, the calling
+process's handle table is updated and the object's usage count
+is incremented. The returned handle will be inheritable if you pass
+TRUE for the <i>bInheritHandle</i> parameter.</p>
+ 
+<p>The main difference between calling a <i>Create*</i> function versus
+calling an <i>Open*</i> function is that if the object doesn't
+already exist, the <i>Create*</i> function will create it, whereas the
+<i>Open*</i> function will simply fail.</p> 
+
+<p>As I mentioned earlier, Microsoft offers no real guidelines on how to
+create unique object names. In other words, it would be a problem if a
+user attempted to run two programs from different companies and each
+program attempted to create an object called &quot;MyObject&quot;. For
+uniqueness, I recommend that you create a GUID and use the string
+representation of the GUID for your object names.</p> 
+
+<p>Named objects are commonly used to prevent multiple instances of an
+application from running. To do this, simply call a <i>Create*</i>
+function in your <i>main</i> or <i>WinMain</i> function to create a
+named object (it doesn't matter what type of object you create).
+When the <i>Create*</i> function returns, call <i>GetLastError</i>. If
+<i>GetLastError</i> returns ERROR_ALREADY_EXISTS, another instance of
+your application is running and the new instance can exit. Here's
+some code that illustrates this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+int WINAPI WinMain(HINSTANCE hinstExe, HINSTANCE, PSTR pszCmdLine, 
+   int nCmdShow) {
+   HANDLE h = CreateMutex(NULL, FALSE, 
+      &quot;{FA531CC1-0497-11d3-A180-00105A276C3E}&quot;);
+   if (GetLastError() == ERROR_ALREADY_EXISTS) {
+      // There is already an instance of this application running.
+      return(0);
+   }
+
+   // This is the first instance of this application running.
+
+   <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+
+   // Before exiting, close the object.
+   CloseHandle(h);
+   return(0);
+}
+</pre></td></tr></table></p>
+
+<A NAME="36"><H3>Terminal Server Name Spaces</H3></A>
+
+<p>Note that Terminal Server changes the above scenario a little bit. A
+Terminal Server machine will have multiple name spaces for kernel
+objects. There is one global name space, which is used by kernel
+objects that are meant to be accessible by any and all client sessions.
+This name space is mostly used by services. In addition, each client
+session has its own name space. This keeps two or more sessions that
+are running the same application from trampling over each
+other&#8212;one session cannot access another session's objects even
+though the objects share the same name. On a machine without Terminal
+Server, services and applications share the same kernel object name
+space as described above; this is not true on a Terminal Server
+machine.</p> 
+
+<p>A service's named kernel objects always go in the global name
+space. By default, in Terminal Server, an application's named
+kernel object goes in the session's name space. However, it is
+possible to force the named object to go into the global name space by
+prefixing the name with &quot;Global\&quot;, as in the example
+below:</p>
+
+<p><table cellpadding=5><tr><td>
+<PRE>
+HANDLE h = CreateEvent(NULL, FALSE, FALSE, &quot;Global\\MyName&quot;); 
+</pre></td></tr></table></p>
+
+<p>You can also explicitly state that you want a kernel object to go in
+the session's name space by prefixing the name with
+&quot;Local\&quot;, as in</p>
+
+<p><table cellpadding=5><tr><td>
+<PRE>
+HANDLE h = CreateEvent(NULL, FALSE, FALSE, &quot;Local\\MyName&quot;); 
+</pre></td></tr></table></p>
+
+<p>Microsoft considers Global and Local to be reserved keywords that
+you should not use in object names except to force a particular name
+space. Microsoft also considers Session to be a reserved keyword,
+although it currently has no meaning. Note that all of these reserved
+keywords are case-sensitive. Finally, these keywords are ignored if the
+host machine is not running Terminal Server.</p>
+
+<A NAME="37"><H2>Duplicating Object Handles</H2></A>
+
+<p>The last technique for sharing kernel objects across process
+boundaries requires the use of the <i>DuplicateHandle</i> function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL DuplicateHandle(
+   HANDLE hSourceProcessHandle, 
+   HANDLE hSourceHandle,
+   HANDLE hTargetProcessHandle, 
+   PHANDLE phTargetHandle, 
+   DWORD dwDesiredAccess, 
+   BOOL bInheritHandle, 
+   DWORD dwOptions);
+</pre></td></tr></table></p>
+
+<p>Simply stated, this function takes an entry in one process's
+handle table and makes a copy of the entry into another process's
+handle table. <i>DuplicateHandle</i> takes several parameters but is
+actually quite straightforward. The most general usage of the <i>
+DuplicateHandle</i> function involves three different processes that
+are running in the system.</p>
+
+<p>When you call <i>DuplicateHandle</i>, the first and third
+parameters&#8212;<i>hSourceProcessHandle</i> and <i>
+hTargetProcessHandle</i>&#8212;are kernel object handles. The handles
+themselves must be relative to the process that is calling the <i>
+DuplicateHandle</i> function. In addition, these two parameters must
+identify process kernel objects; the function fails if you pass handles
+to any other type of kernel object. We'll discuss process kernel
+objects in more detail in <A HREF="ch04a.htm">Chapter 4</A>; for now, all you need to know is
+that a process kernel object is created whenever a new process is
+invoked in the system.</p>
+
+<p>The second parameter, <i>hSourceHandle</i>, is a handle to any type
+of kernel object. However, the handle value is not relative to the
+process that calls <i>DuplicateHandle</i>. Instead, this handle must be
+relative to the process identified by the <i>hSourceProcessHandle</i>
+handle. The fourth parameter, <i>phTargetHandle</i>, is the address of
+a HANDLE variable that will receive the index of the entry that gets
+the copy of the source's handle information. The handle value that
+comes back is relative to the process identified by <i>
+hTargetProcessHandle</i>.</p>
+
+<p><i>DuplicateHandle</i>'s last three parameters allow you to
+indicate the value of the access mask and the inheritance flag that
+should be used in the target's entry for this kernel object handle.
+The <i>dwOptions</i> parameter can be 0 (zero) or any combination of
+the following two flags: DUPLICATE_SAME_ACCESS and
+DUPLICATE_CLOSE_SOURCE.</p>
+
+<p>Specifying DUPLICATE_SAME_ACCESS tells <i>DuplicateHandle</i> that
+you want the target's handle to have the same access mask as the
+source process's handle. Using this flag causes <i>
+DuplicateHandle</i> to ignore its <i>dwDesiredAccess</i> parameter.</p>
+
+<p>Specifying DUPLICATE_CLOSE_SOURCE has the effect of closing the
+handle in the source process. This flag makes it easy for one process
+to hand a kernel object over to another process. When this flag is
+used, the usage count of the kernel object is not affected.</p>
+
+<p>I'll use an example to show you how <i>DuplicateHandle</i>
+works. For this demonstration, Process S is the source process that
+currently has access to some kernel object and Process T is the target
+process that will gain access to this kernel object. Process C is the
+catalyst process that will execute the call to <i>
+DuplicateHandle</i>.</p>
+
+<p>Process C's handle table (Table 3-4) contains two handle values,
+1 and 2. Handle value 1 identifies Process S's process kernel
+object, and handle value 2 identifies Process T's process kernel
+object.</p>
+
+<p><b>Table 3-4.</b> <i>Process C's handle table</i></p>
+
+<table cellpadding=5 width="95%">
+<tr><th>Index</th>
+<th>Pointer to Kernel Object Memory Block</th>
+<th>Access Mask (DWORD of Flag Bits)</th>
+<th>Flags (DWORD of Flag Bits)</th></tr>
+    
+<tr><td vAlign=top>1</td><td vAlign=top>0xF0000000 (Process S's kernel object)</td><td vAlign=top>0x????????</td><td vAlign=top>0x00000000</td></tr> 
+
+<tr><td vAlign=top>2</td><td vAlign=top>0xF0000010 (Process T's kernel object)</td><td vAlign=top>0x????????</td> <td vAlign=top>0x00000000</td></tr>
+
+</table>
+
+
+<p>Table 3-5 is Process S's handle table, which contains a single
+entry with a handle value of 2. This handle can identify any type of
+kernel object&#8212;it doesn't have to be a process kernel
+object.</p>
+
+<p><b>Table 3-5.</b> <i>Process S's handle table</i></p> 
+
+<table cellpadding=5 width="95%">
+<tr><th>Index</th>
+<th>Pointer to Kernel Object Memory Block</th>
+<th>Access Mask (DWORD of Flag Bits)</th>
+<th>Flags (DWORD of Flag Bits)</th></tr>
+
+<tr><td vAlign=top>1</td><td vAlign=top>0x00000000</td><td vAlign=top>(N/A)</td><td vAlign=top>(N/A)</td></tr> 
+
+<tr><td vAlign=top>2</td><td vAlign=top>0xF0000020 (any kernel object)</td> 
+<td vAlign=top>0x????????</td><td vAlign=top>0x00000000</td></tr> 
+</table>
+
+<p>Table 3-6 shows what Process T's handle table contains before
+Process C calls the <i>DuplicateHandle</i> function. As you can see,
+Process T's handle table contains only a single entry with a handle
+value of 2; handle entry 1 is currently unused.</p>
+
+<p><b>Table 3-6.</b> <i>Process T's handle table before calling</i> DuplicateHandle</p>
+
+<table cellpadding=5 width="95%">
+<tr><th>Index</th>
+<th>Pointer to Kernel Object Memory Block</th>
+<th>Access Mask (DWORD of Flag Bits)</th>
+<th>Flags (DWORD of Flag Bits)</th></tr>
+
+<tr><td vAlign=top>1</td><td vAlign=top>0x00000000</td><td vAlign=top>(N/A)</td><td vAlign=top>(N/A)</td></tr>
+
+<tr><td vAlign=top>2</td><td vAlign=top>0xF0000030 (any kernel object)</td>  
+<td vAlign=top>0x????????</td> <td vAlign=top>0x00000000</td></tr>
+</table>
+
+<p>If Process C now calls <i>DuplicateHandle</i> using the following code,
+only Process T's handle table has changed, as shown in Table
+3-7.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+DuplicateHandle(1, 2, 2, &amp;hObj, 0, TRUE, DUPLICATE_SAME_ACCESS);
+</pre></td></tr></table></p>
+
+<p><b>Table 3-7.</b> <i>Process T's handle table after calling</i> DuplicateHandle</p>
+
+<table cellpadding=5 width="95%">
+<tr><th>Index</th>
+<th>Pointer to Kernel Object Memory Block</th>
+<th>Access Mask (DWORD of Flag Bits)</th>
+<th>Flags (DWORD of Flag Bits)</th></tr>
+
+<tr><td vAlign=top>1</td><td vAlign=top>0xF0000020</td><td vAlign=top>0x????????</td><td vAlign=top>0x00000001</td></tr>
+
+<tr><td vAlign=top>2</td><td vAlign=top>0xF0000030 (any kernel object)</td><td vAlign=top>0x????????</td><td vAlign=top>0x00000000</td></tr>
+</table>
+
+
+<p>The second entry in Process S's handle table has been copied to
+the first entry in Process T's handle table. <i>DuplicateHandle</i>
+has also filled in Process C's <i>hObj</i> variable with a value of
+1, which is the index in process T's handle table where the new
+entry was placed.</p>
+
+<p>Because the DUPLICATE_SAME_ACCESS flag was passed to <i>
+DuplicateHandle</i>, the access mask for this handle in Process T's
+table is identical to the access mask in Process S's table entry.
+Also, passing the DUPLICATE_SAME_ACCESS flag causes <i>
+DuplicateHandle</i> to ignore its <i>dwDesiredAccess</i> parameter.
+Finally, notice that the inheritance bit flag has been turned on
+because TRUE was passed for <i>DuplicateHandle</i>'s <i>
+bInheritHandle</i> parameter.</p> 
+
+<p>Obviously, you would never call <i>DuplicateHandle</i> passing in
+hard-coded numeric values as I have done in this example. I have used
+hard-coded numbers only to demonstrate how the function operates. In
+real applications, you would have the various handle values in
+variables and you would pass the variables as arguments to the
+function.</p>
+
+<p>Like inheritance, one of the odd things about the <i>
+DuplicateHandle</i> function is that the target process is not given
+any notification that a new kernel object is now accessible to it. So,
+Process C must somehow notify Process T that it now has access to a
+kernel object and must use some form of interprocess communication to
+pass the handle value in <i>hObj</i> to Process T. Obviously, using a
+command-line argument or changing Process T's environment variables
+is out of the question since the process is already up and running. A
+window message or some other IPC mechanism must be used.</p>
+
+<p>What I have just explained is the most general usage of <i>
+DuplicateHandle</i>. As you can see, it is a very flexible function.
+However, it is rarely used with the involvement of three different
+processes (partly because it is unlikely that Process C would know the
+handle value of an object in use by Process S). Usually, <i>
+DuplicateHandle</i> is called when only two processes are involved.
+Imagine a situation in which one process has access to an object that
+another process wants access to, or a case in which one process wants
+to give access to a kernel object to another process. For example,
+let's say that Process S has access to a kernel object and wants to
+give Process T access to this object. To do this, you would call <i>
+DuplicateHandle</i> as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// All of the following code is executed by Process S.
+
+// Create a mutex object accessible by Process S.
+HANDLE hObjProcessS = CreateMutex(NULL, FALSE, NULL); 
+
+// Open a handle to Process T's kernel object.
+HANDLE hProcessT = OpenProcess(PROCESS_ALL_ACCESS, FALSE,
+   dwProcessIdT);
+
+HANDLE hObjProcessT;   // An uninitialized handle relative to Process T.
+
+// Give Process T access to our mutex object.
+DuplicateHandle(GetCurrentProcess(), hObjProcessS, hProcessT, 
+   &amp;hObjProcessT, 0, FALSE, DUPLICATE_SAME_ACCESS);
+
+// Use some IPC mechanism to get the handle
+// value in hObjProcessS into Process T.
+
+<img src="images/grayvellip.JPG" width=3 height=13 border="0">
+
+// We no longer need to communicate with Process T.
+CloseHandle(hProcessT);
+
+<img src="images/grayvellip.JPG" width=3 height=13 border="0">
+
+// When Process S no longer needs to use the mutex, it should close it.
+CloseHandle(hObjProcessS);
+</pre></td></tr></table></p>
+
+<p>The call to <i>GetCurrentProcess</i> returns a pseudo-handle that
+always identifies the calling process&#8212;Process S in this example.
+Once <i>DuplicateHandle</i> returns, <i>hObjProcessT</i> is a handle
+relative to Process T that identifies the same object that <i>
+hObjProcessS</i>'s handle does when referenced by code in Process
+S. Process S should never execute the following code:</p>
+
+<table cellpadding=5 width="95%"><TR><TD>
+<PRE>// Process S should never attempt to close the
+// duplicated handle.
+CloseHandle(hObjProcessT);
+</PRE>
+</td></tr></table>
+
+<p>If Process S were to execute this code, the call might or might not fail. The call would succeed if Process S happened to have access to a kernel object with the same handle value as <i>hObjProcessT</i>. This call would have the effect of closing some object so that Process S no longer had access to it, which would certainly cause the application to behave undesirably (to put it nicely).</p>
+
+<p>Here is another way to use <i>DuplicateHandle</i>: Suppose that a process has read and write access to a file-mapping object. At some point a function is called that is supposed to access the file-mapping object by reading it. To make our application more robust, we can use <i>DuplicateHandle</i> to create a new handle for the existing object and ensure that this new handle has read-only access on it. We would then pass this read-only handle to the function; this way, the code in the function would never be able to accidentally write to the file-mapping object. The following code illustrates this example:</p>
+
+<table cellpadding=5 width="95%"><TR><TD>
+<PRE>
+int WINAPI WinMain(HINSTANCE hinstExe, HINSTANCE, 
+   LPSTR szCmdLine, int nCmdShow) {
+
+   // Create a file-mapping object; the handle has read/write access.
+   HANDLE hFileMapRW = CreateFileMapping(INVALID_HANDLE_VALUE, 
+      NULL, PAGE_READWRITE, 0, 10240, NULL);
+
+   // Create another handle to the file-mapping object;
+   // the handle has read-only access.
+   HANDLE hFileMapRO;
+   DuplicateHandle(GetCurrentProcess(), hFileMapRW, GetCurrentProcess(),
+      &amp;hFileMapRO, FILE_MAP_READ, FALSE, 0);
+
+   // Call the function that should only read from the file mapping.
+   ReadFromTheFileMapping(hFileMapRO);
+
+   // Close the read-only file-mapping object.
+   CloseHandle(hFileMapRO);
+
+   // We can still read/write the file-mapping object using hFileMapRW.
+
+   <img src="images/grayvellip.JPG" width=3 height=13 border="0">   
+   
+   // When the main code doesn’t access the file mapping anymore,
+   // close it.
+   CloseHandle(hFileMapRW);
+}
+</PRE>
+</td></tr></table>
+
+</body>
+</html>
+
+
+
+
+
+
+

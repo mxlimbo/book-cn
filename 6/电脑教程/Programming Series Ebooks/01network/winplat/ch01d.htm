@@ -1,0 +1,975 @@
+<HTML>
+<HEAD>
+<TITLE>Common NetBIOS Routines</title>
+<link rel="STYLESHEET" type="text/css" href="Library.css">
+
+
+</head>
+<BODY BGCOLOR="#FFFFFF" TEXT="#000000">
+<SCRIPT LANGUAGE="JavaScript">
+<!--
+
+function fullSize(sURL){
+	window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+
+function LibraryHeaderNav(sBackward, sForward, sImgLeftOff, sImgLeftOn, sImgRightOff, sImgRightOn, iH, iW, sImgLeftStyle, sImgRightStyle, sImgRuleStyle, sRuleColor, sRuleSize){
+	var tableStr;
+	//validate questionable args for defs
+	tableStr = "<TABLE BORDER=0 CELLPADDING=0 CELLSPACING=0 border=0 width=100%>";
+	tableStr += "<TR VALIGN=top ALIGN=right>";
+
+	tableStr += "<TD align=right class=" + sImgRuleStyle + ">&nbsp;</TD>";	
+	
+	tableStr += "<TD width=34 align=right class=" + sImgLeftStyle + ">";
+	tableStr += "<A href='" + sBackward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgLeftOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgLeftOff + '\'\"';
+	tableStr += " SRC='" + sImgLeftOff + "' vspace=0 hspace=0></a></TD>";
+	
+	tableStr += "<TD width=34 align=left class=" + sImgRightStyle + ">";
+	tableStr += "<A href='" + sForward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgRightOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgRightOff + '\'\"';
+	tableStr += " SRC='" + sImgRightOff + "' vspace=0 hspace=0></a></TD></TR>";
+
+	tableStr += "<TR VALIGN=top>";
+	tableStr += "<TD height=3 align=center colspan=3 class=" + sImgRuleStyle + ">";
+	tableStr += "<HR color=" + sRuleColor + " size=" + sRuleSize + "></TD></TR></TABLE>";
+	//alert(tableStr);
+	document.write(tableStr);
+}
+
+ 																						     //purple is: #aa22aa   orange is: #ff9900
+LibraryHeaderNav("ch01c.htm" , "ch01e.htm", "images/unit_o_a1.gif", "images/unit_o_a2.gif", "images/unit_o_b1.gif", "images/unit_o_b2.gif", 18, 34, "unit01", "unit02", "headerrule", "#ff9900", "2");
+//--></SCRIPT>
+
+
+
+<A NAME="11"><H1>Common NetBIOS Routines</H1></A>
+
+<p>In this section, we'll examine a basic server NetBIOS application. We will examine the server first because the design of the server dictates how the client should act. Since most servers are designed to handle multiple clients simultaneously, the asynchronous NetBIOS model fits best. We will present server samples using both the asynchronous callback routines and the event model. However, we'll first introduce source code that implements some common functions necessary to most NetBIOS applications. Figure 1-3 is from file Nbcommon.c, which you'll find on the companion disc under <i>\Examples\Chapter01\Common</i>. Code examples throughout this book will use functions from this file.</p>
+
+<p><b>Figure 1-3.</b> <i>Common NetBIOS routines (Nbcommon.c)</i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+// Nbcommon.c
+
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+
+#include &quot;nbcommon.h&quot;
+
+//
+// Enumerate all LANA numbers
+//
+int LanaEnum(LANA_ENUM *lenum)
+{
+    NCB                ncb;
+
+    ZeroMemory(&amp;ncb, sizeof(NCB));
+    ncb.ncb_command = NCBENUM;
+    ncb.ncb_buffer = (PUCHAR)lenum;
+    ncb.ncb_length = sizeof(LANA_ENUM);
+
+    if (Netbios(&amp;ncb) != NRC_GOODRET)
+    {
+        printf(&quot;ERROR: Netbios: NCBENUM: %d\n&quot;, ncb.ncb_retcode);
+        return ncb.ncb_retcode;
+    }
+    return NRC_GOODRET;
+}
+
+//
+// Reset each LANA listed in the LANA_ENUM structure. Also, set
+// the NetBIOS environment (max sessions, max name table size),
+// and use the first NetBIOS name.
+//
+int ResetAll(LANA_ENUM *lenum, UCHAR ucMaxSession, 
+             UCHAR ucMaxName, BOOL bFirstName)
+{
+    NCB                ncb;
+    int                i;
+
+    ZeroMemory(&amp;ncb, sizeof(NCB));
+    ncb.ncb_command = NCBRESET;
+    ncb.ncb_callname[0] = ucMaxSession;
+    ncb.ncb_callname[2] = ucMaxName;
+    ncb.ncb_callname[3] = (UCHAR)bFirstName;
+
+    for(i = 0; i &lt; lenum-&gt;length; i++)
+    {
+        ncb.ncb_lana_num = lenum-&gt;lana[i];
+        if (Netbios(&amp;ncb) != NRC_GOODRET)
+        {
+            printf(&quot;ERROR: Netbios: NCBRESET[%d]: %d\n&quot;,
+                ncb.ncb_lana_num, ncb.ncb_retcode);
+            return ncb.ncb_retcode;
+        }
+    }
+    return NRC_GOODRET;
+}
+
+//
+// Add the given name to the given LANA number. Return the name
+// number for the registered name.
+//
+int AddName(int lana, char *name, int *num)
+{
+    NCB                ncb;
+
+    ZeroMemory(&amp;ncb, sizeof(NCB));
+
+    ncb.ncb_command = NCBADDNAME;
+    ncb.ncb_lana_num = lana;
+    memset(ncb.ncb_name, ' ', NCBNAMSZ);
+    strncpy(ncb.ncb_name, name, strlen(name));
+
+    if (Netbios(&amp;ncb) != NRC_GOODRET)
+    {
+        printf(&quot;ERROR: Netbios: NCBADDNAME[lana=%d;name=%s]: %d\n&quot;,
+            lana, name, ncb.ncb_retcode);
+        return ncb.ncb_retcode;
+    }
+    *num = ncb.ncb_num;
+    return NRC_GOODRET;
+}
+
+//
+// Add the given NetBIOS group name to the given LANA
+// number. Return the name number for the added name.
+//
+int AddGroupName(int lana, char *name, int *num)
+{
+    NCB                ncb;
+
+    ZeroMemory(&amp;ncb, sizeof(NCB));
+    ncb.ncb_command = NCBADDGRNAME;
+    ncb.ncb_lana_num = lana;
+    memset(ncb.ncb_name, ' ', NCBNAMSZ);
+    strncpy(ncb.ncb_name, name, strlen(name));
+
+    if (Netbios(&amp;ncb) != NRC_GOODRET)
+    {
+        printf(&quot;ERROR: Netbios: NCBADDGRNAME[lana=%d;name=%s]: %d\n&quot;,
+            lana, name, ncb.ncb_retcode);
+        return ncb.ncb_retcode;
+    }
+    *num = ncb.ncb_num;
+    return NRC_GOODRET;
+}
+
+//
+// Delete the given NetBIOS name from the name table associated
+// with the LANA number
+//
+int DelName(int lana, char *name)
+{
+    NCB                ncb;
+
+    ZeroMemory(&amp;ncb, sizeof(NCB));
+    ncb.ncb_command = NCBDELNAME;
+    ncb.ncb_lana_num = lana;
+    memset(ncb.ncb_name, ' ', NCBNAMSZ);
+    strncpy(ncb.ncb_name, name, strlen(name));
+
+    if (Netbios(&amp;ncb) != NRC_GOODRET)
+    {
+        printf(&quot;ERROR: Netbios: NCBADDNAME[lana=%d;name=%s]: %d\n&quot;,
+            lana, name, ncb.ncb_retcode);
+        return ncb.ncb_retcode;
+    }
+    return NRC_GOODRET;
+}
+
+//
+// Send len bytes from the data buffer on the given session (lsn)
+// and lana number
+//
+int Send(int lana, int lsn, char *data, DWORD len)
+{
+    NCB                ncb;
+    int                retcode;
+
+    ZeroMemory(&amp;ncb, sizeof(NCB));
+    ncb.ncb_command = NCBSEND;
+    ncb.ncb_buffer = (PUCHAR)data;
+    ncb.ncb_length = len;
+    ncb.ncb_lana_num = lana;
+    ncb.ncb_lsn = lsn;
+  
+    retcode = Netbios(&amp;ncb);
+
+    return retcode;
+}
+
+//
+// Receive up to len bytes into the data buffer on the given session 
+// (lsn) and lana number
+//
+int Recv(int lana, int lsn, char *buffer, DWORD *len)
+{
+    NCB                ncb;
+
+    ZeroMemory(&amp;ncb, sizeof(NCB));
+    ncb.ncb_command = NCBRECV;
+    ncb.ncb_buffer = (PUCHAR)buffer;
+
+    ncb.ncb_length = *len;
+    ncb.ncb_lana_num = lana;
+    ncb.ncb_lsn = lsn;
+
+    if (Netbios(&amp;ncb) != NRC_GOODRET)
+    {
+        *len = -1;
+        return ncb.ncb_retcode;
+    }
+    *len = ncb.ncb_length;
+
+    return NRC_GOODRET;
+}
+//
+// Disconnect the given session on the given lana number
+//
+int Hangup(int lana, int lsn)
+{
+    NCB                ncb;
+    int                retcode;
+
+    ZeroMemory(&amp;ncb, sizeof(NCB));
+    ncb.ncb_command = NCBHANGUP;
+    ncb.ncb_lsn = lsn;
+    ncb.ncb_lana_num = lana;
+
+    retcode = Netbios(&amp;ncb);
+
+    return retcode;
+}
+
+//
+// Cancel the given asynchronous command denoted in the NCB
+// structure parameter
+//
+int Cancel(PNCB pncb)
+{
+    NCB                ncb;
+
+    ZeroMemory(&amp;ncb, sizeof(NCB));
+    ncb.ncb_command = NCBCANCEL;
+    ncb.ncb_buffer = (PUCHAR)pncb;
+    ncb.ncb_lana_num = pncb-&gt;ncb_lana_num;
+
+    if (Netbios(&amp;ncb) != NRC_GOODRET)
+    {
+        printf(&quot;ERROR: NetBIOS: NCBCANCEL: %d\n&quot;, ncb.ncb_retcode);
+        return ncb.ncb_retcode;
+    }
+    return NRC_GOODRET;
+}
+
+//
+// Format the given NetBIOS name so that it is printable. Any
+// unprintable characters are replaced by a period. The outname
+// buffer is the returned string, which is assumed to be at least 
+// NCBNAMSZ + 1 characters in length.
+//
+int FormatNetbiosName(char *nbname, char *outname)
+{
+    int        i;
+
+    strncpy(outname, nbname, NCBNAMSZ);
+    outname[NCBNAMSZ - 1] = '\0';
+    for(i = 0; i &lt; NCBNAMSZ - 1; i++)
+    {
+        // If the character isn't printable, replace it with a '.'
+        //
+        if (!((outname[i] &gt;= 32) &amp;&amp; (outname[i] &lt;= 126)))
+            outname[i] = '.';
+    }
+    return NRC_GOODRET;
+}
+</pre>
+</td></tr></table>
+</p>
+
+<p>The first of the common routines in Nbcommon.c is <i>LanaEnum</i>. This is the most basic routine that almost all NetBIOS applications use. This function enumerates the available LANA numbers on a given system. The function initializes an <i>NCB</i> structure to 0, sets the <i>ncb_command</i> field to <i>NCBENUM</i>, assigns a <i>LANA_ENUM</i> structure to the <i>ncb_buffer</i> field, and sets the <i>ncb_length</i> field to the size of the <i>LANA_ENUM</i> structure. With the <i>NCB</i> structure correctly initialized, the only action that the <i>LanaEnum</i> function needs to take to invoke the <i>NCBENUM</i> command is to call the <i>Netbios</i> function. As you can see, executing a NetBIOS command is fairly easy. For synchronous commands, the return value from <i>Netbios</i> will tell you whether the command succeeded. The constant <i>NRC_GOODRET</i> always indicates success.</p>
+
+<p>A successful NetBIOS call fills the supplied <i>LANA_ENUM</i> structure with the count of LANA numbers on the current machine as well as the actual LANA numbers. The <i>LANA_ENUM</i> structure is defined as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+typedef struct LANA_ENUM 
+{
+    UCHAR   length; 
+    UCHAR   lana[MAX_LANA + 1];
+} LANA_ENUM, *PLANA_ENUM;
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>length</i> member indicates how many LANA numbers the local machine has. The <i>lana</i> field is the array of actual LANA numbers. The value of <i>length</i> corresponds to how many elements of the <i>lana</i> array will be filled with LANA numbers.</p>
+
+<p>The next function is <i>ResetAll</i>. Again, this function will be used in all NetBIOS applications. A well-written NetBIOS program should reset each LANA number that it plans to use. Once you have a <i>LANA_ENUM</i> structure with LANA numbers from <i>LanaEnum</i>, you can reset them by calling the <i>NCBRESET</i> command on each LANA number in the structure. That's exactly what <i>ResetAll</i> does; the function's first parameter is a <i>LANA_ENUM</i> structure. A reset requires only that the function set <i>ncb_command</i> to <i>NCBRESET</i> and <i>ncb_lana_num</i> to the LANA it needs to reset. Note that while some platforms, such as Windows 95, do not require you to reset each LANA number that you use, it is good practice to do so. Windows NT requires you to reset each LANA number prior to use; otherwise, any other calls to <i>Netbios</i> will return error 52 (<i>NRC_ENVNOTDEF</i>).</p>
+
+<p>Additionally, when resetting a LANA number you can set certain NetBIOS environment settings via the character fields of <i>ncb_callname</i>. <i>ResetAll</i>'s other parameters correspond to these environmental settings. The function uses the <i>ucMaxSession</i> parameter to set character 0 of <i>ncb_callname</i>, which specifies the maximum number of concurrent sessions. Normally, the operating system imposes a default that is less than the maximum. For example, Windows NT 4 defaults to 64 concurrent sessions. <i>ResetAll</i> sets character 2 of <i>ncb_callname</i> (which specifies the maximum number of NetBIOS names that can be added to each LANA) to the value of the <i>ucMaxName</i> parameter. Again, the operating system imposes a default maximum. Finally, <i>ResetAll</i> sets character 3, used for NetBIOS clients, to the value of its <i>bFirstName</i> parameter. By setting this parameter to <i>TRUE</i>, a client uses the machine name as its NetBIOS process name. As a result, a client can connect to a
+server and send data without allowing any incoming connections. This option is used to save on initialization time because adding a NetBIOS name to the local name table can be costly.</p>
+
+<p>Adding a name to the local name table is another common function. This is what <i>AddName</i> does. The parameters are simply the name to add and which LANA number to add it to. Remember that a name table is on a per-LANA basis, and if your application wants to communicate on every available LANA, you need to add the process's name to every LANA. The command for adding a unique name is <i>NCBADDNAME</i>. The other required fields are the LANA number to add the name to and the name to add, which must be copied into <i>ncb_name</i>. <i>AddName</i> initializes the <i>ncb_name</i> buffer to spaces first and assumes that the <i>name</i> parameter points to a null-terminated string. After adding a name successfully, <i>Netbios</i> returns the NetBIOS name number associated with the newly added name in the <i>ncb_num</i> field. You use this value with datagrams to identify the originating NetBIOS process. We'll discuss datagrams in greater detail later in this chapter. The most common error encountered when
+adding a unique name is <i>NRC_DUPNAME</i>, which occurs when the name is already in use by another process on the network.</p>
+
+<p><i>AddGroupName</i> works the same way as <i>AddName</i> except that it issues the command <i>NCBADDGRNAME</i> and never causes the <i>NRC_DUPNAME</i> error.</p>
+
+<p><i>DelName</i>, another related function, deletes a NetBIOS name from the name table. It requires only the LANA number you want to remove the name from and the name itself.</p>
+
+<p>The next two functions in Figure 1-3, <i>Send</i> and <i>Recv,</i> are for sending and receiving data in a connected session. These functions are almost identical except for the <i>ncb_command</i> field setting. The command field is set to either <i>NCBSEND</i> or <i>NCBRECV</i>. The LANA number on which to send the data and the session number are both required parameters. A successful <i>NCBCALL</i> or <i>NCBLISTEN</i> command returns the session number. Clients use the <i>NCBCALL</i> command to connect to a known service, while servers use <i>NCBLISTEN</i> to &quot;wait&quot; for incoming client connections. When either of these commands succeeds, the NetBIOS interface establishes a session with a unique integer identifier. <i>Send</i> and <i>Recv</i> also require parameters that map to <i>ncb_buffer</i> and <i>ncb_length</i>. When sending data, <i>ncb_buffer</i> points to the buffer containing the data to send. The length field is the number of characters in the buffer that should be sent. When receiving
+data, the buffer field points to the block of memory that incoming data is copied to. The length field is the size of the memory chunk. When the <i>Netbios</i> function returns, it updates the length field with the number of bytes successfully received. One important aspect of sending data in a session-oriented connection is that a call to the <i>Send</i> function will wait until the receiver has posted a <i>Recv</i> function. This means that if the sender is pushing a great deal of data and the receiver is not reading it, a lot of resources are being used to buffer the data locally. Therefore, it's a good idea to issue only a few <i>NCBSEND</i> or <i>NCBCHAINSEND</i> commands simultaneously. To circumvent this problem, use the <i>Netbios</i> commands <i>NCBSENDNA</i> and <i>NCBCHAINSENDNA</i>. With these commands, the sending of the data is performed without waiting for an acknowledgment of receipt from the receiver.</p>
+
+<p>The last two functions near the end of Figure 1-3, <i>Hangup</i> and <i>Cancel</i>, are for closing established sessions or canceling an outstanding command. You can call the NetBIOS command <i>NCBHANGUP</i> to gracefully shut down an established session. When you execute this command, all outstanding receive calls for the given session terminate and return with the session-closed error, <i>NRC_SCLOSED</i> (0x0A). If any send commands are outstanding, the hang-up command blocks until they complete. This delay occurs whether the commands are transferring data or are waiting for the remote side to issue a receive command.</p>
+
+<A NAME="12"><H2>Session Server: Asynchronous Callback Model</H2></A>
+
+<p>Now that we have the basic NetBIOS functions out of the way, we can look at the server that will listen for incoming client connections. Our server will be a simple echo server; it will send back any data that it receives from a connected client. Figure 1-4 contains server code that uses asynchronous callback functions. The code is also available as file Cbnbsvr.c on the companion disc in the /Examples/Chapter01/Server folder. If you look at the function <i>main</i>, you will see that first we enumerate the available LANA numbers with <i>LanaEnum</i>, and then we reset each LANA with <i>ResetAll</i>. Remember that these two steps are generally required of all NetBIOS applications.</p>
+
+<p><b>Figure 1-4.</b> <i>Asynchronous callback server (Cbnbsvr.c)</i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+// Cbnbsvr.c
+
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+
+#include &quot;..\Common\nbcommon.h&quot;
+
+#define MAX_BUFFER      2048
+#define SERVER_NAME     &quot;TEST-SERVER-1&quot;
+
+DWORD WINAPI ClientThread(PVOID lpParam);
+
+//
+// Function: ListenCallback
+//
+// Description:
+//    This function is called when an asynchronous listen completes.
+//    If no error occurred, create a thread to handle the client.
+//    Also, post another listen for other client connections.
+//
+void CALLBACK ListenCallback(PNCB pncb)
+{
+    HANDLE      hThread;
+    DWORD       dwThreadId;
+
+    if (pncb-&gt;ncb_retcode != NRC_GOODRET)
+    {
+        printf(&quot;ERROR: ListenCallback: %d\n&quot;, pncb-&gt;ncb_retcode);
+        return;
+    }
+    Listen(pncb-&gt;ncb_lana_num, SERVER_NAME);
+
+    hThread = CreateThread(NULL, 0, ClientThread, (PVOID)pncb, 0, 
+        &amp;dwThreadId);
+
+    if (hThread == NULL)
+    {
+        printf(&quot;ERROR: CreateThread: %d\n&quot;, GetLastError());
+        return;
+    }
+    CloseHandle(hThread);
+
+    return;
+}
+
+//
+// Function: ClientThread
+//
+// Description:
+//    The client thread blocks for data sent from clients and 
+//    simply sends it back to them. This is a continuous loop
+//    until the session is closed or an error occurs. If
+//    the read or write fails with NRC_SCLOSED, the session
+//    has closed gracefully--so exit the loop.
+//
+DWORD WINAPI ClientThread(PVOID lpParam)
+{
+    PNCB        pncb = (PNCB)lpParam;
+    NCB         ncb;
+    char        szRecvBuff[MAX_BUFFER];
+    DWORD       dwBufferLen = MAX_BUFFER,
+                dwRetVal = NRC_GOODRET;
+    char        szClientName[NCBNAMSZ+1];
+
+    FormatNetbiosName(pncb-&gt;ncb_callname, szClientName);
+
+    while (1)
+    {
+        dwBufferLen = MAX_BUFFER;
+
+        dwRetVal = Recv(pncb-&gt;ncb_lana_num, pncb-&gt;ncb_lsn,
+            szRecvBuff, &amp;dwBufferLen);
+        if (dwRetVal != NRC_GOODRET)
+            break;
+        szRecvBuff[dwBufferLen] = 0;
+        printf(&quot;READ [LANA=%d]: '%s'\n&quot;, pncb-&gt;ncb_lana_num, 
+            szRecvBuff);
+
+        dwRetVal = Send(pncb-&gt;ncb_lana_num, pncb-&gt;ncb_lsn,
+            szRecvBuff, dwBufferLen);
+        if (dwRetVal != NRC_GOODRET)
+            break;
+    }
+
+    printf(&quot;Client '%s' on LANA %d disconnected\n&quot;, szClientName,
+        pncb-&gt;ncb_lana_num);
+ 
+    if (dwRetVal != NRC_SCLOSED)
+    {
+        // Some other error occurred; hang up the connection
+        //
+        ZeroMemory(&amp;ncb, sizeof(NCB));
+        ncb.ncb_command = NCBHANGUP;
+        ncb.ncb_lsn = pncb-&gt;ncb_lsn;
+        ncb.ncb_lana_num = pncb-&gt;ncb_lana_num;
+
+        if (Netbios(&amp;ncb) != NRC_GOODRET)
+        {
+            printf(&quot;ERROR: Netbios: NCBHANGUP: %d\n&quot;, ncb.ncb_retcode);
+            dwRetVal = ncb.ncb_retcode;
+        }
+        GlobalFree(pncb);
+        return dwRetVal; 
+    }
+    GlobalFree(pncb);
+    return NRC_GOODRET;
+}
+
+//
+// Function: Listen
+//
+// Description:
+//    Post an asynchronous listen with a callback function. Create
+//    an NCB structure for use by the callback (since it needs a
+//    global scope).
+//
+int Listen(int lana, char *name)
+{
+    PNCB        pncb = NULL;
+
+    pncb = (PNCB)GlobalAlloc(GMEM_FIXED | GMEM_ZEROINIT, sizeof(NCB));
+    pncb-&gt;ncb_command = NCBLISTEN | ASYNCH;
+    pncb-&gt;ncb_lana_num = lana;
+    pncb-&gt;ncb_post = ListenCallback;
+    //
+    // This is the name clients will connect to
+    //
+    memset(pncb-&gt;ncb_name, ' ', NCBNAMSZ);
+    strncpy(pncb-&gt;ncb_name, name, strlen(name));
+    //
+    // An '*' means we'll take a client connection from anyone. By
+    // specifying an actual name here, we restrict connections to
+    // clients with that name only.
+    //
+    memset(pncb-&gt;ncb_callname, ' ', NCBNAMSZ);
+    pncb-&gt;ncb_callname[0] = '*';
+
+    if (Netbios(pncb) != NRC_GOODRET)
+    {
+        printf(&quot;ERROR: Netbios: NCBLISTEN: %d\n&quot;, pncb-&gt;ncb_retcode);
+        return pncb-&gt;ncb_retcode;
+    }
+    return NRC_GOODRET;
+}
+
+//
+// Function: main
+//
+// Description:
+//    Initialize the NetBIOS interface, allocate some resources, add
+//    the server name to each LANA, and post an asynch NCBLISTEN on
+//    each LANA with the appropriate callback. Then wait for incoming
+//    client connections, at which time, spawn a worker thread to
+//    handle them. The main thread simply waits while the server
+//    threads are handling client requests. You wouldn't do this in a
+//    real application, but this sample is for illustrative purposes
+//    only. 
+//
+int main(int argc, char **argv)
+{
+    LANA_ENUM   lenum;
+    int         i,
+                num;
+
+    // Enumerate all LANAs and reset each one
+    //
+    if (LanaEnum(&amp;lenum) != NRC_GOODRET)
+        return 1;
+    if (ResetAll(&amp;lenum, 254, 254, FALSE) != NRC_GOODRET)
+        return 1;
+    //
+    // Add the server name to each LANA, and issue a listen on each
+    //
+    for(i = 0; i &lt; lenum.length; i++)
+    {
+        AddName(lenum.lana[i], SERVER_NAME, &amp;num);
+        Listen(lenum.lana[i], SERVER_NAME);
+    }
+
+
+    while (1)
+    {        
+        Sleep(5000);
+    }
+}
+</pre>
+</td></tr></table>
+</p>
+
+<p>The next thing that the function <i>main</i> does is add your process's name to each LANA number on which you want to accept connections. The server adds its process name, TEST-SERVER-1, to each LANA number in a loop. This is the name the clients will use to connect to our server (padded with spaces, of course). Every character in a NetBIOS name is significant when trying to establish or accept a connection. We can't stress this point enough. Most problems encountered when coding NetBIOS clients and servers involve mismatched names. Be consistent in padding names either with spaces or with some other character. Spaces are the most popular pad character because when they are enumerated and printed out, they are human-readable.</p>
+
+<p>The last and most crucial step for a server is to post a number of <i>NCBLISTEN</i> commands. The <i>Listen</i> function first allocates an <i>NCB</i> structure. When you use asynchronous NetBIOS calls, the <i>NCB</i> structure that you submit must persist from the time you issue the call until the call completes. This requires that you either dynamically allocate each <i>NCB</i> structure before issuing the command or maintain a global pool of <i>NCB</i> structures for use in asynchronous calls. For <i>NCBLISTEN</i>, set the LANA number that you want the call to apply to. Note that the code listing in Figure 1-3 logically ORs the <i>NCBLISTEN</i> command with the <i>ASYNCH</i> command. When specifying the <i>ASYNCH</i> command, you must make either the <i>ncb_post</i> field or the <i>ncb_event</i> field nonzero; if you don't, the <i>Netbios</i> call will fail with <i>NRC_ILLCMD</i>. In Figure 1-4, the <i>Listen</i> function sets the <i>ncb_post</i> field to our callback function, <i>ListenCallback</i>.
+Next, <i>Listen</i> sets the <i>ncb_name</i> field to the name of the server process. This is the name that clients will connect to. The function also sets the first character of the <i>ncb_callname</i> field to an asterisk (*), signifying that the server will accept a connection from any client. Alternatively, you could place a specific name in the <i>ncb_callname</i> field, which would allow only the client who registered that specific name to connect to the server. Finally, <i>Listen</i> makes a call to <i>Netbios</i>. The call completes immediately, and the <i>Netbios</i> function sets the <i>ncb_cmd_cplt</i> field of the submitted <i>NCB</i> structure to <i>NRC_PENDING</i> (0xFF) until the command has completed.</p>
+
+<p>Once <i>main</i> resets and posts an <i>NCBLISTEN</i> command to each LANA number, the main thread goes into a continuous loop.</p>
+
+<p><div class="note"><blockquote><b>NOTE</b><hr>Since this server is only a sample, the design is very basic. When writing your own NetBIOS servers, you can do other processing in the main loop or post a synchronous NCBLISTEN in the main loop for one of the LANA numbers.</blockquote></div></p>
+
+<p>The callback function executes only when an incoming connection is accepted on a LANA number. When the <i>NCBLISTEN</i> command accepts a connection, it calls the function in the <i>ncb_post</i> field with the originating <i>NCB</i> structure as a parameter. The <i>ncb_retcode</i> is set to the return code. Always check this value to see whether the client connection succeeded. A successful connection will result in an <i>ncb_retcode</i> of <i>NRC_GOODRET</i> (0x00).</p>
+
+<p>If the connection was successful, post another <i>NCBLISTEN</i> on the same LANA number. This is necessary because once the original listen succeeds, the server stops listening for client connections on that LANA until another <i>NCBLISTEN</i> is submitted. Thus, if your servers require a high availability, you can post multiple <i>NCBLISTEN</i> commands on the same LANA so that connections from multiple clients can be accepted simultaneously. Finally, the callback function creates a thread that will service the client. In this example, the thread simply loops and calls a blocking read (<i>NCBRECV</i>) followed by a blocking send (<i>NCBSEND</i>). The server implements an echo server, which reads messages from connected clients and echoes them back. The client thread loops until the client breaks the connection, at which point the client thread issues an <i>NCBHANGUP</i> command to close the connection on its end. From there the client thread frees the <i>NCB</i> structure and exits.</p>
+
+<p>For connection-oriented sessions, data is buffered by the underlying protocols, so it is not necessary to always have outstanding receive calls. When a receive command is posted, the <i>Netbios</i> function immediately transfers available data to the supplied buffer and the call returns. If no data is available, the receive call blocks until data is present or until the session is disconnected. The same is true for the send command: if the network stack is able either to send data immediately on the wire or to buffer the data in the stack for transmission, the call returns immediately. If the system does not have the buffer space to send the data immediately, the send call blocks until the buffer space becomes available. To circumvent this blocking, you can use the <i>ASYNCH</i> command on sends and receives. The buffer supplied to asynchronous sends and receives must have a scope that extends beyond the calling procedure. Another way around blocking sends and receives is to use the <i>ncb_sto</i> and <i>
+ncb_rto</i> fields. The <i>ncb_sto</i> field is for send timeouts. By specifying a nonzero value, you set an upper limit for how long a send will block before returning. This number is specified in 500-millisecond units. If a command times out, the data is not sent. The same is true of the receive timeout: if no data arrives within the prescribed amount of time, the call returns with no data transferred into the buffers.</p>
+
+<A NAME="13"><H2>Session Server: Asynchronous Event Model</H2></A>
+
+<p>Figure 1-5  illustrates an echo server that is similar to the one in Figure 1-4 but uses Win32 events as the signaling mechanism for completion. The event model is similar to the callback model. The only difference is that with the callback model, the system executes your code when the asynchronous operation completes; while with the event model, your application has to check for the completion of the operation by checking the event status. Because these are standard Win32 events, you can use any of the synchronization routines available, such as <i>WaitForSingleEvent</i> and <i>WaitForMultipleEvents</i>. The event model is more efficient because it forces the programmer to structure the program to consciously check for completion.</p>
+
+<p>Our event-model server starts out exactly the same as the callback server:</p>
+
+<ol>
+<p><li> Enumerate the LANA numbers.</li></p>
+
+<p><li> Reset each LANA.</li></p>
+
+<p><li> Add the server's name to each LANA.</li></p>
+
+<p><li> Post a listen on each LANA.</li></p>
+</ol>
+
+<p>The only difference is that you need to keep track of all outstanding listen commands because you must associate event completion with the respective <i>NCB</i> blocks that initiate a particular command. The code in Figure 1-5 allocates an array of <i>NCB</i> structures equal to the number of LANA numbers (since you want to post one <i>NCBLISTEN</i> command on each number). Additionally, the code creates an event for each of the <i>NCB</i> structures for signaling the command's completion. The <i>Listen</i> function takes one of the <i>NCB</i> structures from the array as a parameter.</p>
+
+<p><b>Figure 1-5.</b> <i>Asynchronous event server (Evnbsvr.c)</i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+// Evnbsvr.c
+
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+
+#include &quot;..\Common\nbcommon.h&quot;
+
+#define MAX_SESSIONS    254
+#define MAX_NAMES       254
+
+#define MAX_BUFFER      2048
+#define SERVER_NAME     &quot;TEST-SERVER-1&quot;
+
+NCB    *g_Clients=NULL;        // Global NCB structure for clients
+
+//
+// Function: ClientThread
+//
+// Description:
+//    This thread takes the NCB structure of a connected session
+//    and waits for incoming data, which it then sends back to the
+//    client until the session is closed
+//
+DWORD WINAPI ClientThread(PVOID lpParam)
+{
+    PNCB        pncb = (PNCB)lpParam;
+    NCB         ncb;
+    char        szRecvBuff[MAX_BUFFER],
+                szClientName[NCBNAMSZ + 1];
+    DWORD       dwBufferLen = MAX_BUFFER,
+                dwRetVal = NRC_GOODRET;
+
+    // Send and receive messages until the session is closed
+    // 
+    FormatNetbiosName(pncb-&gt;ncb_callname, szClientName);
+    while (1)
+    {
+        dwBufferLen = MAX_BUFFER;
+        dwRetVal = Recv(pncb-&gt;ncb_lana_num, pncb-&gt;ncb_lsn,
+            szRecvBuff, &amp;dwBufferLen);
+        if (dwRetVal != NRC_GOODRET)
+            break;
+
+        szRecvBuff[dwBufferLen] = 0;
+        printf(&quot;READ [LANA=%d]: '%s'\n&quot;, pncb-&gt;ncb_lana_num, 
+            szRecvBuff);
+
+        dwRetVal = Send(pncb-&gt;ncb_lana_num, pncb-&gt;ncb_lsn,
+            szRecvBuff, dwBufferLen);
+        if (dwRetVal != NRC_GOODRET)
+            break;
+    }
+    printf(&quot;Client '%s' on LANA %d disconnected\n&quot;, szClientName,
+        pncb-&gt;ncb_lana_num);
+    //
+    // If the error returned from a read or a write is NRC_SCLOSED, 
+    // all is well; otherwise, some other error occurred, so hang up the
+    // connection from this side
+    //
+    if (dwRetVal != NRC_SCLOSED)
+    {
+        ZeroMemory(&amp;ncb, sizeof(NCB));
+        ncb.ncb_command = NCBHANGUP;
+        ncb.ncb_lsn = pncb-&gt;ncb_lsn;
+        ncb.ncb_lana_num = pncb-&gt;ncb_lana_num;
+
+        if (Netbios(&amp;ncb) != NRC_GOODRET)
+        {
+
+            printf(&quot;ERROR: Netbios: NCBHANGUP: %d\n&quot;,
+                ncb.ncb_retcode);
+            GlobalFree(pncb);
+            dwRetVal = ncb.ncb_retcode;
+        }
+    }
+    // The NCB structure passed in is dynamically allocated, so 
+    // delete it before we go
+    //
+    GlobalFree(pncb);
+    return NRC_GOODRET; 
+}
+
+//
+// Function: Listen
+//
+// Description:
+//    Post an asynchronous listen on the given LANA number.
+//    The NCB structure passed in already has its ncb_event
+//    field set to a valid Windows event handle.
+//
+int Listen(PNCB pncb, int lana, char *name)
+{
+    pncb-&gt;ncb_command = NCBLISTEN | ASYNCH;
+    pncb-&gt;ncb_lana_num = lana;
+    //
+    // This is the name clients will connect to
+    //
+    memset(pncb-&gt;ncb_name, ' ', NCBNAMSZ);
+    strncpy(pncb-&gt;ncb_name, name, strlen(name));
+    //
+    // An '*' means we'll accept connections from anyone.
+    // We can specify a specific name, which means that only a
+    // client with the specified name will be allowed to connect.
+    //
+    memset(pncb-&gt;ncb_callname, ' ', NCBNAMSZ);
+    pncb-&gt;ncb_callname[0] = '*';
+  
+    if (Netbios(pncb) != NRC_GOODRET)
+    {
+        printf(&quot;ERROR: Netbios: NCBLISTEN: %d\n&quot;, pncb-&gt;ncb_retcode);
+        return pncb-&gt;ncb_retcode;
+    }
+    return NRC_GOODRET;
+}
+
+//
+// Function: main
+//
+// Description:
+//    Initialize the NetBIOS interface, allocate some resources, and
+//    post asynchronous listens on each LANA using events. Wait for
+//    an event to be triggered, and then handle the client 
+//    connection.
+//
+int main(int argc, char **argv)
+{
+    PNCB        pncb=NULL;
+    HANDLE      hArray[64],
+                hThread;
+    DWORD       dwHandleCount=0,
+                dwRet,
+                dwThreadId;
+    int         i,
+                num;
+    LANA_ENUM   lenum;
+
+    // Enumerate all LANAs and reset each one
+    //
+    if (LanaEnum(&amp;lenum) != NRC_GOODRET)
+        return 1;
+    if (ResetAll(&amp;lenum, (UCHAR)MAX_SESSIONS, (UCHAR)MAX_NAMES,
+            FALSE) != NRC_GOODRET)
+        return 1;
+    //
+    // Allocate an array of NCB structures (one for each LANA)
+    // 
+    g_Clients = (PNCB)GlobalAlloc(GMEM_FIXED | GMEM_ZEROINIT,
+            sizeof(NCB) * lenum.length);
+    //
+    // Create the events, add the server name to each LANA, and issue
+    // the asynchronous listens on each LANA.
+    //
+    for(i = 0; i &lt; lenum.length; i++)
+    {
+        hArray[i] = g_Clients[i].ncb_event = CreateEvent(NULL, TRUE, 
+            FALSE, NULL);
+
+        AddName(lenum.lana[i], SERVER_NAME, &amp;num);
+        Listen(&amp;g_Clients[i], lenum.lana[i], SERVER_NAME);
+    }
+    while (1)
+    {        
+
+        // Wait until a client connects
+        //
+        dwRet = WaitForMultipleObjects(lenum.length, hArray, FALSE, 
+            INFINITE);
+        if (dwRet == WAIT_FAILED)
+        {
+            printf(&quot;ERROR: WaitForMultipleObjects: %d\n&quot;, 
+                GetLastError());
+            break;
+        }
+        // Go through all the NCB structures to see whether more than one
+        // succeeded. If ncb_cmd_plt is not NRC_PENDING, there
+        // is a client; create a thread, and hand off a new NCB
+        // structure to the thread. We need to reuse the original
+        // NCB for other client connections.
+        //
+        for(i = 0; i &lt; lenum.length; i++)
+        {
+            if (g_Clients[i].ncb_cmd_cplt != NRC_PENDING) 
+            {
+                pncb = (PNCB)GlobalAlloc(GMEM_FIXED, sizeof(NCB));
+                memcpy(pncb, &amp;g_Clients[i], sizeof(NCB));
+                pncb-&gt;ncb_event = 0;
+
+                hThread = CreateThread(NULL, 0, ClientThread, 
+                    (LPVOID)pncb, 0, &amp;dwThreadId);
+                CloseHandle(hThread);
+                //
+                // Reset the handle, and post another listen 
+                //
+                ResetEvent(hArray[i]);
+                Listen(&amp;g_Clients[i], lenum.lana[i], SERVER_NAME);
+            }
+        }
+    }
+    // Clean up
+    //
+    for(i = 0; i &lt; lenum.length; i++)
+    {
+        DelName(lenum.lana[i], SERVER_NAME);
+        CloseHandle(hArray[i]);
+    }
+    GlobalFree(g_Clients);
+
+    return 0;
+}
+
+</pre>
+</td></tr></table>
+</p>
+
+<p>The <i>main</i> function's first loop cycles through the available LANA numbers, adding the server name and posting the <i>NCBLISTEN</i> command to each LANA number, and building an array of event handles. Next call <i>WaitForMultipleObjects</i>, which blocks until at least one of the handles becomes signaled. Once one or more of the handles in the even-handle array is in a signaled state, <i>WaitForMultipleObjects</i> completes and the code spawns a thread to read incoming messages and send them back to the client. The code creates a copy of the signaled <i>NCB</i> structure to pass into the client thread. This is because you want to reuse the original <i>NCB</i> to post another <i>NCBLISTEN</i>, which you can do by resetting the event and calling <i>Listen</i> again on that structure. Note that you don't necessarily have to copy the whole structure. In reality you need only the local session number (<i>ncb_lsn</i>) and the LANA number (<i>ncb_lana_num</i>). However, the <i>NCB</i> structure is a
+nice container for holding both values to pass into the single parameter of the thread. The client thread used by the event model is the same as the callback model except for the <i>GlobalFree</i> statement.</p>
+
+<A NAME="14"><H3>Asynchronous server strategies</H3></A>
+
+<p>Notice that with both servers the possibility exists of a client being denied service. Once the <i>NCBLISTEN</i> completes, there is a slight delay until either the callback function is called or the event gets signaled. The servers don't post another <i>NCBLISTEN</i> until a few statements later. If the server accepted a client on LANA 2, for example, and then another client attempted a connection before the server issued another <i>NCBLISTEN</i> on that LANA, the client would receive the error <i>NRC_NOCALL</i> (0x14). This means that the given name had no <i>NCBLISTEN</i> posted on it. To avoid this, the server could post multiple <i>NCBLISTEN</i> commands on each LANA.</p>
+
+<p>From these two server samples, you can see how easy it is to issue asynchronous commands. The <i>ASYNCH</i> flag can be applied to just about any NetBIOS command. Just remember that the <i>NCB</i> structure that you pass to <i>Netbios</i> must have a global scope.</p>
+
+<A NAME="15"><H2>NetBIOS Session Client</H2></A>
+
+<p>The NetBIOS client is similar in design to the asynchronous event server. Figure 1-6 contains example code for the client. The client performs the familiar routine initialization steps by name. It adds its own name to the name table of each LANA number and then issues an asynchronous connect command. The main loop waits for one of the events to become signaled. At that point, the code cycles through all the <i>NCB</i> structures that correspond to the connect commands it issued, one for each LANA. It checks the <i>ncb_cmd_cplt</i> status. If it is <i>NRC_PENDING</i>, the code cancels the asynchronous command; if the command completed (that is, connected) and the <i>NCB</i> doesn't correspond to the <i>NCB</i> that was signaled (as specified by the return value from <i>WaitForMultipleObjects</i>), the code hangs up the connection. It is possible that if the server is listening on each LANA on its side and the client attempts connections on each of its LANAs, more than one connection can
+succeed. The code simply closes extra connections with the <i>NCBHANGUP</i> command&#8212;it needs to communicate over only one channel. By attempting to establish a connection using every LANA on both sides, we allow for the greatest possibility of a successful connection.</p>
+
+<p><b>Figure 1-6.</b> <i>Asynchronous event client (Nbclient.c) </i></p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+// Nbclient.c
+
+#include &lt;windows.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+
+#include &quot;..\Common\nbcommon.h&quot;
+
+#define MAX_SESSIONS     254
+#define MAX_NAMES        254
+
+#define MAX_BUFFER       1024
+
+char    szServerName[NCBNAMSZ];
+
+//
+// Function: Connect
+//
+// Description:
+//    Post an asynchronous connect on the given LANA number to
+//    the server. The NCB structure passed in already has the 
+//    ncb_event field set to a valid Windows event handle. Just
+//    fill in the blanks and make the call.
+//
+int Connect(PNCB pncb, int lana, char *server, char *client)
+{
+    pncb-&gt;ncb_command = NCBCALL | ASYNCH;
+    pncb-&gt;ncb_lana_num = lana;
+
+    memset(pncb-&gt;ncb_name, ' ', NCBNAMSZ);
+    strncpy(pncb-&gt;ncb_name, client, strlen(client));
+
+    memset(pncb-&gt;ncb_callname, ' ', NCBNAMSZ);
+    strncpy(pncb-&gt;ncb_callname, server, strlen(server));
+
+    if (Netbios(pncb) != NRC_GOODRET)
+    {
+        printf(&quot;ERROR: Netbios: NCBCONNECT: %d\n&quot;,
+            pncb-&gt;ncb_retcode);
+        return pncb-&gt;ncb_retcode;
+    }
+
+    return NRC_GOODRET;
+}
+
+//
+// Function: main
+//
+// Description:
+//    Initialize the NetBIOS interface, allocate some resources
+//    (event handles, a send buffer, and so on), and issue an 
+//    NCBCALL for each LANA to the given server. Once a connection
+//    has been made, cancel or hang up any other outstanding
+//    connections. Then send/receive the data. Finally, clean 
+//    things up.
+//
+int main(int argc, char **argv)
+{
+    HANDLE      *hArray;
+    NCB         *pncb;
+    char         szSendBuff[MAX_BUFFER];
+    DWORD        dwBufferLen,
+                 dwRet,
+                 dwIndex,
+                 dwNum;
+    LANA_ENUM    lenum;
+    int          i;
+
+    if (argc != 3)
+    {
+        printf(&quot;usage: nbclient CLIENT-NAME SERVER-NAME\n&quot;);
+        return 1;
+    }
+    // Enumerate all LANAs and reset each one
+    //
+    if (LanaEnum(&amp;lenum) != NRC_GOODRET)
+        return 1;
+    if (ResetAll(&amp;lenum, (UCHAR)MAX_SESSIONS, (UCHAR)MAX_NAMES, 
+            FALSE) != NRC_GOODRET)
+        return 1;
+    strcpy(szServerName, argv[2]);
+    //
+    // Allocate an array of handles to use for asynchronous events.
+    // Also allocate an array of NCB structures. We need one handle
+    // and one NCB for each LANA number.
+    //
+    hArray = (HANDLE *)GlobalAlloc(GMEM_FIXED,
+        sizeof(HANDLE) * lenum.length);
+    pncb   = (NCB *)GlobalAlloc(GMEM_FIXED | GMEM_ZEROINIT,
+        sizeof(NCB) * lenum.length);        
+    //
+    // Create an event, assign it into the corresponding NCB 
+    // structure, and issue an asynchronous connect (NCBCALL). 
+    // Additionally, don't forget to add the client's name to each
+    // LANA it wants to connect over.
+    //
+    for(i = 0; i &lt; lenum.length; i++)
+    {
+        hArray[i] = CreateEvent(NULL, TRUE, FALSE, NULL);
+        pncb[i].ncb_event = hArray[i];
+
+        AddName(lenum.lana[i], argv[1], &amp;dwNum);
+        Connect(&amp;pncb[i], lenum.lana[i], szServerName, argv[1]);
+    }
+    // Wait for at least one connection to succeed
+    //
+    dwIndex = WaitForMultipleObjects(lenum.length, hArray, FALSE, 
+        INFINITE);
+    if (dwIndex == WAIT_FAILED)
+    {
+        printf(&quot;ERROR: WaitForMultipleObjects: %d\n&quot;,
+            GetLastError());
+    }
+    else
+    {
+        // If more than one connection succeeds, hang up the extra 
+        // connection. We'll use the connection that was returned
+        // by WaitForMultipleObjects. Otherwise, if it's still pending,
+        // cancel it.
+        //
+        for(i = 0; i &lt; lenum.length; i++)
+        {
+            if (i != dwIndex)
+            {
+                if (pncb[i].ncb_cmd_cplt == NRC_PENDING)
+                    Cancel(&amp;pncb[i]);
+                else
+                    Hangup(pncb[i].ncb_lana_num, pncb[i].ncb_lsn);
+            }
+        }
+        printf(&quot;Connected on LANA: %d\n&quot;, pncb[dwIndex].ncb_lana_num);
+        //
+        // Send and receive the messages
+        //
+        for(i = 0; i &lt; 20; i++)
+        {
+            wsprintf(szSendBuff, &quot;Test message %03d&quot;, i);
+            dwRet = Send(pncb[dwIndex].ncb_lana_num, 
+                pncb[dwIndex].ncb_lsn, szSendBuff,
+                strlen(szSendBuff));
+            if (dwRet != NRC_GOODRET)
+                break;
+            dwBufferLen = MAX_BUFFER;
+            dwRet = Recv(pncb[dwIndex].ncb_lana_num, 
+                pncb[dwIndex].ncb_lsn, szSendBuff, &amp;dwBufferLen);
+            if (dwRet != NRC_GOODRET)
+                break;
+            szSendBuff[dwBufferLen] = 0;
+            printf(&quot;Read: '%s'\n&quot;, szSendBuff);
+        }
+        Hangup(pncb[dwIndex].ncb_lana_num, pncb[dwIndex].ncb_lsn);
+    }
+    // Clean things up
+    //
+    for(i = 0; i &lt; lenum.length; i++)
+    {
+        DelName(lenum.lana[i], argv[1]);
+        CloseHandle(hArray[i]);
+    }
+    GlobalFree(hArray);
+    GlobalFree(pncb);
+
+    return 0;
+}
+</pre>
+</td></tr></table>
+</p>
+
+</BODY>
+</HTML>
+
+
+
+

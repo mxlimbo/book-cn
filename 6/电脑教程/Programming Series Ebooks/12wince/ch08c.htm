@@ -1,0 +1,268 @@
+<HTML>
+ <HEAD>
+	<LINK REL=StyleSheet HREF="prowice.css" TYPE="text/css">
+<TITLE>Threads</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+
+<A NAME="528"><h1>Threads</h1></a>
+
+<P>A thread is, fundamentally, a unit of execution. That is, it has a stack and a processor context, which is a set of values in the CPU internal registers. When a thread is suspended, the registers are pushed onto the thread's stack, the active stack is changed to the next thread to be run, that thread's CPU state is pulled off its stack, and the new thread starts executing instructions.
+
+<P>Threads under Windows CE are similar to threads under Windows NT or Windows 98. Each process has a primary thread. Using the functions that I describe below, a process can create any number of additional threads within the process. The only limit to the number of threads in a Windows CE process is the memory and process address space available for the thread's stack.
+
+<P>Threads within a process share the address space of the process. Memory allocated by one thread is accessible to all threads in the process. Threads share the same access rights for handles whether they be file handles, memory objects handles, or handles to synchronization objects.
+
+<P>Before Windows CE 2.1, the size of all thread stacks was set at around 58 KB. Starting with Windows CE 2.1, the stack size of the all threads created within a process is set by the linker. (The linker switch for setting the stack size in Microsoft Visual C++ is <I>/stack</I>.) Secondary threads under Windows CE 2.1 are created with the same stack size as the primary thread.
+
+<A NAME="312"><H2>The System Scheduler</H2></A>
+
+<P>Windows CE schedules threads in a preemptive manner. Threads run for a <I>quantum</I> or time slice, which is usually 25 milliseconds on H/PCs and Palm-size PCs. (OEMs developing custom hardware can specify a different quantum.) After that time, if the thread hasn't already relinquished its time slice and if the thread isn't a time-critical thread, it's suspended and another thread is scheduled to run. Windows CE chooses which thread to run based on a priority scheme. Threads of a higher priority are scheduled before threads of lower priority.
+
+<P>The rules for how Windows CE allocates time among the threads are quite different from Windows NT and from Windows 98. Unlike Windows NT, Windows CE processes don't have a <I>priority class</I>. Under Windows NT, a process is created with a priority class. Threads derive their priority based on the priority class of their parent processes. A process with a higher-priority class has threads that run at a higher priority than threads in a lower-priority class process. Threads within a process can then refine their priority within that process by setting their relative thread priority.
+
+<P>Because Windows CE has no priority classes, all processes are treated as peers. Individual threads can have different priorities, but the process that the thread runs within doesn't influence those priorities. Also, unlike Windows NT, the foreground thread in Windows CE doesn't get a boost in priority.
+
+<P>In Windows CE, a thread can have one of eight priority levels. Those priorities are listed below:
+
+<UL>
+<P><LI><I>THREAD_PRIORITY_TIME_CRITICAL</I>Indicates 3 points above normal priority. Threads of this priority aren't preempted.
+<P><LI><I>THREAD_PRIORITY_HIGHEST</I>Indicates 2 points above normal priority.
+<P><LI><I>THREAD_PRIORITY_ABOVE_NORMAL</I>Indicates 1 point above normal priority.
+<P><LI><I>THREAD_PRIORITY_NORMAL</I>Indicates normal priority. All threads are created with this priority.
+<P><LI><I>THREAD_PRIORITY_BELOW_NORMAL</I>Indicates 1 point below normal priority.
+<P><LI><I>THREAD_PRIORITY_LOWEST</I>Indicates 2 points below normal priority.
+<P><LI><I>THREAD_PRIORITY_ABOVE_IDLE</I>Indicates 3 points below normal priority.
+<P><LI><I>THREAD_PRIORITY_IDLE</I>Indicates 4 points below normal priority.
+</UL>
+
+<P>All higher-priority threads run before lower-priority threads. This means that before a thread set to run at particular priority can be scheduled, all threads that have a higher priority must be <I>blocked</I>. A blocked thread is one that's waiting on some system resource or synchronization object before it can continue. Threads of equal priority are scheduled in a round-robin fashion. Once a thread has voluntarily given up its time slice, is blocked, or has completed its time slice, all other threads of the same priority are allowed to run before the original thread is allowed to continue. If a thread of higher-priority is unblocked and a thread of lower priority is currently running, the lower-priority thread is immediately suspended and the higher-priority thread is scheduled. Lower-priority threads can never preempt a higher-priority thread.
+
+<P>There are two exceptions to the rules I just stated. If a thread has a priority of THREAD_PRIORITY_TIME_CRITICAL, it's never preempted, even by another THREAD_PRIORITY_TIME_CRITICAL thread. As you can see, a THREAD_PRIORITY_TIME_CRITICAL thread can and will starve everyone else in the system unless written carefully. This priority is reserved by convention for interrupt service threads in device drivers, which are written so that each thread quickly performs its task and releases its time slice.
+
+<P>The other exception to the scheduling rules happens if a low-priority thread owns a resource that a higher-priority thread is waiting on. In this case, the low-priority thread is temporarily given the higher-priority thread's priority in a scheme known as <I>priority inversion</I>, so that it can quickly accomplish its task and free the needed resource.
+
+<P>While it might seem that lower-priority threads never get a chance to run in this scheme, it works out that threads are almost always blocked, waiting on something to free up before they can be scheduled. Threads are always created at THREAD_PRIORITY_NORMAL, so, unless they proactively change their priority level, a thread is usually at an equal priority to most of the other threads in the system. Even at the normal priority level, threads are almost always blocked. For example, an application's primary thread is typically blocked waiting on messages. Other threads should be designed to block on one of the many synchronization objects available to a Windows CE application.
+
+<A NAME="313"><H2>Never Do This!</H2></A>
+
+<P>What's not supported by the arrangement I just described, or by any other thread-based scheme, is code like the following:
+
+<p><pre>
+while (bFlag == FALSE) {
+    // Do nothing, and spin
+}
+// Now do something.
+</pre>
+
+<P>This kind of code isn't just bad manners, since it wastes CPU power, it's a death sentence to a battery-powered Windows CE device. To understand why this is important, I need to digress into a quick lesson on Windows CE power management.
+
+<P>Windows CE is designed so that when all threads are blocked, which happens over 90 percent of the time, it calls down to the OEM Abstraction Layer (the equivalent to the BIOS on an MS-DOS machine) to enter a low-power waiting state. Typically, this low-power state means that the CPU is halted; that is, it simply stops executing instructions. Because the CPU isn't executing any instructions, no power-consuming reads and writes of memory are performed by the CPU. At this point, the only power necessary for the system is to maintain the contents of the RAM and light the display. This low-power mode can reduce power consumption by up to 99 percent of what is required when a thread is running in a well-designed system.
+
+<P>Doing a quick back-of-the-envelope calculation, say a Palm-size PC is designed to run for 15 hours on a couple of AAA batteries. Given that the system turns itself off after a few minutes of non-use, this 15 hours translates into a month or two of battery life in the device for the user. (I'm basing this calculation on the assumption that the system indeed spends 90 percent or more of its time in its low-power idle state.) Say a poorly written application thread spins on a variable instead of blocking. While this application is running, the system will never enter its low-power state. So, instead of 900 minutes of battery time (15 hours &#215; 60 minutes/hour), the system spends 100 percent of its time at full power, resulting in a battery life of slightly over 98 minutes, or right at 1.5 hours. So, as you can see, it's good to have the system in its low-power state.
+
+<P>Fortunately, since Windows applications usually spend their time blocked in a call to <I>GetMessage,</I> the system power management works by default. However, if you plan on using multiple threads in your application, you must use synchronization objects to block threads while they're waiting. First, let's look at how to create a thread, and then I'll dive into the synchronization tools available to Windows CE programs.
+
+<A NAME="314"><H2>Creating a Thread</H2></A>
+
+<P>You create a thread by calling this function:
+
+<p><pre>
+HANDLE CreateThread (LPSECURITY_ATTRIBUTES lpThreadAttributes, 
+                     DWORD dwStackSize, 
+                     LPTHREAD_START_ROUTINE lpStartAddress, 
+                     LPVOID lpParameter, DWORD dwCreationFlags, 
+                     LPDWORD lpThreadId);
+</pre>
+
+<P>As with <I>CreateProcess</I>, Windows CE doesn't support a number of the parameters in <I>CreateThread</I>, and so they are set to NULL or 0 as appropriate. For <I>CreateThread</I>, the <I>lpThreadAttributes</I>, and <I>dwStackSize</I> parameters aren't supported. The parameter <I>lpThreadAttributes</I> must be set to NULL and <I>dwStackSize</I> is ignored by the system and should be set to 0. The third parameter, <I>lpStartAddress</I>, must point to the start of the thread routine. The <I>lpParameter</I> parameter in <I>CreateThread</I> is an application-defined value that's passed to the thread function as its one and only parameter. The <I>dwCreationFlags</I> parameter can be set to either 0 or CREATE_SUSPENDED. If CREATE_SUSPENDED is passed, the thread is created in a suspended state and must be resumed with a call to <I>ResumeThread. </I>The final parameter is a pointer to a DWORD that receives the newly created thread's ID value.
+
+<P>The thread routine should be prototyped this way:
+
+<p><pre>
+DWORD WINAPI ThreadFunc (LPVOID lpArg);
+</pre>
+
+<P>The only parameter is the <I>lpParameter</I> value, passed unaltered from the call to <I>CreateThread</I>. The parameter can be an integer or a pointer. Make sure, however, that you don't pass a pointer to a stack-based structure that will disappear when the routine that called <I>CreateThread</I> returns.
+
+<P>If <I>CreateThread</I> is successful, it creates the thread and returns the handle to the newly created thread. As with <I>CreateProcess</I>, the handle returned should be closed when you no longer need the handle. Following is a short code fragment that contains a call to start a thread and the thread routine.
+
+<p><pre>
+//
+//
+//
+HANDLE hThread1;
+DWORD dwThread1ID = 0;
+INT nParameter = 5;
+
+hThread1 = CreateThread (NULL, 0, Thread2, nParameter, 0,
+                         &amp;dwThread1ID);
+CloseHandle (hThread1);
+
+//----------------------------------------------------------------------
+// Second thread routine
+//
+DWORD WINAPI Thread2 (PVOID pArg) {
+
+    INT nParam = (INT) pArg;
+
+    // 
+    // Do something here.
+    // .
+    // .
+    // .
+    return 0x15;
+}
+</pre>
+
+<P>In this code, the second thread is started with a call to <I>CreateThread</I>. The <I>nParameter</I> value is passed to the second thread as the single parameter to the thread routine. The second thread executes until it terminates, in this case simply by returning from the routine.
+
+<P>A thread can also terminate itself by calling this function:
+
+<p><pre>
+VOID ExitThread (DWORD dwExitCode);
+</pre>
+
+<P>The only parameter is the exit code that's set for the thread. That thread exit code can be queried by another thread using this function:
+
+<p><pre>
+BOOL GetExitCodeThread (HANDLE hThread, LPDWORD lpExitCode);
+</pre>
+
+<P>The function takes the handle to the thread (not the thread ID) and returns the exit code of the thread. If the thread is still running, the exit code is STILL_ACTIVE, a constant defined as 0x0103. The exit code is set by a thread using <I>ExitThread</I> or the value returned by the thread procedure. In the preceding code, the thread sets its exit code to 0x15 when it returns.
+
+<P>All threads within a process are terminated when the process terminates. As I said earlier, a process is terminated when its primary thread terminates.
+
+<A NAME="315"><H3>Setting and querying thread priority</H3></A>
+
+<P>Threads are always created at a priority level of THREAD_PRIORITY_NORMAL. The thread priority can be changed either by the thread itself or by another thread calling this function:
+
+<p><pre>
+BOOL SetThreadPriority (HANDLE hThread, int nPriority);
+</pre>
+
+<P>The two parameters are the thread handle and the new priority level. The level passed can be one of the constants described previously, ranging from THREAD_PRIORITY_IDLE up to THREAD_PRIORITY_TIME_CRITICAL. You must be extremely careful when you're changing a thread's priority. Remember that threads of a lower priority almost never preempt threads of higher priority. So, a simple bumping up of a thread one notch above normal can harm the responsiveness of the rest of the system unless that thread is carefully written.
+
+<P>To query the priority level of a thread, call this function:
+
+<p><pre>
+int GetThreadPriority (HANDLE hThread);
+</pre>
+
+<P>This function returns the priority level of the thread. You shouldn't use the hard-coded priority levels. Instead, use constants, such as THREAD_PRIORITY_NORMAL, defined by the system. This ensures that any change to the priority scheme in future versions of Windows CE doesn't affect your program.
+
+<A NAME="316"><H3>Suspending and resuming a thread</H3></A>
+
+<P>You can suspend a thread at any time by calling this function:
+
+<p><pre>
+DWORD SuspendThread (HANDLE hThread);
+</pre>
+
+<P>The only parameter is the handle to the thread to suspend. The value returned is the <I>suspend count</I> for the thread. Windows maintains a suspend count for each thread. Any thread with a suspend count greater than 0 is suspended. Since <I>SuspendThread</I> increments the suspend count, multiple calls to <I>SuspendThread</I> must be matched with an equal number of calls to <I>ResumeThread</I> before a thread is actually scheduled to run. <I>ResumeCount</I> is prototyped as
+
+<p><pre>
+DWORD ResumeThread (HANDLE hThread);
+</pre>
+
+<P>Here again, the parameter is the handle to the thread and the return value is the previous suspend count. So, if <I>ResumeThread</I> returns 1, the thread is no longer suspended.
+
+<P>At times, a thread simply wants to kill some time. Since I've already explained why simply spinning in a <I>while</I> loop is a very bad thing to do, you need another way to kill time. The best way to do this is to use this function:
+
+<p><pre>
+void Sleep (DWORD dwMilliseconds); 
+</pre>
+
+<P><I>Sleep </I>suspends the thread for at least the number of milliseconds specified in the <I>dwMilliseconds</I> parameter. Since the quantum, or time slice, on a Windows CE system is usually 25 milliseconds, specifying very small numbers of milliseconds results in sleeps of at least 25 milliseconds. This strategy is entirely valid, and sometimes it's equally valid to pass a 0 to <I>Sleep</I>. When a thread passes a 0 to <I>Sleep</I>, it gives up its time slice but is rescheduled immediately according to the scheduling rules I described previously.
+
+<A NAME="317"><H2>Thread Local Storage</H2></A>
+
+<P><I>Thread local storage</I> is a mechanism that allows a routine to maintain separate instances of data for each thread calling the routine. This capability might not seem like much, but it has some very handy uses. Take the following thread routine:
+
+<p><pre>
+INT g_nGlobal;            // System global variable
+
+int ThreadProc (pStartData) {
+    INT nValue1;
+    INT nValue2;
+
+    while (unblocked) {
+        //
+        // Do some work.
+        //
+    }
+    // We're done now, terminate the thread by returning.
+    return 0;
+}
+</pre>
+
+<P>For this example, imagine that multiple threads are created to execute the same routine, <I>ThreadProc</I>. Each thread has its own copy of <I>nValue1</I> and <I>nValue2</I> because these are stack-based variables and each thread has its own stack. All threads, though, share the same static variable, <I>g_nGlobal</I>.
+
+<P>Now, imagine that the <I>ThreadProc</I> routine calls another routine, <I>WorkerBee</I>. As in
+
+<p><pre>
+int g_nGlobal;            // System global variable
+
+int ThreadProc (pStartData) {
+    int nValue1;
+    int nValue2;
+    while (unblocked) {
+        WorkerBee();      // Let someone else do the work.
+    }
+    // We're done now, terminate the thread by returning.
+    return 0;
+}
+int WorkerBee (void) {
+    int nLocal1;
+    static int nLocal2;
+    //
+    // Do work here.
+    //
+    return nLocal1;
+}
+</pre>
+
+<P>Now <I>WorkerBee</I> doesn't have access to any persistent memory that's local to a thread. <I>nLocal1</I> is persistent only for the life of a single call to <I>WorkerBee</I>. <I>nLocal2</I> is persistent across calls to <I>WorkerBee</I> but is static and therefore shared among all threads calling <I>WorkerBee</I>. One solution would be to have <I>ThreadProc</I> pass a pointer to a stack-based variable to <I>WorkerBee</I>. This strategy works, but only if you have control over the routines calling <I>WorkerBee</I>. What if you're writing a DLL and you need to have a routine in the DLL maintain a different state for each thread calling the routine? You can't define static variables in the DLL because they would be shared across the different threads. You can't define local variables because they aren't persistent across calls to your routine. The answer is to use thread local storage.
+
+<P>Thread local storage allows a process to have its own cache of values that are guaranteed to be unique for each thread in a process. This cache of values is small because an array must be created for every thread created in the process, but it's large enough, if used intelligently. To be specific, the system constant, TLS_MINIMUM_AVAILABLE, is defined to be the number of slots in the TLS array that's available for each process. For Windows CE, like Windows NT, this value is defined as 64. So, each process can have 64 4-byte values that are unique for each thread in that process. For the best results, of course, you must manage those 64 slots well.
+
+<P>To reserve one of the TLS slots, a process calls
+
+<p><pre>
+DWORD TlsAlloc (void);
+</pre>
+
+<P><I>TlsAlloc</I> looks through the array to find a free slot in the TLS array, marks it as <I>in</I> <I>use</I>, and then returns an index value to the newly assigned slot. If no slots are available, the function returns -1. It's important to understand that the individual threads don't call <I>TlsAlloc</I>. Instead, the process or DLL calls it before creating the threads that will use the TLS slot.
+
+<P>Once a slot has been assigned, each thread can access its unique data in the slot by calling this function:
+
+<p><pre>
+BOOL TlsSetValue (DWORD dwTlsIndex, LPVOID lpTlsValue);
+</pre>
+
+<P>and
+
+<p><pre>
+LPVOID TlsGetValue (DWORD dwTlsIndex);
+</pre>
+
+<P>For both of these functions, the TLS index value returned by <I>TlsAlloc </I>specifies the slot that contains the data. Both <I>TlsGetValue</I> and <I>TlsSetValue</I> type the data as a PVOID, but the value can be used for any purpose. The advantage of thinking of the TLS value as a pointer is that a thread can allocate a block of memory on the heap, and then keep the pointer to that data in the TLS value. This allows each thread to maintain a block of thread-unique data of almost any size.
+
+<P>One other matter is important to thread local storage. When <I>TlsAlloc</I> reserves a slot, it zeros the value in that slot for all currently runnig threads. All new threads are created with their TLS array initialized to 0 as well. This means that a thread can safely assume that the value in its slot will be initialized to 0. This is helpful for determining whether a thread needs to allocate a memory block the first time the routine is called.
+
+<P>When a process no longer needs the TLS slot, it should call this function:
+
+<p><pre>
+BOOL TlsFree (DWORD dwTlsIndex);
+</pre>
+
+<P>The function is passed the index value of the slot to be freed. The function returns TRUE if successful. This function frees only the TLS slot. If threads have allocated storage in the heap and stored pointers to those blocks in their TLS slots, that storage isn't freed by this function. Threads are responsible for freeing their own memory blocks.
+
+</body>
+</html>
+

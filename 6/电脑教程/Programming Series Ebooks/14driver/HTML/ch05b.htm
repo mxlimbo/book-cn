@@ -1,0 +1,201 @@
+<HTML>
+<HEAD>
+<TITLE>Data Structures</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch05a.htm">[Previous]</A> <A HREF="ch05c.htm">[Next]</a>
+</p>
+
+<A NAME="148"><H1>Data Structures</H1></A>
+
+<p>Two data structures are crucial to the handling of I/O requests: the I/O request
+packet itself and the IO_STACK_LOCATION structure. I'll describe both structures in
+this section.</p>
+
+<A NAME="149"><H2>Structure of an IRP</H2></A>
+
+<p>Figure 5-1 illustrates the IRP data structure, with opaque fields shaded in the usual
+convention of this book. A brief description of the important fields follows.</p>
+
+<p><b>MdlAddress</b> (PMDL) is the address of a memory descriptor list (MDL) describing the
+user-mode buffer associated with this request. The I/O Manager creates this MDL for IRP_MJ_READ
+and IRP_MJ_WRITE requests if the topmost device object's flags indicate DO_DIRECT_IO. It
+creates an MDL for the output buffer used with an IRP_MJ_DEVICE_CONTROL request if the control
+code indicates METHOD_IN_DIRECT or METHOD_OUT_DIRECT. The MDL itself describes the user-mode 
+virtual buffer and also contains the physical addresses of locked pages containing that buffer. 
+A driver has to do additional work, which can be quite minimal, to actually access the user-mode 
+buffer.</p>
+
+<p>
+<img src="images/F05wi01.JPG" width=403 height=801 border="0">
+</p><p>
+<!--caption--><b>Figure 5-1.</b> <i>I/O request packet data structure.</i><!--/caption-->
+</p>
+
+
+<p><b>Flags</b> (ULONG) contains flags that a device driver can read but not directly alter.
+None of these flags are relevant to a Windows Driver Model driver.</p>
+
+<p><b>AssociatedIrp</b> (union) is a union of three possible pointers. The alternative that a
+typical WDM driver might want to access is named <b>AssociatedIrp.SystemBuffer</b>. The
+SystemBuffer pointer holds the address of a data buffer in nonpaged kernel-mode memory. For
+IRP_MJ_READ and IRP_MJ_WRITE operations, the I/O Manager creates this data buffer if the
+topmost device object's flags specify DO_BUFFERED_IO. For IRP_MJ_DEVICE_CONTROL operations,
+the I/O Manager creates this buffer if the I/O control function code indicates that it should. 
+(See Chapter 9, &quot;<A HREF="ch09a.htm#299">Specialized Topics</A>.&quot;) The I/O Manager copies data sent by user-mode 
+code to the driver into this buffer as part of the process of creating the IRP. Such data 
+includes the data involved in a <b>WriteFile</b> call or the so-called input data for a call to 
+<b>DeviceIoControl</b>. For read requests, the device driver fills this buffer with data; the 
+I/O Manager later copies the buffer back to the user-mode buffer. For control operations that 
+specify METHOD_BUFFERED, the driver places the so-called output data in this buffer, and the I/O 
+Manager copies it to the user-mode output buffer.</p>
+
+<p><b>IoStatus</b> (IO_STATUS_BLOCK) is a structure containing two fields that drivers set when
+they ultimately complete a request. <b>IoStatus.Status</b> will receive an NTSTATUS code, while
+<b>IoStatus.Information</b> is a ULONG_PTR that will receive an information value whose exact
+content depends on the type of IRP and the completion status. A common use of the Information
+field is to hold the total number of bytes transferred by an operation like IRP_MJ_READ that
+transfers data. Certain Plug and Play (PnP) requests use this field as a pointer to a structure
+that you can think of as the answer to a query.</p>
+
+<p><b>RequestorMode</b> will equal one of the enumeration constants <b>UserMode</b> or <b>
+KernelMode</b>, depending on where the original I/O request originated. Drivers sometimes
+inspect this value to know whether to trust some parameters.</p>
+
+<p><b>PendingReturned</b> (BOOLEAN) is TRUE if the lowest-level dispatch routine to process
+this IRP returned STATUS_PENDING. Completion routines reference this field to avoid a potential
+race condition between completion and dispatch routines.</p>
+
+<p><b>Cancel</b> (BOOLEAN) is TRUE if <b>IoCancelIrp</b> has been called to cancel this request
+and FALSE if it hasn't (yet) been called. IRP cancellation is a relatively complex topic
+that I'll discuss fully later on in this chapter (in &quot;<A HREF="ch05f.htm#165">Cancelling I/O Requests</A>&quot;).</p>
+
+<p><b>CancelIrql</b> (KIRQL) is the interrupt request level (IRQL) at which the special cancel
+spin lock was acquired. You reference this field in a cancel routine when you release the spin
+lock.</p>
+
+<p><b>CancelRoutine</b> (PDRIVER_CANCEL) is the address of an IRP cancellation routine in your
+driver. You use <b>IoSetCancelRoutine</b> to set this field instead of modifying it
+directly.</p>
+
+<p><b>UserBuffer</b> (PVOID) contains the user-mode virtual address of the output buffer for an
+IRP_MJ_DEVICE_CONTROL request for which the control code specifies METHOD_NEITHER. It also
+holds the user-mode virtual address of the buffer for read and write requests, but a driver
+should usually specify one of the device flags DO_BUFFERED_IO or DO_DIRECT_IO and should
+therefore not usually need to access the field for reads or writes. When handling a
+METHOD_NEITHER control operation, the driver can create its own MDL using this address.</p>
+
+<p><b>Tail.Overlay</b> is a structure within a union that contains several members potentially
+useful to a WDM driver. Refer to Figure 5-2 for a map of the <b>Tail</b> union. In the figure,
+items at the same level as you read left to right are alternatives within a union, while the
+vertical dimension portrays successive locations within a structure. <b>
+Tail.Overlay.DeviceQueueEntry</b> (KDEVICE_QUEUE_ENTRY) and <b>Tail.Overlay.DriverContext</b> 
+(PVOID[4]) are alternatives within an unnamed union within Tail.Overlay. The I/O Manager uses
+DeviceQueueEntry as a linking field within the standard queue of requests for a device. At
+moments when the IRP is not on some queue that uses this field and when you own the IRP, you
+can use the four pointers in DriverContext in any way you please. <b>Tail.Overlay.ListEntry</b> 
+(LIST_ENTRY) is available for you to use as a linking field for IRPs on any private queue you
+choose to implement.</p>
+
+<p>
+<A HREF="javascript:fullSize('F05wi02x.htm')"> <img src="images/F05wi02.JPG" width=404 height=358 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 5-2.</b> <i>Map of the Tail union in an IRP.</i><!--/caption-->
+</p>
+
+
+<p><b>CurrentLocation</b> (CHAR) and <b>Tail.Overlay.CurrentStackLocation</b> (PIO_STACK_LOCATION) 
+are not documented for use by drivers because support functions like <b>
+IoGetCurrentIrpStackLocation</b> can be used instead. During debugging, however, it might help
+you to realize that CurrentLocation is the index of the current I/O stack location and
+CurrentStackLocation is a pointer to it.</p>
+
+
+<A NAME="150"><H2>The I/O Stack</H2></A>
+
+<p>Whenever any kernel-mode program creates an IRP, it also creates an associated array of
+IO_STACK_LOCATION structures: one stack location for each of the drivers that will process the
+IRP and often one more stack location for the use of the originator of the IRP. (See Figure
+5-3.) A stack location contains type codes and parameter information for the IRP as well as the
+address of a completion routine. Refer to Figure 5-4 for an illustration of the stack
+structure.</p>
+
+<p>
+<A HREF="javascript:fullSize('F05wi03x.htm')"> <img src="images/F05wi03.JPG" width=404 height=275 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 5-3.</b> <i>Parallelism between driver and I/O stacks.</i><!--/caption-->
+</p>
+
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+I'll discuss the mechanics of creating IRPs a bit further on in this
+chapter. It helps to know right now that the <b>StackCount</b> field of a DEVICE_OBJECT
+indicates how many locations to reserve for an IRP sent to that device's
+driver.
+</blockquote></div>
+</p>
+
+<p>
+<img src="images/F05wi04.JPG" width=403 height=452 border="0">
+</p><p>
+<!--caption--><b>Figure 5-4.</b> <i>I/O stack location data structure.</i><!--/caption-->
+</p>
+
+
+<p><b>MajorFunction</b> (UCHAR) is the major function code associated with this IRP. This would
+be a value like IRP_MJ_READ that corresponds to one of the dispatch function pointers in the
+MajorFunction table of a driver object. Since this code is in the I/O stack location for a
+particular driver, it's conceivable that an IRP could start life as an IRP_MJ_READ (for
+example) and be transformed into something else as it progresses down the stack of drivers.
+I'll show you examples in Chapter 11, &quot;<A HREF="ch11a.htm#359">The Universal Serial Bus</A>,&quot; of how a USB
+driver changes the personality of a read or write request into an internal control operation in
+order to submit the request to the USB bus driver.</p>
+
+<p><b>MinorFunction</b> (UCHAR) is a minor function code that further identifies an IRP
+belonging to a few major function classes. IRP_MJ_PNP requests, for example, are divided into a
+dozen or so subtypes with minor function codes such as IRP_MN_START_DEVICE,
+IRP_MN_REMOVE_DEVICE, and so on.</p>
+
+<p><b>Parameters</b> (union) is a union of substructures, one for each type of request that has
+specific parameters. The substructures include, for example, <b>Create</b> (for IRP_MJ_CREATE
+requests), <b>Read</b> (for IRP_MJ_READ requests), and <b>StartDevice</b> (for the
+IRP_MN_START_DEVICE subtype of IRP_MJ_PNP).</p>
+
+<p><b>DeviceObject</b> (PDEVICE_OBJECT) is the address of the device object that corresponds to
+this stack entry. <b>IoCallDriver</b> fills in this field.</p>
+
+<p><b>FileObject</b> (PFILE_OBJECT) is the address of the kernel file object to which the IRP
+is directed. Drivers often use the FileObject pointer to correlate IRPs in a queue with a
+request (in the form of an IRP_MJ_CLEANUP) to cancel all queued IRPs in preparation for closing
+the file object.</p>
+
+<p><b>CompletionRoutine</b> (PIO_COMPLETION_ROUTINE) is the address of an I/O completion
+routine installed <i>by the driver above the one to which this stack location corresponds.</i>
+You never set this field directly&#8212;instead, you call <b>IoSetCompletionRoutine</b>, which
+knows to reference the stack location below the one that your driver owns. The lowest-level
+driver in the hierarchy of drivers for a given device never needs a completion routine because
+it must complete the request. The originator of a request, however, sometimes does need a
+completion routine but doesn't usually have its own stack location. That's why each
+level in the hierarchy uses the next lower stack location to hold its own completion routine
+pointer.</p>
+
+<p><b>Context</b> (PVOID) is an arbitrary context value that will be passed as an argument to
+the completion routine. You never set this field directly; it's set automatically from one
+of the arguments to IoSetCompletionRoutine.</p>
+
+
+</BODY>
+</HTML>
+
+
+
+
+

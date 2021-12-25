@@ -1,0 +1,457 @@
+<HTML>
+<HEAD>
+<TITLE>Creating Server-Side Charts on Demand</TITLE>
+<link rel="STYLESHEET" type="text/css" href="webcomp.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch06d.htm">[Previous]</A> <A HREF="ch06f.htm">[Next]</A><P>
+
+<A NAME="145"><H1>Creating Server-Side Charts on Demand</H1></A>
+
+<P>Many users ask me how to use the Chart component to generate charts as GIF 
+images on demand and return them to the client. They find this scenario attractive, as 
+it requires no client installation and will render and function in many browsers 
+on many platforms. I implemented this technique in the GetChart.asp file; let's take 
+a look at it now.</p>
+
+<A NAME="146"><H2>Using the Chart Component on the Server</H2></A>
+
+<P>When using the Chart component on the server, you must remember to create it, 
+use it, and destroy it all within the same client request. You might be tempted to 
+create an instance of the Chart component and put it into the Session or Application 
+state objects, thinking you are saving resources or optimizing your object usage. But 
+you should not do this. If you do, your web application might not function properly, 
+will not scale well, and will perform poorly under moderate to heavy loads.</P>
+
+<P><div class="sidebar"><blockquote>
+<b>Adding Virtual Directories Using Personal Web Server</b>
+
+<P>When I first tested installing this solution, it was trivial to add it to an IIS 
+installation. Then I tried adding it to a Personal Web Server installation on 
+Windows 98. I could not figure out why it wouldn't work. After some searching on 
+MSDN, I found an article saying that you must set the Execute access permission on 
+a directory that you want to declare as a web application. On IIS, execute 
+access allows for server-side execution of binary code, not scripts, so I never 
+would have thought to enable that permission.</P>
+
+<P>I also tried to add the entire CD tree as a virtual directory, figuring 
+that Personal Web Server would add directories for the subdirectories 
+automatically. It did allow access to them, but it still would not run my Global.asa file in the Chap06 directory. I then found another note in MSDN that reminded me 
+to manually add any subdirectories as virtual directories if they are 
+applications unto themselves. After I did that, everything worked fine.</P>
+</blockquote></div></p>
+
+<P>Why, you ask? Because the Chart component, like all the Office Web Components, uses the <I>apartment threading model</I>. The apartment threading model stipulates that all calls to an object must be routed through the thread that created the object. This ensures synchronization, keeping multiple threads that are using the same object from causing each other grief. To illustrate what can go wrong in the absence of the apartment threading model, suppose you have two independent threads of execution 
+that are both trying to create different charts in the same Chart component instance at 
+the same time. Imagine that the first thread starts creating its chart but is then 
+interrupted by the second thread, which clears the Chart component and starts creating a 
+different chart. The result would be chaos. Since client requests in ASP pages run 
+concurrently on different threads, developers using the Chart component on a web 
+server would commonly find themselves in this chaotic environment.</P>
+
+<P>Instead of forcing developers to code synchronization primitives (which are 
+not available in Microsoft VBScript or Microsoft JScript anyway) around the 
+components, our team chose to develop the components using the apartment threading 
+model&#8212;which is the same model used for objects created in Microsoft Visual Basic. 
+The apartment threading model forces all calls to an object to use the same thread 
+on which the object was initially created. This ensures that two threads don't call the 
+same object at the same time, but it still does not prohibit two different threads from 
+using the same object instance at different times. Although the apartment 
+threading model guarantees that another thread can't enter the object's code while your 
+thread is executing a method, it does not prevent that other thread from marshaling a 
+request to your thread and executing a method while your thread is not actively 
+executing other code and checking for new messages. Therefore, if you share a Chart 
+component instance using the Session or Application state object, you can still 
+encounter the situation in which two threads try to use the same object instance to create a 
+chart and can interfere with each other. This is because creating a chart involves 
+many method calls, each of which affects the object's global state.</P>
+
+<P>Sharing an apartment threading model object creates an enormous 
+overhead in the server, causing lots of cross-thread marshaling and thread context 
+switching. Since all calls have to route through a single thread (the thread that originally 
+created the object instance), your massively multithreaded server turns into a single 
+thread of execution with all other threads waiting in line to execute. Your web 
+application will never scale to support hundreds or thousands of concurrent users if you 
+attempt to share an apartment threading model object in the Session or Application state.
+</P>
+
+<P>To avoid this mess, create the Chart component instance, load it with data, 
+export it to a temporary GIF file, and destroy it in the same client request. Our team 
+designed the Chart component to initialize quickly, so all this creation and destruction 
+occurs rather rapidly. To see how it runs, click the Current Logs link in the Helpdesk 
+Reporting solution. Use the drop-down list to select different charts, and click the button 
+next to the drop-down list to submit the form and run the ASP page. Each time you 
+click the Go button next to the drop-down list, the ASP page creates a Chart 
+component instance, loads it with data, formats the chart, exports the chart to a GIF, and 
+destroys the component instance. On my rather wimpy Pentium laptop, this takes 
+less than a second.</P>
+
+<A NAME="147"><H2>Generating a Server-Side Chart</H2></A>
+
+<P>Now that we have established how to use the Chart component on the server, 
+let's look at some of the GetChart.asp file's source code. This file creates a new GIF 
+image each time it is called, returning the GIF to the client browser. Let's start by 
+creating an instance of the Chart component as an in-memory object:</P>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Dim m_cspace            ' OWC ChartSpace object reference
+Dim m_cht               ' WCChart object reference
+Dim m_ser               ' WCSeries object reference
+Dim c                   ' Constants object reference
+
+' Create the Chart object in the server context
+Set m_cspace = server.CreateObject(&quot;OWC.Chart&quot;)
+Set m_cht = m_cspace.Charts.Add()
+Set c = m_cspace.Constants
+<img src="images/grayvellip.JPG" width=3 height=13 border="0">
+</pre></td></tr></table></p>
+
+<P>You create an instance of the Chart component using the standard 
+CreateObject method exposed from the Server object of ASP. The parameter passed here 
+is &quot;OWC.Chart&quot;, which is the ProgID for the Chart component. A ProgID is a 
+string-based name for a COM object. The Spreadsheet and PivotTable components use the 
+ProgIDs &quot;OWC.Spreadsheet&quot; and &quot;OWC.PivotTable&quot;, respectively.</P>
+
+<P>Note that these are <I>version-independent </I>ProgIDs, meaning the system will 
+create the most current registered version of the object rather than a specific version. 
+Although this ensures that you will always get the most current version of a 
+component, it might be a curse rather than a blessing. If the new version does not operate how you 
+expect it to, it could cause your script to fail. However, if you think this is a concern, use 
+the &quot;OWC.Chart.9&quot; ProgID instead. This is the 
+<I>version-dependent </I>ProgID, and if you use it, COM will always attempt to create the Office 2000 version of the Chart component.</P>
+
+<P>After creating an instance of the Chart component, this code adds a new chart 
+to the chart space and sets a variable to the Constants object so that constants can be 
+used in an untyped language. Note that when developing ASP scripts, you can add a 
+reference to the Office Web Components type library in the Global.asa file. Doing so 
+allows you to use type names explicitly in your ASP scripts, as well as the 
+enumeration constants, just as you would in Visual Basic. For more information on this, see the 
+ASP help topic &quot;TypeLibrary declarations,&quot; available in the IIS product documentation.
+</P>
+<P>From this point on, the code should look familiar. Programming the Chart 
+component in an ASP page is exactly like programming the Chart control on a web 
+page. The code continues by adding some series and data values to the chart:
+</P>
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+<img src="images/grayvellip.JPG" width=3 height=13 border="0">
+' Set the chart type to Clustered Bar, and give it a legend
+m_cht.Type = c.chChartTypeBarClustered
+m_cht.HasLegend = True
+
+' Add two series to the chart
+Dim asPri(1)
+asPri(0) = &quot;Normal Priority&quot;
+asPri(1) = &quot;High Priority&quot;
+
+For m_ct = 0 To 1
+    Set m_ser = m_cht.SeriesCollection.Add()
+    m_ser.Caption = asPri(m_ct)
+
+    m_ser.SetData c.chDimCategories, c.chDataLiteral, _
+        Array(&quot;Jeff&quot;, &quot;Laura&quot;, &quot;Kevin&quot;, &quot;Elaine&quot;, &quot;Rico&quot;, &quot;Hannah&quot;)
+
+    m_ser.SetData c.chDimValues, c.chDataLiteral, _
+        GenRandomValues(6, 5, 15)
+Next 'm_ct
+
+' Add a chart title, some axis titles, and so on
+FormatChart m_cht, &quot;Active Logs by Priority&quot;, &quot;Number of Logs&quot;, _
+    &quot;Technician&quot;, &quot;#,##0&quot;
+<img src="images/grayvellip.JPG" width=3 height=13 border="0">
+</pre></td></tr></table></p>
+
+
+<P>This code (taken from Case 1 of the GetChart.asp script) sets the chart's 
+type to Clustered Bar, adds a legend, and adds two series filled with literal data. The 
+data in this example is randomly generated, but you would of course use the 
+appropriate mechanism for obtaining your metrics. For example, if the metrics you want 
+to chart are in a database, you would use an ADO Recordset object to get the data 
+and bind the Chart component to the Recordset (as <A HREF="ch03a.htm">Chapter 3</A> demonstrated). 
+However, some business metrics come from sources that are not databases, such as 
+machines on a manufacturing floor or sensors monitoring an aspect of a system. In those 
+cases, loading literal data is the best approach.</P>
+
+<p>The FormatChart function called at the end of this code block is a simple 
+function on the same ASP page that formats the chart elements, adding chart and axis 
+titles. The code for the FormatChart function looks like this:</p>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Sub FormatChart(cht, sTitle, sValTitle, sCatTitle, sValNumFmt)
+    ' Local variables
+    Dim ax          ' Temporary WCAxis object
+    Dim fnt         ' Temporary OWCFont object
+    Dim c           ' Constants object
+    
+    Set c = cht.Parent.Constants
+    
+    cht.HasTitle = True
+    cht.Title.Caption = sTitle
+    set fnt = cht.Title.Font
+    fnt.Name = &quot;Tahoma&quot;
+    fnt.Size = 10
+    fnt.Bold = True
+
+    For Each ax In cht.Axes
+        If ax.Type = c.chValueAxis Then
+            ax.HasTitle = True
+            ax.Title.Caption = sValTitle
+            set fnt = ax.Title.Font
+            fnt.Name = &quot;Tahoma&quot;
+            fnt.Size = 8
+            fnt.Bold = True
+            ax.NumberFormat = sValNumFmt
+            
+        Else
+            ax.HasTitle = True
+            ax.Title.Caption = sCatTitle
+            set fnt = ax.Title.Font
+            fnt.Name = &quot;Tahoma&quot;
+            fnt.Size = 8
+            fnt.Bold = True
+            
+        End If
+    Next 'ax
+    
+End Sub 'FormatChart()
+</pre></td></tr></table></p>
+
+<P>This code should also look similar to code you saw in <A HREF="ch03a.htm">Chapter 3</A>. You 
+format a chart on the server exactly the same way as you do on the client. The only 
+difference is that the chart is not actually visible on the screen. Since I want this code 
+to work for many chart types, I loop over all the chart's axes using the For Each 
+construct and use the Type property of the axis to determine whether it is a value axis or 
+a category axis so that I can format the axes differently. This works for most of 
+the common chart types. However, because a Scatter chart has two value axes and 
+no category axis, this code would add the same title to both the X and Y value axes 
+of a Scatter chart&#8212;which is probably not what you would want.</P> 
+
+<p>The last line of the main script follows:</p>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+' Export the chart to a GIF, and emit the rest of the HTML
+m_sFilePath = ExportChartToGIF(m_cspace)
+</pre></td></tr></table></p>
+
+<P>The ExportChartToGIF function is another function on the same ASP page. 
+It returns the new GIF filename (as a relative path), which I then use in the 
+returned HTML fragment as the src attribute of the &lt;img&gt; tag:
+</P>
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+&lt;img src=&lt;%= m_sFilePath %&gt;&gt;
+</pre></td></tr></table></p>
+
+
+<P>For example, the HTML fragment returned to the client browser might 
+look like this:
+</P>
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+&lt;img src=radDD604.tmp&gt;
+</pre></td></tr></table></p>
+
+<P>When the browser sees this tag, it returns to the web server to get this file and 
+display it in the page.</P>
+
+<P>The ExportChartToGIF function is where most of the complicated stuff 
+happens. Let's take a look at it:</P>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Function ExportChartToGIF(cspace)
+    ' Local variables
+    Dim fso             ' FileSystemObject
+    Dim sFilePath       ' Root file path for GIF
+    Dim sFileName       ' Filename for GIF
+    
+    ' Now save the current chart to a GIF file
+    ' Build a temporary filename that is unique
+    Set fso = CreateObject(&quot;Scripting.FileSystemObject&quot;)
+
+    sFilePath = Request.ServerVariables(&quot;PATH_TRANSLATED&quot;)
+    sFilePath = Left(sFilePath, InStrRev(sFilePath, &quot;\&quot;))
+    sFileName = fso.GetTempName()
+
+    ' Call ExportPicture to generate the chart
+    ' The last two arguments are width and height, respectively
+    m_cspace.ExportPicture sFilePath &amp; sFileName, &quot;gif&quot;, 600, 350
+
+    ' Add this new file to Session state so that we can delete
+    ' it later
+    Session(&quot;TC:&quot; &amp; sFilePath &amp; sFileName) = sFilePath &amp; sFileName
+    ExportChartToGIF = sFileName
+End Function 'ExportChartToGIF()
+</pre></td></tr></table></p>
+
+
+<P><div class="sidebar"><blockquote>
+<b>The Case of the Mysterious, Undeletable File</b>
+<p>When I first started working on a server-side chart example, I thought I 
+would make it simple by overwriting a single temporary GIF file each time the 
+client requested an ASP page. I thought I could use FileSystemObject to delete 
+the existing file and use the Chart component to write a new file with the same name.</p>
+<p>Interestingly enough, the DeleteFile method of FileSystemObject ran 
+without error. However, the ExportPicture method on the next line failed, 
+saying the file was in use. But how could the file be in use if I had just deleted it? 
+I looked in the directory where the temporary file lay and sure enough, it was 
+still there. The DeleteFile method returned no error, but it did not delete the 
+file.</p> 
+<p>I don't know why this is the case. Several people I've spoken to think 
+that IIS is somehow caching the file and that although FileSystemObject thinks 
+it deleted the file, it did not. So keep in mind that even though the 
+DeleteFile method runs without error, the file might still exist.</p>
+</blockquote></div></p>
+
+<P>The only complicated part of this function is coming up with the name and 
+file path for the temporary GIF the code creates and keeping track of it so that you 
+can delete the file later. This code uses Scripting.FileSystemObject (from the 
+Microsoft Scripting Runtime library) to generate a temporary filename using the 
+GetTempName method. This method returns a temporary name that you can later pass to the 
+Chart component's ExportPicture method. You can of course generate a name using 
+your own scheme, but be aware that the Chart component will generate an error if 
+you pass the name of a file in use. Plus, IIS will mark files requested by clients as &quot;in 
+use&quot; for a longer period of time than you might expect.</p> 
+
+<p>When you generate a temporary GIF, you will likely want to put it in the 
+same directory as your ASP page or in some subdirectory underneath it. To get your 
+ASP page's current directory in the server's file system, use the PATH_TRANSLATED 
+server variable. This returns the entire path and filename of your ASP page, so the 
+previous code looks for the last backslash (\) and takes everything before it in order 
+to get only the directory path in which the current ASP page resides. It then 
+appends the temporary name returned from the GetTempName method and passes that as 
+the first parameter to the ExportPicture method. You can also specify a width and 
+height for the new GIF in pixels. This code uses the hard-coded values of 600x350, but 
+you might consider letting the client pass those dimensions to your ASP page as 
+query string parameters so that you generate an appropriate size image based on the 
+client's display resolution.</p> 
+
+<p>The last technique to note in this function is the next to last line. Let's look 
+at it again:</p>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+    ' Add this new file to the Session state so that we can delete it later
+    Session(&quot;TC:&quot; &amp; sFilePath &amp; sFileName) = sFilePath &amp; sFileName
+</pre></td></tr></table></p>
+
+<P>We just generated a new temporary file on the server's file system, but IIS 
+does not automatically clean up this file after the client browser requests it. If you do 
+not delete such files, the file system on the server machine will fill up rather quickly. 
+We need to ensure that we clean up temporary files created within the session. 
+The Session object and Session_OnEnd event in the Global.asa file provide us with 
+a mechanism to accomplish this task.</P>
+
+<P>The previous code adds the full file path for the temporary GIF to the 
+Session object, giving it a name starting with TC: (meaning 
+<I>temporary chart</I>). Using the temporary file's name in the Session variable name keeps the name unique in the 
+Session namespace. The TC: prefix lets us know later that this is indeed a temporary 
+chart that needs to be deleted, as opposed to another session variable that is not a file 
+path to a temporary chart. You can use other naming schemes here, such as 
+appending an integer until you get a unique index number in the Session variable's 
+Contents collection. The previous code adds the file to the Session state, and the 
+Session_OnEnd event in the Global.asa file does the cleanup:</P>
+
+<P><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Sub Session_OnEnd
+    ' Clean up any temporary image files created during the session
+    Set fsoTemp = CreateObject(&quot;Scripting.FileSystemObject&quot;)
+
+    For Each imagefile In Session.Contents 
+        If Left(imagefile,3) = &quot;TC:&quot; Then
+            fsoTemp.DeleteFile Mid(imagefile,4), True
+        End If
+    Next 
+End Sub
+</pre></td></tr></table></p>
+ 
+<P>IIS executes this subroutine whenever a session has timed out, meaning that 
+the client has not requested a page in the current application within the session 
+timeout duration (set to 1 minute in the Session_OnStart event). This is our clue that it is 
+safe to delete any temporary GIFs created for this session because the client 
+browser certainly has already downloaded them. The code here creates a FileSystemObject 
+again and loops through the Session variable's Contents collection looking for 
+variables whose names start with TC:. If it finds one, it uses the DeleteFile method to 
+delete the temporary GIF file. We can be sure that the DeleteFile method will work 
+because IIS should have released the file lock by this time for files requested by the 
+client whose session is ending.</P>
+
+<A NAME="148"><H2>Other Approaches to Managing Temporary Files</H2></A>
+
+<P>The code we just discussed demonstrates one way to manage temporary files 
+created by the Chart component. This approach works well because it automatically 
+deletes temporary files when a session ends. However, the shortest timeout you can set 
+for a session is 1 minute. If your server is destined to have an incredibly heavy 
+and constant load, you might run into file space problems because of your 
+application producing large numbers of charts per session and having to wait a full minute 
+before the session ends.</p> 
+
+<p>The browser typically retrieves the temporary GIF right after your ASP 
+page returns the HTML fragment containing the &lt;img&gt; tag. If the browser is using 
+HTTP 1.1, it might do this within the same socket connection, meaning it will download the 
+GIF long before your 1-minute timeout value. If the client returns for another chart, 
+the timeout clock is reset and your Session_OnEnd might not fire for quite a while.</p> 
+
+<p>If you expect this to be the case in your application, you might consider 
+another approach to managing the temporary files. Instead of relying on session 
+timeouts, use a server-side daemon process that deletes temporary files that are older than a 
+specified time duration, such as 30 seconds. This process could periodically check 
+a specific directory in which you create temporary GIF files and delete any files 
+with a timestamp older than your threshold.</p> 
+
+<p>Another approach is to use a file naming scheme that rotates through a set 
+of filenames and eventually loops around to reuse the same filenames for 
+successive groups of charts. IIS will mark a file as &quot;in use&quot; for a period of time after a 
+client requests it. While that file is in use, you cannot write over it using the 
+ExportPicture method. However, if you have a large enough set of filenames, IIS will probably 
+have released the file lock by the time you loop back to the same filename. For 
+example, you could start generating images named TC000.GIF and keep track of the 
+current index number in an Application state variable. The next time the page generated 
+a temporary GIF, it would first increment the current index value (so that other 
+threads don't have a chance to use your thread's index) and then generate the file 
+TC001.GIF. When you reach TC999.GIF, your page will reset the current index to 0, causing 
+other calls to overwrite previously generated files that now should be unlocked. This 
+strategy ensures that you will have at most only 1000 temporary GIF files, but it is of 
+course highly dependent on timing. If your application starts to receive errors from 
+the ExportPicture method, you will have to increase the number of digits used in 
+your filenames to ensure a longer time between loops. There is also a minute chance 
+that you might encounter a problem if your thread is interrupted just after updating 
+the current index but before reading the current index value. Without using a 
+transaction, it's impossible to guarantee that both operations are isolated. However, if 
+you require transaction isolation, you can use a database table instead of the 
+Application state to store your current index.</p> 
+
+<p>The last approach is to produce your GIFs either by using a batch process 
+or by intelligently sharing GIFs that have already been produced with clients 
+requesting the same chart and data. If your metric is not that dynamic&#8212;for instance, 
+some metrics change only once per hour or day&#8212;you might consider using a batch 
+process to generate all the interesting charts in one shot. The pages you then put on 
+your web site simply reference existing GIF files that your batch program updates 
+every hour or night. If you think that clients might request these files while you are 
+generating new ones, put the new files in a directory name that is keyed to your 
+update interval and code your ASP pages to use a directory name based on the current 
+time. For example, if you update the charts nightly, put the new GIFs into a 
+subdirectory named with the next day's date (such as 19990423). Your ASP page should use 
+the current system date to determine which subdirectory to pull the image from. 
+Your batch program could safely delete the directory from the previous day, because 
+it knows that no clients will access the files in that directory.</p> 
+
+<p>Our team used this last approach with many of our daily bug statistic 
+charts. We used a Visual Basic program to produce the charts, typically generating 50 
+chart images in 30 to 40 seconds.</p>
+
+</BODY>
+</HTML>
+
+
+
+
+

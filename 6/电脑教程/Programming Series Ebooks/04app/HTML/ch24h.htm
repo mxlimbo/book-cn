@@ -1,0 +1,171 @@
+<HTML>
+<HEAD>
+<TITLE>Software Exceptions</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch24g.htm">[Previous]</A> <A HREF="ch25a.htm">[Next]</A><P>
+
+<A NAME="334"><H1>Software Exceptions</H1></A>
+
+<p>So far, we have been discussing hardware exceptions in which the CPU
+catches an event and raises an exception. It is also possible for your
+code to forcibly raise an exception. This is another way for a function
+to indicate failure to its caller. Traditionally, functions that can
+fail return some special value to indicate failure. The caller of the
+function is supposed to check for this special value and take an
+alternative course of action. Frequently, the caller has to clean up
+what it's doing and return its own failure code back to its caller.
+This propagating of error codes causes your source code to become much
+more difficult to write and to maintain. </p>
+
+<p>An alternative approach is to have functions raise exceptions when they
+fail. With this approach, the code is much easier to write and to
+maintain. Plus, the code typically performs better without all of the
+error testing code being executed. In fact, the error-testing code only
+executes if there is a failure, and this is the exceptional case.</p>
+
+<p>Unfortunately, most developers do not get into the habit of using
+exceptions for error handling. There are two basic reasons for this.
+The first reason is that most developers are unfamiliar with SEH. Even
+if one developer is acquainted with it, other developers might not be.
+If one developer writes a function that raises an exception but other
+developers don't write SEH frames to trap the exception, the
+process will be terminated by the operating system.</p>
+ 
+<p>The second reason why developers avoid SEH is that it is not portable
+to other operating systems. Many companies target multiple operating
+systems and would like to have a single source code base for their
+products, which is certainly understandable. SEH is a Windows-specific
+technology.</p>
+
+<p>However, if you decide to return errors via exceptions, I applaud
+your decision and this section is for you. First, let's look at the
+Windows Heap functions such as <i>HeapCreate</i>, <i>HeapAlloc</i>, and
+so on. You'll recall from <A HREF="ch18a.htm">Chapter 18</A> that these functions offer
+developers a choice. Normally when any of the heap functions fail, they
+return NULL to indicate failure. You can, however, pass the
+HEAP_GENERATE_EXCEPTIONS flag to any of these heap functions. If you
+use this flag and the function fails, the function does not return
+NULL; instead, the function raises a STATUS_NO_MEMORY software
+exception that other parts of your code can catch with an SEH
+frame.</p>
+
+<p>If you want to take advantage of this exception, you can code your
+<i>try</i> block as though the memory allocation will always succeed;
+if the allocation fails, you can either handle the exception by using
+an <i>except</i> block or have your function clean up by matching the
+<i>try</i> block with a <i>finally</i> block. How convenient!</p>
+ 
+<p>Your application traps software exceptions exactly the same way that it
+traps hardware exceptions. In other words, everything I said in the
+last chapter applies equally well to software exceptions. </p>
+
+<p>What we want to concentrate on in this section is how to have your own
+functions forcibly raise software exceptions as a method for indicating
+failure. In fact, you can implement your functions similarly to
+Microsoft's implementation of the heap functions: have your callers
+pass a flag that tells your function how it should indicate
+failures. </p>
+
+<p>Raising a software exception couldn't be easier. You simply call
+the <i>RaiseException</i> function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+VOID RaiseException(
+   DWORD dwExceptionCode, 
+   DWORD dwExceptionFlags,
+   DWORD nNumberOfArguments, 
+   CONST ULONG_PTR *pArguments);
+</pre></td></tr></table></p>
+
+<p>The first parameter, <i>dwExceptionCode</i>, must be a value that
+identifies the raised exception. The <i>HeapAlloc</i> function passes
+STATUS_NO_MEMORY for this parameter. If you define your own exception
+identifiers, you should follow the same format as the standard Windows
+error codes as defined in the WinError.h file. Recall that each DWORD
+is divided as shown in Table 24-1.</p>
+
+<p>If you create your own exception code, fill out all four fields of
+the DWORD:</p>
+
+<ul>
+<p><li>Bits 31 and 30 will contain the severity.</li></p>
+
+<p><li>Bit 29 will be 1 (0 is reserved for Microsoft-created exceptions,
+such as <i>HeapAlloc</i>'s STATUS_NO_MEMORY).</li></p>
+
+<p><li>Bit 28 is 0.</li></p>
+
+<p><li>Bits 27 through 16 will be one of Microsoft's predefined
+facility codes.</li></p>
+
+<p><li>Bits 15 through 0 will be an arbitrary value that you choose to
+identify the section of your application that raised the
+exception.</li></p>
+</ul>
+
+
+
+<p><i>RaiseException</i>'s second parameter, <i>dwExceptionFlags</i>, must be either 0 or EXCEPTION_NONCONTINUABLE. Basically, this flag indicates whether it is legal for an exception filter to return EXCEPTION_CONTINUE_EXECUTION in response to this raised exception. If you do not pass the EXCEPTION_NONCONTINUABLE flag to <i>RaiseException</i>, the filter can return EXCEPTION_CONTINUE_EXECUTION. Normally, this would cause the
+thread to re-execute the same CPU instruction that raised the software exception. However, Microsoft has done some trickery so that execution continues after the call to the <i>RaiseException</i> function.</p>
+
+<p>If you do pass the EXCEPTION_NONCONTINUABLE flag to <i>
+RaiseException</i>, you're telling the system that the type of
+exception you are raising can't be continued. This flag is used
+internally in the operating system to signal fatal (nonrecoverable) errors. In addition, when <i>HeapAlloc</i> raises the STATUS_NO_MEMORY software exception, it uses the EXCEPTION_NONCONTINUABLE flag to tell the system that this exception cannot be continued. This makes sense: there is no way to force the memory to be allocated and continue
+running.</p>
+ 
+<p>If a filter ignores the EXCEPTION_NONCONTINUABLE flag and returns
+EXCEPTION_CONTINUE_EXECUTION anyway, the system raises a new exception:
+EXCEPTION_NONCONTINUABLE_EXCEPTION.</p>
+
+<p>It is possible for an exception to be raised while the application
+is trying to process another exception. This makes sense, of course.
+While we're at it, let's note that it's also possible for
+an invalid memory access to occur inside a <i>finally</i> block, an
+exception filter, or an exception handler. When this happens, the
+system stacks exceptions. Remember the <i>GetExceptionInformation</i>
+function? This function returns the address of an EXCEPTION_POINTERS
+structure. The <i>ExceptionRecord</i> member of the EXCEPTION_POINTERS
+structure points to an EXCEPTION_RECORD structure that contains another
+<i>ExceptionRecord</i> member. This member is a pointer to another
+EXCEPTION_RECORD, which contains information about the previously
+raised exception.</p>
+ 
+<p>Usually the system is processing only one exception at a time, and the <i>ExceptionRecord</i> member is NULL. However, if during the processing of one exception another exception is raised, the first EXCEPTION_RECORD structure contains information about the most recently raised exception and the <i>ExceptionRecord</i> member of this first EXCEPTION_RECORD structure points to the EXCEPTION_RECORD structure for the previously raised exception. If additional exceptions have not been processed completely, you can continue to walk this linked-list of EXCEPTION_RECORD structures to determine how to handle the exception.</p>
+
+<p><i>RaiseException</i>'s third and fourth parameters, <i>
+nNumberOfArguments</i> and <i>pArguments</i>, are used to pass
+additional information about the raised exception. Usually, there is no need for additional arguments&#8212;you can simply pass NULL for the <i>pArguments</i> parameter, in which case <i>RaiseException</i> ignores the <i>nNumberOfArguments</i> parameter. If you do want to pass additional arguments, the <i>nNumberOfArguments</i> parameter must indicate the number of elements in the ULONG_PTR array pointed to by the <i>pArguments</i> parameter. This parameter cannot exceed
+EXCEPTION_MAXIMUM_PARAMETERS, which is defined in WinNT.h as 15.</p>
+ 
+<p>During the processing of this exception, you can have an exception
+filter refer to the <i>NumberParameters</i> and <i>
+ExceptionInformation</i> members of the EXCEPTION_RECORD structure to
+examine the information in the <i>nNumberOfArguments</i> and <i>
+pArguments</i> parameters.</p>
+ 
+<p>You might want to generate your own software exceptions in your
+application for any of several reasons. For example, you might want to
+send informational messages to the system's event log. Whenever a
+function in your application sensed some sort of problem, you could
+call <i>RaiseException</i> and have some exception handler further up
+the call tree look for certain exceptions and either add them to the
+event log or pop up a message box. You might also want to create
+software exceptions to signal internal fatal errors in your
+application.</p>
+</body>
+</html>
+
+
+
+
+
+
+

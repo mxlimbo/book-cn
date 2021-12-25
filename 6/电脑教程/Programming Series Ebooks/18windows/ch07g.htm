@@ -1,0 +1,383 @@
+<HTML>
+<HEAD>
+	<LINK REL=StyleSheet HREF="petzoldi.css" TYPE="text/css">
+<title>The Mouse Wheel</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="212"><h1>The Mouse Wheel</h1></A>
+<p>&quot;Build a better mousetrap and the world will beat a path to your door,&quot; my mother told me, unknowingly paraphrasing Emerson. Of course, nowadays it might make more sense to build a better <I>mouse</I>.
+
+<p>The Microsoft IntelliMouse features an enhancement to the traditional mouse in the form of a little wheel between the two buttons. You can press down on this wheel, in which case it functions as a middle mouse button, or you can turn it with your index finger. This generates a special message named WM_MOUSEWHEEL. Programs that use the mouse wheel respond to this message by scrolling or zooming a document. It sounds like an unnecessary gimmick at first, but I must confess I got accustomed very quickly to using the mouse wheel for scrolling through Microsoft Word and Microsoft Internet Explorer.
+I won't attempt to discuss all the ways the mouse wheel can be used. Instead, I'll show how you can add mouse wheel logic to an existing program that scrolls data within its client area, a program such as SYSMETS4. The final SYSMETS program is shown in Figure 7-12.
+<p><B>Figure 7-12.</B> <I>The SYSMETS program.</I>
+<TABLE CELLPADDING=5 WIDTH="95%"><TR><TD>
+<A NAME="213"><p><h3>SYSMETS.C</h3></A>
+<p><pre>
+/*---------------------------------------------------
+   SYSMETS.C -- Final System Metrics Display Program 
+                (c) Charles Petzold, 1998
+
+  ---------------------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &quot;sysmets.h&quot;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName[] = TEXT (&quot;SysMets&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;Program requires Windows NT!&quot;), 
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Get System Metrics&quot;),
+                          WS_OVERLAPPEDWINDOW | WS_VSCROLL | WS_HSCROLL,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static int  cxChar, cxCaps, cyChar, cxClient, cyClient, iMaxWidth ;
+     static int  iDeltaPerLine, iAccumDelta ;     // for mouse wheel logic
+     HDC         hdc ;
+     int         i, x, y, iVertPos, iHorzPos, iPaintBeg, iPaintEnd ;
+     PAINTSTRUCT ps ;
+     SCROLLINFO  si ;
+     TCHAR       szBuffer[10] ;
+     TEXTMETRIC  tm ;
+     ULONG       ulScrollLines ;                  // for mouse wheel logic
+
+     switch (message)
+     {
+     case WM_CREATE:
+          hdc = GetDC (hwnd) ;
+
+          GetTextMetrics (hdc, &amp;tm) ;
+          cxChar = tm.tmAveCharWidth ;
+          cxCaps = (tm.tmPitchAndFamily &amp; 1 ? 3 : 2) * cxChar / 2 ;
+          cyChar = tm.tmHeight + tm.tmExternalLeading ;
+          
+          ReleaseDC (hwnd, hdc) ;
+
+               // Save the width of the three columns
+          
+          iMaxWidth = 40 * cxChar + 22 * cxCaps ;
+
+               // Fall through for mouse wheel information
+
+     case WM_SETTINGCHANGE:
+          SystemParametersInfo (SPI_GETWHEELSCROLLLINES, 0, &amp;ulScrollLines, 0) ;
+          
+               // ulScrollLines usually equals 3 or 0 (for no scrolling)
+               // WHEEL_DELTA equals 120, so iDeltaPerLine will be 40
+          if (ulScrollLines)
+               iDeltaPerLine = WHEEL_DELTA / ulScrollLines ;
+          else
+               iDeltaPerLine = 0 ;
+
+          return 0 ;
+          
+     case WM_SIZE:
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+
+               // Set vertical scroll bar range and page size
+
+          si.cbSize = sizeof (si) ;
+          si.fMask  = SIF_RANGE | SIF_PAGE ;
+          si.nMin   = 0 ;
+          si.nMax   = NUMLINES - 1 ;
+          si.nPage  = cyClient / cyChar ;
+          SetScrollInfo (hwnd, SB_VERT, &amp;si, TRUE) ;
+
+               // Set horizontal scroll bar range and page size
+
+          si.cbSize = sizeof (si) ;
+          si.fMask  = SIF_RANGE | SIF_PAGE ;
+          si.nMin   = 0 ;
+          si.nMax   = 2 + iMaxWidth / cxChar ;
+          si.nPage  = cxClient / cxChar ;
+          SetScrollInfo (hwnd, SB_HORZ, &amp;si, TRUE) ;
+          return 0 ;
+          
+     case WM_VSCROLL:
+               // Get all the vertical scroll bar information
+
+          si.cbSize = sizeof (si) ;
+          si.fMask  = SIF_ALL ;
+          GetScrollInfo (hwnd, SB_VERT, &amp;si) ;
+
+               // Save the position for comparison later on
+
+          iVertPos = si.nPos ;
+
+          switch (LOWORD (wParam))
+          {
+          case SB_TOP:
+               si.nPos = si.nMin ;
+               break ;
+               
+          case SB_BOTTOM:
+               si.nPos = si.nMax ;
+               break ;
+               
+          case SB_LINEUP:
+               si.nPos -= 1 ;
+               break ;
+               
+          case SB_LINEDOWN:
+               si.nPos += 1 ;
+               break ;
+               
+          case SB_PAGEUP:
+               si.nPos -= si.nPage ;
+               break ;
+               
+          case SB_PAGEDOWN:
+               si.nPos += si.nPage ;
+               break ;
+               
+          case SB_THUMBTRACK:
+               si.nPos = si.nTrackPos ;
+               break ;
+
+          default:
+               break ;         
+          }
+               // Set the position and then retrieve it.  Due to adjustments
+               //   by Windows it may not be the same as the value set.
+
+          si.fMask = SIF_POS ;
+          SetScrollInfo (hwnd, SB_VERT, &amp;si, TRUE) ;
+          GetScrollInfo (hwnd, SB_VERT, &amp;si) ;
+
+               // If the position has changed, scroll the window and update it
+
+          if (si.nPos != iVertPos)
+          {                    
+               ScrollWindow (hwnd, 0, cyChar * (iVertPos - si.nPos), 
+                                   NULL, NULL) ;
+               UpdateWindow (hwnd) ;
+          }
+          return 0 ;
+          
+     case WM_HSCROLL:
+               // Get all the vertical scroll bar information
+
+          si.cbSize = sizeof (si) ;
+          si.fMask  = SIF_ALL ;
+
+               // Save the position for comparison later on
+
+          GetScrollInfo (hwnd, SB_HORZ, &amp;si) ;
+          iHorzPos = si.nPos ;
+
+          switch (LOWORD (wParam))
+          {
+          case SB_LINELEFT:
+               si.nPos -= 1 ;
+               break ;
+               
+          case SB_LINERIGHT:
+               si.nPos += 1 ;
+               break ;
+               
+          case SB_PAGELEFT:
+               si.nPos -= si.nPage ;
+               break ;
+
+          case SB_PAGERIGHT:
+               si.nPos += si.nPage ;
+               break ;
+               
+          case SB_THUMBPOSITION:
+               si.nPos = si.nTrackPos ;
+               break ;
+               
+          default:
+               break ;
+          }
+               // Set the position and then retrieve it.  Due to adjustments
+               //   by Windows it may not be the same as the value set.
+
+          si.fMask = SIF_POS ;
+          SetScrollInfo (hwnd, SB_HORZ, &amp;si, TRUE) ;
+          GetScrollInfo (hwnd, SB_HORZ, &amp;si) ;
+          
+               // If the position has changed, scroll the window 
+
+          if (si.nPos != iHorzPos)
+          {
+               ScrollWindow (hwnd, cxChar * (iHorzPos - si.nPos), 0, 
+                             NULL, NULL) ;
+          }
+          return 0 ;
+
+     case WM_KEYDOWN :
+          switch (wParam)
+          {
+          case VK_HOME :
+               SendMessage (hwnd, WM_VSCROLL, SB_TOP, 0) ;
+               break ;
+               
+          case VK_END :
+               SendMessage (hwnd, WM_VSCROLL, SB_BOTTOM, 0) ;
+               break ;
+               
+          case VK_PRIOR :
+               SendMessage (hwnd, WM_VSCROLL, SB_PAGEUP, 0) ;
+               break ;
+               
+          case VK_NEXT :
+               SendMessage (hwnd, WM_VSCROLL, SB_PAGEDOWN, 0) ;
+               break ;
+
+          case VK_UP :
+               SendMessage (hwnd, WM_VSCROLL, SB_LINEUP, 0) ;
+               break ;
+               
+          case VK_DOWN :
+               SendMessage (hwnd, WM_VSCROLL, SB_LINEDOWN, 0) ;
+               break ;
+               
+          case VK_LEFT :
+               SendMessage (hwnd, WM_HSCROLL, SB_PAGEUP, 0) ;
+               break ;
+               
+          case VK_RIGHT :
+               SendMessage (hwnd, WM_HSCROLL, SB_PAGEDOWN, 0) ;
+               break ;
+          }
+          return 0 ;
+
+     case WM_MOUSEWHEEL:
+          if (iDeltaPerLine == 0)
+               break ;
+
+          iAccumDelta += (short) HIWORD (wParam) ;     // 120 or -120
+          while (iAccumDelta &gt;= iDeltaPerLine)
+          {               
+               SendMessage (hwnd, WM_VSCROLL, SB_LINEUP, 0) ;
+               iAccumDelta -= iDeltaPerLine ;
+          }
+
+          while (iAccumDelta &lt;= -iDeltaPerLine)
+          {
+               SendMessage (hwnd, WM_VSCROLL, SB_LINEDOWN, 0) ;
+               iAccumDelta += iDeltaPerLine ;
+          }
+
+          return 0 ;
+
+     case WM_PAINT :
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+
+               // Get vertical scroll bar position
+
+          si.cbSize = sizeof (si) ;
+          si.fMask  = SIF_POS ;
+          GetScrollInfo (hwnd, SB_VERT, &amp;si) ;
+          iVertPos = si.nPos ;
+
+               // Get horizontal scroll bar position
+
+          GetScrollInfo (hwnd, SB_HORZ, &amp;si) ;
+          iHorzPos = si.nPos ;
+
+               // Find painting limits
+
+          iPaintBeg = max (0, iVertPos + ps.rcPaint.top / cyChar) ;
+          iPaintEnd = min (NUMLINES - 1,
+                           iVertPos + ps.rcPaint.bottom / cyChar) ;
+          
+          for (i = iPaintBeg ; i &lt;= iPaintEnd ; i++)
+          {
+               x = cxChar * (1 - iHorzPos) ;
+               y = cyChar * (i - iVertPos) ;
+               
+               TextOut (hdc, x, y,
+                        sysmetrics[i].szLabel,
+                        lstrlen (sysmetrics[i].szLabel)) ;
+               
+               TextOut (hdc, x + 22 * cxCaps, y,
+                        sysmetrics[i].szDesc,
+                        lstrlen (sysmetrics[i].szDesc)) ;
+               
+               SetTextAlign (hdc, TA_RIGHT | TA_TOP) ;
+               
+               TextOut (hdc, x + 22 * cxCaps + 40 * cxChar, y, szBuffer,
+                        wsprintf (szBuffer, TEXT (&quot;%5d&quot;),
+                             GetSystemMetrics (sysmetrics[i].iIndex))) ;
+               
+               SetTextAlign (hdc, TA_LEFT | TA_TOP) ;
+          }
+
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+          
+     case WM_DESTROY :
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</pre>
+</TD></TR>
+</TABLE>
+
+
+<p>Rotating the wheel causes Windows to generate WM_MOUSEWHEEL messages to the window with the input focus (<I>not</I> the window underneath the mouse cursor). As usual, <I>lParam</I> contains the position of the mouse; however, the coordinates are relative to the upper left corner of the screen rather than the client area. Also as usual, the low word of <I>wParam</I> contains a series of flags indicating the state of the mouse buttons and the Shift and Ctrl keys.
+
+<p>The new information is in the high word of <I>wParam</I>. This is a &quot;delta&quot; value that is currently likely to be either 120 or -120, depending on whether the wheel is rotated forward (that is, toward the front of the mouse, the end with the buttons and cable) or backward. The values of 120 or -120 indicate that the document is to be scrolled three lines up or down, respectively. The idea here is that future versions of the mouse wheel can have a finer gradation than the current mouse and would generate WM_MOUSEWHEEL messages with delta values of (for example) 40 and -40. These values would cause the document to be scrolled just one line up or down.
+
+<p>To keep the program generalized, SYSMETS calls <I>SystemParametersInfo</I> with the SPI_GETWHEELSCROLLLINES during the WM_CREATE and WM_SETTINGCHANGE messages. This value indicates how many lines to scroll for a delta value of WHEEL_DELTA, which is defined in WINUSER.H. WHEEL_DELTA equals 120 and by default <I>SystemParametersInfo</I> returns 3, so the delta value associated with scrolling one line is 40. SYSMETS stores this value in <I>iDeltaPerLine</I>.\
+
+<p>During the WM_MOUSEWHEEL messages, SYSMETS adds the delta value to the static variable <I>iAccumDelta</I>. Then, if <I>iAccumDelta</I> is greater than or equal to <I>iDeltaPerLine</I> (or less than or equal to -<I>iDeltaPerLine</I>), SYSMETS generates WM_VSCROLL messages using SB_LINEUP or SB_LINEDOWN values. For each WM_VSCROLL message, <I>iAccumDelta</I> is decreased (or increased) by <I>iDeltaPerLine</I>. This code allows for delta values that are greater than, less than, or equal to the delta value required to scroll one line.
+
+<A NAME="214"><h2>Still to Come</h2></A>
+<p>The only other outstanding mouse issue is the creation of customized mouse cursors. I'll cover this subject in <a href="ch10a.htm#279">Chapter 10</a> along with an introduction to other Windows resources.
+</BODY>
+</HTML>
+
+
+
+
+
+

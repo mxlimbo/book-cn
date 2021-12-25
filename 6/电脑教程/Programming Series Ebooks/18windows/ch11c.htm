@@ -1,0 +1,1249 @@
+<HTML>
+<HEAD>
+	<LINK REL=StyleSheet HREF="petzoldi.css" TYPE="text/css">
+<title>The Common Dialog Boxes</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="366"><h1>The Common Dialog Boxes</h1></A><P>One of the primary goals of Windows when it was initially released was to promote 
+a standardized user interface. For many common menu items, this happened fairly 
+quickly. Almost every software manufacturer adopted the Alt-File-Open selection to open a 
+file. However, the actual file-open dialog boxes were often quite dissimilar.
+<P>Beginning with Windows 3.1, a solution to this problem became available. This 
+is an enhancement called the &quot;common dialog box library.&quot; This library consists of 
+several functions that invoke standard dialog boxes for opening and saving files, searching 
+and replacing, choosing colors, choosing fonts (all of which I'll demonstrate in this 
+chapter), and printing (which I'll demonstrate in <a href="ch13a.htm#401">Chapter 13</a>).
+<P>To use these functions, you basically initialize the fields of a structure and pass 
+a pointer to the structure to a function in the common dialog box library. The function 
+creates and displays the dialog box. When the user makes the dialog box go away, the 
+function you called returns control to your program and you obtain information from 
+the structure you passed to it.
+
+<P>You'll need to include the COMMDLG.H header file in any C source code file 
+that uses the common dialog box library. The common dialog boxes are documented in 
+/Platform SDK/User Interface Services/User Input/Common Dialog Box Library.
+
+<A NAME="367"><h2>POPPAD Revisited</h2></A><P>When we added a menu to POPPAD in <a href="ch10a.htm#279">Chapter 10</a>, several standard menu options 
+were left unimplemented. We are now ready to add logic to POPPAD to open files, read 
+them in, and save the edited files on disk. In the process, we'll also add font selection and 
+search-and-replace logic to POPPAD.
+<P>The files that contribute to the POPPAD3 program are shown in Figure 11-11.
+
+
+<P><!-- caption --><B>Figure 11-11.</b> <i>The POPPAD3 program.</I><!-- /caption -->
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="368"><p><H3>POPPAD.C</H3></A><P><pre>
+/*---------------------------------------
+   POPPAD.C -- Popup Editor
+               (c) Charles Petzold, 1998
+  ---------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &lt;commdlg.h&gt;
+#include &quot;resource.h&quot;
+
+#define EDITID   1
+#define UNTITLED TEXT (&quot;(untitled)&quot;)
+
+LRESULT CALLBACK WndProc      (HWND, UINT, WPARAM, LPARAM) ;
+BOOL    CALLBACK AboutDlgProc (HWND, UINT, WPARAM, LPARAM) ;
+
+     // Functions in POPFILE.C
+
+void PopFileInitialize (HWND) ;
+BOOL PopFileOpenDlg    (HWND, PTSTR, PTSTR) ;
+BOOL PopFileSaveDlg    (HWND, PTSTR, PTSTR) ;
+BOOL PopFileRead       (HWND, PTSTR) ;
+BOOL PopFileWrite      (HWND, PTSTR) ;
+
+     // Functions in POPFIND.C
+
+HWND PopFindFindDlg     (HWND) ;
+HWND PopFindReplaceDlg  (HWND) ;
+BOOL PopFindFindText    (HWND, int *, LPFINDREPLACE) ;
+BOOL PopFindReplaceText (HWND, int *, LPFINDREPLACE) ;
+BOOL PopFindNextText    (HWND, int *) ;
+BOOL PopFindValidFind   (void) ;
+
+     // Functions in POPFONT.C
+
+void PopFontInitialize   (HWND) ;
+BOOL PopFontChooseFont   (HWND) ;
+void PopFontSetFont      (HWND) ;
+void PopFontDeinitialize (void) ;
+
+     // Functions in POPPRNT.C
+
+BOOL PopPrntPrintFile (HINSTANCE, HWND, HWND, PTSTR) ;
+
+     // Global variables
+
+static HWND  hDlgModeless ;
+static TCHAR szAppName[] = TEXT (&quot;PopPad&quot;) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     MSG       msg ;
+     HWND      hwnd ;
+     HACCEL    hAccel ;
+     WNDCLASS  wndclass ;
+     
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (hInstance, szAppName) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = szAppName ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, NULL,
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, szCmdLine) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+     hAccel = LoadAccelerators (hInstance, szAppName) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          if (hDlgModeless == NULL || !IsDialogMessage (hDlgModeless, &amp;msg))
+          {
+               if (!TranslateAccelerator (hwnd, hAccel, &amp;msg))
+               {
+                    TranslateMessage (&amp;msg) ;
+                    DispatchMessage (&amp;msg) ;
+               }
+          }
+     }
+     return msg.wParam ;
+}
+
+void DoCaption (HWND hwnd, TCHAR * szTitleName)
+{
+     TCHAR szCaption[64 + MAX_PATH] ;
+     
+     wsprintf (szCaption, TEXT (&quot;%s - %s&quot;), szAppName,
+               szTitleName[0] ? szTitleName : UNTITLED) ;
+     
+     SetWindowText (hwnd, szCaption) ;
+}
+
+void OkMessage (HWND hwnd, TCHAR * szMessage, TCHAR * szTitleName)
+{
+     TCHAR szBuffer[64 + MAX_PATH] ;
+     
+     wsprintf (szBuffer, szMessage, szTitleName[0] ? szTitleName : UNTITLED) ;
+     
+     MessageBox (hwnd, szBuffer, szAppName, MB_OK | MB_ICONEXCLAMATION) ;
+}
+
+short AskAboutSave (HWND hwnd, TCHAR * szTitleName)
+{
+     TCHAR szBuffer[64 + MAX_PATH] ;
+     int   iReturn ;
+     
+     wsprintf (szBuffer, TEXT (&quot;Save current changes in %s?&quot;),
+               szTitleName[0] ? szTitleName : UNTITLED) ;
+     
+     iReturn = MessageBox (hwnd, szBuffer, szAppName,
+                           MB_YESNOCANCEL | MB_ICONQUESTION) ;
+
+     if (iReturn == IDYES)
+          if (!SendMessage (hwnd, WM_COMMAND, IDM_FILE_SAVE, 0))
+               iReturn = IDCANCEL ;
+          
+     return iReturn ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static BOOL      bNeedSave = FALSE ;
+     static HINSTANCE hInst ;
+     static HWND      hwndEdit ;
+     static int       iOffset ;
+     static TCHAR     szFileName[MAX_PATH], szTitleName[MAX_PATH] ;
+     static UINT      messageFindReplace ;
+     int              iSelBeg, iSelEnd, iEnable ;
+     LPFINDREPLACE    pfr ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+          hInst = ((LPCREATESTRUCT) lParam) -&gt; hInstance ;
+          
+               // Create the edit control child window
+          
+          hwndEdit = CreateWindow (TEXT (&quot;edit&quot;), NULL,
+                              WS_CHILD | WS_VISIBLE | WS_HSCROLL | WS_VSCROLL |
+                              WS_BORDER | ES_LEFT | ES_MULTILINE |
+                              ES_NOHIDESEL | ES_AUTOHSCROLL | ES_AUTOVSCROLL,
+                              0, 0, 0, 0,
+                              hwnd, (HMENU) EDITID, hInst, NULL) ;
+          
+          SendMessage (hwndEdit, EM_LIMITTEXT, 32000, 0L) ;
+          
+               // Initialize common dialog box stuff
+          
+          PopFileInitialize (hwnd) ;
+          PopFontInitialize (hwndEdit) ;
+          
+          messageFindReplace = RegisterWindowMessage (FINDMSGSTRING) ;
+          
+          DoCaption (hwnd, szTitleName) ;
+          return 0 ;
+     case WM_SETFOCUS:
+          SetFocus (hwndEdit) ;
+          return 0 ;
+          
+     case WM_SIZE: 
+          MoveWindow (hwndEdit, 0, 0, LOWORD (lParam), HIWORD (lParam), TRUE) ;
+          return 0 ;
+          
+     case WM_INITMENUPOPUP:
+          switch (lParam)
+          {
+          case 1:             // Edit menu
+               
+                    // Enable Undo if edit control can do it
+               
+               EnableMenuItem ((HMENU) wParam, IDM_EDIT_UNDO,
+                    SendMessage (hwndEdit, EM_CANUNDO, 0, 0L) ?
+                                             MF_ENABLED : MF_GRAYED) ;
+               
+                    // Enable Paste if text is in the clipboard
+               
+               EnableMenuItem ((HMENU) wParam, IDM_EDIT_PASTE,
+                    IsClipboardFormatAvailable (CF_TEXT) ?
+                                             MF_ENABLED : MF_GRAYED) ;
+               
+                    // Enable Cut, Copy, and Del if text is selected
+               
+               SendMessage (hwndEdit, EM_GETSEL, (WPARAM) &amp;iSelBeg,
+                                                 (LPARAM) &amp;iSelEnd) ;
+               
+               iEnable = iSelBeg != iSelEnd ? MF_ENABLED : MF_GRAYED ;
+               
+               EnableMenuItem ((HMENU) wParam, IDM_EDIT_CUT,   iEnable) ;
+               EnableMenuItem ((HMENU) wParam, IDM_EDIT_COPY,  iEnable) ;
+               EnableMenuItem ((HMENU) wParam, IDM_EDIT_CLEAR, iEnable) ;
+               break ;
+               
+          case 2:             // Search menu
+               
+               // Enable Find, Next, and Replace if modeless
+               //   dialogs are not already active
+               
+               iEnable = hDlgModeless == NULL ?
+                              MF_ENABLED : MF_GRAYED ;
+
+               EnableMenuItem ((HMENU) wParam, IDM_SEARCH_FIND,    iEnable) ;
+               EnableMenuItem ((HMENU) wParam, IDM_SEARCH_NEXT,    iEnable) ;
+               EnableMenuItem ((HMENU) wParam, IDM_SEARCH_REPLACE, iEnable) ;
+               break ;
+          }
+          return 0 ;
+     
+     case WM_COMMAND:
+               // Messages from edit control
+          
+          if (lParam &amp;&amp; LOWORD (wParam) == EDITID)
+          {
+               switch (HIWORD (wParam))
+               {
+               case EN_UPDATE :
+                    bNeedSave = TRUE ;
+                    return 0 ;
+                    
+               case EN_ERRSPACE :
+               case EN_MAXTEXT :
+                    MessageBox (hwnd, TEXT (&quot;Edit control out of space.&quot;),
+                                szAppName, MB_OK | MB_ICONSTOP) ;
+                    return 0 ;
+               }
+               break ;
+          }
+          
+          switch (LOWORD (wParam))
+          {
+               // Messages from File menu
+               
+          case IDM_FILE_NEW:
+               if (bNeedSave &amp;&amp; IDCANCEL == AskAboutSave (hwnd, szTitleName))
+                    return 0 ;
+               
+               SetWindowText (hwndEdit, TEXT (&quot;\0&quot;)) ;
+               szFileName[0]  = `\0' ;
+               szTitleName[0] = `\0' ;
+               DoCaption (hwnd, szTitleName) ;
+               bNeedSave = FALSE ;
+               return 0 ;
+               
+          case IDM_FILE_OPEN:
+               if (bNeedSave &amp;&amp; IDCANCEL == AskAboutSave (hwnd, szTitleName))
+                    return 0 ;
+               if (PopFileOpenDlg (hwnd, szFileName, szTitleName))
+               {
+                    if (!PopFileRead (hwndEdit, szFileName))
+                    {
+                         OkMessage (hwnd, TEXT (&quot;Could not read file %s!&quot;),
+                                    szTitleName) ;
+                         szFileName[0]  = `\0' ;
+                         szTitleName[0] = `\0' ;
+                    }
+               }
+               
+               DoCaption (hwnd, szTitleName) ;
+               bNeedSave = FALSE ;
+               return 0 ;
+               
+          case IDM_FILE_SAVE:
+               if (szFileName[0])
+               {
+                    if (PopFileWrite (hwndEdit, szFileName))
+                    {
+                         bNeedSave = FALSE ;
+                         return 1 ;
+                    }
+                    else
+                    {
+                         OkMessage (hwnd, TEXT (&quot;Could not write file %s&quot;),
+                                    szTitleName) ;
+                         return 0 ;
+                    }
+               }
+                                   // fall through
+          case IDM_FILE_SAVE_AS:
+               if (PopFileSaveDlg (hwnd, szFileName, szTitleName))
+               {
+                    DoCaption (hwnd, szTitleName) ;
+                    
+                    if (PopFileWrite (hwndEdit, szFileName))
+                    {
+                         bNeedSave = FALSE ;
+                         return 1 ;
+                    }
+                    else
+                    {
+                         OkMessage (hwnd, TEXT (&quot;Could not write file %s&quot;),
+                                    szTitleName) ;
+
+                         return 0 ;
+                    }
+               }
+               return 0 ;
+
+          case IDM_FILE_PRINT:
+               if (!PopPrntPrintFile (hInst, hwnd, hwndEdit, szTitleName))
+                    OkMessage (hwnd, TEXT (&quot;Could not print file %s&quot;),
+                                     szTitleName) ;
+               return 0 ;
+               
+          case IDM_APP_EXIT:
+               SendMessage (hwnd, WM_CLOSE, 0, 0) ;
+               return 0 ;
+               
+                    // Messages from Edit menu
+               
+          case IDM_EDIT_UNDO:
+               SendMessage (hwndEdit, WM_UNDO, 0, 0) ;
+               return 0 ;
+               
+          case IDM_EDIT_CUT:
+               SendMessage (hwndEdit, WM_CUT, 0, 0) ;
+               return 0 ;
+               
+          case IDM_EDIT_COPY:
+               SendMessage (hwndEdit, WM_COPY, 0, 0) ;
+               return 0 ;
+               
+          case IDM_EDIT_PASTE:
+               SendMessage (hwndEdit, WM_PASTE, 0, 0) ;
+               return 0 ;
+               
+          case IDM_EDIT_CLEAR:
+               SendMessage (hwndEdit, WM_CLEAR, 0, 0) ;
+               return 0 ;
+               
+          case IDM_EDIT_SELECT_ALL:
+               SendMessage (hwndEdit, EM_SETSEL, 0, -1) ;
+               return 0 ;
+               
+                    // Messages from Search menu
+          case IDM_SEARCH_FIND:
+               SendMessage (hwndEdit, EM_GETSEL, 0, (LPARAM) &amp;iOffset) ;
+               hDlgModeless = PopFindFindDlg (hwnd) ;
+               return 0 ;
+               
+          case IDM_SEARCH_NEXT:
+               SendMessage (hwndEdit, EM_GETSEL, 0, (LPARAM) &amp;iOffset) ;
+               
+               if (PopFindValidFind ())
+                    PopFindNextText (hwndEdit, &amp;iOffset) ;
+               else
+                    hDlgModeless = PopFindFindDlg (hwnd) ;
+               
+               return 0 ;
+               
+          case IDM_SEARCH_REPLACE:
+               SendMessage (hwndEdit, EM_GETSEL, 0, (LPARAM) &amp;iOffset) ;
+               hDlgModeless = PopFindReplaceDlg (hwnd) ;
+               return 0 ;
+               
+          case IDM_FORMAT_FONT:
+               if (PopFontChooseFont (hwnd))
+                    PopFontSetFont (hwndEdit) ;
+               
+               return 0 ;
+               
+                    // Messages from Help menu
+               
+          case IDM_HELP:
+               OkMessage (hwnd, TEXT (&quot;Help not yet implemented!&quot;), 
+                                TEXT (&quot;\0&quot;)) ;
+               return 0 ;
+               
+          case IDM_APP_ABOUT:
+               DialogBox (hInst, TEXT (&quot;AboutBox&quot;), hwnd, AboutDlgProc) ;
+               return 0 ;
+          }
+          break ;
+               
+     case WM_CLOSE:
+          if (!bNeedSave || IDCANCEL != AskAboutSave (hwnd, szTitleName))
+               DestroyWindow (hwnd) ;
+          
+          return 0 ;
+
+     case WM_QUERYENDSESSION :
+          if (!bNeedSave || IDCANCEL != AskAboutSave (hwnd, szTitleName))
+               return 1 ;
+          
+          return 0 ;
+          
+     case WM_DESTROY:
+          PopFontDeinitialize () ;
+          PostQuitMessage (0) ;
+          return 0 ;
+          
+     default:
+               // Process &quot;Find-Replace&quot; messages
+          
+          if (message == messageFindReplace)
+          {
+               pfr = (LPFINDREPLACE) lParam ;
+               
+               if (pfr-&gt;Flags &amp; FR_DIALOGTERM)
+                    hDlgModeless = NULL ;
+               
+               if (pfr-&gt;Flags &amp; FR_FINDNEXT)
+                    if (!PopFindFindText (hwndEdit, &amp;iOffset, pfr))
+                         OkMessage (hwnd, TEXT (&quot;Text not found!&quot;), 
+                                          TEXT (&quot;\0&quot;)) ;
+                    
+               if (pfr-&gt;Flags &amp; FR_REPLACE || pfr-&gt;Flags &amp; FR_REPLACEALL)
+                    if (!PopFindReplaceText (hwndEdit, &amp;iOffset, pfr))
+                         OkMessage (hwnd, TEXT (&quot;Text not found!&quot;), 
+                                          TEXT (&quot;\0&quot;)) ;
+                         
+               if (pfr-&gt;Flags &amp; FR_REPLACEALL)
+                    while (PopFindReplaceText (hwndEdit, &amp;iOffset, pfr)) ;
+                              
+               return 0 ;
+          }
+          break ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+
+BOOL CALLBACK AboutDlgProc (HWND hDlg, UINT message, 
+                            WPARAM wParam, LPARAM lParam)
+{
+     switch (message)
+     {
+     case WM_INITDIALOG:
+          return TRUE ;
+          
+     case WM_COMMAND:
+          switch (LOWORD (wParam))
+          {
+          case IDOK:
+               EndDialog (hDlg, 0) ;
+               return TRUE ;
+          }
+          break ;
+     }
+     return FALSE ;
+}
+</PRE>
+</TD></TR></TABLE> 
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="369"><p><H3>POPFILE.C</H3></A><PRE>
+/*------------------------------------------
+   POPFILE.C -- Popup Editor File Functions
+  ------------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &lt;commdlg.h&gt;
+
+static OPENFILENAME ofn ;
+
+void PopFileInitialize (HWND hwnd)
+{
+     static TCHAR szFilter[] = TEXT (&quot;Text Files (*.TXT)\0*.txt\0&quot;)  \
+                               TEXT (&quot;ASCII Files (*.ASC)\0*.asc\0&quot;) \
+                               TEXT (&quot;All Files (*.*)\0*.*\0\0&quot;) ;
+     
+     ofn.lStructSize       = sizeof (OPENFILENAME) ;
+     ofn.hwndOwner         = hwnd ;
+     ofn.hInstance         = NULL ;
+     ofn.lpstrFilter       = szFilter ;
+     ofn.lpstrCustomFilter = NULL ;
+     ofn.nMaxCustFilter    = 0 ;
+     ofn.nFilterIndex      = 0 ;
+     ofn.lpstrFile         = NULL ;          // Set in Open and Close functions
+     ofn.nMaxFile          = MAX_PATH ;
+     ofn.lpstrFileTitle    = NULL ;          // Set in Open and Close functions
+     ofn.nMaxFileTitle     = MAX_PATH ;
+     ofn.lpstrInitialDir   = NULL ;
+     ofn.lpstrTitle        = NULL ;
+     ofn.Flags             = 0 ;             // Set in Open and Close functions
+     ofn.nFileOffset       = 0 ;
+     ofn.nFileExtension    = 0 ;
+     ofn.lpstrDefExt       = TEXT (&quot;txt&quot;) ;
+     ofn.lCustData         = 0L ;
+     ofn.lpfnHook          = NULL ;
+     ofn.lpTemplateName    = NULL ;
+}
+
+BOOL PopFileOpenDlg (HWND hwnd, PTSTR pstrFileName, PTSTR pstrTitleName)
+{
+     ofn.hwndOwner         = hwnd ;
+     ofn.lpstrFile         = pstrFileName ;
+     ofn.lpstrFileTitle    = pstrTitleName ;
+     ofn.Flags             = OFN_HIDEREADONLY | OFN_CREATEPROMPT ;
+     
+     return GetOpenFileName (&amp;ofn) ;
+}
+
+BOOL PopFileSaveDlg (HWND hwnd, PTSTR pstrFileName, PTSTR pstrTitleName)
+{
+     ofn.hwndOwner         = hwnd ;
+     ofn.lpstrFile         = pstrFileName ;
+     ofn.lpstrFileTitle    = pstrTitleName ;
+     ofn.Flags             = OFN_OVERWRITEPROMPT ;
+     
+     return GetSaveFileName (&amp;ofn) ;
+}
+
+BOOL PopFileRead (HWND hwndEdit, PTSTR pstrFileName)
+{
+     BYTE   bySwap ;
+     DWORD  dwBytesRead ;
+     HANDLE hFile ;
+     int    i, iFileLength, iUniTest ;
+     PBYTE  pBuffer, pText, pConv ;
+
+          // Open the file.
+     if (INVALID_HANDLE_VALUE == 
+               (hFile = CreateFile (pstrFileName, GENERIC_READ, FILE_SHARE_READ,
+                                    NULL, OPEN_EXISTING, 0, NULL)))
+          return FALSE ;
+
+          // Get file size in bytes and allocate memory for read.
+          // Add an extra two bytes for zero termination.
+                    
+     iFileLength = GetFileSize (hFile, NULL) ; 
+     pBuffer = malloc (iFileLength + 2) ;
+
+          // Read file and put terminating zeros at end.
+     
+     ReadFile (hFile, pBuffer, iFileLength, &amp;dwBytesRead, NULL) ;
+     CloseHandle (hFile) ;
+     pBuffer[iFileLength] = `\0' ;
+     pBuffer[iFileLength + 1] = `\0' ;
+
+          // Test to see if the text is Unicode
+
+     iUniTest = IS_TEXT_UNICODE_SIGNATURE | IS_TEXT_UNICODE_REVERSE_SIGNATURE ;
+     
+     if (IsTextUnicode (pBuffer, iFileLength, &amp;iUniTest))
+     {
+          pText = pBuffer + 2 ;
+          iFileLength -= 2 ;
+
+          if (iUniTest &amp; IS_TEXT_UNICODE_REVERSE_SIGNATURE)
+          {
+               for (i = 0 ; i &lt; iFileLength / 2 ; i++)
+               {
+                    bySwap = ((BYTE *) pText) [2 * i] ;
+                    ((BYTE *) pText) [2 * i] = ((BYTE *) pText) [2 * i + 1] ;
+                    ((BYTE *) pText) [2 * i + 1] = bySwap ;
+               }
+          }
+
+               // Allocate memory for possibly converted string
+
+          pConv = malloc (iFileLength + 2) ;
+
+               // If the edit control is not Unicode, convert Unicode text to 
+               // non-Unicode (i.e., in general, wide character).
+
+#ifndef UNICODE
+          WideCharToMultiByte (CP_ACP, 0, (PWSTR) pText, -1, pConv, 
+                               iFileLength + 2, NULL, NULL) ;
+
+               // If the edit control is Unicode, just copy the string
+#else
+          lstrcpy ((PTSTR) pConv, (PTSTR) pText) ;
+#endif
+
+     }
+     else      // the file is not Unicode
+     {
+          pText = pBuffer ;
+
+               // Allocate memory for possibly converted string.
+
+          pConv = malloc (2 * iFileLength + 2) ;
+
+               // If the edit control is Unicode, convert ASCII text.
+
+#ifdef UNICODE
+          MultiByteToWideChar (CP_ACP, 0, pText, -1, (PTSTR) pConv, 
+                               iFileLength + 1) ;
+
+               // If not, just copy buffer
+#else
+          lstrcpy ((PTSTR) pConv, (PTSTR) pText) ;
+#endif
+     }
+     
+     SetWindowText (hwndEdit, (PTSTR) pConv) ;
+     free (pBuffer) ;
+     free (pConv) ;
+   
+     return TRUE ;
+}
+
+BOOL PopFileWrite (HWND hwndEdit, PTSTR pstrFileName)
+{
+     DWORD  dwBytesWritten ;
+     HANDLE hFile ;
+     int    iLength ;
+     PTSTR  pstrBuffer ;
+     WORD   wByteOrderMark = 0xFEFF ;
+          // Open the file, creating it if necessary
+     
+     if (INVALID_HANDLE_VALUE == 
+               (hFile = CreateFile (pstrFileName, GENERIC_WRITE, 0, 
+                                    NULL, CREATE_ALWAYS, 0, NULL)))
+          return FALSE ;
+
+          // Get the number of characters in the edit control and allocate
+          // memory for them.
+     
+     iLength = GetWindowTextLength (hwndEdit) ;
+     pstrBuffer = (PTSTR) malloc ((iLength + 1) * sizeof (TCHAR)) ;
+     
+     if (!pstrBuffer)
+     {
+          CloseHandle (hFile) ;
+          return FALSE ;
+     }
+
+          // If the edit control will return Unicode text, write the
+          // byte order mark to the file.
+
+#ifdef UNICODE
+     WriteFile (hFile, &amp;wByteOrderMark, 2, &amp;dwBytesWritten, NULL) ;
+#endif
+
+          // Get the edit buffer and write that out to the file.
+     
+     GetWindowText (hwndEdit, pstrBuffer, iLength + 1) ;
+     WriteFile (hFile, pstrBuffer, iLength * sizeof (TCHAR), 
+                &amp;dwBytesWritten, NULL) ;
+     
+     if ((iLength * sizeof (TCHAR)) != (int) dwBytesWritten)
+     {
+          CloseHandle (hFile) ;
+          free (pstrBuffer) ;
+          return FALSE ;
+     }
+     
+     CloseHandle (hFile) ;
+     free (pstrBuffer) ;
+     
+     return TRUE ;
+}
+</PRE>
+</TD></TR></TABLE> 
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="370"><p><H3>POPFIND.C</H3></A><PRE>
+/*--------------------------------------------------------
+   POPFIND.C -- Popup Editor Search and Replace Functions
+  --------------------------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &lt;commdlg.h&gt;
+#include &lt;tchar.h&gt;            // for _tcsstr (strstr for Unicode &amp; non-Unicode)
+
+#define MAX_STRING_LEN   256
+
+static TCHAR szFindText [MAX_STRING_LEN] ;
+static TCHAR szReplText [MAX_STRING_LEN] ;
+
+HWND PopFindFindDlg (HWND hwnd)
+{
+     static FINDREPLACE fr ;       // must be static for modeless dialog!!!
+     
+     fr.lStructSize      = sizeof (FINDREPLACE) ;
+     fr.hwndOwner        = hwnd ;
+     fr.hInstance        = NULL ;
+     fr.Flags            = FR_HIDEUPDOWN | FR_HIDEMATCHCASE | FR_HIDEWHOLEWORD ;
+     fr.lpstrFindWhat    = szFindText ;
+     fr.lpstrReplaceWith = NULL ;
+     fr.wFindWhatLen     = MAX_STRING_LEN ;
+     fr.wReplaceWithLen  = 0 ;
+     fr.lCustData        = 0 ;
+     fr.lpfnHook         = NULL ;
+     fr.lpTemplateName   = NULL ;
+     
+     return FindText (&amp;fr) ;
+}
+
+HWND PopFindReplaceDlg (HWND hwnd)
+{
+     static FINDREPLACE fr ;       // must be static for modeless dialog!!!
+     
+     fr.lStructSize      = sizeof (FINDREPLACE) ;
+     fr.hwndOwner        = hwnd ;
+     fr.hInstance        = NULL ;
+     fr.Flags            = FR_HIDEUPDOWN | FR_HIDEMATCHCASE | FR_HIDEWHOLEWORD ;
+     fr.lpstrFindWhat    = szFindText ;
+     fr.lpstrReplaceWith = szReplText ;
+     fr.wFindWhatLen     = MAX_STRING_LEN ;
+     fr.wReplaceWithLen  = MAX_STRING_LEN ;
+     fr.lCustData        = 0 ;
+     fr.lpfnHook         = NULL ;
+     fr.lpTemplateName   = NULL ;
+     
+     return ReplaceText (&amp;fr) ;
+}
+
+BOOL PopFindFindText (HWND hwndEdit, int * piSearchOffset, LPFINDREPLACE pfr)
+{
+     int    iLength, iPos ;
+     PTSTR  pstrDoc, pstrPos ;
+     
+          // Read in the edit document
+     
+     iLength = GetWindowTextLength (hwndEdit) ;
+     
+     if (NULL == (pstrDoc = (PTSTR) malloc ((iLength + 1) * sizeof (TCHAR))))
+          return FALSE ;
+     
+     GetWindowText (hwndEdit, pstrDoc, iLength + 1) ;
+     
+          // Search the document for the find string
+     
+     pstrPos = _tcsstr (pstrDoc + * piSearchOffset, pfr-&gt;lpstrFindWhat) ;
+     free (pstrDoc) ;
+     
+          // Return an error code if the string cannot be found
+     
+     if (pstrPos == NULL)
+          return FALSE ;
+     
+          // Find the position in the document and the new start offset
+     
+     iPos = pstrPos - pstrDoc ;
+     * piSearchOffset = iPos + lstrlen (pfr-&gt;lpstrFindWhat) ;
+     
+          // Select the found text
+     
+     SendMessage (hwndEdit, EM_SETSEL, iPos, * piSearchOffset) ;
+     SendMessage (hwndEdit, EM_SCROLLCARET, 0, 0) ;
+     
+     return TRUE ;
+}
+
+BOOL PopFindNextText (HWND hwndEdit, int * piSearchOffset)
+{
+     FINDREPLACE fr ;
+     
+     fr.lpstrFindWhat = szFindText ;
+     
+     return PopFindFindText (hwndEdit, piSearchOffset, &amp;fr) ;
+}
+
+BOOL PopFindReplaceText (HWND hwndEdit, int * piSearchOffset, LPFINDREPLACE pfr)
+{
+          // Find the text
+     
+     if (!PopFindFindText (hwndEdit, piSearchOffset, pfr))
+          return FALSE ;
+     
+          // Replace it
+     
+     SendMessage (hwndEdit, EM_REPLACESEL, 0, (LPARAM) pfr-&gt;lpstrReplaceWith) ;
+     
+     return TRUE ;
+}
+
+BOOL PopFindValidFind (void)
+{
+     return * szFindText != `\0' ;
+}
+</PRE>
+</TD></TR></TABLE> 
+
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="371"><p><H3>POPFONT.C</H3></A><PRE>
+/*------------------------------------------
+   POPFONT.C -- Popup Editor Font Functions
+  ------------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &lt;commdlg.h&gt;
+
+static LOGFONT logfont ;
+static HFONT   hFont ;
+
+BOOL PopFontChooseFont (HWND hwnd)
+{
+     CHOOSEFONT cf ;
+     cf.lStructSize    = sizeof (CHOOSEFONT) ;
+     cf.hwndOwner      = hwnd ;
+     cf.hDC            = NULL ;
+     cf.lpLogFont      = &amp;logfont ;
+     cf.iPointSize     = 0 ;
+     cf.Flags          = CF_INITTOLOGFONTSTRUCT | CF_SCREENFONTS | CF_EFFECTS ;
+     cf.rgbColors      = 0 ;
+     cf.lCustData      = 0 ;
+     cf.lpfnHook       = NULL ;
+     cf.lpTemplateName = NULL ;
+     cf.hInstance      = NULL ;
+     cf.lpszStyle      = NULL ;
+     cf.nFontType      = 0 ;               // Returned from ChooseFont
+     cf.nSizeMin       = 0 ;
+     cf.nSizeMax       = 0 ;
+     
+     return ChooseFont (&amp;cf) ;
+}
+
+void PopFontInitialize (HWND hwndEdit)
+{
+     GetObject (GetStockObject (SYSTEM_FONT), sizeof (LOGFONT), 
+                (PTSTR) &amp;logfont) ;
+
+     hFont = CreateFontIndirect (&amp;logfont) ;
+     SendMessage (hwndEdit, WM_SETFONT, (WPARAM) hFont, 0) ;
+}
+
+void PopFontSetFont (HWND hwndEdit)
+{
+     HFONT hFontNew ;
+     RECT  rect ;
+     
+     hFontNew = CreateFontIndirect (&amp;logfont) ;
+     SendMessage (hwndEdit, WM_SETFONT, (WPARAM) hFontNew, 0) ;
+     DeleteObject (hFont) ;
+     hFont = hFontNew ;
+     GetClientRect (hwndEdit, &amp;rect) ;
+     InvalidateRect (hwndEdit, &amp;rect, TRUE) ;
+}
+
+void PopFontDeinitialize (void)
+{
+     DeleteObject (hFont) ;
+}
+</PRE>
+</TD></TR></TABLE> 
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="372"><p><H3>POPPRNT0.C</H3></A><PRE>
+/*---------------------------------------------------------------
+   POPPRNT0.C -- Popup Editor Printing Functions (dummy version)
+  ---------------------------------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+BOOL PopPrntPrintFile (HINSTANCE hInst, HWND hwnd, HWND hwndEdit,
+                       PTSTR pstrTitleName)
+{
+     return FALSE ;
+}
+</PRE>
+</TD></TR></TABLE> 
+<P> 
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="373"><p><H3>POPPAD.RC (excerpts)</H3></A><PRE>
+//Microsoft Developer Studio generated resource script.
+
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+// Dialog
+
+ABOUTBOX DIALOG DISCARDABLE  32, 32, 180, 100
+STYLE DS_MODALFRAME | WS_POPUP
+FONT 8, &quot;MS Sans Serif&quot;
+BEGIN
+    DEFPUSHBUTTON   &quot;OK&quot;,IDOK,66,80,50,14
+    ICON            &quot;POPPAD&quot;,IDC_STATIC,7,7,20,20
+    CTEXT           &quot;PopPad&quot;,IDC_STATIC,40,12,100,8
+    CTEXT           &quot;Popup Editor for Windows&quot;,IDC_STATIC,7,40,166,8
+    CTEXT           &quot;(c) Charles Petzold, 1998&quot;,IDC_STATIC,7,52,166,8
+END
+
+PRINTDLGBOX DIALOG DISCARDABLE  32, 32, 186, 95
+STYLE DS_MODALFRAME | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
+CAPTION &quot;PopPad&quot;
+FONT 8, &quot;MS Sans Serif&quot;
+BEGIN
+    PUSHBUTTON      &quot;Cancel&quot;,IDCANCEL,67,74,50,14
+    CTEXT           &quot;Sending&quot;,IDC_STATIC,8,8,172,8
+    CTEXT           &quot;&quot;,IDC_FILENAME,8,28,172,8
+    CTEXT           &quot;to print spooler.&quot;,IDC_STATIC,8,48,172,8
+END
+
+/////////////////////////////////////////////////////////////////////////////
+// Menu
+
+POPPAD MENU DISCARDABLE 
+BEGIN
+    POPUP &quot;&amp;File&quot;
+    BEGIN
+        MENUITEM &quot;&amp;New\tCtrl+N&quot;,                IDM_FILE_NEW
+        MENUITEM &quot;&amp;Open...\tCtrl+O&quot;,            IDM_FILE_OPEN
+        MENUITEM &quot;&amp;Save\tCtrl+S&quot;,               IDM_FILE_SAVE
+        MENUITEM &quot;Save &amp;As...&quot;,                 IDM_FILE_SAVE_AS
+        MENUITEM SEPARATOR
+        MENUITEM &quot;&amp;Print\tCtrl+P&quot;,              IDM_FILE_PRINT
+        MENUITEM SEPARATOR
+        MENUITEM &quot;E&amp;xit&quot;,                       IDM_APP_EXIT
+    END
+    POPUP &quot;&amp;Edit&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Undo\tCtrl+Z&quot;,               IDM_EDIT_UNDO
+        MENUITEM SEPARATOR
+        MENUITEM &quot;Cu&amp;t\tCtrl+X&quot;,                IDM_EDIT_CUT
+        MENUITEM &quot;&amp;Copy\tCtrl+C&quot;,               IDM_EDIT_COPY
+        MENUITEM &quot;&amp;Paste\tCtrl+V&quot;,              IDM_EDIT_PASTE
+        MENUITEM &quot;De&amp;lete\tDel&quot;,                IDM_EDIT_CLEAR
+        MENUITEM SEPARATOR
+        MENUITEM &quot;&amp;Select All&quot;,                 IDM_EDIT_SELECT_ALL
+    END
+    POPUP &quot;&amp;Search&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Find...\tCtrl+F&quot;,            IDM_SEARCH_FIND
+        MENUITEM &quot;Find &amp;Next\tF3&quot;,              IDM_SEARCH_NEXT
+        MENUITEM &quot;&amp;Replace...\tCtrl+R&quot;,         IDM_SEARCH_REPLACE
+    END
+    POPUP &quot;F&amp;ormat&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Font...&quot;,                    IDM_FORMAT_FONT
+    END
+    POPUP &quot;&amp;Help&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Help&quot;,                       IDM_HELP
+        MENUITEM &quot;&amp;About PopPad...&quot;,            IDM_APP_ABOUT
+    END
+END
+
+/////////////////////////////////////////////////////////////////////////////
+// Accelerator
+
+POPPAD ACCELERATORS DISCARDABLE 
+BEGIN
+    VK_BACK,        IDM_EDIT_UNDO,          VIRTKEY, ALT, NOINVERT
+    VK_DELETE,      IDM_EDIT_CLEAR,         VIRTKEY, NOINVERT
+    VK_DELETE,      IDM_EDIT_CUT,           VIRTKEY, SHIFT, NOINVERT
+    VK_F1,          IDM_HELP,               VIRTKEY, NOINVERT
+    VK_F3,          IDM_SEARCH_NEXT,        VIRTKEY, NOINVERT
+    VK_INSERT,      IDM_EDIT_COPY,          VIRTKEY, CONTROL, NOINVERT
+    VK_INSERT,      IDM_EDIT_PASTE,         VIRTKEY, SHIFT, NOINVERT
+    &quot;^C&quot;,           IDM_EDIT_COPY,          ASCII,  NOINVERT
+    &quot;^F&quot;,           IDM_SEARCH_FIND,        ASCII,  NOINVERT
+    &quot;^N&quot;,           IDM_FILE_NEW,           ASCII,  NOINVERT
+    &quot;^O&quot;,           IDM_FILE_OPEN,          ASCII,  NOINVERT
+    &quot;^P&quot;,           IDM_FILE_PRINT,         ASCII,  NOINVERT
+    &quot;^R&quot;,           IDM_SEARCH_REPLACE,     ASCII,  NOINVERT
+    &quot;^S&quot;,           IDM_FILE_SAVE,          ASCII,  NOINVERT
+    &quot;^V&quot;,           IDM_EDIT_PASTE,         ASCII,  NOINVERT
+    &quot;^X&quot;,           IDM_EDIT_CUT,           ASCII,  NOINVERT
+    &quot;^Z&quot;,           IDM_EDIT_UNDO,          ASCII,  NOINVERT
+END
+
+/////////////////////////////////////////////////////////////////////////////
+// Icon
+
+POPPAD                  ICON    DISCARDABLE     &quot;poppad.ico&quot;
+</PRE>
+</TD></TR></TABLE> 
+<P> 
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="374"><p><H3>RESOURCE.H (excerpts)</H3></A><PRE>
+// Microsoft Developer Studio generated include file.
+// Used by poppad.rc
+
+#define IDC_FILENAME                    1000
+#define IDM_FILE_NEW                    40001
+#define IDM_FILE_OPEN                   40002
+#define IDM_FILE_SAVE                   40003
+#define IDM_FILE_SAVE_AS                40004
+#define IDM_FILE_PRINT                  40005
+#define IDM_APP_EXIT                    40006
+#define IDM_EDIT_UNDO                   40007
+#define IDM_EDIT_CUT                    40008
+#define IDM_EDIT_COPY                   40009
+#define IDM_EDIT_PASTE                  40010
+#define IDM_EDIT_CLEAR                  40011
+#define IDM_EDIT_SELECT_ALL             40012
+#define IDM_SEARCH_FIND                 40013
+#define IDM_SEARCH_NEXT                 40014
+#define IDM_SEARCH_REPLACE              40015
+#define IDM_FORMAT_FONT                 40016
+#define IDM_HELP                        40017
+#define IDM_APP_ABOUT                   40018
+</pre>
+</TD></TR></TABLE> 
+
+<A NAME="375"><p><H3>POPPAD.ICO</H3></A>
+<P><IMG SRC="F11zg11a.GIF" width=205 height=205 ALIGN="BOTTOM">
+<P><IMG SRC="F11zg11b.GIF" width=109 height=109 ALIGN="BOTTOM">
+
+<P>To avoid duplicating source code in <a href="ch13a.htm#401">Chapter 13</a>, I've added printing to the menu 
+in POPPAD.RC along with some other support.
+<P>POPPAD.C contains all the basic source code for the program. POPFILE.C has the 
+code to invoke the File Open and File Save dialog boxes, and it also contains the file I/O 
+routines. POPFIND.C contains the search-and-replace logic. POPFONT.C has the font 
+selection logic. POPPRNT0.C doesn't do much: POPPRNT0.C will be replaced with 
+
+POPPRNT.C in <a href="ch13a.htm#401">Chapter 13</a> to create the final POPPAD program.
+<P>Let's look at POPPAD.C first. POPPAD.C maintains two filename strings: The 
+first, stored in <I>WndProc</I> using the name 
+<I>szFileName</I>, is the fully qualified drive, path, 
+and filename. The second, stored as 
+<I>szTitleName</I>, is the filename by itself. This is used in 
+
+the <I>DoCaption</I> function in POPPAD3 to display the filename in the title bar of the window 
+and is used in the <I>OKMessage</I> and 
+<I>AskAboutSave</I> functions to display message boxes to the user.
+<P>POPFILE.C contains several functions to display the File Open and File Save 
+dialog boxes and to perform the actual file I/O. The dialog boxes are displayed using the 
+functions <I>GetOpenFileName</I> and 
+<I>GetSaveFileName</I>. Both of these functions use a structure 
+of type OPENFILENAME, defined in COMMDLG.H. In POPFILE.C, a global variable 
+named <I>ofn</I> is used for this structure. Most of the fields of 
+<I>ofn</I> are initialized in the 
+<I>PopFileInitialize</I> function, which POPPAD.C calls when processing the WM_CREATE message in 
+<I>WndProc</I>.
+<P>It's convenient to make <I>ofn</I> a static global structure because 
+<I>GetOpenFileName</I> and <I>GetSaveFileName</I> return some information to the structure that should be used in 
+subsequent calls to these functions.
+<P>Although common dialog boxes have a lot of options&#8212;including setting your 
+own dialog box template and hooking into the dialog box procedure&#8212;my use of the File 
+Open and File Save dialog boxes in POPFILE.C is quite basic. The only fields of the 
+OPENFILENAME structure that are set are 
+<I>lStructSize</I> (the size of the structure), 
+<I>hwndOwner</I> (the dialog box's owner), 
+<I>lpstrFilter</I> (which I'll discuss shortly), 
+<I>lpstrFile</I> and <I>nMaxFile</I> (a pointer to a 
+buffer to receive the fully qualified filename and the size of that buffer), 
+<I>lpstrFileTitle</I> and <I>nMaxFileTitle</I> (a buffer and its size for the filename by itself), 
+<I>Flags</I> (which sets options for the dialog box), and 
+<I>lpstrDefExt</I> (which is set to a text string containing the default 
+filename extension if the user does not specify one when typing a filename in the dialog box).
+<P>When the user selects Open from the File menu, POPPAD3 calls POPFILE's 
+<I>PopFileOpenDlg</I> function, passing to it the window handle, a pointer to the filename buffer, 
+and a pointer to the file title buffer. 
+<I>PopFileOpenDlg</I> sets the <I>hwndOwner</I>, 
+<I>lpstrFile</I>, and <I>lpstrFileTitle</I> fields of the OPENFILENAME structure appropriately, sets 
+<I>Flags</I> to OFN_ CREATEPROMPT, and then calls 
+<I>GetOpenFileName</I>, which displays the familiar dialog 
+box shown in Figure 11-12.
+<P><A HREF="javascript:fullSize('F11zg12x.htm')"><IMG SRC="F11zg12.JPG" width=404 height=285 ALIGN="BOTTOM" border=0 ALT="Click to view at full size."></a>
+<P><!-- caption --><B>Figure 11-12.</b> <i>The File Open dialog box.</I><!-- /caption -->
+<P>When the user ends this dialog box, the 
+<I>GetOpenFileName</I> function returns. The OFN_CREATEPROMPT flag instructs 
+<I>GetOpenFileName</I> to display a message box 
+asking the user whether the file should be created if the selected file does not exist.
+<P>The combo box in the lower left corner lists the types of files that will be 
+displayed in the file list. This is known as a &quot;filter.&quot; The user can change the filter by selecting 
+another file type from the combo box list. In the 
+<I>PopFileInitialize</I> function in POPFILE.C, I define a filter in the variable 
+<I>szFilter</I> (an array of character strings) for three types of 
+files: text files with the extension .TXT, ASCII files with the extension .ASC, and all files. A 
+pointer to the first string in this array is set to the 
+<I>lpstrFilter</I> field of the OPENFILENAME structure.
+<P>If the user changes the filter when the dialog box is active, the 
+<I>nFilterIndex</I> field of OPENFILENAME reflects the user's 
+choice. Because the structure is stored as a static 
+variable, the next time the dialog box is invoked the filter will be set to the selected file type.
+<P>The <I>PopFileSaveDlg</I> function in POPFILE.C is similar. It sets the Flags parameter 
+to OFN_OVERWRITEPROMPT and calls 
+<I>GetSaveFileName</I> to invoke the File Save dialog 
+box. The OFN_OVERWRITEPROMPT flag causes a message box to be displayed asking the 
+user whether a file should be overwritten if the selected file already exists.
+
+<A NAME="376"><h2>Unicode File I/O</h2></A><P>In many of the programs in this book, you may never notice a difference between 
+the Unicode and non-Unicode versions. In the Unicode version of POPPAD3, for 
+example, the edit control maintains Unicode text and all the common dialog boxes use Unicode 
+text strings. When the program needs to do a search-and-replace, for example, the entire 
+operation is done with Unicode strings with no conversion necessary.
+<P>However, POPPAD3 does file I/O, and that means that the program is not 
+entirely self-enclosed. If the Unicode version of POPPAD3 obtains the contents of the edit 
+buffer and writes it out to the disk, that file will be in Unicode. If the non-Unicode version 
+of POPPAD3 reads that file and puts it into its edit buffer, the result will be garbage. The 
+same goes for files saved by the non-Unicode version and read by the Unicode version.
+<P>The solution involves identification and conversion. First, in the 
+<I>PopFileWrite</I> function in POPFILE.C, you'll see that the Unicode version of the program writes out the 
+word 0xFEFF at the beginning of the file. This is defined as a byte order mark, indicating 
+that the text file actually contains Unicode text. 
+<P>Secondly, in the <I>PopFileRead</I> function, the program uses the 
+<I>IsTextUnicode</I> functions to determine whether the file contains the byte order mark. The function even checks 
+to see if the byte order mark is reversed, which means that a Unicode text file was 
+created on a Macintosh or other machine that used the opposite byte order from Intel 
+processors. In this case, every pair of bytes is reversed. If the file is Unicode but it's being read by 
+the non-Unicode version of POPPAD3, then the text is converted by 
+<I>WideCharToMultiChar</I>, which is really a wide-char-to-ANSI function (unless you're running a Far East version 
+of Windows). Only then can the text be put into the edit buffer.
+<P>Similarly, if the file is a non-Unicode text file but the Unicode version of the 
+program is running, the text must be converted using 
+<I>MultiCharToWideChar</I>.
+
+<A NAME="377"><h2>Changing the Font</h2></A><P>We'll be looking at fonts in more detail in <a href="ch17a.htm#600">Chapter 17</a>, but nothing quite beats the 
+common dialog box functions for choosing fonts.
+<P>During the WM_CREATE message, POPPAD calls 
+<I>PopFontInitialize</I> in POPFONT.C. This function obtains a LOGFONT structure based on the system font, creates a font 
+from it, and sends a WM_SETFONT message to the edit control to set a new font. (Although 
+the default edit control font is the system font, the 
+
+<I>PopFontInitialize</I> function creates a new font for the edit control because eventually the font will be deleted and it wouldn't be 
+wise to delete the stock system font.)
+<P>When POPPAD receives a WM_COMMAND message for the program's font 
+option, it calls <I>PopFontChooseFont</I>. This function initializes a CHOOSEFONT structure and 
+then calls <I>ChooseFont</I> to display the font selection dialog box. If the user presses the OK 
+button, <I>ChooseFont</I> will return TRUE. POPPAD then calls 
+<I>PopFontSetFont</I> to set the new font in the edit control. The old font is deleted.
+<P>Finally, during the WM_DESTROY message, POPPAD calls 
+<I>PopFontDeinitialize</I> to delete the last font that 
+<I>PopFontSetFont</I> created.
+
+<A NAME="378"><h2>Search and Replace</h2></A><P>The common dialog box library also includes two dialog boxes for the text search 
+and replace functions. These two functions 
+(<I>FindText</I> and <I>ReplaceText</I>) use a structure of 
+type FINDREPLACE. The POPFIND.C file, shown in Figure 10-11, has two routines 
+(<I>PopFindFindDlg</I> and 
+<I>PopFindReplaceDlg</I>) to call these functions, and it also has a couple of 
+functions to search through the text in the edit control and to replace text.
+<P>There are a few considerations with using the search and replace functions. 
+First, the dialog boxes they invoke are modeless dialog boxes, which means you should 
+alter your message loop to call 
+<I>IsDialogMessage</I> when the dialog boxes are active. 
+Second, the FINDREPLACE structure you pass to 
+<I>FindText</I> and <I>ReplaceText</I> must be a static 
+variable; because the dialog box is modal, the functions return after the dialog box is 
+displayed rather than after it's destroyed. Nevertheless, the dialog box procedure must be able 
+to continue to access the structure.
+<P>Third, while the <I>FindText</I> and 
+<I>ReplaceText</I> dialogs are displayed, they 
+communicate with the owner window through a special message. The message number can be 
+obtained by calling the 
+<I>RegisterWindowMessage</I> function with the FINDMSGSTRING parameter. 
+This is done while processing the WM_CREATE message in 
+<I>WndProc</I>, and the message number is stored in a static variable.
+<P>While processing the default message case, 
+<I>WndProc</I> compares the message variable with the value returned from 
+<I>RegisterWindowMessage</I>. The <I>lParam</I> message parameter 
+is a pointer to the FINDREPLACE structure, and the Flags field indicates whether the user 
+has used the dialog box to find text or replace text or whether the dialog box is 
+terminating. POPPAD3 calls the 
+<I>PopFindFindText</I> and 
+<I>PopFindReplaceText</I> functions in POPFIND.C 
+to perform the search and replace functions.
+
+<A NAME="379"><h2>The One-Function-Call Windows Program</h2></A><P>So far I've shown two programs that let you view selected colors: COLORS1 in Chapter 
+9 and COLORS2 in this chapter. Now it's time for COLORS3, a program that makes only 
+one Windows function call. The COLORS3 source code is shown in Figure 11-13.
+<P>The one Windows function that COLORS3 calls is 
+<I>ChooseColor</I>, another function in the common dialog box library. It displays the dialog box shown in Figure 11-14. Color selection is similar to that in COLORS1 and COLORS2, but it's 
+somewhat more interactive.
+<P><B>Figure 11-13.</b> <i>The COLORS3 program.</i>
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<A NAME="380"><H3>COLORS3.C</H3></A><pre>
+/*----------------------------------------------
+   COLORS3.C -- Version using Common Dialog Box
+                (c) Charles Petzold, 1998
+  ----------------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &lt;commdlg.h&gt;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static CHOOSECOLOR cc ;
+     static COLORREF    crCustColors[16] ;
+
+     cc.lStructSize    = sizeof (CHOOSECOLOR) ;
+     cc.hwndOwner      = NULL ;
+     cc.hInstance      = NULL ;
+     cc.rgbResult      = RGB (0x80, 0x80, 0x80) ;
+     cc.lpCustColors   = crCustColors ;
+     cc.Flags          = CC_RGBINIT | CC_FULLOPEN ;
+     cc.lCustData      = 0 ;
+     cc.lpfnHook       = NULL ;
+     cc.lpTemplateName = NULL ;
+
+     return ChooseColor (&amp;cc) ;
+}
+</pre>
+</TD></TR></TABLE>
+
+<p><A HREF="javascript:fullSize('F11zg14x.htm')"><IMG SRC="F11zg14.JPG" width=404 height=289 ALIGN="BOTTOM" border=0 ALT="Click to view at full size."></a>
+<P><!-- caption --><B>Figure 11-14.</b> <i>The COLORS3 display.</I><!-- /caption -->
+<P>The <I>ChooseColor</I> function uses a structure of type CHOOSECOLOR and an array 
+of 16 DWORDs to store custom colors that the user selects from the dialog box. The 
+<I>rgbResult</I> field can be initialized to a color value that will be displayed if the CC_RGBINIT flag is 
+set in the <I>Flags </I>field. When using the function normally, the 
+<I>rgbResult</I> field will be set to the color that the user selects.
+<P>Notice that the <I>hwndOwner</I> field of the Color dialog box is set to NULL. When 
+the <I>ChooseColor</I> function calls 
+<I>DialogBox</I> to display the dialog box, the third parameter 
+to <I>DialogBox</I> is also set to NULL. This is perfectly legitimate. It means that the dialog box 
+is not owned by another window. The caption in the dialog box will appear in the Task 
+List, and the dialog box will seem to function much like a normal window.
+<P>You can also use this technique with your own dialog boxes in your own 
+programs. It's possible to make a Windows program that creates only a dialog box and does all 
+processing within the dialog box procedure.
+</BODY>
+</HTML>
+
+
+
+
+

@@ -1,0 +1,136 @@
+<HTML>
+<HEAD>
+<TITLE>Restricted Tokens</TITLE>
+<link rel="STYLESHEET" type="text/css" href="prosrvwin.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR = "#ffffff">
+<A HREF="ch11e.htm">[Previous]</A> <A HREF="ch12a.htm">[Next]</A><P>
+
+<A NAME="248"><h1>Restricted Tokens</h1></A>
+<p>As I mentioned earlier, it is impossible for your service or any application to build a token from scratch&#8212;the system must build it for you. But Windows will allow you to create a new token, based on an existing token, with some additional restrictions. This new token is known as a <i>restricted token</i>. The restricted token can help your software meet some complex security needs with a very clean solution.</p>
+
+<p>When you create a restricted token, you are not adding restrictions to an existing token. Instead you are using a token as a kind of template to create a new token, although this new token has additional restrictions. There are three restrictions that you can place on your token. Each restriction is optional, and you can choose any combination of them in the creation of your new token. Two of the restrictions rely on knowledge of access control, which I covered in detail in <A HREF="ch10a.htm">Chapter 10</A>. You can perform any combination of the following actions on a token to create a new restricted token:</p>
+
+
+<ul>
+<p><li>Delete privileges</li></p>
+
+<p><li>Disable token SIDs for trustee accounts</li></p>
+
+<p><li>Add &quot;restricted SIDs&quot; of trustee accounts</li></p>
+</ul>
+
+
+<A NAME="249"><h2>Deleting Privileges</h2></A>
+<p>When creating a restricted token, you can choose a set of privileges that you do <i>not</i> want granted to the new token, which is not the same as disabling privileges. Rather, you are explicitly removing a privilege from the new token. There might be situations in which you want to use an existing security context but delete certain privileges. For example, you might use your own security context or one received via impersonation and remove the SE_SHUTDOWN_NAME or SE_TCB_NAME privileges.</p>
+
+<A NAME="250"><h2>Disabling Token SIDs</h2></A>
+<p>When creating a restricted token, you can select which of the trustees in the existing token will be disabled. The disabled trustees can be any combination of the token user and the groups of which the user is a member. Any trustees whose SIDs are selected to be added to the disabled list will be used for denied access only, when access checks are performed.</p>
+
+<p>For example, suppose the token user's membership in the TEMP USERS group awarded the user access to the C:\Temp directory while denying the user access to the C:\Permanent directory. If the SID for the TEMP USERS group was selected to be a disabled SID in a restricted token, membership in the TEMP USERS group would no longer allow access to the C:\Temp directory, but it would still deny access to the C:\Permanent directory.</p>
+
+<p>You can disable only those SIDs that already exist in the source token, and disabling trustees in a token does not in any way affect the identity of the token. Disabling the token user, for example, only affects access to objects. The token still identifies that particular user.</p>
+
+<A NAME="251"><h2>Adding Restricted SIDs</h2></A>
+<p>In addition to disabling existing SIDs, you can create a set of trustees, or SIDs, known as <i>restricted SIDs</i>, to dynamically add to your new token. You might be thinking that the ability to dynamically add a trustee to a token is awfully powerful. But the catch is that the new SIDs are used as a cross-check for access to a securable object. Not only does an access check have to clear the token's &quot;natural&quot; trustees before access can be granted, but it also has to clear the new set of restricted trustees.</p>
+
+<p>Using restricted SIDs is similar to creating a second token and making sure that both tokens have access to a securable object before performing an action on the object. But with restricted tokens, this second check is handled automatically for you by the system. Restricted SIDs change access checks somewhat in that they must actually be performed twice: once for the natural SIDs in the token and once for the restricted SIDs. Only when both succeed is the access check granted. (See <A HREF="ch10a.htm">Chapter 10</A> for a detailed discussion of access checks.)</p>
+
+<p>Now you are familiar with the restrictions you can apply to your new restricted copy of a token. Let's look at the function that creates the token, <i>CreateRestrictedToken</i>:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+BOOL CreateRestrictedToken(
+   HANDLE               hExistingTokenHandle,
+   DWORD                dwFlags,
+   DWORD                dwDisableSidCount,
+   PSID_AND_ATTRIBUTES  pSidsToDisable,
+   DWORD                dwDeletePrivilegeCount,
+   PLUID_AND_ATTRIBUTES pPrivilegesToDelete,
+   DWORD                dwRestrictedSidCount,
+   PSID_AND_ATTRIBUTES  pSidsToRestrict,
+   PHANDLE              phNewTokenHandle);
+</pre></td></tr></table>
+</p>
+
+<p>The <i>hExistingTokenHandle</i> parameter is the source token from which the new token will be created. <i>CreateRestrictedToken</i> creates a new token based on the token whose handle is passed as the <i>hExistingTokenHandle</i> parameter. The handle must have TOKEN_DUPLICATE access. Any token is legal as the source token for a restricted token with the exception of a token that already has a list of restricting SIDs. You can ascertain whether a token contains restricted SIDs by passing its handle to the <i>IsTokenRestricted</i> function:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+BOOL IsTokenRestricted(
+   HANDLE TokenHandle);
+</pre></td></tr></table>
+</p>
+
+<p>You can pass DISABLE_MAX_PRIVILEGE as the <i>dwFlags</i> parameter if you want the new token to allow only functionality that requires no privileges. You can pass zero if you want to delete only a subset of the privileges. Passing zero is the more common case.</p>
+
+<p>The <i>dwDisableSidCount</i> parameter indicates the number of trustees you want to ensure are disabled in the new token. The next parameter, <i>pSidsToDisable</i>, points to an array of SID_AND_ATTRIBUTES structures indicating the groups (as well as perhaps the token user) to disable in the new token. The <i>dwDisableSidCount</i> parameter refers to the number of entries passed as this parameter. Disabled SIDs are characterized by the existence of the SE_GROUP_USE_FOR_DENY_ONLY attributes information for the SID in the new token.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+You can pass a superset of the trustees represented in the source token as the <i>pSidsToDisable</i> parameter. The system will ignore any SIDs not in the source token. In this way you can generically apply a single list of disabled SIDs to more than one token with different underlying token users and groups.</blockquote>
+</div>
+</p>
+
+<p>The SID_AND_ATTRIBUTES structure is defined as follows:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+typedef struct _SID_AND_ATTRIBUTES { 
+   PSID  Sid; 
+   DWORD Attributes; 
+} SID_AND_ATTRIBUTES ;
+</pre></td></tr></table>
+</p>
+
+<p>The <i>Attributes</i> member of the structure is ignored by <i>CreateRestrictedToken</i>. Other functions such as <i>GetTokenInformation</i> use the <i>Attributes</i> member to report attributes of a SID such as SE_GROUP_USE_FOR_DENY_ONLY and SE_GROUP_MANDATORY. The <i>Sid</i> member of SID_AND_ATTRIBUTES points to a SID structure indicating the trustee that you wish to disable in the new token.</p>
+
+<p>Your server should pass a fully populated array of SID_AND_ATTRIBUTES structures as the <i>pSidsToDisable</i> parameter of <i>CreateRestrictedToken</i>. If you do not want to disable any trustees in your new token, you should pass zero for the <i>dwDisableSidCount</i> and NULL for the <i>pSidsToDisable</i> parameter.</p>
+
+<p>The <i>dwDeletePrivilegeCount</i> and <i>pPrivilegesToDelete</i> parameters of <i>CreateRestrictedToken</i> work similarly to the &quot;disabled SID&quot; parameters, except that <i>pPrivilegesToDelete</i> points to an array of LUID_AND_ATTRIBUTES structures. As with disabled SIDs, passing zero and NULL for <i>dwDeletePrivilegeCount</i> and <i>pPrivilegesToDelete</i> is appropriate when you don't want to delete any privileges. For a detailed discussion of the LUID_AND_ATTRIBUTES structure, refer to the section &quot;<A HREF="ch11d.htm#242">Adjusting a Token's Privileges</A>&quot; earlier in this chapter.</p>
+
+<p>The <i>dwRestrictedSidCount</i> and <i>pSidsToRestrict</i> parameters represent the count and the array of the trustees that you want to add as &quot;restricted SIDs&quot; to the new token, respectively. You should use the same rules applied to <i>dwDisableSidCount</i> and <i>pSidsToDisable</i> to build your restricted trustee list. Remember that you are not required to include any restricted SIDs in your new token. If no restricted SIDs are desired, pass zero for the <i>dwRestrictedSidCount</i> parameter.</p>
+
+<p>The difference between the disabled SIDs array that you pass to <i>CreateRestrictedToken</i> and the restricted SIDs array is that with restricted SIDs the function does not ignore trustees that do not exist in the original token. In fact, you will often include trustees not included in the original token to further restrict access checks.</p>
+
+<p>The last parameter of <i>CreateRestrictedToken</i>, named <i>phNewTokenHandle</i>, points to a HANDLE variable, which receives a handle to the new, restricted token.</p>
+
+<p><i>CreateRestrictedToken</i> is a powerful function allowing you flexible restriction of existing tokens. Consider, for example, the following scenario, which illustrates this flexibility. Imagine that you wanted to secure a group of objects for which you explicitly allow or deny users certain access, in a somewhat unorthodox manner. You want to restrict access to some objects only on Tuesdays, regardless of what the typical access is for this object. You can take the following steps to implement this functionality without undermining the typical non-Tuesday access to the objects. Here are the administrative tasks:</p>
+
+<ol>
+<p><li>Create a user account named Tuesday for the sole purpose of adding restrictions to securable objects.</li></p>
+
+<p><li>Modify the objects' DACLs to include the restrictions desired on Tuesdays. Assign these access-denied ACEs to the SID of the Tuesday account.</li></p>
+</ol>
+
+<p>Here are the server tasks:</p>
+
+<ol>
+<p><li>When a user connects to your server, use the <i>GetSystemTime</i> function to determine whether it is Tuesday.</li></p>
+
+<p><li>If it is Tuesday, rather than use the impersonation token for the user, create a restricted token before executing code on behalf of the client.</li></p>
+
+<p><li>Build a list of restricting SIDs that matches the groups in the source token, and include the user SID for the token. Additionally include in the list of restricting SIDs an entry for the Tuesday trustee.</li></p>
+
+<p><li>Impersonate the new restricted token using <i>ImpersonateLoggedOnUser</i>.</li></p>
+</ol>
+
+<p>Using this process you can easily enforce additional restrictions without requiring a change to the access control of all of your secured objects every Tuesday.</p>
+
+<p>The TokenMaster sample application allows you to retrieve a token and then create a restricted version of the token. You can use this restricted version to launch applications. This can be a very useful tool in furthering your understanding of restricted tokens.</p>
+
+<p>After reading this chapter, you are familiar with tools and techniques that allow your software to maintain and manage a sense of identity in a flexible manner that is consistent with the Windows access control model. Your software will greatly benefit from your understanding of the token as the system's way of enforcing user context. Your software will also greatly benefit from your knowledge of impersonation, which allows you to act on behalf of your client. (<A HREF="ch12a.htm">Chapter 12</A> takes this topic to the next level with the SSPI.) The restricted token is another powerful feature you can use in secure projects that require a great deal of flexibility in their access control.</p>
+
+<p>The better you understand the features discussed in this chapter, as well as the capabilities and features covered in the last two chapters, the better you will be able to design software that makes security work for you.</p>
+
+</body>
+</html>
+
+
+
+
+

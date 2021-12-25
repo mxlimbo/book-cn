@@ -1,0 +1,1160 @@
+<HTML>
+ <HEAD>
+	<LINK REL=StyleSheet HREF="prowice.css" TYPE="text/css">
+<TITLE>Writing an Input Method</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="480"><H1>Writing an Input Method</H1></A>
+
+<P>Up to this point, I've talked only about the application side of dealing with SIPs. You can also design your own input method rather easily. An input method is merely a COM object that exports an <I>IInputMethod</I> interface and creates an input method window in response to requests from the input panel.
+
+<A NAME="481"><H2>The Components of a SIP</H2></A>
+
+<P>A SIP is composed of two main components&#8212;the input panel and the input method. The input panel is supplied by the system. It creates the input panel window, provides the message loop processing for the SIP, and the window procedure for the input panel window. The input panel cooperates with the taskbar or other shell program to provide the user with the ability to switch between a number of installed input methods.
+
+<P>The input method is the installable portion of the SIP. It's responsible for translating pen strokes and taps into keyboard input. It's also responsible for the look and feel of the SIP while it's selected. In almost all cases, the input method creates a window that's a child of the input panel window. Within that child window, the input method draws its interface and interprets mouse messages. The input method then calls back to the input panel when it wants to generate a key event.
+
+<P>Each of these two components implements a COM interface that becomes the interface between them. The input method implements an <I>IInputMethod</I> interface, while the input panel implements an <I>IIMCallback</I> interface. In the interaction between the input panel and the input method, the input panel drives the interaction. For the most part, the input method simply responds to calls made to its <I>IInputMethod</I> methods. Calls are made when the input method is loaded, when it's unloaded, and when it's shown or hidden. In response, the input method must draw in its child window, interpret the user's actions, and call methods in the <I>IIMCallback</I> interface to send keys to the system or to control the input panel's window.
+
+<P>Input methods are implemented as COM in-proc servers. Because of this, they must conform to the standard COM in-proc server specifications. This means that an input method is implemented as a DLL that exports <I>DllGetClassObject</I> and <I>DllCanUnloadNow</I> functions. Input methods must also export <I>DllRegisterServer</I> and <I>DllUnregisterServer </I>functions that perform the necessary registry registration and unregistration for the server DLL.
+
+<A NAME="482"><H2>Threading Issues with Input Methods</H2></A>
+
+<P>Because the input panel and input method components are so tightly interrelated, you must follow a few rules when writing an input method. While it's permissible to use multiple threads in an input method, the interaction between the input panel and the input method is strictly limited to the input panel's primary thread. This means that the input method should create any windows during calls to methods in the <I>IInputMethod</I> interface. This ensures that these windows will use the same message loop as the input panel's window. This, in turn, allows the input panel to directly call the input method's window procedures, as necessary. In addition, that same thread should make all calls made back to the <I>IIMCallback</I> interface.
+
+<P>In short, try not to multithread your input method. If you must, create all windows in your input method using the input panel's thread. Secondary threads can be created, but they can't call the <I>IIMCallbac</I>k interface and they shouldn't create any windows.
+
+<A NAME="483"><H2>The <I>IInputMethod</I> Interface</H2></A>
+<P>The <I>IInputMethod</I> interface is the core of an IM. Using the interface's methods, an IM should create any windows, react to any changes in the parent input panel window, and provide any cleanup when it's released. The <I>IInputMethod</I> interface exports the following methods in addition to the standard <I>IUnknown</I> methods:
+
+<UL>
+<P><LI><I>IInputMethod::Select</I> The user has selected the IM. The IM should create its window.
+<P><LI><I>IInputMethod::Deselect</I> The user has selected another IM. The IM should destroy its window.
+<P><LI><I>IInputMethod::Showing</I> The IM window is about to be displayed.
+<P><LI><I>IInputMethod::Hiding</I> The IM window is about to be hidden.
+<P><LI><I>IInputMethod::GetInfo</I> The system is querying the IM for information.
+<P><LI><I>IInputMethod::ReceiveSipInfo</I> The system is providing information to the IM.
+<P><LI><I>IInputMethod::RegisterCallback</I> The system is providing a pointer to the <I>IIMCallback</I> interface.
+<P><LI><I>IInputMethod::GetImData</I> The IM is queried for IM-specific data.
+<P><LI><I>IInputMethod::SetImData</I> The IM is provided IM-specific data.
+<P><LI><I>IInputMethod::UserOptionsDlg</I> The IM should display an options dialog box to support the SIP control panel applet.
+</UL>
+
+<P>Let's now look at these methods in detail so that we can understand the processing necessary for each.
+
+<A NAME="484"><h3><I>IInputMethod::Select</I></h3></A>
+
+<P>When the user chooses your input method, the DLL that contains your IM is loaded and the <I>Select </I>method is called. This method is prototyped as
+
+<p><pre>
+HRESULT IInputMethod::Select (HWND hwndSip);
+</PRE>
+
+<P>The only parameter is the handle to the SIP window that's the parent of your input method's main window. You should return S_OK to indicate success or E_FAIL if you can't create and initialize your input method successfully.
+
+<P>When the <I>Select</I> method is called, the IM will have just been loaded into memory and you'll need to perform any necessary initialization. This includes registering any window classes and creating the input method window. The IM should be created as a child of the SIP window because it's the SIP window that will be shown, hidden, and moved in response to user action. You can call <I>GetClientRect</I> with the parent window handle to query the necessary size of your input window.
+
+<A NAME="485"><h3><I>IInputMethod::GetInfo</I></H3></A>
+
+<P>After the input panel has loaded your IM, it calls the <I>GetInfo</I> method. The input panel calls this method to query the bitmaps that represent the IM. These bitmaps appear in the SIP button on the taskbar. In addition, the IM can provide a set of flags and the size and location on the screen where it would like to be displayed. This method is prototyped as
+
+<p><pre>
+HRESULT IInputMethod::GetInfo (IMINFO *pimi);
+</PRE>
+
+<P>The only parameter is a pointer to an IMINFO structure that the IM must fill out to give information back to the SIP. The IMINFO structure is defined as
+
+<p><pre>
+typedef struct  {
+    DWORD cbSize;
+    HANDLE hImageNarrow;
+    HANDLE hImageWide;
+    int iNarrow;
+    int iWide;
+    DWORD fdwFlags;
+    RECT rcSipRect;
+} IMINFO;
+</PRE>
+
+<P>The first field, <I>cbSize</I>, must be filled with the size of the IMINFO structure. 
+The next two fields, <I>hImageNarrow</I> and 
+<I>hImageWide</I>, should be filled with handles 
+to image lists that contain the bitmaps that will appear on the taskbar SIP button. 
+The wide image is a 32-by-16-pixel bitmap that's used when the shell has room to 
+display the wide SIP button on the taskbar. When space on the taskbar is constrained, 
+the system narrows the SIP button and displays the 16-by-16 bitmap from the 
+Narrow image list. The input method must create these image lists and pass the handles 
+in this structure. The IM is responsible for destroying the image lists when a user or 
+an application unloads it. You can create these image lists in the 
+<I>GetInfo</I> method, as long as you design your application to know not to create the image lists twice if 
+<I>GetInfo</I> is called more than once. Another strategy is to create the image lists in the 
+<I>Select </I>method and store the handles as member variables of the 
+<I>IInputMethod</I> object. Then when 
+<I>GetInfo</I> is called, you can pass the handles of the already created image lists 
+to the input panel.
+
+<P>The next two fields, <I>iNarrow</I> and <I>iWide</I>, should be set to the index in the image lists for the bitmap you want the SIP to use. For example, you might have two different bitmaps for the SIP button, depending on whether your IM is docked to the taskbar or is floating. You can then have an image list with two bitmaps, and you can specify the index depending on the state of your IM.
+
+<P>The <I>fdwFlags</I> field should be set to a combination of the flags, SIPF_ON, SIPF_DOCKED, SIPF_LOCKED, and SIPF_DISABLECOMPLETION, all of which define the state of the input panel. The first three flags are the same flags that I described earlier. When the SIPF_DISABLECOMPLETION flag is set, the auto-completion function of the SIP is disabled.
+
+<P>Finally, the <I>rcSipRect</I> field should be filled with the default rectangle for the input method. Unless you have a specific size and location on the screen for your IM, you can simply query the client rectangle of the parent SIP window for this rectangle. Note that just because you request a size and location of the SIP window doesn't mean that the window will have that rectangle. You should always query the size of the parent SIP window when laying out your IM window.
+
+<A NAME="486"><h3><I>IInputMethod::ReceiveSipInfo</I></h3></A>
+
+<P>The <I>ReceiveSipInfo</I> method is called by the input panel when the input panel is shown and then again when an application moves or changes the state of the input panel. The method is prototyped as
+
+<p><pre>
+HRESULT IInputMethod::ReceiveSipInfo (SIPINFO *psi);
+</PRE>
+
+<P>The only parameter is a pointer to a SIPINFO structure that I described earlier in this chapter. When this method is called, only two of the fields are valid&#8212;the <I>fdwFlags</I> field and the <I>reSipRect</I> field. The <I>rcSipRect</I> field contains the size and location of the input panel window, while the <I>fdwFlags</I> field contains the SIPF_<I>xxx</I> flags previously described. In response to the <I>ReceiveSipInfo</I> method call, the IM should save the new state flags and rectangle.
+
+<A NAME="487"><h3><I>IInputMethod::RegisterCallback</I></h3></A>
+
+<P>The input panel calls the <I>RegisterCallback</I> method once, after the input method has been selected. The method is prototyped as
+
+<p><pre>
+HRESULT IInputMethod::RegisterCallback (IIMCallback *lpIMCallback);
+</PRE>
+
+<P>This method is called to provide a pointer to the <I>IIMCallback</I> interface. The only action the IM must take is to save this pointer so that it can be used to provide feedback to the input panel.
+
+<A NAME="488"><h3><I>IInputMethod::Showing and IInputMethod::Hiding</I></h3></A>
+
+<P>The input panel calls the <I>Showing</I> and <I>Hiding</I> methods just before the IM is shown or hidden. Both these methods have no parameters and you should simply return S_OK to indicate success. The <I>Showing</I> method is also called when the panel is moved or resized. This makes the <I>Showing</I> method a handy place for resizing the IM child window to properly fit in the parent input panel window.
+
+<A NAME="489"><h3><I>IInputMethod::GetImData and IInputMethod::SetImData</I></h3></A>
+
+<P>The <I>GetImData</I> and <I>SetImData</I> methods give you a back door into the IM for applications that need to have a special communication path between the application and a custom IM. This arrangement allows a specially designed IM to provide additional data to and from applications. The two methods are prototyped as
+
+<p><pre>
+HRESULT IInputMethod::GetImData (DWORD dwSize, void* pvImData);
+
+HRESULT IInputMethod::SetImData (DWORD dwSize, void* pvImData);
+</PRE>
+
+<P>For both of these functions, the pointer points to a block of memory in the application. The <I>dwSize</I> parameter contains the size of the block pointed to by <I>pvImData</I>.
+
+<P>When an application is sending data to a custom IM, it calls <I>SHSipInfo</I> with the SPI_SETSIPINFO flag. The pointer to the buffer and the size of the buffer are specified in the <I>pvImData</I> and <I>dwImDataSize</I> fields of the SIPINFO structure. If these two fields are nonzero, the input panel then calls the <I>SetImData</I> method with the pointer and the size of the buffer contained in the two parameters of the method. The input method then accepts the data in the buffer pointed to by <I>pvImData</I>. When an application calls <I>SHSipInfo</I> with the SPI_GETSIPINFO structure and nonzero values in <I>pvImData</I> and <I>dwImDataSize</I>, the input panel then calls the <I>GetImData</I> method to retrieve data from the input method.
+
+<A NAME="490"><h3><I>IInputMethod::Deselect</I></h3></A>
+
+<P>When the user or a program switches to a different default IM, the input panel calls <I>Deselect</I>. Your input method should save its state (its location on the screen, for example), destroy any windows it has created, and unregister any window classes it has registered. It should also destroy any image lists it's still maintaining. The prototype for this method is
+
+<p><pre>
+HRESULT IInputMethod::Deselect (void);
+</PRE>
+
+<P>After the <I>Deselect</I> method is called, the SIP will unload the input method DLL.
+
+<A NAME="491"><h3><I>IInputMethod::UserOptionsDlg</I></h3></A>
+
+<P>The <I>UserOptionsDlg</I> method isn't called by the input panel. Instead, the input panel's control panel applet calls this method when the user clicks on the Options button. The IM should display a dialog box that allows the user to configure any settable parameters in the input method. The <I>UserOptionsDlg</I> method is prototyped as
+
+<p><pre>
+HRESULT IInputMethod::UserOptionsDlg (HWND hwndParent);
+</PRE>
+
+<P>The only parameter is the handle to the window that should be the parent window of the dialog box. Because the IM might be unloaded after the dialog box is dismissed, any configuration data should be saved in a persistent place such as the registry, where it can be recalled when the input panel is loaded again.
+
+<A NAME="492"><H2>The <I>IIMCallback</I> Interface</H2></A>
+
+<P>The <I>IIMCallback</I> interface allows an IM to call back to the input panel for services such as sending keys to the operating system. Aside from the standard <I>IUnknown</I> methods that can be ignored by the IM, only four methods are exposed by IIMCallback. These methods are
+
+<UL>
+<P><LI><I>IIMCallback::SetImInfo</I> Sets the bitmaps used by the input panel as well as the location and visibility state of the input method
+<P><LI><I>IIMCallback::SendVirtualKey</I> Sends a virtual key to the system
+<P><LI><I>IIMCallback::SendCharEvents</I> Sends Unicode characters to the window with the current focus
+<P><LI><I>IIMCallback::SendString</I> Sends a string of characters to the window with the current focus
+</UL>
+
+<P>It's appropriate that the <I>IIMCallback</I> interface devotes three of its four methods to sending keys and characters to the system because that's the primary purpose of the IM. Let's take a quick look at each of these methods.
+
+<A NAME="493"><h3><I>IIMCallback::SetImInfo</I></h3></A>
+
+<P>The <I>SetImInfo</I> method allows the IM control over its size and location on the screen. This method can also be used to set the bitmaps representing the IM. The method is prototyped as
+
+<p><pre>
+HRESULT IIMCallback::SetImInfo (IMINFO *pimi);
+</PRE>
+
+<P>The only parameter is a pointer to an IMINFO structure. This is the same structure that the IM uses when it calls the <I>GetInfo</I> method of the <I>IInputMethod</I> interface, but I'll repeat it here for clarity.
+
+<p><pre>
+
+typedef struct  {
+    DWORD cbSize;
+    HANDLE hImageNarrow;
+    HANDLE hImageWide;
+    int iNarrow;
+    int iWide;
+
+    DWORD fdwFlags;
+    RECT rcSipRect;
+} IMINFO;
+</PRE>
+
+<P>This structure enables an IM to tell the input panel the information that the panel asked for in <I>GetInfo</I>. The IM must correctly fill in all the fields in the IMINFO structure because it has no other way to tell the input panel to look at only one or two of the fields. You shouldn't re-create the image lists when you're calling <I>SetImInfo</I>; instead, use the same handles you passed in <I>GetInfo</I> unless you want to change the image lists used by the input panel. In that case, you'll need to destroy the old image lists after you've called <I>SetImInfo</I>.
+
+<P>You can use <I>SetImInfo</I> to undock the input panel and move it around the screen by clearing the SIPF_DOCKED flag in <I>fdwFlags</I> and specifying a new size and location for the panel in the <I>rcSipRect</I> field. Because Windows CE doesn't provide system support for dragging an input panel around the screen, the IM is responsible for providing such a method. The sample IM I present supports dragging the input panel around by creating a gripper area on the side of the panel and interpreting the stylus messages in this area to allow the panel to be moved around the screen.
+
+<A NAME="494"><h3><I>IIMCallback::SendVirtualKey</I></h3></A>
+
+<P>The <I>SendVirtualKey</I> method is used to send virtual key codes to the system. The difference between this method and the <I>SendCharEvents</I> and <I>SendString</I> methods is that this method can be used to send noncharacter key codes, such as those from cursor keys and shift keys, that have a global impact on the system. Also, key codes sent by <I>SendVirtualKey</I> are affected by the system key state. For example, if you send an <I>a</I> character and the Shift key is currently down, the resulting WM_CHAR message contains an <I>A</I> character. <I>SendVirtualKey</I> is prototyped as
+
+<p><pre>
+HRESULT IIMCallback::SendVirtualKey (BYTE bVk, DWORD dwFlags);
+</PRE>
+
+<P>The first parameter is the virtual key code of the key you want to send. The second parameter can contain one or more flags that help define the event. The flags can be either 0 or a combination of flags. You would use KEYEVENTF_KEYUP to indicate that the event is a key up event as opposed to a key down event and KEYEVENTF_SILENT, which specifies that the key event won't cause a key click to be played for the event. If you use <I>SendVirtualKey</I> to send a character key, the character will be modified by the current shift state of the system.
+
+<A NAME="495"><h3><I>IIMCallback::SendCharEvents</I></h3></A>
+
+
+<P>The <I>SendCharEvents</I> method can be used to send specific characters to the window with the current focus. The difference between this method and the <I>SendVirtualKey</I> method is that <I>SendCharEvents</I> gives you much more control over the exact information provided in the WM_KEY<I>xxx</I> and WM_CHAR messages generated. Instead of simply sending a virtual key code and letting the system determine the proper character, this method allows you to specify the virtual key and associate a completely different character or series of characters generated by this event. For example, in a simple case, calling this method once causes the messages WM_KEYDOWN, WM_CHAR, and WM_KEYUP all to be sent to the focus window. In a more complex case, this method can send a WM_KEYDOWN, and multiple WM_CHAR messages, followed by a WM_KEYUP message.
+
+<P>This method is prototyped as
+
+<p><pre>
+HRESULT IIMCallback::SendCharEvents (UINT uVK, UINT uKeyFlags, 
+                   UINT uChars, UINT *puShift, UINT *puChars);
+</PRE>
+
+<P>The first parameter is the virtual key code that will be sent with the WM_KEYDOWN and WM_KEYUP messages. The second parameter is the key flags that will be sent with the WM_KEYDOWN and WM_KEYUP messages. The third parameter is the number of WM_CHAR messages that will be generated by this one event. The next parameter, <I>puShift</I>, should point to an array of key state flags, while the final parameter, <I>puChar</I>, should point to an array of Unicode characters. Each entry in the shift array will be joined with the corresponding Unicode character in the character array when the WM_CHAR messages are generated. This allows you to give one key on the IM keyboard a unique virtual key code and to generate any number of WM_CHAR messages, each with its own shift state.
+
+
+<A NAME="496"><h3><I>IIMCallback::SendString</I></h3></A>
+
+<P>You use the <I>SendString</I> method to send a series of characters to the focus window. The advantage of this function is that an IM can easily send an entire word or sentence, and the input panel will take care of the details such as key down and key up events. The method is prototyped as
+
+<p><pre>
+HRESULT IIMCallback::SendString (LPTSTR ptszStr, DWORD dwSize);
+</PRE>
+
+<P>The two parameters are the string of characters to be sent and the number of characters in the string.
+
+<A NAME="497"><H2>The NumPanel Example Input Method</H2></A>
+
+
+<P>The NumPanel example code demonstrates a simple IM. NumPanel gives a user a simple numeric keyboard including keys 0 through 9 as well as the four arithmetic operators, +, -, *, and / and the equal sign key. While not of much use to the user, NumPanel does demonstrate all the requirements of an input method. The NumPanel example is different from the standard IMs that come with the Palm-size PC in that it can be undocked. The NumPanel IM has a gripper bar on the left side of the window that can be used to drag the SIP around the screen. When a user double-taps the gripper bar, the SIP snaps back to its docked position. Figure 13-2 shows the NumPanel IM in its docked position while Figure 13-3 shows the same panel undocked.
+
+<P><img src="F13RG02.gif" width=242 height=322 ALIGN="BOTTOM">
+
+<P><!-- caption --><B>Figure 13-2.</B> <I>The NumPanel IM window in its docked position.<!-- /caption -->
+
+<P><img src="F13RG03.gif" width=242 height=322 ALIGN="BOTTOM"></I>
+
+<P><!-- caption --><B>Figure 13-3.</B> <I>The NumPanel IM window undocked.</I><!-- /caption -->
+
+<P>The source code that implements NumPanel is divided into two main files, NumPanel.cpp and NPWnd.c. NumPanel.cpp provides the COM interfaces necessary for the IM, including the <I>IInputMethod</I> interface and the <I>IClassFactory</I> interface. In this file as well is <I>DllMain</I>, and the other functions necessary to implement a COM in-proc server. NPWnd.c contains the code that implements the NumPanel window. This code comprises the NumPanel window procedure and the supporting message handling procedures. The source code for NumPanel is shown in Figure 13-4.
+
+<P><B>Figure 13-4.</B> <I>The NumPanel source code.</I>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td>
+<A NAME="498"><H3>NumPanel.def</H3></A>
+
+<p><pre>
+;
+;Standard COM library DEF file
+;
+
+
+LIBRARY   NUMPANEL.DLL
+
+
+EXPORTS 
+   DllCanUnloadNow     @1 PRIVATE
+   DllGetClassObject   @2 PRIVATE
+   DllRegisterServer   @3 PRIVATE
+   DllUnregisterServer @4 PRIVATE
+</PRE>
+</td></tr></table>
+
+<table cellpadding="5" width="95%"><tr><td>
+<A NAME="499"><H3>NumPanel.rc</H3></A>
+<p><pre>
+//======================================================================
+// Resource file
+//
+
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+
+//======================================================================
+#include &quot;windows.h&quot;                 // For all that Windows stuff
+#include &quot;NumPanel.h&quot;                // Program-specific stuff
+
+//----------------------------------------------------------------------
+// Icons and bitmaps
+//
+ID_ICON        ICON   &quot;NumPanel.ico&quot; // Module icon
+
+NarrowBmp      BITMAP &quot;nkbd.bmp&quot;     // Bmp used in image list
+NarrowMask     BITMAP &quot;nmask.bmp&quot;    // Mask used in image list
+WideBmp        BITMAP &quot;widekbd.bmp&quot;  // Bmp used in image list
+WideMask       BITMAP &quot;widemask.bmp&quot; // Mask used in image list
+</PRE>
+</td></tr></table>
+
+<p><table cellpadding="5" width="95%"><tr><td>
+<A NAME="500"><H3>NumPanel.h</H3></A>
+
+<p><pre>
+//======================================================================
+
+// Header file
+//
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+
+//======================================================================
+
+#define ID_ICON        1
+#define IDC_SIP        10
+
+// **** Start of Generic COM declarations **** 
+//======================================================================
+// MyClassFactory - Object declaration
+//
+class MyClassFactory : public IClassFactory {
+
+private:
+    long m_lRef;
+
+public:
+    MyClassFactory();
+    ~MyClassFactory();
+    //IUnknown methods
+    STDMETHODIMP QueryInterface (THIS_ REFIID riid, LPVOID *ppv);
+    STDMETHODIMP_(ULONG) AddRef (THIS);
+    STDMETHODIMP_(ULONG) Release (THIS);
+    //IClassFactory methods
+    STDMETHODIMP CreateInstance (LPUNKNOWN pUnkOuter, REFIID riid, 
+                                 LPVOID *ppv);
+    STDMETHODIMP LockServer (BOOL fLock);
+};
+// **** End of Generic OLE declarations **** 
+
+//======================================================================
+// MyIInputMethod - Object declaration
+//
+class MyIInputMethod : public IInputMethod {
+
+private:
+    long m_lRef;
+    HWND m_hwndParent;
+    HWND m_hwndMyWnd;
+    HIMAGELIST m_himlWide;
+    HIMAGELIST m_himlNarrow;
+    IIMCallback *m_pIMCallback;
+
+public:
+    MyIInputMethod();
+    ~MyIInputMethod();
+
+    //IUnknown methods
+    STDMETHODIMP QueryInterface (THIS_ REFIID riid, LPVOID *ppvObj);
+    STDMETHODIMP_(ULONG) AddRef (THIS);
+    STDMETHODIMP_(ULONG) Release (THIS);
+
+    //IInputMethod
+    HRESULT STDMETHODCALLTYPE Select (HWND hwndSip);
+    HRESULT STDMETHODCALLTYPE Deselect (void);
+    HRESULT STDMETHODCALLTYPE Showing (void);
+    HRESULT STDMETHODCALLTYPE Hiding (void);
+    HRESULT STDMETHODCALLTYPE GetInfo (IMINFO __RPC_FAR *pimi);
+    HRESULT STDMETHODCALLTYPE ReceiveSipInfo (SIPINFO __RPC_FAR *psi);
+    HRESULT STDMETHODCALLTYPE RegisterCallback (
+                                   IIMCallback __RPC_FAR *lpIMCallback);
+    HRESULT STDMETHODCALLTYPE GetImData (DWORD dwSize, LPVOID pvImData);
+    HRESULT STDMETHODCALLTYPE SetImData (DWORD dwSize, LPVOID pvImData);
+    HRESULT STDMETHODCALLTYPE UserOptionsDlg (HWND hwndParent);
+
+
+};
+</pre>
+</td></tr></table>
+
+<p><table cellpadding="5" width="95%"><tr><td>
+<A NAME="501"><H3>NPWnd.h</H3></A>
+
+
+<p><pre>
+//======================================================================
+// NPWnd.h - An include file
+//
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//======================================================================
+
+
+#ifdef __cplusplus
+extern &quot;C&quot;{
+#endif 
+
+// Returns number of elements
+#define dim(x) (sizeof(x) / sizeof(x[0]))   
+
+struct decodeUINT {                            // Structure associates
+    UINT Code;                                 // messages 
+                                               // with a function. 
+    LRESULT (*Fxn)(HWND, UINT, WPARAM, LPARAM);
+}; 
+
+#define MYSIPCLS       TEXT (&quot;MyNumPanelWndCls&quot;)
+#define MYMSG_METHCALL (WM_USER+100)           // Used to pass info
+
+#define GRIPWIDTH      9                       // Width of the gripper
+#define FLOATWIDTH     200                     // Width of floating wnd
+#define FLOATHEIGHT    100                     // Height of floating wnd
+
+#define CXBTNS         5                       // Num columns of buttons
+#define CYBTNS         3                       // Num rows of buttons
+
+//
+// Local data structure for keypad IM window
+//
+typedef struct {
+    DWORD dwBtnDnFlags;
+    IIMCallback *pIMCallback;
+    RECT rectDocked;
+    BOOL fMoving;
+    POINT ptMovBasis;
+    POINT ptMovStart;
+    IMINFO imi;
+} SIPWNDSTRUCT, *LPSIPWNDSTRUCT;
+
+LRESULT CALLBACK NPWndProc (HWND, UINT, WPARAM, LPARAM);
+LRESULT CALLBACK DoCreateSip (HWND, UINT, WPARAM, LPARAM);
+LRESULT CALLBACK DoSetSipInfo (HWND, UINT, WPARAM, LPARAM);
+LRESULT CALLBACK DoPaintSip (HWND, UINT, WPARAM, LPARAM);
+LRESULT CALLBACK DoMouseSip (HWND, UINT, WPARAM, LPARAM);
+LRESULT CALLBACK DoDestroySip (HWND, UINT, WPARAM, LPARAM);
+
+#ifdef __cplusplus
+}
+#endif 
+</pre>
+</td></tr></table>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<A NAME="502"><H3>NumPanel.cpp</H3></A>
+
+
+<p><pre>
+//======================================================================
+// NumPanel - A Windows CE example input method
+//
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//======================================================================
+
+#include &lt;windows.h&gt;                 // For all that Windows stuff
+#include &lt;commctrl.h&gt;                // Command bar includes
+#define INITGUID
+#include &lt;initguid.h&gt;
+#include &lt;coguid.h&gt;
+#include &lt;aygshell.h&gt;                // Palm-size PC shell includes
+#include &lt;sip.h&gt;                     // SIP includes
+
+#include &quot;NumPanel.h&quot;                // Local program includes
+#include &quot;NPWnd.h&quot;                   // My IM window includes
+HINSTANCE hInst;                     // DLL instance handle
+long g_DllCnt = 0;                   // Global DLL reference count
+
+// Replace this GUID with your own!
+static const TCHAR szCLSIDNumPanel[] = 
+TEXT (&quot;{C915FE81-24C0-11d2-93F7-204C4F4F5020}&quot;);
+static const GUID CLSID_NumPanel = 
+{0xc915fe81, 0x24c0, 0x11d2, {0x93,0xf7,0x20,0x4c,0x4f,0x4f,0x50,0x20}};
+static const TCHAR szFriendlyName[] = TEXT (&quot;Numeric Keypad&quot;);
+
+//======================================================================
+// DllMain - DLL initialization entry point
+//
+BOOL WINAPI DllMain (HINSTANCE hinstDLL, DWORD dwReason, 
+                     LPVOID lpvReserved) {
+    hInst = hinstDLL;
+    return TRUE;
+}
+//======================================================================
+// DllGetClassObject - Exported function called to get pointer to 
+// Class factory object
+//
+STDAPI DllGetClassObject (REFCLSID rclsid, REFIID riid, LPVOID *ppv) {
+    MyClassFactory *pcf;
+    HRESULT hr;
+
+    // See if caller wants us...
+    if (IsEqualCLSID (rclsid, CLSID_NumPanel)) {
+
+        // Create IClassFactory object.
+        pcf = new MyClassFactory();
+        if (pcf == NULL)
+            return E_OUTOFMEMORY;
+
+        // Call class factory's query interface method.
+        hr = pcf-&gt;QueryInterface (riid, ppv);
+        // This will cause an obj delete unless interface found
+        pcf-&gt;Release();
+        return hr;
+    }
+    return CLASS_E_CLASSNOTAVAILABLE;
+}
+//======================================================================
+// DllCanUnloadNow - Exported function called when DLL can unload
+//
+STDAPI DllCanUnloadNow () {
+
+    if (g_DllCnt)
+        return S_FALSE;
+    return S_OK;
+}
+//======================================================================
+// DllRegisterServer - Exported function called to register the server
+//
+STDAPI DllRegisterServer () {
+    TCHAR szName[MAX_PATH+2];
+    DWORD dwDisp;
+    HKEY hKey, hSubKey;
+    INT rc, i;
+
+    GetModuleFileName (hInst, szName, sizeof (szName));
+    // Open the key.
+    rc = RegCreateKeyEx (HKEY_CLASSES_ROOT, szCLSIDNumPanel, 0,
+                         TEXT (&quot;&quot;), 0, 0, NULL, &amp;hKey, &amp;dwDisp);
+    if (rc != ERROR_SUCCESS)
+        return E_FAIL;
+
+    // Set the friendly name of the SIP.
+    RegSetValueEx (hKey, TEXT (&quot;&quot;), 0, REG_SZ, (PBYTE)szFriendlyName,
+                   (lstrlen (szFriendlyName)+1) * sizeof (TCHAR));
+
+    // Create subkeys.
+    // Set the module name of the SIP.
+    rc = RegCreateKeyEx (hKey, TEXT (&quot;InProcServer32&quot;), 0, TEXT (&quot;&quot;),
+                         0, 0, NULL, &amp;hSubKey, &amp;dwDisp);
+    rc = RegSetValueEx (hSubKey, TEXT (&quot;&quot;), 0, REG_SZ, (PBYTE)szName,
+                        (lstrlen (szName)+1) * sizeof (TCHAR));
+    RegCloseKey (hSubKey);
+
+    // Set the default icon of the server.
+    RegCreateKeyEx (hKey, TEXT (&quot;DefaultIcon&quot;), 0, TEXT (&quot;&quot;),
+                         0, 0, NULL, &amp;hSubKey, &amp;dwDisp);
+    lstrcat (szName, TEXT (&quot;,0&quot;));
+    RegSetValueEx (hSubKey, TEXT (&quot;&quot;), 0, REG_SZ, (PBYTE)szName,
+                        (lstrlen (szName)+1) * sizeof (TCHAR));
+    RegCloseKey (hSubKey);
+
+    // Set the flag indicating this is a SIP.
+    RegCreateKeyEx (hKey, TEXT (&quot;IsSIPInputMethd&quot;), 0, TEXT (&quot;&quot;), 
+                    0, 0, NULL, &amp;hSubKey, &amp;dwDisp);
+    i = 1;
+    RegSetValueEx (hSubKey, TEXT (&quot;&quot;), 0, REG_DWORD, (PBYTE)&amp;i, 4);
+    RegCloseKey (hSubKey);
+
+    RegCloseKey (hKey);
+    return S_OK;
+}
+//======================================================================
+// DllUnregisterServer - Exported function called to remove the server
+// information from the registry
+//
+STDAPI DllUnregisterServer() {
+    INT rc;
+    rc = RegDeleteKey (HKEY_CLASSES_ROOT, szCLSIDNumPanel);
+    if (rc == ERROR_SUCCESS)
+        return S_OK;
+    return E_FAIL;
+}
+//**********************************************************************
+// MyClassFactory Object implimentation
+//----------------------------------------------------------------------
+// Object constructor
+MyClassFactory::MyClassFactory () {
+    m_lRef = 1;     //Set ref count to 1 on create
+    return;
+}
+//----------------------------------------------------------------------
+// Object destructor
+MyClassFactory::~MyClassFactory () {
+    return;
+}
+//----------------------------------------------------------------------
+// QueryInterface - Called to see what interfaces this object supports
+STDMETHODIMP MyClassFactory::QueryInterface (THIS_ REFIID riid, 
+                                             LPVOID *ppv) {
+
+    // If caller wants our IUnknown or IClassFactory object, 
+    // return a pointer to the object.
+    if (IsEqualIID (riid, IID_IUnknown) || 
+        IsEqualIID (riid, IID_IClassFactory)) {
+
+        *ppv = (LPVOID)this;     // Return pointer to object.
+        AddRef();                // Inc ref to prevent delete on return.
+        return NOERROR;
+    }
+    *ppv = NULL;
+    return (E_NOINTERFACE);
+}
+//----------------------------------------------------------------------
+// AddRef - Increment object reference count.
+STDMETHODIMP_(ULONG) MyClassFactory::AddRef (THIS) {
+    ULONG cnt;
+
+    cnt = (ULONG)InterlockedIncrement (&amp;m_lRef);
+    return cnt;
+}
+//----------------------------------------------------------------------
+// Release - Decrement object reference count.
+STDMETHODIMP_(ULONG) MyClassFactory::Release (THIS) {
+    ULONG cnt;
+
+    cnt = (ULONG)InterlockedDecrement (&amp;m_lRef);
+    if (cnt == 0)
+        delete this;
+    return cnt;
+}
+//----------------------------------------------------------------------
+// LockServer - Called to tell the DLL not to unload even if use cnt 0
+STDMETHODIMP MyClassFactory::LockServer (BOOL fLock) {
+    if (fLock)
+        InterlockedIncrement (&amp;g_DllCnt);
+    else
+        InterlockedDecrement (&amp;g_DllCnt);
+    return NOERROR;
+}
+//----------------------------------------------------------------------
+// CreateInstance - Called to have class factory object create other
+// objects
+STDMETHODIMP MyClassFactory::CreateInstance (LPUNKNOWN pUnkOuter, 
+                                             REFIID riid, LPVOID *ppv) {
+    MyIInputMethod *pMyIM;
+    HRESULT hr;
+
+    if (pUnkOuter)
+        return (CLASS_E_NOAGGREGATION);
+
+    if (IsEqualIID (riid, IID_IUnknown) || 
+        IsEqualIID (riid, IID_IInputMethod)) {
+
+        // Create file filter object.
+        pMyIM = new MyIInputMethod();
+        if (!pMyIM)
+            return E_OUTOFMEMORY;
+
+        // See if object exports the proper interface.
+        hr = pMyIM-&gt;QueryInterface (riid, ppv);
+        // This will cause an obj delete unless interface found.
+        pMyIM-&gt;Release ();
+        return hr;
+    } 
+    return E_NOINTERFACE;
+}
+//**********************************************************************
+// MyIInputMethod Object implementation
+//----------------------------------------------------------------------
+// Object constructor
+MyIInputMethod::MyIInputMethod () {
+
+    m_lRef = 1;     //Set reference count to 1 on create.
+    g_DllCnt++;
+    return;
+}
+//----------------------------------------------------------------------
+// Object destructor
+MyIInputMethod::~MyIInputMethod () {
+    g_DllCnt--;
+    return;
+}
+//----------------------------------------------------------------------
+// QueryInterface - Called to see what interfaces this object supports
+STDMETHODIMP MyIInputMethod::QueryInterface (THIS_ REFIID riid, 
+                                             LPVOID *ppv) {
+
+    // If caller wants our IUnknown or IID_ICeFileFilter object, 
+    // return a pointer to the object.
+    if (IsEqualIID (riid, IID_IUnknown) || 
+        IsEqualIID (riid, IID_IInputMethod)){
+
+        // Return pointer to object.
+        *ppv = (IInputMethod *)this;
+        AddRef();                // Inc ref to prevent delete on return.
+        return NOERROR;
+    }
+    *ppv = NULL;
+    return (E_NOINTERFACE);
+}
+//----------------------------------------------------------------------
+// AddRef - Increment object reference count.
+STDMETHODIMP_(ULONG) MyIInputMethod::AddRef (THIS) {
+    ULONG cnt;
+
+    cnt = (ULONG)InterlockedIncrement (&amp;m_lRef);
+    return cnt;
+}
+//----------------------------------------------------------------------
+// Release - Decrement object reference count.
+STDMETHODIMP_(ULONG) MyIInputMethod::Release (THIS) {
+    ULONG cnt;
+    cnt = (ULONG)InterlockedDecrement (&amp;m_lRef);
+    if (cnt == 0) {
+        delete this;
+        return 0;
+    }
+    return cnt;
+}
+//----------------------------------------------------------------------
+// Select - The IM has just been loaded into memory.
+//
+HRESULT STDMETHODCALLTYPE MyIInputMethod::Select (HWND hwndSip) {
+    RECT rect;
+    WNDCLASS wc;
+    HBITMAP hBmp, hbmpMask;
+
+    m_hwndParent = hwndSip;
+
+    // Create image list for narrow (16x16) image.
+    m_himlNarrow = ImageList_Create (16, 16, ILC_COLOR | ILC_MASK, 
+                                     1, 0);
+    hBmp = LoadBitmap (hInst, TEXT (&quot;NarrowBmp&quot;));
+    hbmpMask = LoadBitmap (hInst, TEXT (&quot;NarrowMask&quot;));
+    ImageList_Add (m_himlNarrow, hBmp, hbmpMask);
+    DeleteObject (hBmp);
+    DeleteObject (hbmpMask);
+
+    // Create image list for wide (32x16) image.
+    m_himlWide = ImageList_Create (32, 16, ILC_COLOR | ILC_MASK, 1, 0);
+    hBmp = LoadBitmap (hInst, TEXT (&quot;WideBmp&quot;));
+    hbmpMask = LoadBitmap (hInst, TEXT (&quot;WideMask&quot;));
+    ImageList_Add (m_himlWide, hBmp, hbmpMask);
+    DeleteObject (hBmp);
+    DeleteObject (hbmpMask);
+
+    // Register SIP window class.
+    memset (&amp;wc, 0, sizeof (wc));
+    wc.style = CS_DBLCLKS;
+    wc.lpfnWndProc = NPWndProc;               // Callback function
+    wc.hInstance = hInst;                     // Owner handle
+    wc.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH);
+    wc.lpszClassName = MYSIPCLS;              // Window class name
+    if (RegisterClass (&amp;wc) == 0) return E_FAIL;
+
+    // Create SIP window.  
+    GetClientRect (hwndSip, &amp;rect);
+    m_hwndMyWnd = CreateWindowEx (0, MYSIPCLS, TEXT (&quot;&quot;), 
+                  WS_VISIBLE | WS_CHILD | WS_BORDER, rect.left, 
+                  rect.top, rect.right - rect.left, 
+                  rect.bottom - rect.top, hwndSip, (HMENU)IDC_SIP, 
+                  hInst, 0);
+    if (!IsWindow (m_hwndMyWnd))
+        return E_FAIL;
+
+    return S_OK;
+}
+//----------------------------------------------------------------------
+// Deselect - The IM is about to be unloaded.
+//
+HRESULT STDMETHODCALLTYPE MyIInputMethod::Deselect (void) {
+
+    // Clean up since we're about to be unloaded.
+    DestroyWindow (m_hwndMyWnd);
+    UnregisterClass (MYSIPCLS, hInst);
+    ImageList_Destroy (m_himlNarrow);
+    ImageList_Destroy (m_himlWide);
+    return S_OK;
+}
+//----------------------------------------------------------------------
+// Showing - The IM is about to be made visible.
+//
+HRESULT STDMETHODCALLTYPE MyIInputMethod::Showing (void) {
+    return S_OK;
+}
+//----------------------------------------------------------------------
+// Hiding - The IM is about to be hidden.
+//
+HRESULT STDMETHODCALLTYPE MyIInputMethod::Hiding (void) {
+    return S_OK;
+}
+//----------------------------------------------------------------------
+// GetInfo - The SIP wants info from the IM.
+//
+HRESULT STDMETHODCALLTYPE MyIInputMethod::GetInfo (
+                                              IMINFO __RPC_FAR *pimi) {
+    pimi-&gt;cbSize = sizeof (IMINFO);
+    pimi-&gt;hImageNarrow = m_himlNarrow;
+    pimi-&gt;hImageWide = m_himlWide;
+    pimi-&gt;iNarrow = 0;
+    pimi-&gt;iWide = 0;  
+    pimi-&gt;fdwFlags = SIPF_DOCKED;
+    pimi-&gt;rcSipRect.left = 0;
+    pimi-&gt;rcSipRect.top = 0;
+    pimi-&gt;rcSipRect.right = FLOATWIDTH;
+    pimi-&gt;rcSipRect.bottom = FLOATHEIGHT;
+    SendMessage (m_hwndMyWnd, MYMSG_METHCALL, 1, (LPARAM) pimi);
+    return S_OK;
+}
+//----------------------------------------------------------------------
+// ReceiveSipInfo - The SIP is passing info to the IM.
+//
+HRESULT STDMETHODCALLTYPE MyIInputMethod::ReceiveSipInfo (
+                                               SIPINFO __RPC_FAR *psi) {
+    // Pass the SIP info data to the window.
+    SendMessage (m_hwndMyWnd, MYMSG_METHCALL, 2, (LPARAM) psi);
+    return S_OK;
+}
+//----------------------------------------------------------------------
+// RegisterCallback - The SIP is providing the IM with the pointer to 
+// the IIMCallback interface.
+//
+HRESULT STDMETHODCALLTYPE MyIInputMethod::RegisterCallback (
+                                  IIMCallback __RPC_FAR *lpIMCallback) {
+    m_pIMCallback = lpIMCallback;
+    PostMessage (m_hwndMyWnd, MYMSG_METHCALL, 0, (LPARAM)m_pIMCallback);
+    return S_OK;
+}
+//----------------------------------------------------------------------
+// GetImData - An application is passing IM-specfic data to the IM.
+// 
+HRESULT STDMETHODCALLTYPE MyIInputMethod::GetImData (DWORD dwSize,
+                                                     LPVOID pvImData) {
+    return E_FAIL;
+}
+//----------------------------------------------------------------------
+// SetImData - An application is querying IM-specfic data from the IM.
+//
+HRESULT STDMETHODCALLTYPE MyIInputMethod::SetImData (DWORD dwSize, 
+                                                     LPVOID pvImData) {
+    return S_OK;
+}
+//----------------------------------------------------------------------
+// UserOptionsDlg - The SIP control panel applet is asking for a 
+// configuration dialog box to be displayed.
+//
+HRESULT STDMETHODCALLTYPE MyIInputMethod::UserOptionsDlg (
+                                                     HWND hwndParent) {
+    MessageBox (hwndParent, TEXT (&quot;UserOptionsDlg called.&quot;),
+                TEXT (&quot;NumPanel&quot;), MB_OK);
+    return S_OK;
+}
+</pre>
+</td></tr></table>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+
+<A NAME="503"><H3>NPWnd.c</H3></A>
+
+<p><pre>
+//======================================================================
+// NPWnd - An IM window
+//
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//======================================================================
+
+#include &lt;windows.h&gt;
+#define COBJMACROS
+#include &lt;aygshell.h&gt;                // Palm-size PC shell includes
+#include &lt;sip.h&gt;                     // SIP includes
+#include &lt;keybd.h&gt;                   // Keyboard flag includes
+
+#include &quot;NPWnd.h&quot;                  // Includes for this window
+
+INT DrawButton (HDC hdc, RECT *prect, LPTSTR pChar, BOOL fPressed);
+
+TCHAR g_tcBtnChar[] = {
+        TEXT (`1'), TEXT (`2'), TEXT (`3'), TEXT (`-'), TEXT (`*'),
+        TEXT (`4'), TEXT (`5'), TEXT (`6'), TEXT (`+'), TEXT (`/'),
+        TEXT (`7'), TEXT (`8'), TEXT (`9'), TEXT (`0'), TEXT (`=`),
+};
+UINT g_BtnVChars[] = {
+        `1', `2', `3', VK_HYPHEN, VK_MULTIPLY, 
+        `4', `5', `6', VK_ADD, VK_SLASH,
+        `7', `8', `9', `0', VK_EQUAL,
+};
+
+// Message dispatch table for SipWindowProc
+const struct decodeUINT SipMessages[] = {
+    WM_CREATE, DoCreateSip,
+    WM_PAINT, DoPaintSip,
+    MYMSG_METHCALL, DoSetSipInfo,
+    WM_LBUTTONDOWN, DoMouseSip,
+    WM_MOUSEMOVE, DoMouseSip,
+    WM_LBUTTONUP, DoMouseSip,
+    WM_LBUTTONDBLCLK, DoMouseSip,
+    WM_DESTROY, DoDestroySip,
+};
+//======================================================================
+// NPWndProc - Window procedure for SIP 
+//
+LRESULT CALLBACK NPWndProc (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                             LPARAM lParam) {
+    INT  i;
+    // Call routine to handle control message.
+    for (i = 0; i &lt; dim(SipMessages); i++) {
+        if (wMsg == SipMessages[i].Code)
+            return (*SipMessages[i].Fxn)(hWnd, wMsg, wParam, lParam);
+    }
+    return DefWindowProc (hWnd, wMsg, wParam, lParam);
+}
+//----------------------------------------------------------------------
+// DoCreateSip - Process WM_CREATE message for window.
+//
+LRESULT CALLBACK DoCreateSip (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                             LPARAM lParam) {
+    LPSIPWNDSTRUCT pWndData;
+    // Allocate a data structure for the SIP keyboard window.
+    pWndData = LocalAlloc (LPTR, sizeof (SIPWNDSTRUCT));
+    if (!pWndData) {
+        DestroyWindow (hWnd);
+        return 0;
+    }
+    memset (pWndData, 0, sizeof (SIPWNDSTRUCT));
+    GetWindowRect (GetParent (hWnd), &amp;pWndData-&gt;rectDocked);
+    SetWindowLong (hWnd, GWL_USERDATA, (INT)pWndData);
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoSetSipInfo - Process set information user message for window.
+//
+LRESULT CALLBACK DoSetSipInfo (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                               LPARAM lParam) {
+    LPSIPWNDSTRUCT pWndData;
+    RECT rect;
+
+    pWndData = (LPSIPWNDSTRUCT)GetWindowLong (hWnd, GWL_USERDATA);
+    switch (wParam) {
+    // Called when RegisterCallback method called
+    case 0:
+        pWndData-&gt;pIMCallback = (IIMCallback *)lParam;
+        break;
+    // Called when GetInfo method called
+    case 1:
+        pWndData-&gt;imi = *(IMINFO *)lParam;
+        break;
+    // Called when ReceiveSipInfo method called
+    case 2:
+        GetClientRect (GetParent(hWnd), &amp;rect);
+        MoveWindow (hWnd, 0, 0, rect.right - rect.left,
+                    rect.bottom - rect.top, TRUE);
+        break;
+    }
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoPaintSip - Process WM_PAINT message for window.
+//
+LRESULT CALLBACK DoPaintSip (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                             LPARAM lParam) {
+    HDC hdc;
+    HBRUSH hOld;
+    PAINTSTRUCT ps;
+    RECT rect, rectBtn;
+    INT i, j, k, x, y, cx, cy, cxBtn, cyBtn;
+    LPSIPWNDSTRUCT pWndData;
+
+    pWndData = (LPSIPWNDSTRUCT)GetWindowLong (hWnd, GWL_USERDATA);
+
+    hdc = BeginPaint (hWnd, &amp;ps);
+    GetClientRect (hWnd, &amp;rect);
+
+    cx = (rect.right - rect.left - 3 - GRIPWIDTH) / CXBTNS;
+    cy = (rect.bottom - rect.top - 3) / CYBTNS;
+    cxBtn = cx - 3;
+    cyBtn = cy - 3;
+
+    // Select a brush for the gripper.
+    hOld = SelectObject (hdc, GetStockObject (GRAY_BRUSH));
+    Rectangle (hdc, rect.left, rect.top, rect.left + GRIPWIDTH, 
+               rect.bottom);
+    SelectObject (hdc, hOld);
+
+    k = 0;
+    y = 3;
+    for (i = 0; i &lt; CYBTNS; i++) {
+        x = 3 + GRIPWIDTH;
+        for (j = 0; j &lt; CXBTNS; j++) {
+            SetRect (&amp;rectBtn, x, y, x + cxBtn, y + cyBtn);
+            DrawButton (hdc, &amp;rectBtn, &amp;g_tcBtnChar[k++], 
+                        pWndData-&gt;dwBtnDnFlags &amp; (1 &lt;&lt; k));
+            x += cx;
+        }
+        y += cy;
+    }
+    EndPaint (hWnd, &amp;ps);
+    return 0;
+}
+//----------------------------------------------------------------------
+// HandleGripper - Handles mouse messages over gripper bar
+//
+LRESULT HandleGripper (HWND hWnd, LPSIPWNDSTRUCT pWndData, UINT wMsg, 
+                       LPARAM lParam) {
+    POINT pt;
+
+    pt.x = (short)LOWORD (lParam);
+    pt.y = (short)HIWORD (lParam);
+    switch (wMsg) {
+    case WM_LBUTTONDOWN:
+        if (pt.x &gt; GRIPWIDTH+3)
+            return 0;
+        SetCapture (hWnd);
+        pWndData-&gt;fMoving = TRUE;
+        pWndData-&gt;ptMovBasis = pt;
+        ClientToScreen (hWnd, &amp;pt);
+        pWndData-&gt;ptMovStart = pt;
+        break;
+
+    case WM_MOUSEMOVE:
+        if (!pWndData-&gt;fMoving)
+            return 0;
+        break;
+    case WM_LBUTTONUP:
+        if (!pWndData-&gt;fMoving)
+            return 0;
+        ReleaseCapture();
+        pWndData-&gt;fMoving = FALSE;
+        ClientToScreen (hWnd, &amp;pt);
+        if ((abs (pWndData-&gt;ptMovStart.x - pt.x) &lt; 3) &amp;&amp;
+            (abs (pWndData-&gt;ptMovStart.y - pt.y) &lt; 3))
+            break;
+        pt.x -= pWndData-&gt;ptMovBasis.x;
+        pt.y -= pWndData-&gt;ptMovBasis.y;
+
+        pWndData-&gt;imi.rcSipRect.right = FLOATWIDTH;
+        pWndData-&gt;imi.rcSipRect.bottom = FLOATHEIGHT;
+        pWndData-&gt;imi.rcSipRect.left = pt.x;
+        pWndData-&gt;imi.rcSipRect.top = pt.y;
+        pWndData-&gt;imi.rcSipRect.right += pt.x;
+        pWndData-&gt;imi.rcSipRect.bottom += pt.y;
+
+        pWndData-&gt;imi.fdwFlags &amp;= ~SIPF_DOCKED;
+        pWndData-&gt;imi.fdwFlags |= SIPF_ON;
+
+        IIMCallback_SetImInfo(pWndData-&gt;pIMCallback, &amp;pWndData-&gt;imi);
+        break;
+
+    case WM_LBUTTONDBLCLK:
+        if (pt.x &gt; GRIPWIDTH+3)
+            return 0;
+        ReleaseCapture();
+        pWndData-&gt;fMoving = FALSE;
+        pWndData-&gt;imi.fdwFlags |= (SIPF_DOCKED | SIPF_ON);
+        pWndData-&gt;imi.rcSipRect = pWndData-&gt;rectDocked;
+        IIMCallback_SetImInfo(pWndData-&gt;pIMCallback, &amp;pWndData-&gt;imi);
+        break;
+    }
+    pWndData-&gt;dwBtnDnFlags = 0;   // If we moved, no buttons down.
+    return 1;
+}
+//----------------------------------------------------------------------
+// DoMouseSip - Process mouse button messages for window. 
+//
+LRESULT CALLBACK DoMouseSip (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                             LPARAM lParam) {
+    RECT rect;
+    INT i, x, y, cx, cy, nChar;
+    DWORD BtnDnFlags, dwShiftFlags = 0;
+    LPSIPWNDSTRUCT pWndData;
+    pWndData = (LPSIPWNDSTRUCT)GetWindowLong (hWnd, GWL_USERDATA);
+
+    // See if moving gripper or gripper tap.
+    if (HandleGripper (hWnd, pWndData, wMsg, lParam)) 
+        return 0;
+    // Compute the button grid.
+    GetClientRect (hWnd, &amp;rect);
+    cx = (rect.right - rect.left - 3 - GRIPWIDTH) / CXBTNS;
+    cy = (rect.bottom - rect.top - 3) / CYBTNS;
+    x = ((LOWORD (lParam)-3-GRIPWIDTH) / cx);
+    y = ((HIWORD (lParam)-3) / cy);
+    i = (y * CXBTNS) + x;    // i now contains btn index.
+
+    // Do small amount of message-specific processing.
+    switch (wMsg) {
+    case WM_LBUTTONDOWN:
+        SetCapture (hWnd);
+        // Fall through to WM_MOUSEMOVE case.
+    case WM_MOUSEMOVE:
+        BtnDnFlags = 1 &lt;&lt; i;
+        break;
+    case WM_LBUTTONDBLCLK:
+    case WM_LBUTTONUP:
+        if (pWndData-&gt;dwBtnDnFlags)
+            ReleaseCapture();
+        BtnDnFlags = 0;
+        nChar = g_tcBtnChar[i];
+        IIMCallback_SendCharEvents(pWndData-&gt;pIMCallback, 
+                                   g_BtnVChars[i], KeyStateDownFlag,
+                                   1, &amp;dwShiftFlags, &amp;nChar);
+        break;
+    } 
+    // Decide how to repaint wnd. If only 1 btn changed, just 
+    // invalidate that rect. Otherwise, invalidate entire wnd.
+    if ((wMsg == WM_MOUSEMOVE) &amp;&amp; (BtnDnFlags !=pWndData-&gt;dwBtnDnFlags))
+        InvalidateRect (hWnd, NULL, FALSE);
+    else {
+        i = 3+GRIPWIDTH;   // Compensate for the gripper on left side.
+        SetRect (&amp;rect, x*cx+i, y*cy, (x+1)*cx+i, (y+1)*cy);
+        InvalidateRect (hWnd, &amp;rect, FALSE);
+    }
+    pWndData-&gt;dwBtnDnFlags = BtnDnFlags;
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoDestroySip - Process WM_DESTROY message for window.
+//
+LRESULT CALLBACK DoDestroySip (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                               LPARAM lParam) {
+    LPSIPWNDSTRUCT pWndData;
+
+   pWndData = (LPSIPWNDSTRUCT)GetWindowLong (hWnd, GWL_USERDATA);
+    LocalFree (pWndData);
+    return 0;
+}
+//----------------------------------------------------------------------
+// DrawButton - Draws a button
+//
+INT DrawButton (HDC hdc, RECT *prect, LPTSTR pChar, BOOL fPressed) {
+
+    if (!fPressed) {
+        SelectObject (hdc, GetStockObject (BLACK_PEN));
+        SelectObject (hdc, GetStockObject (WHITE_BRUSH));
+        SetBkColor (hdc, RGB (255, 255, 255));
+        SetTextColor (hdc, RGB (0, 0, 0));
+    } else {
+        SelectObject (hdc, GetStockObject (BLACK_BRUSH));
+        SelectObject (hdc, GetStockObject (WHITE_PEN));
+        SetTextColor (hdc, RGB (255, 255, 255));
+        SetBkColor (hdc, RGB (0, 0, 0));
+    }
+    Rectangle (hdc, prect-&gt;left, prect-&gt;top, prect-&gt;right, 
+               prect-&gt;bottom);
+    Rectangle (hdc, prect-&gt;left+1, prect-&gt;top+1, prect-&gt;right+1, 
+               prect-&gt;bottom+1);
+    DrawText (hdc, pChar, 1, prect, DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+    return 0;
+}
+</pre>
+</td></tr></table>
+
+<P>Although NumPanel is divided into two source files, both the <I>IInputMethod</I> interface and the NumPanel window procedure run in the same thread. In response to a call to the Select method of <I>IInputMethod</I>, the NumPanel window class is registered and the window is created as a child of the IM's window. The image lists used by the IM are also created here with the handles stored in member variables in the <I>MyInputMethod</I> object. The only other work of interest performed by the code in NumPanel.cpp is the code for the <I>GetInfo</I> method. In this method, the image list handles are provided to the IM along with the requested dimensions of the undocked window. The dimensions of the docked window are provided by the system.
+
+<P>For three other methods, all <I>MyInputMethod</I> does is to post messages to the window procedure of the NumPanel window. In NMWnd.c, these messages are fielded in the MYMSG_METHCALL user-defined message. The three methods make available to the window a pointer to the <I>IIMCallback</I> interface and notify the NumPanel window that the window is about to be displayed or that the state of the input panel is changing.
+
+<P>The other code in the NumPanel window draws the keys on the window and processes the stylus taps. The <I>DoPaintSip</I> routine handles the painting. The routine draws a grid of 3 rows of 5 columns of buttons. In each button, a character is drawn to label it. A separate bit array contains the up or down state of each button. If the button is down, the background of the button is drawn in reverse colors.
+
+<P>Two routines&#8212;<I>DoMouseSip</I> and <I>HandleGripper </I>&#8212;handle the mouse messages. The mouse messages all initially go to <I>DoMouseSip</I>, which calls <I>HandleGripper</I>. If the routine determines that the mouse message is on the gripper or that the window is currently being dragged, <I>HandleGripper</I> handles the message. Otherwise, if the <I>DoMouseSip</I> routine determines that a mouse tap occurs on one of the buttons, it calls the <I>SendCharEvent </I>method of <I>IIMCallback</I> to send the character to the focus window.
+
+<P>When the window is dragged to a new location on the screen, the <I>HandleGripper</I> routine clears the SIPF_DOCKED flag and sets the new size and location of the SIP by calling the <I>SetImInfo</I> method of <I>IIMCallback</I>. When the user double-taps on the gripper, <I>HandleGripper</I> sets the SIPF_DOCKED flag and sets the SIP rectangle to the original docked rectangle that was saved when the NumPanel window was first created.
+
+</BODY>
+</HTML>
+
+
+
+

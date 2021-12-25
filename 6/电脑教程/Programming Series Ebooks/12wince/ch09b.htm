@@ -1,0 +1,213 @@
+<HTML>
+ <HEAD>
+	<LINK REL=StyleSheet HREF="prowice.css" TYPE="text/css">
+<TITLE>Basic Drivers</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="342"><H1>Basic Drivers</H1></A>
+
+<P>Before I can delve into the serial drivers, we must take a brief look at how Windows CE handles drivers in general. Windows CE separates device drivers into two main groups: native and stream interface. Native drivers, sometimes called <I>built-in drivers</I>, are those device drivers that are required for the hardware and were created by the OEM when the Windows CE hardware was designed. Among the devices that have native drivers are the keyboard, the touch panel, audio, and the PCMCIA controller. These drivers might not support the generic device driver interface I describe below. Instead, they might extend the interface or have a totally custom interface to the operating system. Native drivers frequently require minor changes when a new version of the operation system is released. These drivers are designed using the OEM adaptation kit supplied by Microsoft. A more general adaptation kit, the Embedded Toolkit (ETK), also enables you to develop built-in drivers. However these drivers are developed, they're tightly bound to the Windows CE operating system and aren't usually replaced after the device has been sold.
+
+<P>On the other hand, stream interface device drivers (which used to be referred to as installable drivers) can be supplied by third-party manufacturers to support hardware added to the system. Since Windows CE systems generally don't have a bus such as an ISA bus or a PCI bus for extra cards, the additional hardware is usually installed via a PCMCIA or a Compact Flash slot. In this case, the device driver would use functions provided by the low-level PCMCIA driver to access the card in the PCMCIA or the Compact Flash slot.
+
+<P>In addition, a device driver might be written to extend the functionality of an existing driver. For example, you might write a driver to provide a compressed or encrypted data stream over a serial link. In this case, an application would access the encryption driver, which would then in turn use the serial driver to access the serial hardware.
+
+<P>Device drivers under Windows CE operate at the same protection level as applications. They differ from applications in that they're DLLs. Most drivers are loaded by the device manager process (DEVICE.EXE) when the system boots. All these drivers, therefore, share the same process address space. Some of the built-in drivers, on the other hand, are loaded by GWE (GWES.EXE). (GWE stands for Graphics Windowing and Event Manager.) These drivers include the display driver (DDI.DLL) as well as the keyboard and touch panel (or mouse) drivers.
+
+<A NAME="343"><H2>Driver Names</H2></A>
+
+<P>Stream interface device drivers are identified by a three-character name followed by a single digit. This scheme allows for 10 device drivers of one name to be installed on a Windows CE device at any one time. Here are a few examples of some three-character names currently in use:
+
+<p><table width="95%" cellpadding=5>
+<tr><td valign="top">COM</td>
+<td valign="top">Serial driver</td></tr>
+
+<tr><td valign="top">ACM</td>
+<td valign="top">Audio compression manage</td></tr>
+
+<tr><td valign="top">WAV</td>
+<td valign="top">Audio wave driver</td></tr>
+
+<tr><td valign="top">CON</td>
+<td valign="top">Console driver</td></tr>
+</table>
+
+<P>When referencing a stream interface driver, an application uses the three-character name, followed by the single digit, followed by a colon (:). The colon is required under Windows CE for the system to recognize the driver name.
+
+<A NAME="344"><H2>Enumerating the Active Drivers</H2></A>
+
+<P>The documented method for determining what drivers are loaded onto a Windows CE system is to look in the registry under the key \Drivers\Active under HKEY_LOCAL_MACHINE. The device manager dynamically updates the subkeys contained here as drivers are loaded and unloaded from the system. Contained in this key is a list of subkeys, one for each active driver. The name of the key is simply a placeholder; it's the values inside the keys that indicate the active drivers. Figure 9-1 shows the registry key for the COM1 serial driver on an HP 620.
+
+<P><A HREF="javascript:fullSize('f09rg01x.htm')"> <img src="f09rg01.jpg" width=404 height=152 border=0 ALT="Click to view at full size."> </A>
+
+<P><!-- caption --><B>Figure 9-1.</B> <I>The registry's active list values for the serial device driver for COM1.</I><!-- /caption -->
+
+<P>In Figure 9-1, the <I>Name</I> value contains the official five-character name (four characters plus a colon) of the device. The <I>THnd</I> and <I>Hnd</I> values are handles that are used internally by Windows CE. The interesting entry is the <I>Key</I> value. This value points to the registry key where the device driver stores its configuration information. This second key is necessary because the active list is dynamic, changing whenever a device is installed. In the case of the serial driver, its configuration data is generally stored in Drivers\BuiltIn\Serial although you shouldn't hard code this value. Instead, you can look at the <I>Key</I> value in the active list to determine the location of a driver's permanent configuration data. The configuration data for the serial driver is shown in Figure 9-2.
+
+<P><A HREF="javascript:fullSize('f09rg02x.htm')"> <img src="f09rg02.jpg" width=404 height=152 border=0 ALT="Click to view at full size."> </A>
+
+<P><!-- caption --><B>Figure 9-2.</B> <I>The registry entry for the serial driver.</I><!-- /caption -->
+
+<P>You can look in the serial driver registry key for such information as the name of the DLL that actually implements the driver, the three-letter prefix defining the driver name, the order in which the driver wants to be loaded, and something handy for user interfaces, the <I>friendly name</I> of the driver. Not all drivers have this friendly name, but when they do, it's a much more user-friendly name than COM2 or NDS1.
+
+<P>Drivers for PCMCIA or Compact Flash Cards have an additional value in their active list key. The <I>PnpId</I> value contains the Plug and Play ID string for the card. While this string is more descriptive than the five-character driver name, some PCMCIA and Compact Flash Cards have their <I>PnpId</I> strings registered in the system. If so, a registry key for the <I>PnpId</I> is located in the <I>Drivers\PCMCIA</I> key under HKEY_LOCAL_MACHINE. For example, a PCMCIA Card that had a <I>PnpId</I> string <I>This_is_a_pc_card</I> would be registered under the key <I>\Drivers\PCMCIA\This_is_a_pc_card</I>. That key may contain a <I>FriendlyName</I> string for the driver.
+
+
+
+<P>Following is a routine (and a small helper routine) that creates a list of active drivers and, if specified, their friendly names. The routine produces a series of Unicode strings, two for each active driver. The first string is the driver name, followed by its friendly name. If a driver doesn't have a friendly name, a zero-length string is inserted in the list. The list ends with a zero-length string for the driver name.
+
+<p><pre>
+//----------------------------------------------------------------------
+// AddToList - Helper routine
+int AddToList (LPTSTR *pPtr, INT *pnListSize, LPTSTR pszStr) {
+    INT nLen = lstrlen (pszStr) + 1;
+
+    if (*pnListSize &lt; nLen)
+        return -1;
+    lstrcpy (*pPtr, pszStr);
+    *pPtr += nLen;
+    *pnListSize -= nLen;
+    return 0;
+}
+//----------------------------------------------------------------------
+// EnumActiveDrivers - Produces a list of active drivers
+//
+int EnumActiveDrivers (LPTSTR pszDrvrList, int nListSize) {
+    INT i = 0, rc;
+    HKEY hKey, hSubKey, hDrvrKey;
+    TCHAR szKey[128], szValue[128];
+    LPTSTR pPtr = pszDrvrList;
+    DWORD dwType, dwSize;
+
+    *pPtr = TEXT (`\0');
+    if (RegOpenKeyEx (HKEY_LOCAL_MACHINE, TEXT (&quot;drivers\\active&quot;), 0,
+                       0, &amp;hKey) != ERROR_SUCCESS)
+        return 0;
+
+    while (1) {
+        // Enumerate active driver list.
+        dwSize = sizeof (szKey);
+        if (RegEnumKeyEx (hKey, i++, szKey, &amp;dwSize, NULL, NULL,
+                          NULL, NULL) != ERROR_SUCCESS)
+            break;
+        // Open active driver key.
+        rc = RegOpenKeyEx (hKey, szKey, 0, 0, &amp;hSubKey);
+        if (rc != ERROR_SUCCESS)
+            continue;
+
+        // Get name of device.
+        dwSize = sizeof (szValue);
+       rc = RegQueryValueEx (hSubKey, TEXT (&quot;Name&quot;), 0, &amp;dwType,
+                              (PBYTE)szValue, &amp;dwSize);
+       if (rc != ERROR_SUCCESS)
+            szValue[0] = TEXT (`\0');
+
+       if (AddToList (&amp;pPtr, &amp;nListSize, szValue)) {
+            rc = -1;
+           RegCloseKey (hSubKey);
+            break;
+        }
+
+       // Get friendly name of device.
+       szValue[0] = TEXT ( `\0');
+       dwSize = sizeof (szKey);
+      rc = RegQueryValueEx (hSubKey, TEXT (&quot;Key&quot;), 0, &amp;dwType,
+                              (PBYTE)szKey, &amp;dwSize);
+      if (rc == ERROR_SUCCESS) {
+            // Get driver friendly name.
+          if (RegOpenKeyEx (HKEY_LOCAL_MACHINE, szKey, 0, 0,
+                              &amp;hDrvrKey) == ERROR_SUCCESS) {
+
+                dwSize = sizeof (szValue);
+              RegQueryValueEx (hDrvrKey, TEXT (&quot;FriendlyName&quot;), 0,
+                                 &amp;dwType, (PBYTE)szValue, &amp;dwSize);
+               RegCloseKey (hDrvrKey);
+            }
+        }
+      RegCloseKey (hSubKey);
+      if (AddToList (&amp;pPtr, &amp;nListSize, szValue)) {
+            rc = -1;
+            break;
+        }
+    }
+   RegCloseKey (hKey);
+   // Add terminating zero.
+    if (!rc)
+      rc = AddToList (&amp;pPtr, &amp;nListSize, TEXT (&quot;&quot;));
+    return rc;
+}
+</PRE>
+
+<A NAME="345"><H2>Reading and Writing Device Drivers</H2></A>
+
+<P>Your application accesses device drivers under Windows CE through the file I/O functions, <I>CreateFile</I>, <I>ReadFile</I>, <I>WriteFile</I>, and <I>CloseHandle</I>. You open the device using <I>CreateFile</I>, with the name of the device being the five-character (three characters plus digit plus colon) name of the driver. Drivers can be opened with all the varied access rights: read only, write only, read/write, or neither read nor write access.
+
+<P>Once a device is open, you can send data to it using <I>WriteFile</I> and can read from the device using <I>ReadFile</I>. As is the case with file operations, overlapped I/O isn't supported for devices under Windows CE. The driver can be sent control characters using the function (not described in <A HREF="ch07a.htm">Chapter 7</a>) <I>DeviceIoControl</I>. The function is prototyped this way:
+
+<p><pre>
+BOOL DeviceIoControl (HANDLE hDevice, DWORD dwIoControlCode,
+                      LPVOID lpInBuffer, DWORD nInBufferSize,
+                      LPVOID lpOutBuffer, DWORD nOutBufferSize,
+                      LPDWORD lpBytesReturned,
+                      LPOVERLAPPED lpOverlapped);
+</PRE>
+
+
+<P>The first parameter is the handle to the opened device. The second parameter, <I>dwIoControlCode</I>, is the <I>IoCtl</I> (pronounced eye-OC-tal) code. This value defines the operation of the call to the driver. The next series of parameters are generic input and output buffers and their sizes. The use of these buffers is dependent on the <I>IoCtl</I> code passed in <I>dwIoControlCode</I>. The <I>lpBytesReturned</I> parameter must point to a DWORD value that will receive the number of bytes returned by the driver in the buffer pointed to by <I>lpOutBuffer</I>.
+
+<P>Each driver has its own set of <I>IoCtl</I> codes. If you look in the source code for the example serial driver provided in the ETK, you'll see that the following <I>IoCtl</I> codes are defined for the COM driver. Note that these codes aren't defined in the Windows CE SDK because an application doesn't need to directly call <I>DeviceIoControl</I> using these codes.
+
+<p><table width="95%" cellpadding=5>
+<tr><td valign="top">IOCTL_SERIAL_SET_BREAK_ON</td>
+<td valign="top">IOCTL_SERIAL_SET_BREAK_OFF</td></tr>
+
+<tr><td valign="top">IOCTL_SERIAL_SET_DTR</td>
+<td valign="top">IOCTL_SERIAL_CLR_DTR</td></tr>
+
+<tr><td valign="top">IOCTL_SERIAL_SET_RTS</td>
+<td valign="top">IOCTL_SERIAL_CLR_RTS</td></tr>
+
+<tr><td valign="top">IOCTL_SERIAL_SET_XOFF</td>
+<td valign="top">IOCTL_SERIAL_SET_XON</td></tr>
+
+<tr><td valign="top">IOCTL_SERIAL_GET_WAIT_MASK</td>
+<td valign="top">IOCTL_SERIAL_SET_WAIT_MASK</td></tr>
+
+<tr><td valign="top">IOCTL_SERIAL_WAIT_ON_MASK</td>
+<td valign="top">IOCTL_SERIAL_GET_COMMSTATUS</td></tr>
+
+<tr><td valign="top">IOCTL_SERIAL_GET_MODEMSTATUS</td>
+<td valign="top">IOCTL_SERIAL_GET_PROPERTIES</td></tr>
+
+<tr><td valign="top">IOCTL_SERIAL_SET_TIMEOUTS</td>
+<td valign="top">IOCTL_SERIAL_GET_TIMEOUTS</td></tr>
+
+<tr><td valign="top">IOCTL_SERIAL_PURGE</td>
+<td valign="top">IOCTL_SERIAL_SET_QUEUE_SIZE</td></tr>
+
+<tr><td valign="top">IOCTL_SERIAL_IMMEDIATE_CHAR</td>
+<td valign="top">IOCTL_SERIAL_GET_DCB</td></tr>
+
+<tr><td valign="top">IOCTL_SERIAL_SET_DCB</td>
+<td valign="top">IOCTL_SERIAL_ENABLE_IR</td></tr>
+
+<tr><td valign="top">IOCTL_SERIAL_DISABLE_IR</td>
+<td valign="top"></td></tr>
+</table>
+
+<P>As you can see from the fairly self-descriptive names, the serial driver <I>IoCtl</I> functions expose significant function to the calling process. Windows uses these <I>IoCtl</I> codes to control some of the specific features of a serial port, such as the handshaking lines and timeouts. Each driver has its own set of <I>IoCtl</I> codes. I've shown the ones above simply as an example of how the <I>DeviceIoControl</I> function is typically used. Under most circumstances, there's no reason for an application to use the <I>DeviceIoControl</I> function with the serial driver. Windows provides its own set of functions that then call down to the serial driver using <I>DeviceIoControl</I>.
+
+<P>Okay, we've talked enough about generic drivers. It's time to sit down to the meat of the chapter&#8212;serial communication. I'll talk first about basic serial connections, and then venture into infrared communication. Windows CE provides excellent support for serial communications, but the API is a subset of the API for Windows NT or Windows 98. Fortunately, the basics are quite similar, and the differences mainly inconsequential.
+
+</BODY>
+</HTML>
+
+
+
+
+

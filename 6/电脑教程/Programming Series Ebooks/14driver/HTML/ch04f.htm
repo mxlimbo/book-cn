@@ -1,0 +1,612 @@
+<HTML>
+<HEAD>
+<TITLE>Other Kernel-Mode Synchronization Primitives</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch04e.htm">[Previous]</A> <A HREF="ch05a.htm">[Next]</a>
+</p>
+
+<A NAME="137"><H1>Other Kernel-Mode Synchronization Primitives</H1></A>
+
+<p>The Windows 2000 kernel offers some additional methods for synchronizing execution between
+threads or for guarding access to shared objects. In this section, I'll discuss the <i>fast
+mutex</i>, which is a mutual exclusion object that offers faster performance than a kernel
+mutex because it's optimized for the case where no contention is actually occurring.
+I'll also describe the category of support functions that include the word <i>
+Interlocked</i> in their name somewhere. These functions carry out certain common
+operations&#8212;such as incrementing or decrementing an integer or inserting or removing an
+entry from a linked list&#8212;in an atomic way that prevents multitasking or multiprocessing
+interference.</p>
+
+<A NAME="138"><H2>Fast Mutex Objects</H2></A>
+
+<p>Compared to kernel mutexes, fast mutexes have the strengths and weaknesses summarized in
+Table 4-6. On the plus side, a fast mutex is much faster to acquire and release if there's
+no actual contention for it. On the minus side, you must avoid trying to recursively acquire a
+fast mutex, and that can mean preventing the delivery of APCs while you own it. Preventing APCs
+means raising IRQL to APC_LEVEL or above, which effectively negates thread priority and gains
+you the assurance that your code will execute except while the processor handles a
+higher-priority interrupt.</p>
+
+<p><b>Table 4-6.</b> <i>Comparison of kernel and fast mutex objects.</i></p>
+
+<P>
+<table cellpadding=5 width="95%">
+<tr> 
+<th><i>Kernel Mutex</i>  </th>
+<th><i>Fast Mutex</i>  </th></tr>
+<tr>
+<td valign="top">Can be acquired recursively by a single thread (system maintains a claim counter)  </td>
+<td valign="top">Cannot be acquired recursively  </td></tr>
+<tr>
+<td valign="top">Relatively slower  </td>
+<td valign="top">Relatively faster  </td></tr>
+<tr>
+<td valign="top">Owner won't receive any but &quot;special&quot; kernel APCs </td>
+<td valign="top">Owner won't receive <i>any</i> APCs  </td></tr>
+<tr>
+<td valign="top">Owner can't be removed from &quot;balance set&quot; (that is, can't be paged out) </td>
+<td valign="top">No automatic priority boost (if you run at or above APC_LEVEL)  </td></tr>
+<tr>
+<td valign="top">Can be part of a multiple object wait  </td>
+<td valign="top">Cannot be used as an argument to KeWaitForMultipleObjects  </td></tr>
+</table></p>
+
+<p>Incidentally, the DDK documentation about kernel mutex objects has long said that the kernel
+gives a priority boost to a thread that claims a mutex. I'm reliably informed that this
+hasn't actually been true since 1992 (the year, that is, not the Windows 2000 build
+number).</p>
+
+<p>Table 4-7 summarizes the service functions you use to work with fast mutexes.</p>
+
+<p><b>Table 4-7.</b> <i>Service functions for use with executive fast mutexes.</i></p>
+
+<P>
+<table cellpadding=5 width="95%">
+<tr> 
+<th><i>Service Function</i>  </th>
+<th><i>Description</i>  </th></tr>
+<tr>
+<td valign="top">ExAcquireFastMutex  </td>
+<td valign="top">Acquires ownership of mutex, waiting if necessary  </td></tr>
+<tr>
+<td valign="top">ExAcquireFastMutexUnsafe  </td>
+<td valign="top">Acquires ownership of mutex, waiting if necessary, in circumstance where caller has already disabled receipt of APCs  </td></tr>
+<tr>
+<td valign="top">ExInitializeFastMutex  </td>
+<td valign="top">Initializes mutex object  </td></tr>
+<tr>
+<td valign="top">ExReleaseFastMutex  </td>
+<td valign="top">Releases mutex  </td></tr>
+<tr>
+<td valign="top">ExReleaseFastMutexUnsafe  </td>
+<td valign="top">Releases mutex without reenabling APC delivery  </td></tr>
+<tr>
+<td valign="top">ExTryToAcquireFastMutex  </td>
+<td valign="top">Acquires mutex if possible to do so without waiting  </td></tr>
+</table></p>
+
+<p> To create a fast mutex, you must first allocate a FAST_MUTEX data structure in nonpaged memory.
+Then you initialize the object by &quot;calling&quot; <b>ExInitializeFastMutex</b>, which is
+really a macro in WDM.H:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql() &lt;= DISPATCH_LEVEL);
+ExInitializeFastMutex(FastMutex);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>where <b>FastMutex</b> is the address of your FAST_MUTEX object. The mutex begins life in
+the unowned state. To acquire ownership later on, call one of these functions:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>ASSERT(KeGetCurrentIrql() &lt; DISPATCH_LEVEL);
+ExAcquireFastMutex(FastMutex);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>or</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql() &lt; DISPATCH_LEVEL);
+ExAcquireFastMutexUnsafe(FastMutex);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The first of these functions waits for the mutex to become available, assigns ownership to
+the calling thread, and then raises the current processor IRQL to APC_LEVEL. Raising the IRQL
+has the effect of blocking delivery of all APCs. The second of these functions doesn't
+change IRQL. You need to think about potential deadlocks if you use the &quot;unsafe&quot;
+function to acquire a fast mutex. The situation you must avoid is an APC routine that is
+running in the same thread context to acquire the same mutex or any other object that can't
+be recursively locked. Otherwise, you'll run the risk of instantly deadlocking that
+thread.</p>
+
+<p>If you don't want to wait if the mutex isn't immediately available, use the
+&quot;try to acquire&quot; function:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql() &lt; DISPATCH_LEVEL);
+BOOLEAN acquired = ExTryToAcquireFastMutex(FastMutex);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>If the return value is TRUE, you now own the mutex. If it's FALSE, someone else owns the
+mutex and has prevented you from acquiring it.</p>
+
+<p>To release control of a fast mutex and allow some other thread to claim it, call the release
+function corresponding to the way you acquired the fast mutex:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql() &lt; DISPATCH_LEVEL);
+ExReleaseFastMutex(FastMutex);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>or</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql() &lt; DISPATCH_LEVEL);
+ExReleaseFastMutexUnsafe(FastMutex);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>A fast mutex is fast because the acquisition and release steps are optimized for the usual
+case when there's no contention for the mutex. The critical step in acquiring the mutex is
+to atomically decrement and test an integer counter that indicates how many threads either own
+or are waiting for the mutex. If the test indicates that no other thread owns the mutex, no
+additional work is required. If the test indicates that another thread <i>does</i> own the
+mutex, the current thread blocks on a synchronization event that's part of the FAST_MUTEX
+object. Releasing the mutex entails atomically incrementing and testing the counter. If the
+test indicates that no thread is currently waiting, no additional work is required. If another
+thread is waiting, however, the owner calls KeSetEvent to release one of the waiters.</p>
+
+<A NAME="139"><H2>Interlocked Arithmetic</H2></A>
+
+<p>You can call several service functions in a WDM driver to perform arithmetic in a way
+that's thread-safe and multiprocessor-safe. See Table 4-8. These routines come in two
+flavors. The first type of routine has a name beginning with <b>Interlocked</b> and performs an
+atomic operation in such a way that no other thread or CPU can interfere. The other flavor has
+a name beginning with <b>ExInterlocked</b> and uses a spin lock.</p>
+
+<p><b>Table 4-8.</b> <i>Service functions for interlocked arithmetic.</i></p>
+
+<P>
+<table cellpadding=5 width="95%">
+<tr> 
+<th><i>Service Function</i>  </th>
+<th><i>Description</i>  </th></tr>
+<tr>
+<td valign="top">InterlockedCompareExchange  </td>
+<td valign="top">Compares and conditionally exchanges  </td></tr>
+<tr>
+<td valign="top">InterlockedDecrement  </td>
+<td valign="top">Subtracts one from an integer  </td></tr>
+<tr>
+<td valign="top">InterlockedExchange  </td>
+<td valign="top">Exchanges two values  </td></tr>
+<tr>
+<td valign="top">InterlockedExchangeAdd  </td>
+<td valign="top">Adds two values and returns sum  </td></tr>
+<tr>
+<td valign="top">InterlockedIncrement  </td>
+<td valign="top">Adds one to an integer  </td></tr>
+<tr>
+<td valign="top">ExInterlockedAddLargeInteger  </td>
+<td valign="top">Adds value to 64-bit integer  </td></tr>
+<tr>
+<td valign="top">ExInterlockedAddLargeStatistic  </td>
+<td valign="top">Adds value to ULONG  </td></tr>
+<tr>
+<td valign="top">ExInterlockedAddUlong </td>
+<td valign="top">Adds value to ULONG and returns initial value  </td></tr>
+<tr>
+<td valign="top">ExInterlockedCompareExchange64  </td>
+<td valign="top">Exchanges two 64-bit values  </td></tr>
+</table></p>
+
+
+<p>The <b>Interlocked</b><i>Xxx</i> functions can be called at any IRQL; they can also handle
+pagable data at PASSIVE_LEVEL because they don't require a spin lock. Although the <b>ExInterlocked</b><i>Xxx</i> routines can be called at any IRQL, they operate on the target data
+at or above DISPATCH_LEVEL and therefore require a nonpaged argument. The only reason to use an
+ExInterlocked<i>Xxx</i> function is if you have a data variable that you sometimes need to
+increment or decrement <i>and</i> sometimes need to access throughout some series of
+instructions. You would explicitly claim the spin lock around the multi-instruction accesses
+and use the ExInterlocked<i>Xxx</i> function to perform the simple increments or
+decrements.</p>
+
+<A NAME="140"><h3>Interlocked<i>Xxx</i> Functions</h3></A>
+<p><b>InterlockedIncrement</b> adds one to a long integer in memory and returns the
+postincrement value to you:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>LONG result = InterlockedIncrement(pLong);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>where <b>pLong</b> is the address of a variable typed as a LONG (that is, a long integer).
+Conceptually, the operation of the function is equivalent to the statement <b>return ++*pLong</b> in C, but the implementation differs from that simple statement in order to
+provide thread safety and multiprocessor safety. InterlockedIncrement guarantees that the
+integer is successfully incremented even if code on other CPUs or in other eligible threads on
+the same CPU is simultaneously trying to alter the same variable. In the nature of the
+operation, it cannot guarantee that the value it returns is still the value of the variable
+even one machine cycle later, because other threads or CPUs will be able to modify the variable
+as soon as the atomic increment operation completes.</p>
+
+<p><b>InterlockedDecrement</b>, shown below, is similar to
+InterlockedIncrement, but it subtracts one from the target variable and returns the
+postdecrement value, just like the C statement <b>return --*pLong</b> but with thread safety
+and multiprocessor safety.</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>LONG result = InterlockedDecrement(pLong);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>You call <b>InterlockedCompareExchange</b> like this:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>LONG target;
+LONG result = InterlockedCompareExchange(&amp;target, newval, oldval);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Here, <b>target</b> is a LONG integer used both as input and output to the function, <b>oldval</b> is your guess about the current contents of the target, and <b>newval</b> is the new
+value that you want installed into the target if your guess is correct. The function performs
+an operation similar to that indicated in the following C code, but does so via an atomic
+operation that's both thread-safe and multiprocessor-safe:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>LONG CompareExchange(PLONG ptarget, LONG newval, LONG oldval)
+  {
+  LONG value = *ptarget;
+  if (value == oldval)
+    *ptarget = newval;
+  return value;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>In other words, the function always returns the previous value of the target variable to
+you. In addition, if that previous value equals <b>oldval</b>, it sets the target equal to the
+<b>newval</b> you specify. The function uses an atomic operation to do the compare and exchange
+so that the replacement happens only if you're correct in your guess about the previous
+contents.</p>
+
+<p>You can also call the <b>InterlockedCompareExchangePointer</b> function to perform a similar
+sort of compare and exchange operation with a pointer. This function is either defined as a
+compiler intrinsic (that is, a function for which the compiler supplies an inline
+implementation) or a real function call, depending on how wide pointers are on the platform for
+which you're compiling and on the ability of the compiler to generate inline code. You
+could use the pointer version of the function, as shown in the following example, to add a
+structure to the head of a singly-linked list without needing to acquire a spin lock or raise
+IRQL:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>typedef struct _SOMESTRUCTURE {
+  struct _SOMESTRUCTURE* next;
+  ... } SOMESTRUCTURE, *PSOMESTRUCTURE;
+...
+void InsertElement(PSOMESTRUCTURE p, PSOMESTRUCTURE anchor)
+  {
+  PSOMESTRUCTURE next, first;
+  do
+    {
+    p-&gt;next = first = *anchor;
+    next = InterlockedCompareExchangePointer(anchor, p, first);
+    }
+  while (next != first);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Each time through the loop, we make the assumption that the new element will end up being
+chained to the current head of the list, the address of which we save in the variable named <b>
+first</b>. Then we call InterlockedCompareExchangePointer to see whether the anchor still
+points to <b>first</b> even these few nanoseconds later. If so,
+InterlockedCompareExchangePointer will set the anchor to point our new element <b>p</b>. The
+fact that the return value from InterlockedCompareExchangePointer is the same as our assumption
+causes the loop to terminate. If, for some reason, the anchor no longer points to the same <b>
+first</b> element, we'll discover that fact and repeat the loop.</p>
+
+<p>The last function in this class is <b>InterlockedExchange</b> , which simply uses an atomic
+operation to replace the value of an integer variable and to return the previous value:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>LONG value;
+LONG oldval = InterlockedExchange(&amp;value, newval);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>As you might have guessed, there's also an <b>InterlockedExchangePointer</b> that
+exchanges a pointer value (64-bit or 32-bit, depending on the platform).</p>
+
+<A NAME="141"><h3>ExInterlocked<i>Xxx</i> Functions</h3></A>
+<p>Each of the ExInterlocked<i>Xxx</i> functions requires that you create and initialize a spin
+lock before you call it. Note that the operands of these functions must all be in nonpaged
+memory because the functions operate on the data at elevated IRQL.</p>
+
+<p><b>ExInterlockedAddLargeInteger</b> adds two 64-bit integers and returns the previous value of
+the target:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>LARGE_INTEGER value, increment;
+KSPIN_LOCK spinlock;
+LARGE_INTEGER prev = ExInterlockedAddLargeInteger(&amp;value,
+  increment, &amp;spinlock);</pre>
+</td></tr>
+</table>
+</p>
+
+<p><b>Value</b> is the target of the addition and one of the operands. <b>Increment</b> is an
+integer operand that's added to the target. <b>Spinlock</b> is a spin lock that you
+previously initialized. The return value is the target's value before the addition. In
+other words, the operation of this function is similar to the following function except that it
+occurs under protection of the spin lock:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>_ _int64 AddLargeInteger(_ _int64* pvalue, _ _int64 increment)
+  {
+  _ _int64 prev = *pvalue;
+  *pvalue += increment;
+  return prev;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Note that the return value is the <i>preaddition</i> value, which contrasts with the
+postincrement return from InterlockedExchange and similar functions. (Also, not all compilers
+support the _ _<b>int64</b> integer data type, and not all computers can perform a 64-bit
+addition operation using atomic instructions.)</p>
+
+<p><b>ExInterlockedAddUlong</b> is analogous to ExInterlockedAddLargeInteger except that it works
+with 32-bit unsigned integers:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ULONG value, increment;
+KSPIN_LOCK spinlock;
+ULONG prev = ExInterlockedAddUlong(&amp;value, increment, &amp;spinlock);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>This function likewise returns the preaddition value of the target of the operation.</p>
+
+<p><b>ExInterlockedAddLargeStatistic</b> is similar to ExInterlockedAddUlong in that it adds a
+32-bit value to a 64-bit value. It hadn't been documented in the DDK at press time, so
+I'll show you its prototype here:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>VOID ExInterlockedAddLargeStatistic(PLARGE_INTEGER Addend,
+  ULONG Increment);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>This new function is faster than ExInterlockedAddUlong because it doesn't need to return
+the preincrement value of the <b>Addend</b> variable. It therefore doesn't need to employ a
+spin lock for synchronization. The atomicity provided by this function is, however, only with
+respect to other callers of the same function. In other words, if you had code on one CPU
+calling ExInterlockedAddLargeStatistic at the same time as code on another CPU was accessing
+the Addend variable for either reading or writing, you could get inconsistent results. I can
+explain why this is so by showing you this paraphrase of the Intel x86 implementation of the
+function (not the actual source code):</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>mov eax, Addend
+mov ecx, Increment
+lock add [eax], ecx
+lock adc [eax+4], 0</pre>
+</td></tr>
+</table>
+</p>
+
+<p>This code works correctly for purposes of incrementing the Addend because the lock prefixes
+guarantee atomicity of each addition operation and because no carries from the low-order 32
+bits can ever get lost. The instantaneous value of the 64-bit Addend isn't always
+consistent, however, because an incrementer might be poised between the ADD and the ADC just at
+the instant someone makes a copy of the complete 64-bit value. Therefore, even a caller of <b>
+ExInterlockedCompareExchange64</b> on another CPU could obtain an inconsistent value.</p>
+
+<A NAME="142"><H2>Interlocked List Access</H2></A>
+
+<p>The Windows NT executive offers three sets of support functions for dealing with linked
+lists in a thread-safe and multiprocessor-safe way. These functions support doubly-linked
+lists, singly-linked lists, and a special kind of singly-linked list called an <i>S-List</i>. I
+discussed noninterlocked doubly-linked and singly-linked lists in the preceding chapter. To
+close this chapter on synchronization within WDM drivers, I'll explain how to use these
+interlocked accessing primitives.</p>
+
+<p>If you need the functionality of a FIFO queue, you should use a doubly-linked list. If you need
+the functionality of a thread-safe and multiprocessor-safe pushdown stack, you should use an
+S-List. In both cases, to achieve thread safety and multiprocessor safety, you will allocate
+and initialize a spin lock. The S-List might not actually use the spin lock, however, because
+the presence of a sequence number might allow the kernel to implement it using just atomic
+compare-exchange sorts of operations.</p>
+
+<p>The support functions for performing interlocked access to list objects are very similar, so
+I've organized this section along functional lines. I'll explain how to initialize all
+three kinds of list. Then I'll explain how to insert an item into all three kinds. After
+that, I'll explain how to remove items.</p>
+
+<A NAME="143"><H3>Initialization</H3></A>
+
+<p>You can initialize these lists as shown here:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>LIST_ENTRY DoubleHead;
+SINGLE_LIST_ENTRY SingleHead;
+SLIST_HEADER SListHead;
+
+InitializeListHead(&amp;DoubleHead);
+
+SingleHead.Next = NULL;
+
+ExInitializeSListHead(&amp;SListHead);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Don't forget that you must also allocate and initialize a spin lock for each list.
+Furthermore, the storage for the list heads and all the items you put into the lists must come
+from nonpaged memory because the support routines perform their accesses at elevated IRQL. Note
+that the spin lock isn't used during initialization of the list head because it doesn't
+make any sense to allow contention for list access before the list has been initialized.</p>
+
+<A NAME="144"><H3>Inserting Items</H3></A>
+
+<p>You can insert items at the head and tail of a doubly-linked list and at the head (only) of
+a singly-linked list or an S-List:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>PLIST_ENTRY pdElement, pdPrevHead, pdPrevTail;
+PSINGLE_LIST_ENTRY psElement, psPrevHead;
+PKSPIN_LOCK spinlock;
+
+pdPrevHead = ExInterlockedInsertHeadList(&amp;DoubleHead, pdElement, spinlock);
+pdPrevTail = ExInterlockedInsertTailList(&amp;DoubleHead, pdElement, spinlock);
+
+psPrevHead = ExInterlockedPushEntryList(&amp;SingleHead, psElement, spinlock);
+
+psPrevHead = ExInterlockedPushEntrySList(&amp;SListHead, psElement, spinlock);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The return values are the addresses of the elements previously at the head (or tail) of the
+list in question. Note that the element addresses you use with these functions are the
+addresses of list entry structures that are usually embedded in larger structures of some kind,
+and you will need to use the CONTAINING_RECORD macro to recover the address of the surrounding
+structure.</p>
+
+<A NAME="145"><H3>Removing Items</H3></A>
+
+<p>You can remove items from the head of any of these lists:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>pdElement = ExInterlockedRemoveHeadList(&amp;DoubleHead, spinlock);
+
+psElement = ExInterlockedPopEntryList(&amp;SingleHead, spinlock);
+
+psElement = ExInterlockedPopEntrySList(&amp;SListHead, spinlock);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The return values are NULL if the respective lists are empty. Be sure to test the return
+value for NULL <i>before</i> applying the CONTAINING_RECORD macro to recover a containing
+structure pointer.</p>
+
+<A NAME="146"><H3>IRQL Restrictions</H3></A>
+
+<p>You can call the S-List functions only while running at or below DISPATCH_LEVEL. The
+ExInterlocked<i>Xxx</i> functions for accessing doubly-linked or singly-linked lists can be
+called at any IRQL so long as <i>all</i> references to the list use an ExInterlocked<i>Xxx</i>
+call. The reason for no IRQL restrictions is that the implementations of these functions
+disable interrupts, which is tantamount to raising IRQL to the highest possible level. Once
+interrupts are disabled, these functions then acquire the spin lock you've specified. Since
+no other code can gain control on the same CPU, and since no code on another CPU can acquire
+the spin lock, your lists are protected.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+The DDK documentation states this rule in an overly restrictive way for at
+least some of the ExInterlocked<i>Xxx</i> functions. It says that all callers must be running
+at some single IRQL less than or equal to the DIRQL of your interrupt object. There is, in
+fact, no requirement that all callers be at the same IRQL, because you can call the functions
+at <i>any</i> IRQL. Likewise, no restriction to &lt;= DIRQL exists either, but there's also
+no reason for the code you and I write to raise IRQL higher than that.</blockquote></div>
+</p>
+
+<p>It's perfectly okay for you to use ExInterlocked<i>Xxx</i> calls to access a
+singly-linked or doubly-linked list (but not an S-List) in some parts of your code and to use
+the noninterlocked functions (<b>InsertHeadList</b> and so on) in other parts of your code if
+you follow a simple rule. Before using a noninterlocked primitive, acquire the same spin lock
+that your interlocked calls use. Furthermore, restrict list access to code running at or below
+DISPATCH_LEVEL. For example:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>// Access list using noninterlocked calls:
+
+VOID Function1()
+  {
+  ASSERT(KeGetCurrentIrql() &lt;= DISPATCH_LEVEL);
+  KIRQL oldirql;
+  KeAcquireSpinLock(spinlock, &amp;oldirql);
+  InsertHeadList(...);
+  RemoveTailList(...);
+  ...
+  KeReleaseSpinLock(spinlock, oldirql);
+  }
+
+// Access list using interlocked calls:
+
+VOID Function2()
+  {
+  ASSERT(KeGetCurrentIrql() &lt;= DISPATCH_LEVEL);
+  ExInterlockedInsertTailList(..., spinlock);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The first function must be running at or below DISPATCH_LEVEL because that's a
+requirement of calling KeAcquireSpinLock. The reason for the IRQL restriction on the
+interlocked calls in the second function is as follows: Suppose that <b>Function1</b> acquires
+the spin lock in preparation for performing some list accesses. Acquiring the spin lock raises
+IRQL to DISPATCH_LEVEL. Now suppose that an interrupt occurs on the same CPU at a higher IRQL
+and that <b>Function2</b> gains control to use one of the ExInterlocked<i>Xxx</i> routines. The
+kernel will now attempt to acquire the same spin lock, and the CPU will deadlock. This problem
+arises from allowing code running at two different IRQLs to use the same spin lock: Function1
+is at DISPATCH_LEVEL, and Function2 is&#8212;practically speaking, anyway&#8212;at HIGH_LEVEL
+when it tries to recursively acquire the lock.</p>
+</body>
+</html>
+
+
+
+
+
+
+

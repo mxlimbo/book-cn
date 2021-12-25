@@ -1,0 +1,460 @@
+<HTML>
+<HEAD>
+<TITLE>Placing Restrictions on a Job's Processes</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch05a.htm">[Previous]</A> <A HREF="ch05c.htm">[Next]</A><P>
+
+<A NAME="68"><H1>Placing Restrictions on a Job's Processes</H1></A>
+
+<p>After creating a job, you will typically want to set up the sandbox
+(set restrictions) on what processes within the job can do. You can
+place several different types of restrictions on a job:</p>
+
+<ul>
+<p><li>The basic limit and extended basic limit prevent processes within
+a job from monopolizing the system's resources.</li></p>
+
+<p><li>Basic UI restrictions prevent processes within a job from
+altering the user interface.</li></p>
+
+<p><li>Security limits prevent processes within a job from accessing
+secure resources (files, registry subkeys, and so on).</li></p>
+</ul>
+
+
+<p>You place restrictions on a job by calling the following:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL SetInformationJobObject(
+   HANDLE hJob,
+   JOBOBJECTINFOCLASS JobObjectInformationClass,
+   PVOID pJobObjectInformation, 
+   DWORD cbJobObjectInformationLength); 
+</pre></td></tr></table></p>
+
+<p>The first parameter identifies the job you want to restrict. The
+second parameter is an enumerated type and indicates the type of
+restriction you want to apply. The third parameter is the address of a
+data structure containing the restriction settings, and the fourth
+parameter indicates the size of this structure (used for versioning).
+The following table summarizes how to set restrictions.</p>
+
+<p><table cellpadding=5 width="95%"><tr>
+<th>Limit Type</th>
+<th>Value of Second Parameter</th>
+<th>Structure of Third Parameter</th>
+</tr><tr>
+<td valign="top">Basic limit</td>
+<td valign="top"><i>JobObjectBasicLimitInformation</i></td>
+<td valign="top">JOBOBJECT_BASIC_ 
+ LIMIT_INFORMATION</td>
+</tr><tr>
+<td valign="top">Extended basic limit</td>
+<td valign="top"><i>JobObjectExtendedLimitInformation</i></td>
+<td valign="top">JOBOBJECT_EXTENDED_LIMIT_INFORMATION</td>
+</tr><tr>
+<td valign="top">Basic UI restrictions</td>
+<td valign="top"><i>JobObjectBasicUIRestrictions</i></td>
+<td valign="top">JOBOBJECT_BASIC_UI_RESTRICTIONS</td>
+</tr><tr>
+<td valign="top">Security limit</td>
+<td valign="top"><i>JobObjectSecurityLimitInformation</i></td>
+<td valign="top">JOBOBJECT_SECURITY_LIMIT_INFORMATION</td>
+</tr></table></p>
+
+<p>In my <i>StartRestrictedProcess</i> function, I set only some basic
+restrictions on the job. I allocated a
+JOB_OBJECT_BASIC_LIMIT_INFORMATION structure, initialized it, and then
+called <i>SetInformationJobObject</i>. A JOB_OBJECT_ 
+BASIC_LIMIT_INFORMATION structure looks like this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+typedef struct _JOBOBJECT_BASIC_LIMIT_INFORMATION {
+   LARGE_INTEGER PerProcessUserTimeLimit;
+   LARGE_INTEGER PerJobUserTimeLimit;
+   DWORD         LimitFlags;
+   DWORD         MinimumWorkingSetSize;
+   DWORD         MaximumWorkingSetSize;
+   DWORD         ActiveProcessLimit;
+   DWORD_PTR     Affinity;
+   DWORD         PriorityClass;
+   DWORD         SchedulingClass;
+} JOBOBJECT_BASIC_LIMIT_INFORMATION, *PJOBOBJECT_BASIC_LIMIT_INFORMATION; 
+</pre></td></tr></table></p>
+
+<p>Table 5-1 briefly describes the members.</p>
+
+<p><b>Table 5-1.</b> <i>JOBOBJECT_BASIC_LIMIT_INFORMATION members</i></p>
+
+<table cellpadding=5 width="95%"><tr>
+<th>Member</th>
+<th>Description</th>
+<th>Notes</th>
+</tr><tr>
+<td valign="top"><i>PerProcessUser-TimeLimit</i></td>
+<td valign="top">Specifies the maximum user mode time allotted to each process (in 100 ns intervals).</td>
+<td valign="top">The system automatically terminates any process that uses more than its allotted time. To set this limit, specify the JOB_OBJECT_LIMIT_ 
+ PROCESS_TIME flag in the 
+ <i>LimitFlags</i> member. </td>
+</tr><tr>
+<td valign="top"><i>PerJobUser-TimeLimit</i></td>
+<td valign="top">Specifies how much more user-mode time the processes in this job can use (in 100 ns intervals).</td>
+<td valign="top">By default, the system automatically terminates
+all processes when this time limit is 
+ reached. You can change this 
+ value periodically as the job 
+ runs. To set this limit, specify 
+ the JOB_OBJECT_LIMIT_JOB_TIME flag in the <i>LimitFlags</i> member.</td>
+</tr><tr>
+<td valign="top"><i>LimitFlags</i></td>
+<td valign="top">Indicates which restrictions to apply to the job.</td>
+<td valign="top">See the section that
+follows this table for more information.</td>
+</tr><tr>
+<td valign="top"><i>MinimumWorkingSetSize/<br>MaximumWorkingSetSize</i></td>
+<td valign="top">Specifies the minimum and maximum working set size for each process (not for all processes within the job).</td>
+<td valign="top">Normally, a process's working 
+set can grow above its maximum; setting <i>MaximumWorkingSetSize</i> forces a hard limit. Once the process's working set reaches this limit, the process pages against itself. Calls to <i>SetProcessWorkingSetSize</i> by an individual process are ignored unless the process is just trying to empty 
+ its working set. To set this limit, 
+ specify the JOB_OBJECT_ 
+ LIMIT_WORKINGSET flag 
+ in the <i>LimitFlags</i> member.</td>
+</tr><tr>
+<td valign="top"><i>ActiveProcessLimit</i></td>
+<td valign="top">Specifies the maximum number of processes that can run concurrently in the job.</td>
+<td valign="top">Any attempt to go over this limit causes the new process to be terminated with a &quot;not enough quota&quot; error. To set this limit, specify the JOB_OBJECT_
+ LIMIT_ACTIVE_PROCESS flag in the <i>LimitFlags</i> member.</td>
+</tr><tr>
+<td valign="top"><i>Affinity</i></td>
+<td valign="top">Specifies the subset of the CPU(s) that can run the processes.</td>
+<td valign="top">Individual processes can limit 
+  this even further. To set this 
+ limit, specify the JOB_OBJECT_ 
+ LIMIT_AFFINITY flag in the 
+ <i>LimitFlags</i> member. </td>
+</tr><tr> 
+<td valign="top"><i>PriorityClass</i></td>
+<td valign="top">Specifies the priority class used by all processes.</td>
+<td valign="top">If a process calls <i>SetPriorityClass</i>, the call will return successfully even though it  actually fails. If the process calls 
+ <i>GetPriorityClass</i>, the function returns what the process has set 
+ the priority class to even though this might not be process's actual priority class. In addition, <i>SetThreadPriority</i> fails to raise threads above normal priority but can be used to lower a thread's priority. To set this 
+ limit, specify the JOB_OBJECT_LIMIT_PRIORITY_CLASS flag in the <i>LimitFlags</i> member.</td>
+</tr><tr> 
+<td valign="top"><i>SchedulingClass</i></td>
+<td valign="top">Specifies a relative time quantum difference assigned to threads in the job.</td>
+<td valign="top">Value can be from 0 to 9 inclusive; 5 is the default. See the 
+  text after this table for more information. To set this limit, 
+ specify theJOB_OBJECT_LIMIT_SCHEDULING_CLASS flag in 
+ the <i>LimitFlags</i> member.</td> 
+</tr></table>
+
+ 
+<p>I'd like to explain a few things about this structure that I
+don't think are clear in the Platform SDK documentation. You set
+bits in the <i>LimitFlags</i> member to indicate the restrictions you
+want applied to the job. For example, in my <i>
+StartRestrictedProcess</i> function, I set the JOB_OBJECT_LIMIT_ 
+PRIORITY_CLASS and JOB_OBJECT_LIMIT_JOB_TIME bits. This means that
+these are the only two restrictions that I place on the job. I impose
+no restrictions on CPU affinity, working set size, per-process CPU
+time, and so on. </p>
+<p>As the job runs, it maintains accounting information&#8212;such as how
+much CPU time the processes in the job have used. Each time you set the
+basic limit using the JOB_OBJECT_LIMIT_JOB_TIME flag, the job subtracts
+the CPU time accounting information for processes that have terminated.
+This shows you how much CPU time is used by the currently active
+processes. But what if you want to change the affinity of the job but
+not reset the CPU time accounting information? To do this, you have to
+set a new basic limit using the JOB_ 
+OBJECT_LIMIT_AFFINITY flag, and you have to leave off the
+JOB_OBJECT_ 
+LIMIT_JOB_TIME flag. But by doing this, you tell the job that you no
+longer want to enforce a CPU time restriction. This is not what you
+want. </p>
+<p>What you want is to change the affinity restriction and keep the
+existing CPU time restriction; you just don't want the CPU time
+accounting information for the terminated processes to be subtracted.
+To solve this problem, use a special flag:
+JOB_OBJECT_LIMIT_PRESERVE_JOB_TIME. This flag and the JOB_ 
+OBJECT_LIMIT_JOB_TIME flag are mutually exclusive. The JOB_OBJECT_ 
+LIMIT_PRESERVE_JOB_TIME flag indicates that you want to change the
+restrictions without subtracting the CPU time accounting information
+for the terminated processes. </p>
+<p>We should also talk about the JOBOBJECT_BASIC_LIMIT_INFORMATION
+structure's <i>SchedulingClass</i> member. Imagine that you have
+two jobs running and you set the priority class of both jobs to
+NORMAL_PRIORITY_CLASS. But you also want processes in one job to get more CPU time
+than processes in the other job. You can use the <i>SchedulingClass</i>
+member to change the relative scheduling of jobs that have the same
+priority class. You can set a value between 0 and 9, inclusive; 5 is
+the default. On Windows 2000, a higher value tells the system to give a
+longer time quantum to threads in processes in a particular job; a
+lower value reduces the threads' time quantum. </p>
+<p>For example, let's say that I have two normal priority class jobs.
+Each job contains one process, and each process has just one (normal
+priority) thread. Under ordinary circumstances, these two threads would
+be scheduled in a round-robin fashion and each would get the same time
+quantum. However, if we set the <i>SchedulingClass</i> member of the
+first job to 3, when threads in this job are scheduled CPU time, their
+quantum is shorter than for threads that are in the second job. </p>
+<p>If you use the <i>SchedulingClass</i> member, you should avoid using
+large numbers and hence larger time quantums because larger time
+quantums reduce the overall responsiveness of the other jobs,
+processes, and threads in the system. Also, I have just described what
+happens on Windows 2000. Microsoft plans to make more significant
+changes to the thread scheduler in future versions of Windows because
+it recognizes a need for the operating system to offer a wider range of
+thread scheduling scenarios to jobs, processes, and threads. </p>
+<p>One last limit that deserves special mention is the
+JOB_OBJECT_LIMIT_ 
+DIE_ON_UNHANDLED_EXCEPTION limit flag. This limit causes the system to
+turn off the &quot;unhandled exception&quot; dialog box for each
+process associated with the job. The system does this by calling the
+<i>SetErrorMode</i> function, passing it the SEM_NOGPFAULTERRORBOX flag
+for each process in the job. A process in a job that raises an
+unhandled exception is immediately terminated without any user
+interface being displayed. This is a useful limit flag for services and
+other batch-oriented jobs. Without it, a process in a job can raise an
+exception and never terminate, thereby wasting system resources. </p>
+<p>In addition to the basic limits, you can set extended limits on a job
+using the JOBOBJECT_EXTENDED_LIMIT_INFORMATION structure:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+typedef struct _JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+   JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
+   IO_COUNTERS IoInfo;
+   SIZE_T ProcessMemoryLimit;
+   SIZE_T JobMemoryLimit;
+   SIZE_T PeakProcessMemoryUsed;
+   SIZE_T PeakJobMemoryUsed;
+} JOBOBJECT_EXTENDED_LIMIT_INFORMATION, *PJOBOBJECT_EXTENDED_LIMIT_INFORMATION;
+</pre></td></tr></table></p>
+
+<p>As you can see, this structure contains a JOBOBJECT_BASIC_LIMIT_
+INFORMATION structure, which makes it a superset of the basic
+limits. This structure is a little strange because it includes members
+that have nothing to do with setting limits on a job. First, the <i>
+IoInfo</i> member is reserved; you should not access it in any way.
+I'll discuss how you can query I/O counter information later in the
+chapter. In addition, the <i>PeakProcessMemoryUsed</i> and <i>
+PeakJobMemoryUsed</i> members are read-only and tell you the maximum
+amount of committed storage that has been required for any one process
+and for all processes within the job, respectively. </p>
+<p>The two remaining members, <i>ProcessMemoryLimit</i> and <i>
+JobMemoryLimit</i>, restrict the amount of committed storage used by
+any one process or by all processes in the job, respectively. To set
+either of these limits, you specify the JOB_OBJECT_LIMIT_JOB_MEMORY and
+the JOB_OBJECT_LIMIT_PROCESS_MEMORY flags in the <i>LimitFlags</i> member,
+respectively.</p>
+
+<p>Now let's turn our attention back to other restrictions that you
+can place on a job. A JOBOBJECT_BASIC_UI_RESTRICTIONS structure looks
+like this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+typedef struct _JOBOBJECT_BASIC_UI_RESTRICTIONS {
+   DWORD UIRestrictionsClass;
+} JOBOBJECT_BASIC_UI_RESTRICTIONS, *PJOBOBJECT_BASIC_UI_RESTRICTIONS; 
+</pre></td></tr></table></p>
+
+<p>This structure has only one data member, <i>UIRestrictionsClass</i>,
+which holds a set of bit flags briefly described in Table 5-2. </p>
+
+<p><b>Table 5-2.</b> <i>Bit flags for basic user-interface restrictions for a job object</i></p>
+
+<p><table cellpadding=5 width="95%"><tr>
+<th>Flag</th>
+<th>Description</th>
+</tr><tr>
+<td valign="top">JOB_OBJECT_UILIMIT_EXITWINDOWS</td>
+<td valign="top">Prevents processes from logging off,
+shutting down, rebooting, or powering off the system via the <i>
+ExitWindowsEx</i> function </td>
+</tr><tr>
+<td valign="top">JOB_OBJECT_UILIMIT_READCLIPBOARD</td>
+<td valign="top">Prevents processes from reading the
+clipboard </td>
+</tr><tr>
+<td valign="top">JOB_OBJECT_UILIMIT_WRITECLIPBOARD</td>
+<td valign="top">Prevents processes from erasing the
+clipboard </td>
+</tr><tr>
+<td valign="top">JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS</td>
+<td valign="top">Prevents processes from changing
+system parameters via the <i>SystemParametersInfo</i> function</td>
+</tr><tr>
+<td valign="top">JOB_OBJECT_UILIMIT_DISPLAYSETTINGS</td>
+<td valign="top">Prevents processes from changing the
+display settings via the <i>ChangeDisplaySettings</i> function </td>
+</tr><tr>
+<td valign="top">JOB_OBJECT_UILIMIT_GLOBALATOMS</td>
+<td valign="top">Gives the job its own global atom table
+and restricts processes in the job to accessing only the job's
+table</td>
+</tr><tr>
+<td valign="top">JOB_OBJECT_UILIMIT_DESKTOP</td>
+<td valign="top">Prevents processes from creating or
+switching desktops using the <i>CreateDesktop</i> or <i>
+SwitchDesktop</i> function</td>
+</tr><tr>
+<td valign="top">JOB_OBJECT_UILIMIT_HANDLES</td>
+<td valign="top">Prevents processes in a job from using USER
+objects (such as HWNDs) created by processes outside the same job</td>
+</tr></table></p>
+
+
+<p>The last flag, JOB_OBJECT_UILIMIT_HANDLES, is particularly
+interesting. This restriction means that no processes in the job can
+access USER objects created by processes outside the job. So if you try
+to run Microsoft Spy++ inside a job, you won't see any windows
+except the windows that Spy++ itself creates. Figure 5-2 shows Spy++
+with two MDI child windows open. Notice that the Threads 1 window
+contains a list of threads in the system. Only one of those threads,
+000006AC SPYXX, seems to have created any windows. This is because I
+ran Spy++ in its own job and restricted its use of UI handles. In the
+same window, you can see the MSDEV and EXPLORER threads, but it appears
+that they have not created any windows. I assure you that these threads
+have definitely created windows, but Spy++ cannot access them. On the
+right side, you see the Windows 3 window, in which Spy++ shows the
+hierarchy of all windows existing on the desktop. Notice that there is
+only one entry, 00000000. Spy++ must just put this here as a
+placeholder.</p>
+
+<p>Note that this UI restriction is only one-way. That is, processes
+outside of a job can see USER objects created by processes within a
+job. For example, if I run Notepad in a job and Spy++ outside of a job,
+Spy++ can see Notepad's window even if the job that Notepad is in
+specifies the JOB_OBJECT_ 
+UILIMIT_HANDLES flag. Also, if Spy++ is in its own job, it can also see
+Notepad's window unless the job has the JOB_OBJECT_UILIMIT_HANDLES
+flag specified. </p>
+<p>The restricting of UI handles is awesome if you want to create a really
+secure sandbox for your job's processes to play in. However, it is
+useful to have a process that is part of a job communicate with a
+process outside of the job.</p>
+
+<p>
+<A HREF="javascript:fullSize('F05SI02x.htm')"> <img src="images/F05SI02.JPG" width=404 height=317 border=0 ALT="Click to view at full size."> </A>
+</p><p>
+<!-- CAPTION --><b>Figure 5-2.</b> <i>Microsoft Spy++ running in a job that restricts access to UI handles</i><!-- /CAPTION -->
+</p>
+
+<p>One easy way to accomplish this is to use window messages, but if
+the job's processes can't access UI handles, a process in the
+job can't send or post a window message to a window created by a
+process outside the job. Fortunately, you can solve this problem using
+a new function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL UserHandleGrantAccess(
+   HANDLE hUserObj, 
+   HANDLE hjob, 
+   BOOL fGrant); 
+</pre></td></tr></table></p>
+
+<p>The <i>hUserObj</i> parameter indicates a single USER object whose
+access you want to grant or deny to processes within the job. This is
+almost always a window handle, but it can be another USER object, such
+as a desktop, hook, icon, or menu. The last two parameters, <i>hjob</i>
+and <i>fGrant</i>, indicate which job you are granting or denying
+access to. Note that this function fails if it is called from a process
+within the job identified by <i>hjob</i>&#8212;this prevents a process
+within a job from simply granting itself access to an object.</p>
+
+<p>The last type of restriction that you place on a job is related to
+security. (Note that once applied, security restrictions cannot be
+revoked.) A JOBOBJECT_SECURITY_LIMIT_INFORMATION structure looks like
+this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+typedef struct _JOBOBJECT_SECURITY_LIMIT_INFORMATION {
+   DWORD SecurityLimitFlags;
+   HANDLE JobToken;
+   PTOKEN_GROUPS SidsToDisable;
+   PTOKEN_PRIVILEGES PrivilegesToDelete;
+   PTOKEN_GROUPS RestrictedSids;
+} JOBOBJECT_SECURITY_LIMIT_INFORMATION, *PJOBOBJECT_SECURITY_LIMIT_INFORMATION;
+</pre></td></tr></table></p>
+
+<p>The following table briefly describes the members.</p>
+
+<p><table cellpadding=5 width="95%"><tr>
+<th>Member</th>
+<th>Description</th>
+</tr><tr>
+<td valign="top"><i>SecurityLimitFlags</i></td>
+<td valign="top">Indicates whether to disallow
+administrator access, disallow unrestricted token access, force a
+specific access token, or disable certain security identifiers (SIDs)
+and privileges</td>
+</tr><tr>
+<td valign="top"><i>JobToken</i></td>
+<td valign="top">Access token to be used by all processes in the
+job </td>
+</tr><tr>
+<td valign="top"><i>SidsToDisable</i></td>
+<td valign="top">Indicates which SIDs to disable for access
+checking </td>
+</tr><tr>
+<td valign="top"><i>PrivilegesToDelete</i></td>
+<td valign="top">Indicates which privileges to delete from the
+access token </td>
+</tr><tr>
+<td valign="top"><i>RestrictedSids</i></td>
+<td valign="top">Indicates a set of deny-only SIDs that should be
+added to the access token</td>
+</tr></table></p>
+
+<p>Naturally, once you have placed restrictions on a job, you might
+want to query those restrictions. You can do so easily by calling</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL QueryInformationJobObject(
+   HANDLE hJob,
+   JOBOBJECTINFOCLASS JobObjectInformationClass,
+   PVOID pvJobObjectInformation,
+   DWORD cbJobObjectInformationLength, 
+   PDWORD pdwReturnLength); 
+</pre></td></tr></table></p>
+
+<p>You pass this function the handle of the job (like you do with <i>
+SetInformationJobObject</i>)&#8212;an enumerated type that indicates
+what restriction information you want, the address of the data
+structure to be initialized by the function, and the length of the data
+block containing that structure. The last parameter, <i>
+pdwReturnLength</i>, points to a DWORD that is filled in by the
+function, which tells you how many bytes were placed in the buffer. You
+can (and usually will) pass NULL for this parameter if you don't
+care.</p>
+
+<p><div class="note"><blockquote><b>NOTE</b><HR> A
+process in a job can call <i>QueryInformationJobObject</i> to obtain
+information about the job to which it belongs by passing NULL for the
+job handle parameter. This can be very useful because it allows a
+process to see what restrictions have been placed on it. However, the
+<i>SetInformationJobObject</i> function fails if you pass NULL for the
+job handle parameter because this would allow a process to remove
+restrictions placed on it.
+</blockquote></div></p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

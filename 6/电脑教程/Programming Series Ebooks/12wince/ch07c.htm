@@ -1,0 +1,2106 @@
+<HTML>
+ <HEAD>
+	<LINK REL=StyleSheet HREF="prowice.css" TYPE="text/css">
+<TITLE>Databases</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="271"><H1>Databases</H1></A>
+
+<P>Windows CE gives you an entirely unique set of database APIs not available under the other versions of Windows. The database implemented by Windows CE is simple, with only one level and a maximum of four sort indexes, but it serves as an effective tool for organizing uncomplicated data, such as address lists or to-do lists.
+
+<P>Under the first two versions of Windows CE, databases could reside only in the object store, not on external media such as PC Cards. Starting with the release of Windows CE 2.1 however, Windows CE can now work with databases on PC Cards or other storage devices. This new feature required changes to the database API, effectively doubling the number of functions with xxx<I>Ex</I> database functions now shadowing the original database API. While the newer versions of Windows CE still support the original database functions, those functions can be used only with databases stored in the object store.
+
+<A NAME="272"><H2>Basic Definitions</H2></A>
+
+<P>A Windows CE database is composed of a series of records. Records can contain any number of properties. These properties can be one of the data types shown in Figure 7-2.
+<P><B>Figure 7-2.</B> <I>Database data types supported by Windows CE.</I>
+
+<P>
+<TABLE cellpadding=5 width="95%">
+
+<tr><td valign="top"><i><b>Data Type</b></i></td>
+<td valign="top"><i><b>Description</b></i></td></tr>
+
+<tr><td valign="top">iVal</td>
+<td valign="top">2-byte signed integer</td></tr>
+
+<tr><td valign="top">uiVal</td>
+<td valign="top">2-byte unsigned integer</td></tr>
+
+<tr><td valign="top">lVal</td>
+<td valign="top">4-byte signed integer</td></tr>
+
+<tr><td valign="top">ulVal</td>
+<td valign="top">4-byte unsigned integer</td></tr>
+
+<tr><td valign="top">FILETIME</td>
+<td valign="top">A time and date structure</td></tr>
+
+<tr><td valign="top">LPWSTR</td>
+<td valign="top">0-terminated Unicode string</td></tr>
+
+<tr><td valign="top">CEBLOB</td>
+<td valign="top">A collection of bytes</td></tr>
+
+<tr><td valign="top">BOOL*</td>
+<td valign="top">Boolean</td></tr>
+
+<tr><td valign="top">Double*</td>
+<td valign="top">8-byte signed value</td></tr>
+</table>
+
+<p>* This data type supported only under Windows CE 2.1 and later
+
+<P>Records can't contain other records. Also, records can reside on only one database. Windows CE databases can't be locked. However, Windows CE does provide a method of notifying a process that another thread has modified a database.
+
+<P>A Windows CE database can have up to four sort indices. These indices are defined when the database is created but can be redefined later, although the restructuring of a database takes a large amount of time. Each sort index by itself results in a fair amount of overhead, so you should limit the number of sort indices to what you really need.
+
+<P>In short, Windows CE gives you a basic database functionality that helps applications organize simple data structures. The pocket series of Windows CE applications provided by Microsoft with the H/PC, H/PC Pro, and the Palm-size PC use the database API to manage the address book, the task list, and e-mail messages. So, if you have a collection of data, this database API might just be the best method of managing that data.
+
+<A NAME="273"><H3>Designing a database</H3></A>
+
+<P>Before you can jump in with a call to <I>CeCreateDatabase</I>, you need to think carefully about how the database will be used. While the basic limitations of the Windows CE database structure rule out complex databases, the structure is quite handy for managing collections of related data on a small personal device, which, after all, is one of the target markets for Windows CE.
+
+<P>Each record in a database can have as many properties as you need as long as they don't exceed the basic limits of the database structure. The limits are fairly loose. An individual property can't exceed the constant CEDB_MAXPROPDATASIZE, which is set to 65,471. A single record can't exceed CEDB_MAXRECORDSIZE, currently defined as 131,072.
+
+<A NAME="274"><H3>Database volumes</H3></A>
+
+<P>Starting with Windows CE 2.1, database files can now be stored in volumes instead of directly in the object store. A database volume is nothing more than a specially formatted file where Windows CE databases can be located. Because database volumes can be stored on file systems other than the object store, database information can be stored on PC Cards or similar external storage devices. The most immediate disadvantage of working with database volumes is that they must be first <I>mounted</I> and then <I>unmounted</I> after you close the databases within the volume. Essentially, mounting the database creates or opens the file that contains one or more databases along with the transaction data for those databases.
+
+<P>There are disadvantages to database volumes aside from the overhead of mounting and unmounting the volumes. Database volumes are actual files and therefore can be deleted by means of standard file operations. The volumes are, by default, marked as hidden, but that wouldn't deter the intrepid user from finding and deleting a volume in a desperate search for more space on the device. Databases created directly within the object store aren't files and therefore are much more difficult for the user to accidentally delete.
+
+<A NAME="275"><H2>The Database API</H2></A>
+
+<P>Once you have planned your database, given the restrictions and considerations necessary to it, the programming can begin.
+
+<A NAME="276"><H3>Mounting a database volume</H3></A>
+
+<P>To mount a database volume, call
+
+<p><pre>
+BOOL CeMountDBVol (PCEGUID pguid, LPWSTR lpszVol, DWORD dwFlags);
+</pre>
+
+<P>This function performs a dual purpose: it can create a new volume or open an existing volume. The first parameter is a pointer to a guid. <I>CeMountDBVol</I> returns a guid that's used by many of the <I>Ex</I> database functions to identify the location of the database file. You shouldn't confuse the CEGUID-type guid parameter in the database functions with the GUID type that is used by OLE and parts of the Windows shell. A CEGUID is simply a handle that tracks the opened database volume.
+
+<P>The second parameter in <I>CeMountDBVol</I> is the name of the volume to mount. This isn't a database name, but the name of a file that will contain one or more databases. Since the parameter is a filename, you should define it in \path\name.ext format. The standard extension should be cdb.
+
+<P>The last parameter, <I>dwFlags</I>, should be loaded with flags that define how this function acts. The possible flags are the following:
+
+<UL>
+<P><LI><I>CREATE_NEW</I> Creates a new database volume. If the volume already exists, the function fails.
+<P><LI><I>CREATE_ALWAYS</I> Creates a new database volume. If the volume already exists, it overwrites the old volume.
+<P><LI><I>OPEN_EXISTING</I> Opens a database volume. If the volume doesn't exist, the function fails.
+<P><LI><I>OPEN_ALWAYS</I> Opens a database volume. If the volume doesn't exist, a new database volume is created.
+<P><LI><I>TRUNCATE_EXISTING</I> Opens a database volume and truncates it to 0 bytes. If the volume already exists, the function fails.
+</UL>
+
+<P>If the flags resemble the action flags for <I>CreateFile</I>, they should. The actions of <I>CeMountDBVol</I> essentially mirror <I>CreateFile</I> except that instead of creating or opening a generic file, <I>CeMountDBVol</I> creates or opens a file especially designed to hold databases.
+
+<P>If the function succeeds, it returns TRUE and the guid is set to a value that is then passed to the other database functions. If the function fails, a call to <I>GetLastError</I> returns an error code indicating the reason for the failure.
+
+<P>Database volumes can be open by more than one process at a time. The system maintains a reference count for the volume. As the last process unmounts a database volume, the system unmounts the volume.
+
+<A NAME="277"><H3>Enumerated mounted database volumes</H3></A>
+
+<P>You can determine what database volumes are currently mounted by repeatedly calling this function:
+
+<p><pre>
+BOOL CeEnumDBVolumes (PCEGUID pguid, LPWSTR lpBuf, DWORD dwSize);
+</pre>
+
+<P>The first time you call <I>CeEnumDBVolumes</I>, set the guid pointed to by <I>pguid</I> to be invalid. You use the CREATE_INVALIDGUID macro to accomplish this. <I>CeEnumDBVolumes</I> returns TRUE if a mounted volume is found and returns the guid and name of that volume in the variables pointed to by <I>pguid</I> and <I>lpBuff</I>. The <I>dwSize</I> parameter should be loaded with the size of the buffer pointed to by <I>lpBuff</I>. To enumerate the next volume, pass the guid returned by the previous call to the function. Repeat this process until <I>CeEnumDBVolumes</I> returns FALSE. The code below demonstrates this process:
+
+<p><pre>
+CEGUID guid;
+TCHAR szVolume[MAX_PATH];
+INT nCnt = 0;
+
+CREATE_INVALIDGUID (&amp;guid);
+while (CeEnumDBVolumes (&amp;guid, szVolume, sizeof (szVolume))) {
+    // guid contains the guid of the mounted volume,
+    // szVolume contains the name of the volume.
+    nCnt++;   // Count the number of mounted volumes.
+}
+</pre>
+
+<A NAME="278"><H3>Unmounting a database volume</H3></A>
+
+<P>When you have completed using the volume, you should unmount it by calling this function:
+
+<p><pre>
+BOOL CeUnmountDBVol (PCEGUID pguid);
+</pre>
+
+<P>The function's only parameter is the guid of a mounted database volume. Calling this function is necessary when you no longer need a database volume and you want to free system resources. Database volumes are only unmounted when all applications that have mounted the volume have called <I>CeUnmountDBVol</I>.
+
+<A NAME="279"><H3>Using the object store as a database volume</H3></A>
+
+<P>If you're writing an application for Windows CE 2.1 or later, you still might want to use the new <I>Ex</I> database functions but not want to use a separate database volume. Because most of the new <I>Ex</I> functions require a CEGUID that identifies a database volume, you need a CEGUID that references the system object store. Fortunately, one can be created using this macro:
+
+<p><pre>
+CREATE_SYSTEMGUID (PCEGUID pguid);
+</pre>
+
+<P>The parameter is, of course, a pointer to a CEGUID. The value set in the CEGUID by this macro can then be passed to any of the <I>Ex</I> database functions as a placeholder for a separate volume CEGUID. Databases created within this system CEGUID are actually created directly in the object store as if you were using the old non-<I>Ex</I> database functions.
+
+<A NAME="280"><H3>Creating a database</H3></A>
+
+<P>Creating a database is accomplished by calling one of two functions, <I>CeCreateDatabase</I> or <I>CeCreateDatabaseEx</I>. The newer function is <I>CeCreateDatabaseEx</I> and works only for Windows CE 2.1 and later. <I>CeCreateDatabase</I> is the proper function to use on Windows CE 2.0. First, I'm going to talk about <I>CeCreateDatabase</I>, then I'll talk about the expanded functionality of <I>CeCreateDatabaseEx</I>.
+
+<P><I>CeCreateDatabase</I> is prototyped as
+
+<p><pre>
+CEOID CeCreateDatabase (LPWSTR lpszName, DWORD dwDbaseType, 
+                        WORD wNumSortOrder,
+                        SORTORDERSPEC * rgSortSpecs);
+</pre>
+
+<P>The first parameter of the function is the name of the new database. Unlike filenames, the database name is limited to 32 characters, including the terminating zero. The <I>deDbaseType</I> parameter is a user-defined parameter that can be employed to differentiate families of databases. For example, you might want to use a common type value for all databases that your application creates. This allows them to be easily enumerated. At this point, there are no rules for what type values to use. Some example type values used by the Microsoft Pocket suite are listed in Figure 7-3.
+
+<P><B>Figure 7-3.</B> <I>Predefined database types.</I>
+
+<P>
+<TABLE cellpadding=5 width="95%">
+
+<tr><td valign="top"><i>Database</i></td>
+<td valign="top"><i>Value</i></td></tr>
+
+<tr><td valign="top">Contacts</td>
+<td valign="top">24     (18 hex)</td></tr>
+
+<tr><td valign="top">Appointments</td>
+<td valign="top">25     (19 hex)</td></tr>
+
+<tr><td valign="top">Tasks</td>
+<td valign="top">26     (1A hex)</td></tr>
+
+<tr><td valign="top">Categories</td>
+<td valign="top">27     (1B hex)</td></tr>
+</table>
+
+<P>The values listed in Figure 7-3 aren't guaranteed to remain constant; I simply wanted to show some typical values. If you use a 4-byte value, it shouldn't be too hard to find a unique database type for your application although there's no reason another application couldn't use the same type.
+
+<P>The final two parameters specify the sort specification for the database. The parameter <I>wNumSortOrder</I> specifies the number of sort specifications, up to a maximum of 4, while the <I>rgSortSpecs</I> parameter points to an array of SORTORDERSPEC structures defined as
+
+<p><pre>
+typedef struct _SORTORDERSPEC {
+    PEGPROPID propid;
+    DWORD dwFlags;
+} SORTORDERSPEC;
+</pre>
+
+<P>The first field in the SORTORDERSPEC structure is a property ID or PEGPROPID. A property ID is nothing more than a unique identifier for a property in the database. Remember that a property is one field within a database record. The property ID is a DWORD value with the low 16 bits containing the data type and the upper 16 bits containing an application-defined value. These values are defined as constants and are used by various database functions to identify a property. For example, a property that contained the name of a contact might be defined as
+
+<p><pre>
+#define PID_NAME       MAKELONG (CEVT_LPWSTR, 1)
+</pre>
+
+<P>The MAKELONG macro simply combines two 16-bit values into a DWORD or LONG. The first parameter is the low word or the result, while the second parameter becomes the high word. In this case, the CEVT_LPWSTR constant indicates that the property contains a string while the second parameter is simply a value that uniquely identifies the <I>Name</I> property, distinguishing it from other string properties in the record.
+
+<P>The second field in the SORTORDERSPEC, <I>dwFlags</I>, contains flags that define how the sort is to be accomplished. The following flags are defined for this field:
+
+<UL>
+<P><LI><I>CEDB_SORT_DESCENDING</I> The sort is to be in descending order. By default, properties are sorted in ascending order.
+<P><LI><I>CEDB_SORT_CASEINSENSITIVE</I> The sort should ignore the case of the letters in the string.
+<P><LI><I>CEDB_SORT_UNKNOWNFIRST</I> Records without this property are to be placed at the start of the sort order. By default, these records are placed last.
+</UL>
+
+<P>A typical database might have three or four sort orders defined. After a database is created, these sort orders can be changed by calling <I>CeSetDatabaseInfo</I>. However, this function is quite resource intensive and can take from seconds up to minutes to execute on large databases.
+
+<P>If you want to open a database outside of the object store, you can use the following function:
+
+<p><pre>
+CEOID CeCreateDatabaseEx (PCEGUID pguid, CEDBASEINFO *pInfo);
+</pre>
+
+<P>This function takes a <I>pguid</I> parameter that identifies the mounted database volume where the database is located. The second parameter is a pointer to a CEDBASEINFO structure defined as
+
+<p><pre>
+typedef struct _CEDBASEINFO {
+    DWORD   dwFlags;
+    WCHAR   szDbaseName[CEDB_MAXDBASENAMELEN];
+    DWORD   dwDbaseType;
+    WORD    wNumRecords;
+    WORD    wNumSortOrder;
+    DWORD   dwSize;
+    FILETIME ftLastModified;
+    SORTORDERSPEC rgSortSpecs[CEDB_MAXSORTORDER];
+} CEDBASEINFO;
+</pre>
+
+<P>As you can see, this structure contains a number of the same parameters passed individually to <I>CeCreateDatabase</I>. The <I>szDatabaseName</I>, <I>dwDbaseType</I>, <I>wNumSortOrder</I>, and <I>rgSortSpecs</I> fields must be initialized in the same manner as they are when you call <I>CeCreateDatabase</I>.
+
+<P>The <I>dwFlags</I> parameter has two uses. First, it contains flags indicating which fields in the structure are valid. The possible values for the <I>dwFlags</I> field are: CEDB_VALIDNAME, CEDB_VALIDTYPE, CEDB_VALIDSORTSPEC, and CEDB_VALIDDBFLAGS. When you're creating a database, it's easier to simply set the <I>dwFlags</I> field to CEDB_VALIDCREATE, which is a combination of the flags I just listed. An additional flag, CEDB_VALIDMODTIME, is used when this structure is used by <I>CeOidGetInfo</I>.
+
+<P>The other use for the <I>dwFlags </I>parameter is to specify the properties of the database. The only flag currently defined is CEDB_NOCOMPRESS. This flag can be specified if you don't want the database you're creating to be compressed. By default, all databases are compressed, which saves storage space at the expense of speed. By specifing the CEDB_NOCOMPRESS flag, the database will be larger but you will be able to read and write the database faster.
+
+<P>You can use <I>CeCreateDatabaseEx</I> but create a database within the object store instead of within a separate database volume. The advantage of this strategy is that the database itself isn't created within a file and is therefore safer from a user who might delete the database volume.
+
+<P>The value returned by either <I>CeCreateDatabase</I> or <I>CeCreateDatabaseEx</I> is a CEOID. We have seen this kind of value a couple of times so far in this chapter. It's an ID value that uniquely identifies the newly created database, not just among other databases, but also among all files, directories, and even database records in the file system. If the value is 0, an error occurred while you were trying to create the database. You can call <I>GetLastError</I> to diagnose the reason the database creation failed.
+
+<A NAME="281"><H3>Opening a database</H3></A>
+
+<P>In contrast to what happens when you create a file, creating a database doesn't also open the database. To do that, you must make an additional call to
+
+<p><pre>
+HANDLE CeOpenDatabase(PCEOID poid, LPWSTR lpszName, CEPROPID propid, 
+                      DWORD dwFlags, HWND hwndNotify);
+</pre>
+
+<P>A database can be opened either by referencing its CEOID value or by referencing its name. To open the database by using its name, set the value pointed to by the <I>poid</I> parameter to 0 and specify the name of the database using the <I>lpszName</I> parameter. If you already know the CEOID of the database, simply put that value in the parameter pointed to by <I>poid</I>. If the CEOID value isn't 0, the functions ignore the <I>lpszName</I> parameter.
+
+<P>The <I>propid</I> parameter specifies which of the sort order specifications should be used to sort the database while it's opened. A Windows CE database can have only one active sort order. To use a different sort order, you can open a database again, specifying a different sort order.
+
+<P>The <I>dwFlags</I> parameter can contain either 0 or CEDB_AUTOINCREMENT. If CEDB_AUTOINCREMENT is specified, each read of a record in the database results in the database pointer being moved to the next record in the sort order. Opening a database without this flag means that the record pointer must be manually moved to the next record to be read. This flag is helpful if you plan to read the database records in sequential order.
+
+<P>The final parameter is the handle of a window that's to be notified when another process or thread modifies the database. This message-based notification allows you to monitor changes to the database while you have it opened. When a database is opened with <I>CeOpenDatabase</I>, Windows CE sends the following three messages to notify you of changes.
+
+<UL>
+<P><LI><I>DB_CEOID_CREATED</I> A record has been created in the database.
+<P><LI><I>DB_CEOID_CHANGED</I> A record has been changed.
+<P><LI><I>DB_CEOID_RECORD_DELETED</I> A record has been deleted.
+</UL>
+
+<P>These messages are encoded as WM_USER+1, WM_USER+3, and WM_USER+6 respectively, so be careful not to use these low WM_USER messages for your own purposes if you want to have that window monitor database changes.
+
+<P>If the function is successful, it returns a handle to the opened database. This handle is then used by the other database functions to reference this opened database. If the handle returned is 0, the function failed for some reason and you can use <I>GetLastError</I> to identify the problem.
+
+<P>If you're running under Windows CE 2.1 or later you can use the function:
+
+<p><pre>
+HANDLE CeOpenDatabaseEx (PCEGUID pguid, 
+                         PCEOID poid, LPWSTR lpszName, CEPROPID propid,
+                         DWORD dwFlags, CENOTIFYREQUEST *pRequest);
+</pre>
+
+<P>With a couple of exceptions, the parameters for <I>CeOpenDatabaseEx </I>are the same as for <I>CeOpenDatabase</I>. The first difference between the two functions is the extra pointer to a guid that identifies the volume in which the database resides.
+
+<P>The other difference is the method Windows CE uses to notify you of a change to the database. Instead of passing a handle to a window that will receive one of three WM_USER based messages, you pass a pointer to a CENOTIFYREQUEST structure that you have previously filled in. This structure is defined as
+
+<p><pre>
+typedef struct _CENOTIFIREQUEST {
+    DWORD dwSize;
+    HWND hWnd; 
+    DWORD dwFlags;
+    HANDLE hHeap;
+    DWORD dwParam;
+} CENOTIREQUEST;
+</pre>
+
+<P>The first field must be initialized to the size of the structure. The <I>hWnd </I>field should be set to the window that will receive the change notifications. The <I>dwFlags </I>field specifies how you want to be notified. If you put 0 in this field, you'll receive the same DB_CEIOD_<I>xxx</I> messages that are sent if you'd opened the database with <I>CeOpenDatabase</I>. If you put CEDB_EXNOTIFICATION in the <I>dwFlags </I>field, your window will receive an entirely new and more detailed notification method.
+
+<P>Instead of receiving the three DB_CEIOD_ messages, your window receives a WM_ DBNOTIFICATION message. When your window receives this message, the <I>lParam </I>parameter points to a CE_NOTIFICATION structure defined as
+
+<p><pre>
+typedef struct _CENOTIFICATION {
+    DWORD dwSize 
+    DWORD dwParam;
+    UINT uType;
+    CEGUID guid;
+    CEOID oid;
+    CEOID oidParent;
+} CENOTINOTIFICATION;
+</pre>
+
+<P>As expected, the <I>dwSize </I>field fills with the size of the structure. The <I>dwParam </I>field contains the value passed in the <I>dwParam </I>field in the CENOTIFYREQUEST structure. This is an application-defined value that can be used for any purpose.
+
+<P>The <I>uType </I>field indicates why the WM_DBNOTIFICATION message was sent. It will be set to one of the following values:
+
+<UL>
+<P><LI><I>DB_CEOID_CREATED</I> A new file system object was created.
+<P><LI><I>DB_CEOID_DATABASE_DELETED</I> The database was deleted from a volume.
+<P><LI><I>DB_CEOID_RECORD_DELETED</I> A record was deleted in a database.
+<P><LI><I>DB_CEOID_CHANGED</I> An object was modified.
+</UL>
+
+<P>The <I>guid </I>field contains the guid for the database volume that the message relates to while the <I>oid </I>field contains the relevant database record oid. Finally, the <I>oidParent </I>field contains the oid of the parent of the oid that the message references.
+
+<P>When you receive a WM_DBNOTIFICATION message, the CENOTIFICATION structure is placed in a memory block that you must free. If you specified a handle to a heap in the <I>hHeap </I>field of CENOTIFYREQUEST, the notification structure will be placed in that heap; otherwise, the system defined where the structure is placed. Regardless of its location, you are responsible for freeing the memory that contains the CENOTIFICATION structure. You do this with a call to
+
+<p><pre>
+BOOL CeFreeNotification(PCENOTIFYREQUEST pRequest,
+                        PCENOTIFICATION pNotify);    
+</pre>
+
+<P>The function's two parameters are a pointer to the original CENOTIFYREQUEST structure and a pointer to the CENOTIFICATION structure to free. You must free the CENOTIFICATION structure each time you receive a WM_DBNOTIFICATION message.
+
+<A NAME="282"><H3>Seeking (or searching for) a record</H3></A>
+
+<P>Now that the database is opened, you can read and write the records. But before you can read or write a record, you must <I>seek</I> to that record. That is, you must move the database pointer to the record you want to read or write. You accomplish this using
+
+<p><pre>
+CEOID CeSeekDatabase (HANDLE hDatabase, DWORD dwSeekType, DWORD dwValue,
+                      LPDWORD lpdwIndex);
+</pre>
+
+<P>The first parameter for this function is the handle to the opened database. The <I>dwSeekType</I> parameter describes how the seek is to be accomplished. The parameter can have one of the following values:
+
+<UL>
+<P><LI><I>CEDB_SEEK_CEOID</I> Seek a specific record identified by its object ID. The object ID is specified in the <I>dwValue</I> parameter. This type of seek is particularly efficient in Windows CE databases.
+<P><LI><I>CEDB_SEEK_BEGINNING</I> Seek the <I>n<SUP>th</SUP></I> record in the database. The index is contained in the <I>dwValue</I> parameter.
+<P><LI><I>CEDB_SEEK_CURRENT</I> Seek from the current position <I>n</I> records forward or backward in the database. The offset is contained in the <I>dwValue</I> parameter. Even though <I>dwValue</I> is typed as a unsigned value, for this seek it's interpreted as a signed value.
+<P><LI><I>CEDB_SEEK_END</I> Seek backward from the end of the database <I>n</I> records. The number of records to seek backward from the end is specified in the <I>dwValue</I> parameter.
+<P><LI><I>CEDB_SEEK_VALUESMALLER</I> Seek from the current location until a record is found that contains a property that is the closest to, but not equal to or over the value specified. The value is specified by a CEPROPVAL structure pointed to by <I>dwValue</I>.
+<P><LI><I>CEDB_SEEK_VALUEFIRSTEQUAL</I> Starting with the current location, seek until a record is found that contains the property that's equal to the value specified. The value is specified by a CEPROPVAL structure pointed to by <I>dwValue</I>. The location returned can be the current record.
+<P><LI><I>CEDB_SEEK_VALUENEXTEQUAL</I> Starting with the next location, seek until a record is found that contains a property that's equal to the value specified. The value is specified by a CEPROPVAL structure pointed to by <I>dwValue</I>.
+<P><LI><I>CEDB_SEEK_VALUEGREATER</I> Seek from the current location until a record is found that contains a property that is equal to, or the closest to, the value specified. The value is specified by a CEPROPVAL structure pointed to by <I>dwValue</I>.
+</UL>
+
+<P>As you can see from the available flags, seeking in the database is more than just moving a pointer; it also allows you to search the database for a particular record.
+
+<P>As I just mentioned in the descriptions of the seek flags, the <I>dwValue</I> parameter can either be loaded with an offset value for the seeks or point to a property value for the searches. The property value is described in a CEPROPVAL structure defined as
+
+<p><pre>
+typedef struct _CEPROPVAL { 
+    CEPROPID propid;
+    WORD wLenData;
+    WORD wFlags;
+    CEVALUNION val;
+} CEPROPVAL;
+</pre>
+
+<P>The <I>propid</I> field should contain one of the property ID values you defined for the properties in your database. Remember that the property ID is a combination of a data type identifier along with an application specific ID value that uniquely identifies a property in the database. This field identifies the property to examine when seeking. The <I>wLenData</I> field is ignored. None of the defined flags for the <I>wFlags</I> field is used by <I>CeSeekDatabase</I>, so this field should be set to 0. The <I>val</I> field is actually a union of the different data types supported in the database.
+
+<P>Following is a short code fragment that demonstrates seeking to the third record in the database.
+
+<p><pre>
+DWORD dwIndex;
+CEOID oid;
+
+// Seek to the third record.
+oid = CeSeekDatabase (g_hDB, CEDB_SEEK_BEGINNING, 3, &amp;dwIndex);
+if (oid == 0) {
+    // There is no third item in the database.
+}
+</pre>
+
+<P>Now say we want to find the first record in the database that has a height property of greater than 100. For this example, assume the size property type is a signed long value.
+
+<p><pre>
+// Define pid for height property as a signed long with ID of one.
+#define PID_HEIGHT     MAKELONG (CEVT_I4, 1)
+
+CEOID oid;
+DWORD dwIndex;
+CEPROPVAL Property;
+
+// First seek to the start of the database.
+oid = CeSeekDatabase (g_hDB, CEDB_SEEK_BEGINNING, 0, &amp;dwIndex);
+
+// Seek the record with height &gt; 100.
+Property.propid = PID_HEIGHT;            // Set property to search.
+Property.wLenData = 0;                   // Not used but clear anyway.
+Property.wFlags = 0;                     // No flags to set
+Property.val.lVal = 100;                 // Data for property
+
+oid = CeSeekDatabase (g_hDB, CEDB_SEEK_VALUEGREATER, &amp;Property,
+                      &amp;dwIndex);
+if (oid == 0) {
+    // No matching property found, db pointer now points to end of db.
+} else {
+    // oid contains the object ID for the record,
+    // dwIndex contains the offset from the start of the database
+    // of the matching record.
+}
+</pre>
+
+<P>Because the search for the property starts at the current location of the database pointer, you first need to seek to the start of the database if you want to find the first record in the database that has the matching property.
+
+<A NAME="283"><H3>Changing the sort order</H3></A>
+
+<P>I talked earlier about how <I>CeDatabaseSeek</I> depends on the sort order of the opened database. If you want to choose one of the predefined sort orders instead, you must close the database and then reopen it specifying the predefined sort order. But what if you need a sort order that isn't one of the four sort orders that were defined when the database was created? You can redefine the sort orders using this function:
+
+<p><pre>
+BOOL CeSetDatabaseInfo (CEOID oidDbase, CEDBASEINFO *pNewInfo);
+</pre>
+
+<P>or, under Windows CE 2.1 or later, this function:
+
+<p><pre>
+BOOL CeSetDatabaseInfoEx (PCEGUID pguid, 
+                          CEOID oidDbase, CEDBASEINFO *pNewInfo);
+</pre>
+
+<P>Both these functions take the object ID of the database you want to redefine and a pointer to a CEDBASEINFO structure. This structure is the same one used by <I>CeCreateDatabaseEx</I>. You can use these functions to rename the database, change its type, or redefine the four sort orders. You shouldn't redefine the sort orders casually. When the database sort orders are redefined, the system has to iterate through every record in the database to rebuild the sort indexes. This can take minutes for large databases. If you must redefine the sort order of a database, you should inform the user of the massive amount of time it might take to perform the operation.
+
+<A NAME="284"><H3>Reading a record</H3></A>
+
+<P>Once you have the database pointer at the record you're interested in, you can read or write that record. You can read a record in a database by calling the following function:
+
+<p><pre>
+CEOID CeReadRecordProps (HANDLE hDbase, DWORD dwFlags, LPWORD lpcPropID,
+                         CEPROPID *rgPropID, LPBYTE *lplpBuffer, 
+                         LPDWORD lpcbBuffer);
+</pre>
+
+<P>or, if you're running under Windows CE 2.1 or later, by calling the following function.
+
+<p><pre>
+CEOID CeReadRecordPropsEx (HANDLE hDbase, DWORD dwFlags,
+                           LPWORD lpcPropID,
+                           CEPROPID *rgPropID, LPBYTE *lplpBuffer,
+                           LPDWORD lpcbBuffer, 
+                           HANDLE hHeap);
+</pre>
+
+<P>The differences between these two functions is the addition of the <I>hHeap</I> parameter in <I>CeReadRecordPropsEx</I>. I'll explain the significance of this parameter shortly.
+
+<P>The first parameter in these functions is the handle to the opened database. The <I>lpcPropID</I> parameter points to a variable that contains the number of CEPROPID structures pointed to by the next parameter <I>rgPropID</I>. These two parameters combine to tell the function which properties of the record you want to read. There are two ways to utilize the <I>lpcPropID</I> and <I>rgPropID</I> parameters. If you want only to read a selected few of the properties of a record, you can initialize the array of CEPROPID structures with the ID values of the properties you want and set the variable pointed to by <I>lpcPropID</I> with the number of these structures. When you call the function, the returned data will be inserted into the CEPROPID structures for data types such as integers. For strings and blobs, where the length of the data is variable, the data is returned in the buffer indirectly pointed to by <I>lplpBuffer</I>.
+
+<P>Since <I>CeReadRecordProps</I> and <I>CeReadRecordPropsEx</I> have a significant overhead to read a record, it is always best to read all the properties necessary for a record in one call. To do this, simply set <I>rgPropID</I> to NULL. When the function returns, the variable pointed to by <I>lpcPropID</I> will contain the count of properties returned and the function will return all the properties for that record in the buffer. The buffer will contain an array of CEPROPID structures created by the function immediately followed by the data for those properties such as blobs and strings where the data isn't stored directly in the CEPROPID array.
+
+<P>One very handy feature of <I>CeReadRecordProps</I> and <I>CeReadRecordPropsEx</I> is that if you set CEDB_ALLOWREALLOC in the <I>dwFlags</I> parameter, the function will enlarge, if necessary, the results buffer to fit the data being returned. Of course, for this to work, the buffer being passed to the function must not be on the stack or in the static data area. Instead, it must be an allocated buffer, in the local heap for <I>CeReadRecordProps</I> or in the case of <I>CeReadRecordPropsEx</I>, in the local heap or a separate heap. In fact, if you use the CEDB_ALLOWREALLOC flag, you don't even need to pass a buffer to the function, instead you can set the buffer pointer to 0. In this case, the function will allocate the buffer for you.
+
+<P>Notice that the buffer parameter isn't a pointer to a buffer but a pointer to a pointer to a buffer. There actually is a method to this pointer madness. Since the resulting buffer can be reallocated by the function, it might be moved if the buffer needs to be reallocated. So the pointer to the buffer must be modified by the function. You must always use the pointer the buffer returned by the function because it might have changed. Also, you're responsible for freeing the buffer after you have used it. Even if the function failed for some reason, the buffer might have moved or even have been freed by the function. You must clean up after the read by freeing the buffer if the pointer returned isn't 0.
+
+<P>Now to the difference between <I>CeReadRecordProps</I> and <I>CeReadRecordPropsEx</I>. As you might have guessed by the above discussion, the extra <I>hHeap</I> parameter allows <I>CeReadRecordPropsEx</I> to use a heap different from the local heap when reallocating the buffer. When you use <I>CeReadRecordPropsEx</I> and you want to use the local heap, simply pass a 0 in the <I>hHeap</I> parameter.
+
+<P>The routine below reads all the properties for a record, then copies the data into a structure.
+
+<p><pre>
+int ReadDBRecord (HANDLE hDB, DATASTRUCT *pData) {
+    WORD wProps;
+    CEOID oid;
+    PCEPROPVAL pRecord;
+    PBYTE pBuff;
+    DWORD dwRecSize;
+    int i;
+
+    // Read all properties for the record.  
+    pBuff = 0;   // Let the function allocate the buffer.
+    oid = CeReadRecordProps (hDB, CEDB_ALLOWREALLOC, &amp;wProps, NULL,
+                             &amp;(LPBYTE)pBuff, &amp;dwRecSize);
+    // Failure on read.
+    if (oid == 0) 
+        return 0;
+
+    // Copy the data from the record to the structure.  The order
+    // of the array is not defined.
+    memset (pData, 0 , sizeof (DATASTRUCT));  // Zero return struct
+    pRecord = (PCEPROPVAL)pBuff;              // Point to CEPROPVAL
+                                              // array.
+    for (i = 0; i &lt; wProps; i++) {
+        switch (pRecord-&gt;propid) {
+        case PID_NAME:
+            lstrcpy (pData-&gt;szName, pRecord-&gt;val.lpwstr);
+            break;
+        case PID_TYPE:
+            lstrcpy (pData-&gt;szType, pRecord-&gt;val.lpwstr);
+            break;
+        case PID_SIZE:
+            pData-&gt;nSize = pRecord-&gt;val.iVal;
+            break;
+        }
+        pRecord++;
+    }
+    LocalFree (pBuff);
+    return i;
+}
+</pre>
+
+<P>Since the function above reads all the properties for the record, <I>CeReadRecordProps</I> creates the array of CEPROPVAL structures. The order of these structures isn't defined so the function cycles through each one to look for the data to fill in the structure. After all the data has been read, a call to <I>LocalFree</I> is made to free the buffer that was returned by <I>CeReadRecordProps</I>.
+
+<P>There is no requirement for every record to contain all the same properties. You might encounter a situation where you request a specific property from a record by defining the CEPROPID array and that property doesn't exist in the record. When this happens, <I>CeReadRecordProps</I> will set the CEDB_PROPNOTFOUND flag in the <I>wFlags</I> field of the CEPROPID structure for that property. You should always check for this flag if you call <I>CeReadRecordProps</I> and you specify the properties to be read. In the example above, all properties were requested, so if a property didn't exist, no CEPROPID structure for that property would have been returned.
+
+<A NAME="285"><H3>Writing a record</H3></A>
+
+<P>You can write a record to the database using this function:
+
+<p><pre>
+CEOID CeWriteRecordProps (HANDLE hDbase, CEOID oidRecord, WORD cPropID,
+                          CEPROPVAL * rgPropVal);
+</pre>
+
+<P>The first parameter is the obligatory handle to the opened database. The <I>oidRecord</I> parameter is the object ID of the record to be written. To create a new record instead of modifying a record in the database, set <I>oidRecord</I> to 0. The <I>cPropID</I> parameter should contain the number of items in the array of property ID structures pointed to by <I>rgPropVal</I>. The <I>rcPropVal</I> array specifies which of the properties in the record to modify and the data to write.
+
+<A NAME="286"><H3>Deleting properties, records, and entire databases</H3></A>
+
+<P>You can delete individual properties in a record using <I>CeWriteRecordProps</I>. To do this, create a CEPROPVAL structure that identifies the property to delete and set CEDB_PROPDELETE in the <I>wFlags</I> field.
+
+<P>To delete an entire record in a database, call
+
+<p><pre>
+BOOL CeDeleteRecord (HANDLE hDatabase, CEOID oidRecord);
+</pre>
+
+<P>The parameters are the handle to the database and the object ID of the record to delete.
+
+<P>You can delete an entire database using this function:
+
+<p><pre>
+BOOL CeDeleteDatabase (CEOID oidDbase);
+</pre>
+
+<P>or, under Windows CE 2.1 or later, this function:
+
+<p><pre>
+BOOL CeDeleteDatabaseEx (PCEGUID pguid, CEOID oid);
+</pre>
+
+<P>The database being deleted can't be currently open. The difference between the two functions is that <I>CeDeleteDatabaseEx</I> can delete databases outside the object store.
+
+<A NAME="287"><H3>Enumerating databases</H3></A>
+
+<P>Sometimes you must search the system to determine what databases are on the system. Windows CE provides two sets of functions to enumerate the databases in a volume. The first set of these functions works only for databases directly within the object store. These functions are
+
+<p><pre>
+HANDLE CeFindFirstDatabase (DWORD dwDbaseType);
+</pre>
+
+<P>and
+
+<p><pre>
+CEOID CeFindNextDatabase (HANDLE hEnum);
+</pre>
+
+<P>These functions act like <I>FindFirstFile</I> and <I>FindNextFile</I> with the exception that <I>CeFindFirstDatabase</I> only opens the search, it doesn't return the first database found. With these functions the only way to limit the search is to specify the ID of a specific database type in the <I>dwDbaseType</I> parameter. If this parameter is set to 0, all databases are enumerated. <I>CeFindFirstDatabase</I> returns a handle that is then passed to <I>CeFindNextDatabase</I> to actually enumerate the databases.
+
+<P>Below is an example of how to enumerate the databases in the object store.
+
+<p><pre>
+HANDLE hDBList;
+CEOID oidDB;
+
+SendDlgItemMessage (hWnd, IDC_RPTLIST, WM_SETREDRAW, FALSE, 0);
+
+hDBList = CeFindFirstDatabase (0);
+if (hDBList != INVALID_HANDLE_VALUE) {
+
+    oidDB = CeFindNextDatabase (hDBList);
+    while (oidDB) {
+        // Enumerated database identified by object ID.
+        MyDisplayDatabaseInfo (hCeDB);
+
+        hCeDB = CeFindNextDatabase (hDBList);
+    }
+    CloseHandle (hDBList);
+}
+</pre>
+
+<P>To enumerate databases within a separate database volume, use
+
+<p><pre>
+HANDLE CeFindFirstDatabaseEx (PCEGUID pguid, DWORD dwClassID);
+</pre>
+
+<P>and
+
+<p><pre>
+HANDLE CeFindFirstDatabaseEx (PCEGUID pguid, DWORD dwClassID);
+</pre>
+
+<P>For the most past, these two functions work identically to their non-<I>Ex</I> predecessors with the exception that they enumerate the different databases within a single database volume. The additional parameter in these functions is the <I>CEOID</I> of the mounted volume to search.
+
+<A NAME="288"><H3>Querying object information</H3></A>
+
+<P>To query information about a database, use this function:
+
+<p><pre>
+BOOL CeOidGetInfo (CEOID oid, CEOIDINFO *poidInfo);
+</pre>
+
+<P>or, if under Windows CE 2.1 or later, use this function:
+
+<p><pre>
+BOOL CeOidGetInfoEx (PCEGUID pguid, CEOID oid, CEOIDINFO *oidInfo);
+</pre>
+
+<P>These functions return information about not just databases, but any object in the file system. This includes files and directories as well as databases and database records. The functions are passed the object ID of the item of interest and a pointer to an CEOIDINFO structure. Here is the definition of the CEIOIDINFO structure:
+
+<p><pre>
+typedef struct _CEOIDINFO { 
+    WORD wObjType;
+    WORD wPad;
+    union {
+        CEFILEINFO infFile;
+        CEDIRINFO infDirectory;
+        CEDBASEINFO infDatabase;
+        CERECORDINFO infRecord;
+    };
+} CEOIDINFO;
+</pre>
+
+<P>This structure contains a word indicating the type of the item and a union of four different structures each detailing information on that type of object. The currently supported flags are: OBJTYPE_FILE, indicating that the object is a file, OBJTYPE_DIRECTORY for directory objects, OBJTYPE_DATABASE for database objects, and OBJTYPE_RECORD indicating that the object is a record inside a database. The structures in the union are specific to each object type.
+
+<P>The CEFILEINFO structure is defined as
+
+<p><pre>
+typedef struct _CEFILEINFO {
+    DWORD dwAttributes; 
+    CEOID oidParent; 
+    WCHAR szFileName[MAX_PATH]; 
+    FILETIME ftLastChanged; 
+    DWORD dwLength; 
+} CEFILEINFO;
+</pre>
+
+<P>the CEDIRINFO structure is defined as
+
+<p><pre>
+typedef struct _CEDIRINFO {
+    DWORD dwAttributes; 
+    CEOID oidParent; 
+    WCHAR szDirName[MAX_PATH]; 
+} CEDIRINFO;
+</pre>
+
+<P>and the CERECORDINFO structure is defined as
+
+<p><pre>
+typedef struct _CERECORDINFO {
+    CEOID oidParent; 
+} CERECORDINFO;
+</pre>
+
+<P>You have already seen the CEDBASEINFO structure used in <I>CeCreateDatabaseEx</I> and <I>CeSetDatabaseInfo</I>. As you can see from the above structures, <I>CeGetOidInfo</I> returns a wealth of information about each object. One of the more powerful bits of information is the object's parent oid, which will allow you to trace the chain of files and directories back to the root. These functions also allow you to convert an object ID into a name of a database, directory, or file.
+
+<P>The object ID method of tracking a file object should not be confused with the PID scheme used by the shell. Object IDs are maintained by the file system, and are independent of whatever shell is being used. This would be a minor point under other versions of Windows, but with the ability of Windows CE to be built as components and customized for different targets, it's important to know what parts of the operating system support which functions.
+
+<A NAME="289"><H2>The AlbumDB Example Program</H2></A>
+
+<P>It's great to talk about the database functions; it's another experience to use them in an application. The example program that follows, AlbumDB, is a simple database that tracks record albums, the artist that recorded them, and the individual tracks on the albums. It has a simple interface because the goal of the program is to demonstrate the database functions, not the user interface. Figure 7-4 shows the AlbumDB window with a few albums entered in the database.
+
+<P>Figure 7-5 contains the code for the AlbumDB program. When the program is first launched, it attempts to open a database called AlbumDB. If one isn't found, a new one is created. This is accomplished in the <I>OpenCreateDB</I> function.
+
+<P><A HREF="javascript:fullSize('f07rg04x.htm')"> <img src="f07rg04.jpg" width=404 height=303 border="0" ALT="Click to view at full size."></a>
+<P><!-- caption --><B>Figure 7-4.</B> <I>The AlbumDB window.</I><!-- /caption -->
+
+<P><B>Figure 7-5.</B> <I>The AlbumDB program.</I>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><td>
+<A NAME="290"><H3>AlbumDB.rc</H3></A>
+<p><pre>
+//======================================================================
+// Resource file
+//
+
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//======================================================================
+
+#include &quot;windows.h&quot;
+#include &quot;albumdb.h&quot;                     // Program-specific stuff
+//----------------------------------------------------------------------
+// Icons and bitmaps
+//
+ID_ICON ICON   &quot;albumdb.ico&quot;             // Program icon
+
+//----------------------------------------------------------------------
+// Menu
+//
+ID_MENU MENU DISCARDABLE 
+BEGIN
+    POPUP &quot;&amp;File&quot;
+    BEGIN
+
+        MENUITEM &quot;&amp;Delete Database&quot;,            IDM_DELDB
+        MENUITEM SEPARATOR
+        MENUITEM &quot;E&amp;xit&quot;,                       IDM_EXIT
+    END
+    POPUP &quot;&amp;Album&quot;
+    BEGIN
+        MENUITEM &quot;&amp;New&quot;,                        IDM_NEW
+        MENUITEM &quot;&amp;Edit&quot;,                       IDM_EDIT
+        MENUITEM &quot;&amp;Delete&quot;,                     IDM_DELETE
+        MENUITEM SEPARATOR
+        MENUITEM &quot;&amp;Sort Name&quot;,                  IDM_SORTNAME
+        MENUITEM &quot;Sort &amp;Artist&quot;,                IDM_SORTARTIST
+        MENUITEM &quot;Sort &amp;Category&quot;,              IDM_SORTCATEGORY
+    END
+    POPUP &quot;&amp;Help&quot;
+    BEGIN
+        MENUITEM &quot;&amp;About...&quot;,                   IDM_ABOUT
+    END
+END
+//----------------------------------------------------------------------
+// New/Edit Track dialog template
+//
+EditTrackDlg DIALOG discardable 10, 10, 165, 40
+STYLE  WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU | DS_CENTER | 
+       DS_MODALFRAME 
+EXSTYLE WS_EX_CAPTIONOKBTN
+CAPTION &quot;Edit Track&quot;
+BEGIN
+    LTEXT &quot;Track Name&quot;                -1,   5,   5,  50,  12
+    EDITTEXT                   IDD_TRACK,  60,   5, 100,  12, WS_TABSTOP
+
+    LTEXT &quot;Time&quot;                      -1,   5,  20,  50,  12
+    EDITTEXT                   IDD_TIME,  60,  20,  50,  12, WS_TABSTOP
+END
+//----------------------------------------------------------------------
+// New/Edit Album data dialog template
+//
+EditAlbumDlg DIALOG discardable 10, 10, 200, 100
+STYLE  WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU | DS_CENTER | 
+       DS_MODALFRAME 
+EXSTYLE WS_EX_CAPTIONOKBTN
+CAPTION &quot;Edit Album&quot;
+BEGIN
+    LTEXT &quot;Album Name&quot;                -1,   5,   5,  50,  12
+    EDITTEXT                   IDD_NAME,  60,   5, 135,  12, WS_TABSTOP
+    LTEXT &quot;Artist&quot;                    -1,   5,  20,  50,  12
+    EDITTEXT                   IDD_ARTIST,  60,  20, 135,  12,
+                                   WS_TABSTOP
+
+    LTEXT &quot;Category&quot;                  -1,   5,  35,  50,  12
+    COMBOBOX                   IDD_CATEGORY,  60,  35, 135,  60, 
+                                   WS_TABSTOP | CBS_DROPDOWN
+    LISTBOX                    IDD_TRACKS,  60,  50, 135,  45, 
+                                   LBS_USETABSTOPS
+
+    PUSHBUTTON &quot;&amp;New Track...&quot;,   
+                               IDD_NEWTRACK,   5,  50,  50,  12,
+                                   WS_TABSTOP
+    PUSHBUTTON &quot;&amp;Edit Track...&quot;, 
+                               IDD_EDITTRACK,   5,  65,  50,  12,
+                                   WS_TABSTOP
+    PUSHBUTTON &quot;&amp;Del Track&quot;,   
+                               IDD_DELTRACK,   5,  80,  50,  12,
+                                   WS_TABSTOP
+END
+//----------------------------------------------------------------------
+// About box dialog template
+//
+aboutbox DIALOG discardable 10, 10, 160, 40
+STYLE  WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU | DS_CENTER | 
+       DS_MODALFRAME 
+CAPTION &quot;About&quot;
+BEGIN
+    ICON  ID_ICON,                    -1,   5,   5,  10,  10
+    LTEXT &quot;AlbumDB - Written for the book Programming Windows \
+           CE Copyright 1998 Douglas Boling&quot;
+                                      -1,  40,   5, 110,  30
+END
+</pre>
+</TD></TR></TABLE>
+
+
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><td>
+<A NAME="291"><H3>AlbumDB.h</H3></A>
+<p><pre>
+//======================================================================
+// Header file
+
+//
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//======================================================================
+// Returns number of elements
+#define dim(x) (sizeof(x) / sizeof(x[0]))
+
+//----------------------------------------------------------------------
+// Generic defines and data types
+//
+struct decodeUINT {                             // Structure associates
+    UINT Code;                                  // messages 
+                                                // with a function.
+    LRESULT (*Fxn)(HWND, UINT, WPARAM, LPARAM);
+}; 
+struct decodeCMD {                              // Structure associates
+    UINT Code;                                  // menu IDs with a 
+    LRESULT (*Fxn)(HWND, WORD, HWND, WORD);     // function.
+};
+
+//----------------------------------------------------------------------
+// Generic defines used by application
+#define  ID_ICON             1                  // App icon resource ID
+#define  IDC_CMDBAR          2                  // Command band ID
+#define  ID_MENU             3                  // Main menu resource ID
+#define  ID_LISTV            5                  // List view control ID
+
+// Menu item IDs
+#define  IDM_DELDB           101                // File menu
+#define  IDM_EXIT            102
+
+#define  IDM_NEW             110                // Album menu
+#define  IDM_EDIT            111
+#define  IDM_DELETE          112
+
+#define  IDM_SORTNAME        120                // Sort IDs must be 
+#define  IDM_SORTARTIST      121                // consecutive.
+#define  IDM_SORTCATEGORY    122
+
+#define  IDM_ABOUT           150                // Help menu
+
+// IDs for dialog box controls
+#define  IDD_NAME            100                // Edit album dialog.
+#define  IDD_ARTIST          101
+#define  IDD_NUMTRACKS       102
+#define  IDD_CATEGORY        103
+#define  IDD_TRACKS          104
+#define  IDD_NEWTRACK        105
+#define  IDD_EDITTRACK       106
+#define  IDD_DELTRACK        107
+
+#define  IDD_TRACK           200                // Edit track dialog.
+#define  IDD_TIME            201
+//----------------------------------------------------------------------
+// Program-specific structures
+//
+// Structure used by New/Edit Album dlg proc
+#define MAX_NAMELEN          64
+#define MAX_ARTISTLEN        64
+#define MAX_TRACKNAMELEN     512
+typedef struct {
+    TCHAR szName[MAX_NAMELEN];
+    TCHAR szArtist[MAX_ARTISTLEN];
+    INT nDateRel;
+    SHORT sCategory;
+    SHORT sNumTracks;
+    INT nTrackDataLen;
+    TCHAR szTracks[MAX_TRACKNAMELEN];
+} ALBUMINFO, *LPALBUMINFO;
+
+// Structure used by Add/Edit album track
+typedef struct {
+    TCHAR szTrack[64];
+    TCHAR szTime[16];
+} TRACKINFO, *LPTRACKINFO;
+
+// Structure used by GetItemData
+typedef struct {
+    int nItem;
+    ALBUMINFO Album;
+} LVCACHEDATA, *PLVCACHEDATA;
+
+// Database property identifiers
+#define PID_NAME       MAKELONG (CEVT_LPWSTR, 1)
+#define PID_ARTIST     MAKELONG (CEVT_LPWSTR, 2)
+#define PID_RELDATE    MAKELONG (CEVT_I2, 3)
+#define PID_CATEGORY   MAKELONG (CEVT_I2, 4)
+#define PID_NUMTRACKS  MAKELONG (CEVT_I2, 5)
+#define PID_TRACKS     MAKELONG (CEVT_BLOB, 6)
+#define NUM_DB_PROPS   6
+
+//----------------------------------------------------------------------
+// Function prototypes
+//
+int InitApp (HINSTANCE);
+HWND InitInstance (HINSTANCE, LPWSTR, int);
+int TermInstance (HINSTANCE, int);
+
+HANDLE OpenCreateDB (HWND, int *);
+void ReopenDatabase (HWND, INT);
+
+int GetItemData (int, PLVCACHEDATA); 
+HWND CreateLV (HWND, RECT *);
+void ClearCache (void);
+
+// Window procedures
+LRESULT CALLBACK MainWndProc (HWND, UINT, WPARAM, LPARAM);
+
+// Message handlers
+LRESULT DoCreateMain (HWND, UINT, WPARAM, LPARAM);
+LRESULT DoSizeMain (HWND, UINT, WPARAM, LPARAM);
+LRESULT DoCommandMain (HWND, UINT, WPARAM, LPARAM);
+LRESULT DoNotifyMain (HWND, UINT, WPARAM, LPARAM);
+LRESULT DoDbNotifyMain (HWND, UINT, WPARAM, LPARAM);
+LRESULT DoDestroyMain (HWND, UINT, WPARAM, LPARAM);
+
+// Command functions
+LPARAM DoMainCommandDelDB (HWND, WORD, HWND, WORD);
+LPARAM DoMainCommandExit (HWND, WORD, HWND, WORD);
+LPARAM DoMainCommandNew (HWND, WORD, HWND, WORD);
+LPARAM DoMainCommandEdit (HWND, WORD, HWND, WORD);
+LPARAM DoMainCommandDelete (HWND, WORD, HWND, WORD);
+LPARAM DoMainCommandSort (HWND, WORD, HWND, WORD);
+LPARAM DoMainCommandAbout (HWND, WORD, HWND, WORD);
+
+// Dialog procedures
+BOOL CALLBACK AboutDlgProc (HWND, UINT, WPARAM, LPARAM);
+BOOL CALLBACK EditAlbumDlgProc (HWND, UINT, WPARAM, LPARAM);
+</pre>
+</td></tr></table>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><td>
+<A NAME="292"><H3>AlbumDB.c</H3></A>
+<p><pre>
+//======================================================================
+
+// AlbumDB - A Windows CE database
+//
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//======================================================================
+#include &lt;windows.h&gt;                 // For all that Windows stuff
+#include &lt;windowsx.h&gt;                // For Window Controls macros
+#include &lt;commctrl.h&gt;                // Command bar includes
+
+#include &quot;AlbumDB.h&quot;                 // Program-specific stuff
+
+//----------------------------------------------------------------------
+// Global data
+//
+const TCHAR szAppName[] = TEXT (&quot;AlbumDB&quot;);
+HINSTANCE hInst;                     // Program instance handle
+HANDLE g_hDB = 0;                    // Handle to album database
+CEOID g_oidDB = 0;                   // Handle to album database
+INT g_nLastSort = PID_NAME;          // Last sort order used
+
+// These two variables represent a one item cache for
+// the list view control.
+int g_nLastItem = -1;
+LPBYTE g_pLastRecord = 0;
+
+// Message dispatch table for MainWindowProc
+const struct decodeUINT MainMessages[] = {
+    WM_CREATE, DoCreateMain,
+    WM_SIZE, DoSizeMain,
+    WM_COMMAND, DoCommandMain,
+    WM_NOTIFY, DoNotifyMain,
+    WM_DESTROY, DoDestroyMain,
+    DB_CEOID_CHANGED, DoDbNotifyMain,
+    DB_CEOID_CREATED, DoDbNotifyMain,
+    DB_CEOID_RECORD_DELETED, DoDbNotifyMain,
+};
+
+// Command message dispatch for MainWindowProc
+const struct decodeCMD MainCommandItems[] = {
+    IDM_DELDB, DoMainCommandDelDB,
+    IDM_EXIT, DoMainCommandExit,
+    IDM_NEW, DoMainCommandNew,
+    IDM_EDIT, DoMainCommandEdit,
+    IDM_DELETE, DoMainCommandDelete,
+    IDM_SORTNAME, DoMainCommandSort,
+    IDM_SORTARTIST, DoMainCommandSort,
+    IDM_SORTCATEGORY, DoMainCommandSort,
+    IDM_ABOUT, DoMainCommandAbout,
+};
+// Album category strings; must be alphabetical.
+const TCHAR *pszCategories[] = {TEXT (&quot;Classical&quot;), TEXT (&quot;Country&quot;), 
+                                TEXT (&quot;New Age&quot;), TEXT (&quot;Rock&quot;)};
+//======================================================================
+// Program entry point
+//
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    LPWSTR lpCmdLine, int nCmdShow) {
+    HWND hwndMain;
+    MSG msg;
+    int rc = 0;
+
+    // Initialize application.
+    rc = InitApp (hInstance);
+    if (rc) return rc;
+
+    // Initialize this instance.
+    hwndMain = InitInstance (hInstance, lpCmdLine, nCmdShow);
+    if (hwndMain == 0)
+        return 0x10;
+
+    // Application message loop
+    while (GetMessage (&amp;msg, NULL, 0, 0)) {
+        TranslateMessage (&amp;msg);
+        DispatchMessage (&amp;msg);
+    }
+    // Instance cleanup
+    return TermInstance (hInstance, msg.wParam);
+}
+//----------------------------------------------------------------------
+// InitApp - Application initialization
+//
+int InitApp (HINSTANCE hInstance) {
+    WNDCLASS wc;
+    INITCOMMONCONTROLSEX icex;
+
+    // Register application main window class.
+    wc.style = 0;                             // Window style
+    wc.lpfnWndProc = MainWndProc;             // Callback function
+    wc.cbClsExtra = 0;                        // Extra class data
+    wc.cbWndExtra = 0;                        // Extra window data
+    wc.hInstance = hInstance;                 // Owner handle
+    wc.hIcon = NULL,                          // Application icon
+    wc.hCursor = NULL;                        // Default cursor
+    wc.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH);
+    wc.lpszMenuName =  NULL;                  // Menu name
+    wc.lpszClassName = szAppName;             // Window class name
+
+    if (RegisterClass (&amp;wc) == 0) return 1;
+
+    // Load the command bar common control class.
+    icex.dwSize = sizeof (INITCOMMONCONTROLSEX);
+    icex.dwICC = ICC_BAR_CLASSES | ICC_TREEVIEW_CLASSES | 
+                 ICC_LISTVIEW_CLASSES;
+    InitCommonControlsEx (&amp;icex);
+    return 0;
+}
+//----------------------------------------------------------------------
+// InitInstance - Instance initialization
+// 
+HWND InitInstance (HINSTANCE hInstance, LPWSTR lpCmdLine, int nCmdShow){
+    HWND hWnd;
+
+    // Save program instance handle in global variable.
+    hInst = hInstance;
+
+    // Create main window.
+    hWnd = CreateWindow (szAppName, TEXT (&quot;AlbumDB&quot;), WS_VISIBLE, 
+                         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+                         CW_USEDEFAULT, NULL, NULL, hInstance, NULL);
+
+    // Return fail code if window not created.
+    if (!IsWindow (hWnd)) return 0;
+
+    // Standard show and update calls
+    ShowWindow (hWnd, nCmdShow);
+    UpdateWindow (hWnd);
+    return hWnd;
+}
+//----------------------------------------------------------------------
+// TermInstance - Program cleanup
+//
+int TermInstance (HINSTANCE hInstance, int nDefRC) {
+    // Close the opened database.
+    if (g_hDB)
+        CloseHandle (g_hDB);
+    // Free the last db query if saved.
+    ClearCache ();
+
+    return nDefRC;
+}
+//======================================================================
+// Message handling procedures for MainWindow
+//----------------------------------------------------------------------
+// MainWndProc - Callback function for application window
+//
+LRESULT CALLBACK MainWndProc (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                              LPARAM lParam) {
+    INT i;
+    //
+    // Search message list to see if we need to handle this
+    // message.  If in list, call procedure.
+    //
+
+    for (i = 0; i &lt; dim(MainMessages); i++) {
+        if (wMsg == MainMessages[i].Code)
+            return (*MainMessages[i].Fxn)(hWnd, wMsg, wParam, lParam);
+    }
+    return DefWindowProc (hWnd, wMsg, wParam, lParam);
+}
+//----------------------------------------------------------------------
+// DoCreateMain - Process WM_CREATE message for window.
+//
+LRESULT DoCreateMain (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                      LPARAM lParam) {
+    HWND hwndCB, hwndChild;
+    INT  nHeight, nCnt;
+    RECT rect;
+    LPCREATESTRUCT lpcs;
+
+    // Convert lParam into pointer to create structure.
+    lpcs = (LPCREATESTRUCT) lParam;
+
+    // Create a minimal command bar that only has a menu and an 
+    // exit button.
+    hwndCB = CommandBar_Create (hInst, hWnd, IDC_CMDBAR);
+    // Insert the menu.
+    CommandBar_InsertMenubar (hwndCB, hInst, ID_MENU, 0);
+    // Add exit button to command bar. 
+    CommandBar_AddAdornments (hwndCB, 0, 0);
+    nHeight = CommandBar_Height (hwndCB);
+
+    // Open the album database.  If one doesn't exist, create it.
+    g_hDB = OpenCreateDB (hWnd, &amp;nCnt);
+    if (g_hDB == INVALID_HANDLE_VALUE) {
+        MessageBox (hWnd, TEXT (&quot;Could not open database.&quot;), szAppName,
+                    MB_OK);
+        DestroyWindow (hWnd);
+        return 0;
+    }
+    // Create the list view control in right pane.
+    SetRect (&amp;rect, 0, nHeight, lpcs-&gt;cx, lpcs-&gt;cy - nHeight);
+    hwndChild = CreateLV (hWnd, &amp;rect);
+
+    // Destroy frame if window not created.
+    if (!IsWindow (hwndChild)) {
+        DestroyWindow (hWnd);
+        return 0;
+    }
+    ListView_SetItemCount (hwndChild, nCnt);
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoSizeMain - Process WM_SIZE message for window.
+// 
+LRESULT DoSizeMain (HWND hWnd, UINT wMsg, WPARAM wParam, LPARAM lParam){
+    HWND hwndLV;
+    RECT rect;
+
+    hwndLV = GetDlgItem (hWnd, ID_LISTV);
+
+    // Adjust the size of the client rect to take into account
+    // the command bar height.
+    GetClientRect (hWnd, &amp;rect);
+    rect.top += CommandBar_Height (GetDlgItem (hWnd, IDC_CMDBAR));
+
+    SetWindowPos (hwndLV, NULL, rect.left, rect.top, 
+                  (rect.right - rect.left), rect.bottom - rect.top,
+                  SWP_NOZORDER);
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoCommandMain - Process WM_COMMAND message for window.
+// 
+LRESULT DoCommandMain (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                       LPARAM lParam) {
+    WORD idItem, wNotifyCode;
+    HWND hwndCtl;
+    INT  i;
+
+    // Parse the parameters.
+    idItem = (WORD) LOWORD (wParam);
+    wNotifyCode = (WORD) HIWORD (wParam);
+    hwndCtl = (HWND) lParam;
+
+    // Call routine to handle control message.
+    for (i = 0; i &lt; dim(MainCommandItems); i++) {
+        if (idItem == MainCommandItems[i].Code)
+            return (*MainCommandItems[i].Fxn)(hWnd, idItem, hwndCtl, 
+                                              wNotifyCode);
+    }
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoNotifyMain - Process DB_CEOID_xxx messages for window.
+// 
+LRESULT DoDbNotifyMain (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                        LPARAM lParam) {
+    switch (wMsg) {
+    case DB_CEOID_CHANGED:
+        InvalidateRect (GetDlgItem (hWnd, ID_LISTV), NULL, TRUE);
+        break;
+    case DB_CEOID_CREATED:
+        ReopenDatabase (hWnd, -1);
+        break;
+    case DB_CEOID_RECORD_DELETED:
+        ReopenDatabase (hWnd, -1);
+        break;
+    }
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoNotifyMain - Process WM_NOTIFY message for window.
+// 
+LRESULT DoNotifyMain (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                      LPARAM lParam) {
+    int idItem, i;
+    LPNMHDR pnmh;
+    LPNMLISTVIEW pnmlv;
+    NMLVDISPINFO *pLVdi;
+    LVCACHEDATA data;
+    HWND hwndLV;
+
+    // Parse the parameters.
+    idItem = (int) wParam;
+    pnmh = (LPNMHDR)lParam;
+    hwndLV = pnmh-&gt;hwndFrom;
+
+    if (idItem == ID_LISTV) {
+        pnmlv = (LPNMLISTVIEW)lParam;
+
+        switch (pnmh-&gt;code) {
+        case LVN_GETDISPINFO:
+            pLVdi = (NMLVDISPINFO *)lParam;
+
+            // Get a pointer to the data either from the cache
+            // or from the actual database.
+            GetItemData (pLVdi-&gt;item.iItem, &amp;data);
+
+            if (pLVdi-&gt;item.mask &amp; LVIF_IMAGE) 
+                pLVdi-&gt;item.iImage = 0;
+            if (pLVdi-&gt;item.mask &amp; LVIF_PARAM) 
+                pLVdi-&gt;item.lParam = 0;
+
+            if (pLVdi-&gt;item.mask &amp; LVIF_STATE) 
+                pLVdi-&gt;item.state = 0;
+
+            if (pLVdi-&gt;item.mask &amp; LVIF_TEXT) {
+                switch (pLVdi-&gt;item.iSubItem) {
+                case 0:
+                    lstrcpy (pLVdi-&gt;item.pszText, data.Album.szName);
+                    break;
+                case 1:
+                    lstrcpy (pLVdi-&gt;item.pszText, data.Album.szArtist);
+                    break;
+                case 2:
+                    lstrcpy (pLVdi-&gt;item.pszText, 
+                             pszCategories[data.Album.sCategory]);
+                    break;
+                }
+            }
+            break;
+
+        // Ignore cache hinting for db example.
+        case LVN_COLUMNCLICK:
+            i = ((NM_LISTVIEW *)lParam)-&gt;iSubItem + IDM_SORTNAME;
+            PostMessage (hWnd, WM_COMMAND, MAKELPARAM (i, 0), 0);
+            break;
+
+        // Ignore cache hinting for db example.
+        case NM_DBLCLK:
+            PostMessage (hWnd, WM_COMMAND, MAKELPARAM (IDM_EDIT, 0), 0);
+            break;
+
+        // Ignore cache hinting for db example.
+        case LVN_ODCACHEHINT:
+            break;
+
+        case LVN_ODFINDITEM:
+            // We should do a reverse look up here to see if
+            // an item exists for the text passed.
+            return -1;
+        }
+    }
+    return 0;
+}
+
+//----------------------------------------------------------------------
+// DoDestroyMain - Process WM_DESTROY message for window.
+//
+LRESULT DoDestroyMain (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                       LPARAM lParam) {
+    PostQuitMessage (0);
+    return 0;
+}
+//======================================================================
+// Command handler routines
+//----------------------------------------------------------------------
+// DoMainCommandDelDB - Process Program Delete command.
+//
+LPARAM DoMainCommandDelDB (HWND hWnd, WORD idItem, HWND hwndCtl, 
+                           WORD wNotifyCode) {
+    int i, rc;
+
+    i = MessageBox (hWnd, TEXT (&quot;Delete the entire database?&quot;), 
+                    TEXT (&quot;Delete&quot;), MB_YESNO);
+    if (i != IDYES) 
+        return 0;
+    if (g_oidDB) {
+        CloseHandle (g_hDB);
+        rc = CeDeleteDatabase (g_oidDB);
+        if (rc == 0) {
+            TCHAR szDbg[128];
+            rc = GetLastError();
+            wsprintf (szDbg, TEXT (&quot;Couldn\'t delete db. rc=%d&quot;), rc);
+            MessageBox (hWnd, szDbg, szAppName, MB_OK);
+            g_hDB = CeOpenDatabase (&amp;g_oidDB, NULL, g_nLastSort, 
+                                    0, hWnd);
+            return 0;
+        }
+        g_hDB = 0;
+        g_oidDB = 0;
+    }
+    ListView_SetItemCount (GetDlgItem (hWnd, ID_LISTV), 0);
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoMainCommandExit - Process Program Exit command.
+//
+LPARAM DoMainCommandExit (HWND hWnd, WORD idItem, HWND hwndCtl, 
+                          WORD wNotifyCode) {
+    SendMessage (hWnd, WM_CLOSE, 0, 0);
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoMainCommandNew - Process Program New command.
+//
+LPARAM DoMainCommandNew (HWND hWnd, WORD idItem, HWND hwndCtl, 
+                         WORD wNotifyCode) {
+    PCEPROPVAL pcepv;
+    INT i, rc;
+    CEOID oid;
+    HWND hwndLV = GetDlgItem (hWnd, ID_LISTV);
+
+    // Display the new/edit dialog.
+    pcepv = 0;
+    rc = DialogBoxParam (hInst, TEXT (&quot;EditAlbumDlg&quot;), hWnd, 
+                         EditAlbumDlgProc, (LPARAM)&amp;pcepv);
+    if (rc == 0) 
+        return 0;
+
+    // Write the record.
+    oid = CeWriteRecordProps(g_hDB, 0, NUM_DB_PROPS, pcepv);
+    if (!oid) {
+        TCHAR szText[64];
+        rc = GetLastError ();
+        wsprintf (szText, TEXT (&quot;Write Rec fail. Error %d (%x)&quot;),
+                  rc, rc);
+        MessageBox (hWnd, szText, TEXT (&quot;Error&quot;), MB_OK);
+    }
+    ClearCache ();                              // Clear the lv cache.
+
+    i = ListView_GetItemCount (hwndLV) + 1;     // Increment list view
+                                                // count.
+    ListView_SetItemCount (hwndLV, i);
+    InvalidateRect (hwndLV, NULL, TRUE);        // Force list view
+                                                // redraw.
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoMainCommandEdit - Process Program Edit command.
+//
+LPARAM DoMainCommandEdit (HWND hWnd, WORD idItem, HWND hwndCtl, 
+                          WORD wNotifyCode) {
+    PCEPROPVAL pcepv = 0;
+    INT nSel, rc;
+    WORD wProps = 0;
+
+    DWORD dwRecSize, dwIndex;
+    CEOID oid;
+    HWND hwndLV = GetDlgItem (hWnd, ID_LISTV);
+
+    nSel = ListView_GetSelectionMark (hwndLV);
+    if (nSel == -1) 
+        return 0;
+
+    // Seek to the necessary record.
+    oid = CeSeekDatabase (g_hDB, CEDB_SEEK_BEGINNING, nSel, &amp;dwIndex);
+    if (oid == 0) {
+        TCHAR szTxt[64];
+        INT rc = GetLastError();
+        wsprintf (szTxt, TEXT (&quot;Db item not found. rc = %d (%x)&quot;),
+                  rc, rc);
+        MessageBox (NULL, szTxt, TEXT (&quot;err&quot;), MB_OK);
+        return 0;
+    }
+    // Read all properties for the record.  Have the system
+    // allocate the buffer containing the data.
+    oid = CeReadRecordProps (g_hDB, CEDB_ALLOWREALLOC, &amp;wProps, NULL,
+                             &amp;(LPBYTE)pcepv, &amp;dwRecSize);
+    if (oid == 0) {
+        TCHAR szTxt[64];
+        INT rc = GetLastError();
+        wsprintf (szTxt, TEXT (&quot;Db item not read. rc = %d (%x)&quot;),
+                  rc, rc);
+        MessageBox (NULL, szTxt, TEXT (&quot;err&quot;), MB_OK);
+        return 0;
+    }
+    // Display the edit dialog.
+    rc = DialogBoxParam (hInst, TEXT (&quot;EditAlbumDlg&quot;), hWnd, 
+                         EditAlbumDlgProc, (LPARAM)&amp;pcepv);
+    if (rc == 0) 
+        return 0;
+
+    // Write the record.
+    oid = CeWriteRecordProps(g_hDB, oid, NUM_DB_PROPS, pcepv);
+    if (!oid) {
+        TCHAR szText[64];
+        rc = GetLastError ();
+        wsprintf (szText, TEXT (&quot;Write Rec fail. Error %d (%x)&quot;),
+                   rc, rc);
+        MessageBox (hWnd, szText, TEXT (&quot;Error&quot;), MB_OK);
+    }
+    LocalFree ((LPBYTE)pcepv);
+    ClearCache ();                              // Clear the lv cache.
+
+    InvalidateRect (hwndLV, NULL, TRUE);        // Force list view
+                                                // redraw.
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoMainCommandDelete - Process Program Delete command.
+//
+LPARAM DoMainCommandDelete (HWND hWnd, WORD idItem, HWND hwndCtl, 
+                            WORD wNotifyCode) {
+    HWND hwndLV;
+    TCHAR szText[64];
+    DWORD dwIndex;
+    int i;
+    CEOID oid;
+    int nSel;
+
+    hwndLV = GetDlgItem (hWnd, ID_LISTV);
+    nSel = ListView_GetSelectionMark (hwndLV);
+    if (nSel != -1) {
+
+        wsprintf (szText, TEXT (&quot;Delete this item?&quot;)); 
+        i = MessageBox (hWnd, szText, TEXT (&quot;Delete&quot;), MB_YESNO);
+        if (i != IDYES) 
+            return 0;
+
+        // Seek to the necessary record.
+        oid = CeSeekDatabase (g_hDB, CEDB_SEEK_BEGINNING, nSel, &amp;dwIndex);
+        CeDeleteRecord (g_hDB, oid);
+
+        // Reduce the list view count by one and force redraw.
+        i = ListView_GetItemCount (hwndLV) - 1;
+        ListView_SetItemCount (hwndLV, i);
+        ClearCache ();                          // Clear the lv cache.
+        InvalidateRect (hwndLV, NULL, TRUE);
+    }
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoMainCommandSort - Process the Sort commands.
+//
+LPARAM DoMainCommandSort(HWND hWnd, WORD idItem, HWND hwndCtl, 
+                         WORD wNotifyCode) {
+    int nSort;
+
+    switch (idItem) {
+    case IDM_SORTNAME:
+        nSort = PID_NAME;
+        break;
+    case IDM_SORTARTIST:
+        nSort = PID_ARTIST;
+        break;
+    case IDM_SORTCATEGORY:
+        nSort = PID_CATEGORY;
+        break;
+    }
+    if (nSort == g_nLastSort)
+        return 0;
+
+    ReopenDatabase (hWnd, nSort);      // Close and reopen the database.
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoMainCommandAbout - Process the Help | About menu command.
+//
+LPARAM DoMainCommandAbout(HWND hWnd, WORD idItem, HWND hwndCtl, 
+                          WORD wNotifyCode) {
+    // Use DialogBox to create modal dialog.
+    DialogBox (hInst, TEXT (&quot;aboutbox&quot;), hWnd, AboutDlgProc);
+    return 0;
+}
+//----------------------------------------------------------------------
+// CreateLV - Creates the list view control
+//
+HWND CreateLV (HWND hWnd, RECT *prect) {
+    HWND hwndLV;
+    LVCOLUMN lvc;
+
+    // Create album list window.  
+    hwndLV = CreateWindowEx (0, WC_LISTVIEW, TEXT (&quot;&quot;), 
+                         WS_VISIBLE | WS_CHILD | WS_VSCROLL |
+                         LVS_OWNERDATA | WS_BORDER | LVS_REPORT, 
+                         prect-&gt;left, prect-&gt;top,
+                         prect-&gt;right - prect-&gt;left,
+                         prect-&gt;bottom - prect-&gt;top,
+                         hWnd, (HMENU)ID_LISTV, 
+                         hInst, NULL);
+
+    // Add columns.
+    if (hwndLV) {
+        lvc.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_FMT | LVCF_SUBITEM;
+        lvc.fmt = LVCFMT_LEFT;
+        lvc.cx = 150;
+        lvc.pszText = TEXT (&quot;Name&quot;);
+        lvc.iSubItem = 0;
+        SendMessage (hwndLV, LVM_INSERTCOLUMN, 0, (LPARAM)&amp;lvc);
+
+        lvc.mask |= LVCF_SUBITEM;
+        lvc.pszText = TEXT (&quot;Artist&quot;);
+        lvc.cx = 100;
+        lvc.iSubItem = 1;
+        SendMessage (hwndLV, LVM_INSERTCOLUMN, 1, (LPARAM)&amp;lvc);
+
+        lvc.mask |= LVCF_SUBITEM;
+        lvc.pszText = TEXT (&quot;Category&quot;);
+        lvc.cx = 100;
+        lvc.iSubItem = 2;
+        SendMessage (hwndLV, LVM_INSERTCOLUMN, 2, (LPARAM)&amp;lvc);
+    }
+
+    return hwndLV;
+}
+//----------------------------------------------------------------------
+// OpenCreateDB - Open database, create if necessary.
+//
+HANDLE OpenCreateDB (HWND hWnd, int *pnRecords) {
+    INT i, rc;
+    CEOIDINFO oidinfo;
+    SORTORDERSPEC sos[4];
+
+    g_oidDB = 0;
+    g_hDB = CeOpenDatabase (&amp;g_oidDB, TEXT (&quot;\\Albums&quot;), 
+                            g_nLastSort, 0, hWnd);
+    if (g_hDB == INVALID_HANDLE_VALUE) {
+        rc = GetLastError();
+        if (rc == ERROR_FILE_NOT_FOUND) {
+            i = 0;
+            sos[i].propid = PID_NAME;
+            sos[i++].dwFlags = 0;
+
+            sos[i].propid = PID_ARTIST;
+            sos[i++].dwFlags = 0;
+
+            sos[i].propid = PID_CATEGORY;
+            sos[i++].dwFlags = 0;
+
+            g_oidDB = CeCreateDatabase (TEXT (&quot;\\Albums&quot;), 0, 3, 
+                                        sos);
+            if (g_oidDB == 0) {
+                TCHAR szErr[128];
+                wsprintf (szErr, TEXT (&quot;Database create failed. \
+                          rc %d&quot;), GetLastError());
+                MessageBox (hWnd, szErr, szAppName, MB_OK);
+                return 0;
+            }
+            g_hDB = CeOpenDatabase(&amp;g_oidDB,NULL, g_nLastSort, 0, hWnd);
+        }
+    } 
+    CeOidGetInfo (g_oidDB, &amp;oidinfo);
+    *pnRecords = oidinfo.infDatabase.wNumRecords;
+    return g_hDB;
+}
+//----------------------------------------------------------------------
+// ClearCache - Clears the one item cache for the list view control
+//
+void ClearCache (void) {
+
+    if (g_pLastRecord)
+        LocalFree (g_pLastRecord);
+    g_pLastRecord = 0;            
+    g_nLastItem = -1;
+    return;
+}
+//----------------------------------------------------------------------
+// ReopenDatabase - Closes and reopens the database 
+//
+void ReopenDatabase (HWND hWnd, INT nNewSort) {
+    INT nCnt; 
+
+    if (nNewSort != -1)
+        g_nLastSort = nNewSort;
+
+    if (g_hDB)
+        CloseHandle (g_hDB);
+    ClearCache ();                        // Clear the lv cache.
+
+    g_hDB = OpenCreateDB (hWnd, &amp;nCnt);
+
+    ListView_SetItemCount (GetDlgItem (hWnd, ID_LISTV), nCnt);
+    InvalidateRect (GetDlgItem (hWnd, ID_LISTV), NULL, 0);
+    return;
+}
+//----------------------------------------------------------------------
+// Get the album data from the database for the requested lv item.
+//
+int GetItemData (int nItem, PLVCACHEDATA pcd) {
+    static WORD wProps;
+    DWORD dwIndex;
+    CEOID oid;
+    PCEPROPVAL pRecord = NULL;
+    DWORD dwRecSize;
+    int i;
+
+    // See if the item requested was the previous one.  If so,
+    // just use the old data.
+    if ((nItem == g_nLastItem) &amp;&amp; (g_pLastRecord)) 
+        pRecord = (PCEPROPVAL)g_pLastRecord;
+    else {
+        // Seek to the necessary record.
+        oid = CeSeekDatabase (g_hDB, CEDB_SEEK_BEGINNING, nItem, &amp;dwIndex);
+        if (oid == 0) {
+            TCHAR szTxt[64];
+            INT rc = GetLastError();
+            wsprintf (szTxt, TEXT (&quot;Db item not found. rc = %d (%x)&quot;),
+                      rc, rc);
+            MessageBox (NULL, szTxt, TEXT (&quot;err&quot;), MB_OK);
+            return 0;
+        }
+        // Read all properties for the record.  Have the system
+        // allocate the buffer containing the data.
+        oid = CeReadRecordProps (g_hDB, CEDB_ALLOWREALLOC, &amp;wProps, NULL,
+                                 &amp;(LPBYTE)pRecord, &amp;dwRecSize);
+        if (oid == 0) {
+            TCHAR szTxt[64];
+            INT rc = GetLastError();
+            wsprintf (szTxt, TEXT (&quot;Db item not read. rc = %d (%x)&quot;),
+                      rc, rc);
+            MessageBox (NULL, szTxt, TEXT (&quot;err&quot;), MB_OK);
+            return 0;
+        }
+        // Free old record and save the newly read one.
+        if (g_pLastRecord)
+            LocalFree (g_pLastRecord);
+        g_nLastItem = nItem;
+        g_pLastRecord = (LPBYTE)pRecord;
+
+    }
+
+    // Copy the data from the record to the album structure.
+    for (i = 0; i &lt; wProps; i++) {
+        switch (pRecord-&gt;propid) {
+        case PID_NAME:
+            lstrcpy (pcd-&gt;Album.szName, pRecord-&gt;val.lpwstr);
+            break;
+        case PID_ARTIST:
+            lstrcpy (pcd-&gt;Album.szArtist, pRecord-&gt;val.lpwstr);
+            break;
+        case PID_CATEGORY:
+            pcd-&gt;Album.sCategory = pRecord-&gt;val.iVal;
+            break;
+        case PID_NUMTRACKS:
+            pcd-&gt;Album.sNumTracks = pRecord-&gt;val.iVal;
+            break;
+        }
+        pRecord++;
+    }
+    return 1;
+}
+//----------------------------------------------------------------------
+// InsertLV - Add an item to the list view control.
+//
+INT InsertLV (HWND hWnd, INT nItem, LPTSTR pszName, LPTSTR pszType, 
+              INT nSize) {
+    LVITEM lvi;
+    HWND hwndLV = GetDlgItem (hWnd, ID_LISTV);
+
+    lvi.mask = LVIF_TEXT | LVIF_IMAGE | LVIF_PARAM;
+    lvi.iItem = nItem;
+    lvi.iSubItem = 0;
+    lvi.pszText = pszName;
+    lvi.iImage = 0;
+    lvi.lParam = nItem;
+    SendMessage (hwndLV, LVM_INSERTITEM, 0, (LPARAM)&amp;lvi);
+
+    lvi.mask = LVIF_TEXT;
+    lvi.iItem = nItem;
+    lvi.iSubItem = 1;
+    lvi.pszText = pszType;
+    SendMessage (hwndLV, LVM_SETITEM, 0, (LPARAM)&amp;lvi);
+
+    return 0;
+}
+//----------------------------------------------------------------------
+// ValidateTime - Trival error checking of time field
+//
+BOOL ValidateTime (TCHAR *pStr) {
+    BOOL fSep = FALSE;
+    TCHAR *pPtr;
+
+    pPtr = pStr;
+    // See if field contains only numbers and up to one colon.
+    while (*pPtr) {
+        if (*pPtr == TEXT (`:')) {
+            if (fSep)
+                return FALSE;
+            fSep = TRUE;
+        } else if ((*pPtr &lt; TEXT (`0')) || (*pPtr &gt; TEXT (`9'))) 
+            return FALSE;
+        pPtr++;
+    }
+    // Reject empty field.
+    if (pPtr &gt; pStr)
+        return TRUE;
+    return FALSE;
+}
+//======================================================================
+// EditTrack dialog procedure
+//
+BOOL CALLBACK EditTrackDlgProc (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                                LPARAM lParam) {
+    static LPTRACKINFO lpti;
+
+    switch (wMsg) {
+        case WM_INITDIALOG:
+            lpti = (LPTRACKINFO)lParam;
+            SendDlgItemMessage (hWnd, IDD_TRACK, EM_SETLIMITTEXT, 
+                                sizeof (lpti-&gt;szTrack), 0);
+            SendDlgItemMessage (hWnd, IDD_TIME, EM_SETLIMITTEXT, 
+                                sizeof (lpti-&gt;szTime), 0);
+            // See if new album or edit of old one.
+            if (lstrlen (lpti-&gt;szTrack) == 0) {
+                SetWindowText (hWnd, TEXT (&quot;New Track&quot;));
+            } else {
+                SetDlgItemText (hWnd, IDD_TRACK, lpti-&gt;szTrack);
+                SetDlgItemText (hWnd, IDD_TIME, lpti-&gt;szTime);
+            }
+            return TRUE;
+
+        case WM_COMMAND:
+            switch (LOWORD (wParam)) {
+                case IDOK:
+                    Edit_GetText (GetDlgItem (hWnd, IDD_TRACK), 
+                             lpti-&gt;szTrack, sizeof (lpti-&gt;szTrack));
+                    Edit_GetText (GetDlgItem (hWnd, IDD_TIME), 
+                              lpti-&gt;szTime, sizeof (lpti-&gt;szTime));
+                    if (ValidateTime (lpti-&gt;szTime))
+                        EndDialog (hWnd, 1);
+                    else 
+                        MessageBox (hWnd, TEXT (&quot;Track time must \
+be entered in mm:ss format&quot;), 
+                                    TEXT (&quot;Error&quot;), MB_OK);
+                    return TRUE;
+                case IDCANCEL:
+                    EndDialog (hWnd, 0);
+                    return TRUE;
+            }
+        break;
+    }
+    return FALSE;
+}
+//======================================================================
+// EditAlbum dialog procedure
+//
+BOOL CALLBACK EditAlbumDlgProc (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                                LPARAM lParam) {
+    static PCEPROPVAL *ppRecord;
+    static int nTracks;
+    PCEPROPVAL pRecord, pRecPtr;
+    TCHAR *pPtr, szTmp[128];
+    HWND hwndTList, hwndCombo;
+    TRACKINFO ti;
+    BOOL fEnable;
+    INT i, nLen, rc;
+
+    switch (wMsg) {
+        case WM_INITDIALOG:
+            ppRecord = (PCEPROPVAL *)lParam;
+            pRecord = *ppRecord;
+
+            hwndCombo = GetDlgItem (hWnd, IDD_CATEGORY);
+            hwndTList = GetDlgItem (hWnd, IDD_TRACKS);
+
+            Edit_LimitText (GetDlgItem (hWnd, IDD_NAME), MAX_NAMELEN);
+            Edit_LimitText (GetDlgItem (hWnd, IDD_ARTIST),
+                            MAX_ARTISTLEN);
+            // Set tabstops on track list box.
+            i = 110;
+            ListBox_SetTabStops (hwndTList, 1, &amp;i);
+            // Initialize category combo box.
+            for (i = 0; i &lt; dim(pszCategories); i++) 
+                ComboBox_AddString (hwndCombo, pszCategories[i]);
+            ComboBox_SetCurSel (hwndCombo, 3);
+            nTracks = 0;
+
+            // See if new album or edit of old one.
+            if (pRecord == 0) {
+                SetWindowText (hWnd, TEXT (&quot;New Album&quot;));
+            } else {
+                // Copy the data from the record to album structure.
+                for (i = 0; i &lt; NUM_DB_PROPS; i++) {
+                    switch (pRecord-&gt;propid) {
+                    case PID_NAME:
+                        SetDlgItemText (hWnd, IDD_NAME, 
+                                        pRecord-&gt;val.lpwstr);
+                        break;
+                    case PID_ARTIST:
+                        SetDlgItemText (hWnd, IDD_ARTIST, 
+                                        pRecord-&gt;val.lpwstr);
+                        break;
+                    case PID_CATEGORY:
+                        ComboBox_SetCurSel (hwndCombo, 
+                                            pRecord-&gt;val.iVal);
+                        break;
+                    case PID_TRACKS:
+                        pPtr = (TCHAR *)pRecord-&gt;val.blob.lpb;
+                        for (i = 0; *pPtr; i++){
+                          ListBox_InsertString (hwndTList,i,pPtr);
+                            pPtr += lstrlen (pPtr) + 1;
+                            nTracks++;
+                        }
+                        break;
+                    }
+                    pRecord++;
+                }
+            }
+            // Select first track or disable buttons if no tracks.
+            if (nTracks) 
+                ListBox_SetCurSel (GetDlgItem (hWnd, IDD_TRACKS), 3);
+
+            else {
+                EnableWindow (GetDlgItem (hWnd, IDD_DELTRACK), 
+                              FALSE);
+                EnableWindow (GetDlgItem (hWnd, IDD_EDITTRACK), 
+                              FALSE);
+            }
+            return TRUE;
+
+        case WM_COMMAND:
+            hwndTList = GetDlgItem (hWnd, IDD_TRACKS);
+            hwndCombo = GetDlgItem (hWnd, IDD_CATEGORY);
+            pRecord = *ppRecord;
+            switch (LOWORD (wParam)) {
+                case IDD_TRACKS:
+                    switch (HIWORD (wParam)) {
+                    case LBN_DBLCLK:
+                        PostMessage (hWnd, WM_COMMAND, 
+                                   MAKELONG(IDD_EDITTRACK, 0), 0);
+                        break;
+                    case LBN_SELCHANGE:
+                        i = ListBox_GetCurSel (hwndTList);
+                        if (i == LB_ERR) 
+                            fEnable = FALSE;
+                        else
+                            fEnable = TRUE;
+                        EnableWindow (GetDlgItem (hWnd, 
+                                      IDD_DELTRACK), fEnable);
+                        EnableWindow (GetDlgItem (hWnd, 
+                                      IDD_EDITTRACK), fEnable);
+                        break;
+                    }
+                    return TRUE;
+
+                case IDD_NEWTRACK:
+                    memset (&amp;ti, 0, sizeof (ti));
+                    rc = DialogBoxParam (hInst, 
+                        TEXT (&quot;EditTrackDlg&quot;), hWnd, 
+                        EditTrackDlgProc, (LPARAM)&amp;ti);
+                    if (rc) {
+                        wsprintf (szTmp, TEXT (&quot;%s\t%s&quot;),
+                                  ti.szTrack, ti.szTime);
+                        i = ListBox_GetCurSel (hwndTList);
+                        if (i != LB_ERR)
+                            i++;
+                        i = ListBox_InsertString (hwndTList, i,
+                                                  szTmp);
+                        ListBox_SetCurSel (hwndTList, i);
+                    }
+                    return TRUE;
+
+                case IDD_EDITTRACK:
+                    i = ListBox_GetCurSel (hwndTList);
+                    if (i != LB_ERR) {
+                        ListBox_GetText (hwndTList, i, szTmp);
+                        pPtr = szTmp;
+                        while ((*pPtr != TEXT (`\t')) &amp;&amp;
+                               (*pPtr != TEXT (`\0'))) 
+                            pPtr++;
+                        if (*pPtr == TEXT (`\t')) 
+                            *pPtr++ = TEXT (`\0');
+
+                        lstrcpy (ti.szTime, pPtr);
+                        lstrcpy (ti.szTrack, szTmp);
+                        rc = DialogBoxParam (hInst, 
+                                             TEXT (&quot;EditTrackDlg&quot;), 
+                                             hWnd, EditTrackDlgProc, 
+                                             (LPARAM)&amp;ti);
+                        if (rc) {
+                            wsprintf (szTmp, TEXT (&quot;%s\t%s&quot;), 
+                                      ti.szTrack, ti.szTime);
+                            i = ListBox_GetCurSel (hwndTList);
+                            ListBox_DeleteString (hwndTList, i);
+                            ListBox_InsertString (hwndTList, i,
+                                                  szTmp);
+                            ListBox_SetCurSel (hwndTList, i);
+                        }
+                    }
+                    return TRUE;
+
+                case IDD_DELTRACK:
+                    // Grab the current selection and remove
+                    // it from list box.
+                    i = ListBox_GetCurSel (hwndTList);
+                    if (i != LB_ERR) {
+                        rc = MessageBox (hWnd, 
+                                         TEXT (&quot;Delete this item?&quot;),
+                                         TEXT (&quot;Track&quot;), MB_YESNO);
+                        if (rc == IDYES) {
+                            i=ListBox_DeleteString (hwndTList,i);
+                            if (i &gt; 0)
+                                i--;
+
+                            ListBox_SetCurSel (hwndTList, i);
+                        }
+                    }
+                    return TRUE;
+
+                case IDOK:
+                    // Be lazy and assume worst case size values.
+                    nLen = sizeof (CEPROPVAL) * NUM_DB_PROPS + 
+                           MAX_NAMELEN + MAX_ARTISTLEN + 
+                           MAX_TRACKNAMELEN;
+                    // See if prev record, alloc if not.
+                    if (pRecord) {
+                        // Resize record if necessary.
+                        if (nLen &gt; (int)LocalSize (pRecord)) 
+                            pRecPtr = 
+                               (PCEPROPVAL)LocalReAlloc (pRecord, 
+                               nLen, LMEM_MOVEABLE);
+                        else
+                            pRecPtr = pRecord;
+                    } else
+                        pRecPtr = LocalAlloc (LMEM_FIXED, nLen);
+                    if (!pRecPtr)
+                        return 0;
+                    // Copy the data from the controls to a 
+                    // marshaled data block with the structure 
+                    // at the front and the data in the back.
+                    pRecord = pRecPtr;
+                    nTracks = ListBox_GetCount (hwndTList);
+                    pPtr = (TCHAR *)((LPBYTE)pRecPtr + 
+                             (sizeof (CEPROPVAL) * NUM_DB_PROPS));
+                    // Zero structure to start over.
+                    memset (pRecPtr, 0, LocalSize (pRecPtr));
+
+                    pRecPtr-&gt;propid = PID_NAME;
+                    pRecPtr-&gt;val.lpwstr = pPtr;
+                    GetDlgItemText (hWnd, IDD_NAME, pPtr, 
+                                    MAX_NAMELEN);
+                    pPtr += lstrlen (pPtr) + 1;
+                    pRecPtr++;
+
+                    pRecPtr-&gt;propid = PID_ARTIST;
+                    pRecPtr-&gt;val.lpwstr = pPtr;
+                    GetDlgItemText (hWnd, IDD_ARTIST, pPtr, 
+                                    MAX_ARTISTLEN);
+                    pPtr += lstrlen (pPtr) + 1;
+                    pRecPtr++;
+                    pRecPtr-&gt;propid = PID_RELDATE;
+                    pRecPtr-&gt;val.iVal = 0;
+                    pRecPtr++;
+
+                    pRecPtr-&gt;propid = PID_CATEGORY;
+                    pRecPtr-&gt;val.iVal = 
+                                    ComboBox_GetCurSel (hwndCombo);
+                    pRecPtr++;
+
+                    pRecPtr-&gt;propid = PID_NUMTRACKS;
+                    pRecPtr-&gt;val.iVal = nTracks;
+                    pRecPtr++;
+
+                    pRecPtr-&gt;propid = PID_TRACKS;
+                    pRecPtr-&gt;val.blob.lpb = (LPBYTE)pPtr;
+
+                    // Get the track titles from the list box.
+                    rc = MAX_TRACKNAMELEN;
+                    for (i = 0; i &lt; nTracks; i++) {
+                        // Make sure we have the room in the buff.
+                        rc -= ListBox_GetTextLen(hwndTList, i);
+                        if (rc) 
+                            ListBox_GetText (hwndTList, i, pPtr);
+                        else {
+                            nTracks = i;
+                            break;
+                        }
+                        pPtr += lstrlen (pPtr) + 1;
+                    }
+                    *pPtr++ = TEXT (`\0');
+                    pRecPtr-&gt;val.blob.dwCount = 
+                              (LPBYTE)pPtr - pRecPtr-&gt;val.blob.lpb;
+                    *ppRecord = pRecord;
+                    EndDialog (hWnd, 1);
+                    return TRUE;
+
+                case IDCANCEL:
+                    EndDialog (hWnd, 0);
+                    return TRUE;
+            }
+        break;
+    }
+    return FALSE;
+}
+
+//======================================================================
+// About dialog procedure
+//
+BOOL CALLBACK AboutDlgProc (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                            LPARAM lParam) {
+    switch (wMsg) {
+        case WM_COMMAND:
+            switch (LOWORD (wParam)) {
+                case IDOK:
+                case IDCANCEL:
+                    EndDialog (hWnd, 0);
+                    return TRUE;
+            }
+        break;
+    }
+    return FALSE;
+}
+</pre>
+</td></tr></table>
+
+<P>The program uses a virtual list view control to display the records in the database. As I explained in <A HREF="ch05a.htm">Chapter 5</a>, virtual list views don't store any data internally. Instead, the control makes calls back to the owning window using notification messages to query the information for each item in the list view control. The WM_NOTIFY handler <I>OnNotifyMain</I> calls <I>GetItemData</I> to query the database in response to the list view control sending LVN_GETDISPINFO notifications. The <I>GetItemInfo</I> function first seeks the record to read then reads all the properties of a database record with one call to <I>CeReadRecordProps</I>. Since the list view control typically uses the LVN_GETDISPINFO notification multiple times for one item, <I>GetItemInfo</I> saves the data from the last record read. If the next read is of the same record, the program uses the cached data instead of rereading the database.
+
+<P>As I've explained before, you can change the way you sort by simply closing the database and reopening it in one of the other sort modes. The list view control is then invalidated, causing it to again request the data for each record being displayed. With a new sort order defined, the seek that happens with each database record read automatically sorts the data by the sort order defined when the database was opened.
+
+<P>AlbumDB doesn't use the new <I>Ex </I>database functions provided by Windows CE 2.1 based systems. This allows the program to run under earlier versions of the operating system. To modify the example to use separate database volumes, only minor changes would be necessary. First a global variable <I>g_guidDB</I> of type CEOID would be added. In the <I>DoCreateMain</I> routine, code such as the following, which mounts the volume, would be added.
+
+
+<p><pre>
+if (!CeMountDBVol (&amp;g_guidDB, TEXT (&quot;\\Albums.cdb&quot;), OPEN_ALWAYS)) {
+    wsprintf (szErr, TEXT (&quot;Database mount failed. rc %d&quot;),
+              GetLastError());
+    MessageBox (NULL, szErr, szAppName, MB_OK);
+}
+</pre>
+
+<P>The following code would be added to the <I>OnDestroyMain</I> routine to unmount the volume:
+
+<p><pre>
+if (!CHECK_INVALIDGUID (&amp;g_guidDB))
+    CeUnmountDBVol (&amp;g_guidDB);
+</pre>
+
+<P>Finally, the <I>OpenCreateDB</I> routine would be replaced by this version:
+
+<p><pre>
+HANDLE OpenCreateDB (HWND hWnd, int *pnRecords) {
+    INT i, rc;
+    CEOIDINFO oidinfo;
+    CEDBASEINFO dbi;
+    TCHAR szErr[128];
+    CENOTIFYREQUEST cenr;
+
+    g_oidDB = 0;
+    cenr.dwSize = sizeof (cenr);
+    cenr.hWnd = hWnd;
+    cenr.dwFlags = 0;                 // Use old style notifications.
+    cenr.hHeap = 0;
+    cenr.dwParam = 0;
+
+    g_hDB = CeOpenDatabaseEx (&amp;g_guidDB, &amp;g_oidDB, TEXT (&quot;\\Albums&quot;), 
+                              g_nLastSort, 0, &amp;cenr);
+    if (g_hDB == INVALID_HANDLE_VALUE) {
+        rc = GetLastError();
+        if (rc == ERROR_FILE_NOT_FOUND) {
+            i = 0;
+            dbi.rgSortSpecs[i].propid = PID_NAME;
+            dbi.rgSortSpecs[i++].dwFlags = 0;
+
+            dbi.rgSortSpecs[i].propid = PID_ARTIST;
+            dbi.rgSortSpecs[i++].dwFlags = 0;
+
+            dbi.rgSortSpecs[i].propid = PID_CATEGORY;
+            dbi.rgSortSpecs[i++].dwFlags = 0;
+
+            dbi.dwFlags = CEDB_VALIDCREATE;
+            lstrcpy (dbi.szDbaseName, TEXT (&quot;\\Albums&quot;));
+            dbi.dwDbaseType = 0;
+            dbi.wNumSortOrder = 3;
+
+            g_oidDB = CeCreateDatabaseEx (&amp;g_guidDB, &amp;dbi);
+
+            if (g_oidDB == 0) {
+                wsprintf (szErr, 
+                          TEXT (&quot;Database create failed. rc %d&quot;),
+                          GetLastError());
+                MessageBox (hWnd, szErr, szAppName, MB_OK);
+                return 0;
+            }
+            g_hDB = CeOpenDatabaseEx (&amp;g_guidDB, &amp;g_oidDB, NULL, 
+                                      g_nLastSort, 0,  &amp;cenr);
+        }
+    } else if (g_hDB == 0){
+        wsprintf (szErr, 
+                  TEXT (&quot;Database open failed. rc %X  ext err:%d&quot;),
+                  g_hDB, GetLastError());
+        MessageBox (hWnd, szErr, szAppName, MB_OK);
+    } 
+    CeOidGetInfoEx (&amp;g_guidDB, g_oidDB, &amp;oidinfo);
+    *pnRecords = oidinfo.infDatabase.wNumRecords;
+    return g_hDB;
+}
+</pre>
+
+
+
+</BODY>
+</HTML>
+
+
+
+

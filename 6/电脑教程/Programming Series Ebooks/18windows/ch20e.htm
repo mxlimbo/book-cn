@@ -1,0 +1,480 @@
+<HTML>
+<HEAD>
+	<LINK REL=StyleSheet HREF="petzoldi.css" TYPE="text/css">
+<title>Event Signaling</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="730"><h1>Event Signaling</h1></A><P>The most common use of multiple threads of execution is for programs that find they 
+must carry out some lengthy processing. We can call this a &quot;big job,&quot; which is anything a 
+program has to do that might violate the 1/10-second rule. Obvious big jobs include a 
+spelling check in a word processing program, a file sort or indexing in a database program, 
+a spreadsheet recalculation, printing, and even complex drawing. Of course, as we 
+know by now, the best solution to following the 
+1/10-second rule is to farm out big jobs to secondary threads of execution. These secondary threads do not create windows, and 
+hence they are not bound by the 1/10-second rule.
+<P>It is often desirable for the secondary threads to inform the primary thread when 
+they have completed, or for the primary thread to abort the job the secondary thread is 
+doing. That's what we'll examine next.
+
+<A NAME="731"><h2>The BIGJOB1 Program</h2></A><P>I'll use a series of floating-point calculations, sometimes known as the &quot;savage&quot; 
+benchmark, as a hypothetical big job. This calculation increments an integer in a roundabout 
+manner: it squares a number and takes the square root (which cancels out the square), applies 
+the <I>log</I> and <I>exp</I> functions (which also cancel each other out), applies the 
+<I>atan</I> and <I>tan</I> functions (another canceling out), and finally adds 1 to the result.
+<P>The BIGJOB1 program is shown in Figure 20-4.
+<P><B>Figure 20-4.</b> <i>The BIGJOB1 program.</I>
+<table cellpadding=5 width="95%"><tr><td>
+<A NAME="732"><h3>BIGJOB1.C</h3></A><PRE>
+/*----------------------------------------
+   BIGJOB1.C -- Multithreading Demo
+                (c) Charles Petzold, 1998
+  ----------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &lt;math.h&gt;
+#include &lt;process.h&gt;
+
+#define REP              1000000
+
+#define STATUS_READY     0
+#define STATUS_WORKING   1
+#define STATUS_DONE      2
+
+#define WM_CALC_DONE     (WM_USER + 0)
+#define WM_CALC_ABORTED  (WM_USER + 1)
+
+typedef struct
+{
+     HWND hwnd ;
+     BOOL bContinue ;
+}
+PARAMS, *PPARAMS ;
+
+LRESULT APIENTRY WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName[] = TEXT (&quot;BigJob1&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Multithreading Demo&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+void Thread (PVOID pvoid)
+{
+     double    A = 1.0 ;
+     INT       i ;
+     LONG      lTime ;
+     volatile  PPARAMS pparams ;
+     
+     pparams = (PPARAMS) pvoid ;
+     
+     lTime = GetCurrentTime () ;
+     for (i = 0 ; i &lt; REP &amp;&amp; pparams-&gt;bContinue ; i++)
+          A = tan (atan (exp (log (sqrt (A * A))))) + 1.0 ;
+     
+     if (i == REP)
+     {
+          lTime = GetCurrentTime () - lTime ;
+          SendMessage (pparams-&gt;hwnd, WM_CALC_DONE, 0, lTime) ;
+     }
+     else
+          SendMessage (pparams-&gt;hwnd, WM_CALC_ABORTED, 0, 0) ;
+     
+     _endthread () ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static INT     iStatus ;
+     static LONG    lTime ;
+     static PARAMS  params ;
+     static TCHAR * szMessage[] = { TEXT (&quot;Ready (left mouse button begins)&quot;),
+                                    TEXT (&quot;Working (right mouse button ends)&quot;),
+                                    TEXT (&quot;%d repetitions in %ld msec&quot;) } ;
+     HDC            hdc ;
+     PAINTSTRUCT    ps ;
+     RECT           rect ;
+     TCHAR          szBuffer[64] ;
+     
+     switch (message)
+     {
+     case WM_LBUTTONDOWN:
+          if (iStatus == STATUS_WORKING)
+          {
+               MessageBeep (0) ;
+               return 0 ;
+          }
+          
+          iStatus = STATUS_WORKING ;
+          
+          params.hwnd = hwnd ;
+          params.bContinue = TRUE ;
+          
+          _beginthread (Thread, 0, &amp;params) ;
+          
+          InvalidateRect (hwnd, NULL, TRUE) ;
+          return 0 ;
+         
+     case WM_RBUTTONDOWN:
+          params.bContinue = FALSE ;
+          return 0 ;
+          
+     case WM_CALC_DONE:
+          lTime = lParam ;
+          iStatus = STATUS_DONE ;
+          InvalidateRect (hwnd, NULL, TRUE) ;
+          return 0 ;
+          
+     case WM_CALC_ABORTED:
+          iStatus = STATUS_READY ;
+          InvalidateRect (hwnd, NULL, TRUE) ;
+          return 0 ;
+          
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+          
+          GetClientRect (hwnd, &amp;rect) ;
+          
+          wsprintf (szBuffer, szMessage[iStatus], REP, lTime) ;
+          DrawText (hdc, szBuffer, -1, &amp;rect,
+                    DT_SINGLELINE | DT_CENTER | DT_VCENTER) ;
+          
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+          
+     case WM_DESTROY:
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</PRE>
+</td></tr></table>
+<P>This is a fairly simple program, but I think you'll see how it illustrates a 
+generalized approach to doing big jobs in a multithreaded program. To use the BIGJOB1 program, 
+click with the left mouse button on the client area of the window. This begins 1,000,000 
+repetitions of the savage calculation. It'll take about 2 seconds on a 300-MHz Pentium II 
+machine. When the calculation has completed, the elapsed time is displayed in the window. 
+While the calculation is in progress, you can click on the client area with the right mouse 
+button to abort it.
+<P>So, let's take a look how this is done:
+<P>The window procedure maintains a static variable called 
+<I>iStatus</I> (which can be set to one of three constants defined near the top of the program beginning with the 
+prefix STATUS) indicating whether the program is ready to do a calculation, working on a 
+calculation, or done with a calculation. The program uses the 
+<I>iStatus</I> variable during the WM_PAINT message to display an appropriate character string in the center of the client area.
+<P>The window procedure also maintains a static structure (of type PARAMS, also 
+defined near the top of the program) to share data between the window procedure and 
+the secondary thread. The structure has only two 
+fields&#8212;<I>hwnd</I> (the handle of the 
+program's window) and <I>bContinue</I>, which is a Boolean variable used to indicate to the thread 
+whether to continue the calculation or not.
+<P>When you click on the client area with the left mouse button, the window 
+procedure sets the <I>iStatus</I> variable to STATUS_WORKING, and the two fields of the PARAMS 
+structure. The <I>hwnd</I> field of the structure is set to the window handle, of course, and 
+<I>bContinue</I> is set to TRUE.
+<P>The window procedure then calls the 
+<I>_beginthread</I> function. The secondary <I>Thread</I> function, called 
+<I>Thread</I>, begins by calling 
+<I>GetCurrentTime</I> to get the elapsed time in 
+milliseconds that Windows has been running. It then enters a 
+<I>for</I> loop to do 1,000,000 repetitions of the savage calculation. Notice also that the thread will drop out of the loop 
+if <I>bContinue</I> is ever set to FALSE.
+<P>After the <I>for</I> loop, the <I>Thread</I> function checks if it's actually completed 
+1,000,000 calculations. If so, it calls 
+<I>GetCurrentTime</I> again to get the elapsed time and then 
+uses <I>SendMessage</I> to send the window procedure a program-defined WM_USER_DONE 
+message with the elapsed time as <I>lParam</I>. If the calculation was aborted prematurely (that 
+is, if the <I>bContinue</I> field of the PARAMS structure became FALSE during the loop), the 
+thread sends the window procedure a WM_USER_ABORTED message. The thread then 
+gracefully ends by calling <I>_endthread</I>.
+<P>Within the window procedure, the 
+<I>bContinue</I> field of the PARAMS structure is set 
+to FALSE when you click on the client area with the right mouse button. This is how 
+the calculation is aborted before completion.
+<P>Notice that the <I>pparams</I> variable in <I>Thread</I> is defined as volatile. This type qualifier 
+indicates to the compiler that a variable might be modified in some way other than actual 
+program statements (such as by another thread). Otherwise, an optimizing compiler might 
+assume that since <I>pparams-&gt;bContinue</I> couldn't possibly be modified by the code inside the 
+<I>for</I> loop, it's not necessary for the variable to be checked following every iteration of the 
+loop. The <I>volatile</I> keyword prevents such optimizations.
+<P>The window procedure processes the WM_USER_DONE message by first saving 
+the elapsed time. Both the processing of the WM_USER_DONE and 
+WM_USER_ABORTED messages continue with a call to 
+<I>InvalidateRect</I> to generate a WM_PAINT message 
+and display a new text string in the client area.
+<P>It's usually a good idea to include a provision, such as the 
+<I>bContinue</I> field in the structure, to allow the thread to terminate gracefully. The 
+<I>KillThread</I> function should be used only when graceful termination is awkward. The reason why is that threads can 
+allocate resources, such as memory. If this memory is not freed when the thread 
+terminates, it will still be allocated. Threads are not processes: allocated resources are shared 
+among all threads in a process, so they are not automatically freed when the thread 
+terminates. Good programming structure dictates that a thread should free any resources it allocates.
+<P>Note also that a third thread can be created while the second thread is still in 
+progress. This could happen if Windows switches control from the second thread to the first 
+thread between the <I>SendMessage</I> call and the 
+<I>_endthread</I> call, and the window procedure 
+then creates a new thread on response from a mouse click. This is not a problem here, but 
+if it is a problem in one of your own applications, you'll want to use a critical section to 
+avoid thread collisions.
+
+<A NAME="733"><h2>The Event Object</h2></A><P>BIGJOB1 creates a thread every time it needs to perform the savage calculation; the 
+thread terminates after doing the calculation.
+<P>An alternative is to keep the thread around for the entire duration of the 
+program and only kick it into action when necessary. This is an ideal application for an event object.
+<P>An event object is either &quot;signaled&quot; (also known as &quot;set&quot;) or &quot;unsignaled&quot; (also 
+known as &quot;reset&quot;). You create the event object by calling
+<P>hEvent = CreateEvent (&amp;sa, fManual, fInitial, pszName) ;
+<P>The first argument (a pointer to a SECURITY_ATTRIBUTES structure) and the last 
+argument (an event object name) are meaningful only when event objects are shared 
+among processes. In a single process, these arguments are generally set to NULL. Set the 
+<I>fInitial</I> argument to TRUE if you want the event object to be initially signaled and to FALSE 
+for initially unsignaled. I'll describe the 
+<I>fManual</I> argument shortly.
+<P>To signal an existing event object, call
+<P>SetEvent (hEvent) ;
+<P>To unsignal an event object, call
+<P>ResetEvent (hEvent) ;
+<P>A program generally calls
+<P>WaitForSingleObject (hEvent, dwTimeOut) ;
+<P>with the second argument set to INFINITE. The function returns immediately if the 
+event object is currently signaled (or set). Otherwise, the function will suspend the thread 
+until the event object becomes signaled. You can set the second argument to a time-out 
+value in milliseconds so that the function returns before the event object becomes signaled.
+<P>If the <I>fManual</I> argument of the original 
+<I>CreateEvent</I> call is set to FALSE, the event object becomes automatically unsignaled when the 
+<I>WaitForSingleObject</I> function returns. This feature usually makes it unnecessary to use the 
+<I>ResetEvent</I> function.
+<P>So, now we're equipped to look at BIGJOB2.C, shown in Figure 20-5.
+<P><B>Figure 20-5.</b> <i>The BIGJOB2 program.</I>
+<table cellpadding=5 width="95%"><tr><td>
+<A NAME="734"><h3>BIGJOB2.C</h3></A><PRE>
+/*----------------------------------------
+   BIGJOB2.C -- Multithreading Demo
+                (c) Charles Petzold, 1998
+  ----------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &lt;math.h&gt;
+#include &lt;process.h&gt;
+
+#define REP              1000000
+
+#define STATUS_READY     0
+#define STATUS_WORKING   1
+#define STATUS_DONE      2
+
+#define WM_CALC_DONE     (WM_USER + 0)
+#define WM_CALC_ABORTED  (WM_USER + 1)
+
+typedef struct
+{
+     HWND   hwnd ;
+     HANDLE hEvent ;
+     BOOL   bContinue ;
+}
+PARAMS, *PPARAMS ;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName[] = TEXT (&quot;BigJob2&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Multithreading Demo&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+void Thread (PVOID pvoid)
+{
+     double    A = 1.0 ;
+     INT       i ;
+     LONG      lTime ;
+     volatile  PPARAMS pparams ;
+     
+     pparams = (PPARAMS) pvoid ;
+     
+     while (TRUE)
+     {
+          WaitForSingleObject (pparams-&gt;hEvent, INFINITE) ;
+          
+          lTime = GetCurrentTime () ;
+          
+          for (i = 0 ; i &lt; REP &amp;&amp; pparams-&gt;bContinue ; i++)
+               A = tan (atan (exp (log (sqrt (A * A))))) + 1.0 ;
+
+          if (i == REP)
+          {
+               lTime = GetCurrentTime () - lTime ;
+
+               PostMessage (pparams-&gt;hwnd, WM_CALC_DONE, 0, lTime) ;
+          }
+          else
+               PostMessage (pparams-&gt;hwnd, WM_CALC_ABORTED, 0, 0) ;
+     }
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static HANDLE  hEvent ;
+     static INT     iStatus ;
+     static LONG    lTime ;
+     static PARAMS  params ;
+     static TCHAR * szMessage[] = { TEXT (&quot;Ready (left mouse button begins)&quot;),
+                                    TEXT (&quot;Working (right mouse button ends)&quot;),
+                                    TEXT (&quot;%d repetitions in %ld msec&quot;) } ;
+     HDC            hdc ;
+     PAINTSTRUCT    ps ;
+     RECT           rect ;
+     TCHAR          szBuffer[64] ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+          hEvent = CreateEvent (NULL, FALSE, FALSE, NULL) ;
+          
+          params.hwnd = hwnd ;
+          params.hEvent = hEvent ;
+          params.bContinue = FALSE ;
+          
+          _beginthread (Thread, 0, &amp;params) ;
+          
+          return 0 ;
+          
+     case WM_LBUTTONDOWN:
+          if (iStatus == STATUS_WORKING)
+          {
+               MessageBeep (0) ;
+               return 0 ;
+          }
+          iStatus = STATUS_WORKING ;
+          params.bContinue = TRUE ;
+          
+          SetEvent (hEvent) ;
+        
+          InvalidateRect (hwnd, NULL, TRUE) ;
+          return 0 ;
+          
+     case WM_RBUTTONDOWN:
+          params.bContinue = FALSE ;
+          return 0 ;
+          
+     case WM_CALC_DONE:
+          lTime = lParam ;
+          iStatus = STATUS_DONE ;
+          InvalidateRect (hwnd, NULL, TRUE) ;
+          return 0 ;
+          
+     case WM_CALC_ABORTED:
+          iStatus = STATUS_READY ;
+          InvalidateRect (hwnd, NULL, TRUE) ;
+          return 0 ;
+          
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+          
+          GetClientRect (hwnd, &amp;rect) ;
+          
+          wsprintf (szBuffer, szMessage[iStatus], REP, lTime) ;
+          DrawText (hdc, szBuffer, -1, &amp;rect,
+                    DT_SINGLELINE | DT_CENTER | DT_VCENTER) ;
+          
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+          
+     case WM_DESTROY:
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</pre>
+</td></tr></table>
+<P>The window procedure processes the WM_CREATE message by first creating a nonmanual event object that is initialized in the unsignaled (or reset) state. It then creates the thread.
+<P>The <I>Thread</I> function enters an infinite <I>while</I> loop but calls <I>WaitForSingleObject</I> at the beginning of the loop. (Notice that the PARAMS structure includes a third field containing the handle to the event object.) Because the event is initially unsignaled, the thread is suspended in the function call. A left mouse button click causes the window procedure to call <I>SetEvent</I>. This releases the second thread from the <I>WaitForSingleObject</I> call, and it begins the savage calculation. After finishing, the thread calls <I>WaitForSingleObject</I> again, but the event object has become unsignaled from the first call. Thus, the thread is suspended until the next mouse click.
+<P>Otherwise, the program is almost identical to BIGJOB1.
+
+</BODY>
+</HTML>
+
+
+
+
+
+

@@ -1,0 +1,756 @@
+<HTML>
+<HEAD>
+<LINK REL=StyleSheet HREF="basicIE4.css" TYPE="text/css">
+<TITLE>Real COM with the MFC Library</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY>
+<A NAME="512"><H1><B>Real COM with the MFC Library</B></H1></A>
+<P>So much for simulations. Now we'll get ready to convert the spaceship example to genuine COM. You need to acquire a little more knowledge before we start, though. First you must learn about the 
+<I>CoGetClassObject</I> function, then you must learn how COM uses the Windows Registry to load the component, and then you have to understand the difference between an <U>in-process</U> <U>component</U> (a DLL) and an <U>out-of-process</U> <U>component</U> (an EXE or a DLL running as 
+a surrogate). Finally, you must become familiar with the MFC macros that support nested classes.
+
+<P>The net result will be an MFC regular DLL component that contains all the <I>CSpaceship</I> code with the <I>IMotion</I> and <I>IVisual</I> interfaces. A regular MFC library Windows application acts as the client. It loads and runs the component when the user selects a menu item.
+
+<A NAME="513"><H2><B>The COM <I>CoGetClassObject</I> Function</B></H2></A>
+<P>In our simulation, we used a phony function named <I>GetClassObject</I>. In real COM, we use the global <I>CoGetClassObject</I> function. (<I>Co</I> stands for &quot;component object.&quot;) Compare the following prototype to the <I>GetClassObject</I> function you've seen already:
+
+<P><pre>
+STDAPI CoGetClassObject(REFCLSID rclsid, DWORD dwClsContext,
+    COSERVERINFO* pServerInfo, REFIID riid, LPVOID* ppvObj)
+</pre>
+
+<P>The interface pointer goes in the <I>ppvObj</I> parameter, and <I>pServerInfo </I>is a pointer to a machine on which the class object is instantiated (<I>NULL</I> if the machine is local). The types 
+<I>REFCLSID</I> and <I>REFIID</I> are references to 128-bit GUIDs (globally unique identifiers for COM classes and interfaces). STDAPI indicates that the function returns a 32-bit value of type <I>HRESULT</I>.
+
+<P>The standard GUIDs (for example, those GUIDs naming interfaces that Microsoft has already created) are defined in the Windows libraries that are dynamically linked to your program. GUIDs for custom classes and interfaces, such as those for spaceship objects, must be defined in your program in this way:
+
+<P><pre>
+// {692D03A4-C689-11CE-B337-88EA36DE9E4E}
+static const IID IID_IMotion =
+    {0x692d03a4, 0xc689, 0x11ce, {0xb3, 0x37, 0x88, 0xea, 0x36, 
+    0xde, 0x9e, 0x4e}};
+</pre>
+
+<P>If the <I>dwClsContext</I> parameter is <I>CLSCTX_INPROC_SERVER</I>, the COM subsytem looks for a DLL. If the parameter is <I>CLSCTX_LOCAL_SERVER</I>, COM looks for an EXE. The two codes can be combined to select either a DLL or an EXE&#151;selected in order of performance. For example, inproc servers are fastest because everybody shares the same address space. Communication EXE servers are considerably slower because the interprocess calls involve data copying as well as many thread context switches. The return value is an <I>HRESULT</I> value, which is 0 (<I>NOERROR</I>) if no error occurs.
+
+<p><DIV CLASS=note>
+<BLOCKQUOTE>
+<IMG SRC="note.jpg" width=123 height=18 BORDER=0><P>
+Another COM function, <I>CoCreateInstance</I>, combines the functionality of <I>CoGetClassObject</I> and <I>IClassFactory::CreateInstance</I>.</blockquote></div>
+
+<A NAME="514"><H2><B>COM and the Windows Registry</B></H2></A>
+<P>In the EX24A example, the component was statically linked to the client, a clearly bogus circumstance. In real COM, the component is either a DLL or a separate EXE. When the client calls the <I>CoGetClassObject </I>function, COM steps in and finds the correct component, which is located somewhere on disk. How does COM make the connection? It looks up the class's unique 128-bit class 
+ID number in the Windows Registry. Thus, the class must be registered permanently on your computer.
+<P>If you run the Windows Regedit program (Regedt32 in Microsoft Windows NT 3.51), you'll see a screen similar to the one shown in Figure 24-5. This figure shows subfolders for four class IDs, three of which are class IDs associated with DLLs (InprocServer32) and one of which is a class ID associated 
+with an EXE (LocalServer32). The <I>CoGetClassObject</I> function looks up the class ID in the Registry and then loads the DLL or EXE as required.
+
+<P>What if you don't want to track those ugly class ID numbers in your client program? No problem. COM supports another type of registration database entry that translates a human-readable program ID into the corresponding class ID. Figure 24-6 shows the Registry entries. The COM function <I>CLSIDFromProgID</I> reads the database and performs the translation.
+
+<P><A HREF="javascript:fullSize('f24og05x.htm')"> <img src="f24og05.jpg" width=404 height=217 border=0 ALT = "Click to view at full size."> </A>
+
+<P><!-- caption --><B>Figure 24-5.</B> <I>Subfolders of four class IDs in the Registry.</I><!-- /caption -->
+
+<P><A HREF="javascript:fullSize('f24og06x.htm')"> <img src="f24og06.jpg" width=404 height=213 border=0 ALT = "Click to view at full size."> </A>
+
+<P><!-- caption --><B>Figure 24-6.</B> <I>Human-readable program IDs in the Registry.</I><!-- /caption -->
+
+<p><DIV CLASS=note>
+<BLOCKQUOTE>
+<IMG SRC="note.jpg" width=123 height=18 BORDER=0>
+
+<P>The first <I>CLSIDFromProgID</I> parameter is a string that holds the program ID, but it's not an ordinary string. This is your first exposure to double-byte characters in COM. All string parameters of COM functions (except Data Access Objects [DAOs]) are Unicode character string pointers of type <I>OLECHAR*. </I>Your life is going to be made miserable because of the constant need to convert between double-byte strings and ordinary strings. If you need a double-byte literal string, prefix the string with an <I>L</I> character,
+
+<p>like this:
+
+<P><pre>
+CLSIDFromProgID(L&quot;Spaceship&quot;, &amp;clsid);
+</pre>
+
+<P>You'll begin learning about the MFC library's Unicode string conversion capabilities in <A HREF="ch25a.htm">Chapter 25</A>.</blockquote></div>
+
+<P>How does the registration information get into the Registry? You can program your component application to call Windows functions that directly update the Registry. The MFC library conveniently wraps these functions with the function <I>COleObjectFactory::UpdateRegistryAll</I>, which finds all your program's global class factory objects and registers their names and class IDs.
+
+<A NAME="515"><H2><B>Runtime Object Registration</B></H2></A>
+<P>You've just seen how the Windows Registry registers COM classes on disk. Class factory <U>objects</U> also must be registered. It's unfortunate that the word &quot;register&quot; is used in both contexts. Objects in out-of-process component modules are registered at runtime with a call to the COM <I>CoRegisterClassObject</I> function, and the registration information is maintained in memory by the Windows DLLs. If the factory is registered in a mode that permits a single instance of 
+the component module to create multiple COM objects, COM can use an existing process when a client calls <I>CoGetClassObject</I>.
+
+<A NAME="516"><H2><B>How a COM Client Calls an In-Process Component</B></H2></A>
+<P>We're beginning with a DLL component instead of an EXE component because the program interactions are simpler. I'll show pseudocode here because you're going to be using the MFC library classes, which hide much of the detail. 
+
+<P><I><U>Client</U></I>
+<BLOCKQUOTE>
+CLSID clsid;<BR>
+IClassFactory* pClf;<BR>
+IUnknown* pUnk;<BR>
+CoInitialize(NULL);&nbsp;&nbsp;// Initialize COM<BR>
+CLSIDFromProgID(&quot;componentname&quot;, &amp;clsid);
+</BLOCKQUOTE>
+
+<P><I><U>COM</U></I>
+<BLOCKQUOTE>
+COM uses the Registry to look up the class ID from &quot;componentname&quot;
+</BLOCKQUOTE>
+
+<P><I><U>Client</U></I>
+<BLOCKQUOTE>
+CoGetClassObject(clsid, CLSCTX_INPROC_SERVER, NULL,<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;IID_IClassFactory, (void**) &amp;pClf );<BR>
+</BLOCKQUOTE>
+
+<P><I><U>COM</U></I>
+<BLOCKQUOTE>
+COM uses the class ID to look for a component in memory <BR>
+if (component DLL is not loaded already) {<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;COM gets DLL filename from the Registry<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;COM loads the component DLL into process memory<BR>
+}
+</BLOCKQUOTE>
+
+<P><I><U>DLL Component</U></I>
+<BLOCKQUOTE>
+if (component just loaded) {<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Global factory objects are constructed<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;DLL's InitInstance called (MFC only)<BR>
+}<BR>
+</BLOCKQUOTE>
+
+<P><I><U>COM</U></I>
+<BLOCKQUOTE>
+COM calls DLL's global exported DllGetClassObject with the CLSID <BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;value that was passed to CoGetClassObject<BR>
+</BLOCKQUOTE>
+
+<P><I><U>DLL Component</U></I>
+<BLOCKQUOTE>
+DllGetClassObject returns IClassFactory*
+</BLOCKQUOTE>
+
+<P><I><U>COM</U></I>
+<BLOCKQUOTE>
+COM returns IClassFactory* to client
+</BLOCKQUOTE>
+
+<P><I><U>Client</U></I>
+<BLOCKQUOTE>
+pClf-&gt;CreateInstance (NULL, IID_IUnknown,&nbsp;&nbsp;(void**) &amp;pUnk);
+</BLOCKQUOTE>
+
+<P><I><U>DLL Component</U></I>
+<BLOCKQUOTE>
+Class factory's CreateInstance function called (called directly&#151;through<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;component's vtable)<BR>
+Constructs object of &quot;componentname&quot; class<BR>
+Returns requested interface pointer<BR>
+</BLOCKQUOTE>
+
+<P><I><U>Client</U></I>
+<BLOCKQUOTE>
+pClf-&gt;Release();<BR>
+pUnk-&gt;Release();<BR>
+</BLOCKQUOTE>
+
+<P><I><U>DLL Component</U></I>
+<BLOCKQUOTE>
+&quot;componentname&quot; Release is called through vtable<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;if (refcount == 0) {<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Object destroys itself<BR>
+}<BR>
+</BLOCKQUOTE>
+
+<P><I><U>Client</U></I>
+<BLOCKQUOTE>
+CoFreeUnusedLibraries();
+</BLOCKQUOTE>
+
+<P><I><U>COM</U></I>
+<BLOCKQUOTE>
+COM calls DLL's global exported DllCanUnloadNow
+</BLOCKQUOTE>
+
+<P><I><U>DLL Component</U></I>
+<BLOCKQUOTE>
+DllCanUnloadNow called if (all DLL's objects destroyed) {<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;return TRUE<BR>
+}<BR>
+</BLOCKQUOTE>
+
+<P><I><U>Client</U></I>
+<BLOCKQUOTE>
+CoUninitialize();&nbsp;&nbsp;// COM frees the DLL if DllCanUnloadNow returns<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;TRUE just prior to exit<BR>
+</BLOCKQUOTE>
+	 
+<P><I><U>COM</U></I>
+<BLOCKQUOTE>
+COM releases resources
+</BLOCKQUOTE>
+
+<P><I><U>Client</U></I>
+<BLOCKQUOTE>
+Client exits
+</BLOCKQUOTE>
+
+<P><I><U>DLL Component</U></I>
+<BLOCKQUOTE>
+Windows unloads the DLL if it is still loaded and no other programs are using it
+</BLOCKQUOTE>
+
+<P>Some important points to note: first, the DLL's exported <I>DllGetClassObject</I> function is called in response to the client's <I>CoGetClassObject</I> call. Second, the class factory interface address returned is the actual physical address of the class factory vtable pointer in the DLL. Third, when the client calls <I>CreateInstance</I>, <U>or</U> <U>any</U> <U>other</U> <U>interface</U> <U>function</U>, the call is direct (through the component's vtable).
+
+<P>The COM linkage between a client EXE and a component DLL is quite efficient&#151;as efficient as the linkage to any C++ virtual function in the same process, plus the full C++ parameter and return type-checking at compile time. The only penalty for using ordinary DLL linkage is the extra step of looking up the class ID in the Registry when the DLL is first loaded.
+
+<A NAME="517"><H2><B>How a COM Client Calls an Out-of-Process Component</B></H2></A>
+<P>The COM linkage to a separate EXE component is more complicated than the linkage to a DLL component. The EXE component is in a different process, or possibly on a different computer. Don't worry, though. Write your programs as if a direct connection existed. COM takes care of the details through its remoting architecture, which usually involves <U>Remote</U> <U>Procedure</U> <U>Calls</U> (RPCs).
+
+<P>In an RPC, the client makes calls to a special DLL called a <U>proxy</U>. The proxy sends a stream of data to a <U>stub</U>, which is inside a DLL in the component's process. When the client calls a component function, the proxy alerts the stub by sending a message to the component program, which is processed by a hidden window. The mechanism of converting parameters to and from data streams is called <U>marshaling</U>.
+
+<P>If you use standard interfaces (those interfaces defined by Microsoft) such as <I>IClassFactory </I>and <I>IPersist </I>(an interface we haven't seen yet but will appear when we examine COM persistence), the proxy and stub code, which implements marshaling, is provided by the Windows OLE32 DLL. If you invent your own interfaces, such as <I>IMotion</I> and <I>IVisual</I>, you need to write the proxies and stubs yourself. Fortunately, creating proxy and stub classes only involves defining your interfaces in Interface Definition Language (IDL) and compiling the code produced by the Microsoft Interface Definition Language (MIDL) compiler. 
+
+<P>Here's the pseudocode interaction between an EXE client and an EXE component. Compare it to the DLL version found above. Notice that the client-side calls are exactly the same.
+
+<P><I><U>Client</U></I>
+
+<BLOCKQUOTE>
+CLSID clsid;<BR>
+
+IClassFactory* pClf;<BR>
+IUnknown* pUnk;<BR>
+CoInitialize(NULL);&nbsp;&nbsp;// Initialize COM<BR>
+CLSIDFromProgID(&quot;componentname&quot;, &amp;clsid);<BR>
+</BLOCKQUOTE>
+
+<P><I><U>COM</U></I>
+<BLOCKQUOTE>
+COM uses the Registry to look up the class ID from &quot;componentname&quot;
+</BLOCKQUOTE>
+
+<P><I><U>Client</U></I>
+<BLOCKQUOTE>
+CoGetClassObject(clsid, CLSCTX_LOCAL_SERVER, NULL,<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;IID_IClassFactory, (void**) &amp;pClf);<BR>
+</BLOCKQUOTE>
+
+<P><I><U>COM</U></I>
+<BLOCKQUOTE>
+COM uses the class ID to look for a component in memory<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;if (component EXE is not loaded already, or<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;if we need another instance) {<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;COM gets EXE filename from the Registry<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;COM loads the component EXE<BR>
+}<BR>
+</BLOCKQUOTE>
+
+<P><I><U>EXE Component</U></I>
+<BLOCKQUOTE>
+if (just loaded) {<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Global factory objects are constructed<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;InitInstance called (MFC only)<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;CoInitialize(NULL);<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;for each factory object {<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;CoRegisterClassObject(...);<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Returns IClassFactory* to COM<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;}<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;}<BR>
+</BLOCKQUOTE>
+
+<P><I><U>COM</U></I>
+<BLOCKQUOTE>
+COM returns the requested interface pointer to the client<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(client's pointer is not the same as the component's interface pointer)
+</BLOCKQUOTE>
+
+<P><I><U>Client</U></I>
+<BLOCKQUOTE>
+pClf-&gt;CreateInstance(NULL, IID_IUnknown, (void**) &amp;pUnk);
+</BLOCKQUOTE>
+
+<P><I><U>EXE Component</U></I>
+<BLOCKQUOTE>
+Class factory's CreateInstance function called<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(called indirectly through marshaling)<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Constructs object of &quot;componentname&quot; class<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Returns requested interface pointer indirectly<BR>
+</BLOCKQUOTE>
+
+<P><I><U>Client</U></I>
+
+<BLOCKQUOTE>
+pClf-&gt;Release();<BR>
+pUnk-&gt;Release();<BR>
+</BLOCKQUOTE>
+
+<P><I><U>EXE Component</U></I>
+<BLOCKQUOTE>
+&quot;componentname&quot; Release is called indirectly<BR>
+if (refcount == 0) {<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Object destroys itself<BR>
+}<BR>
+if (all objects released) {<BR>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Component exits gracefully<BR>
+}<BR>
+</BLOCKQUOTE>
+
+<P><I><U>Client</U></I>
+<BLOCKQUOTE>
+CoUninitialize();&nbsp;&nbsp;// just prior to exit
+</BLOCKQUOTE>
+
+<P><I><U>COM</U></I>
+<BLOCKQUOTE>
+COM calls Release for any objects this client has failed to release
+</BLOCKQUOTE>
+
+<P><I><U>EXE Component</U></I>
+<BLOCKQUOTE>
+Component exits
+</BLOCKQUOTE>
+
+<P><I><U>COM</U></I>
+<BLOCKQUOTE>
+COM releases resources
+</BLOCKQUOTE>
+
+<P><I><U>Client</U></I>
+<BLOCKQUOTE>
+Client exits
+</BLOCKQUOTE>
+
+<P>As you can see, COM plays an important role in the communication between the client and the component. COM keeps an in-memory list of class factories that are in active EXE components, but it does not keep track of individual COM objects such as the <I>CSpaceship</I> object. Individual COM objects are responsible for updating the reference count and for destroying themselves through the <I>AddRef/Release</I> mechanism. COM does step in when a client exits. If that client is using an out-of-process component, COM &quot;listens in&quot; on the communication and keeps track of the reference count on each object. COM disconnects from component objects when the client exits. Under certain circumstances, this causes those objects to be released. Don't depend on this behavior, however. Be sure that your client program releases all its interface pointers prior to exiting.
+
+<A NAME="518"><H2><B>The MFC Interface Macros</B></H2></A>
+<P>In EX24A, you saw nested classes used for interface implementation. The MFC library has a set of macros that automate this process. For the <I>CSpaceship</I> class, derived from the real MFC 
+<I>CCmdTarget</I> class, you use the macros shown here inside the declaration.
+
+<P><pre>
+BEGIN_INTERFACE_PART(Motion, IMotion)
+    STDMETHOD_(void, Fly) ();
+    STDMETHOD_(int&amp;, GetPosition) ();
+END_INTERFACE_PART(Motion)
+
+BEGIN_INTERFACE_PART(Visual, IVisual)
+    STDMETHOD_(void, Display) ();
+END_INTERFACE_PART(Visual)
+
+DECLARE_INTERFACE_MAP()
+</pre>
+
+<P>The <I>INTERFACE_PART</I> macros generate the nested classes, adding <I>X</I> to the first parameter to form the class name and adding <I>m_x</I> to form the embedded object name. The macros generate prototypes for the specified interface functions plus prototypes for <I>QueryInterface</I>, <I>AddRef</I>, and <I>Release</I>.
+
+<P>The <I>DECLARE_INTERFACE_MAP</I> macro generates the declarations for a table that holds the IDs of all the class's interfaces. The <I>CCmdTarget::ExternalQueryInterface</I> function uses the table to retrieve the interface pointers.
+
+<P>In the <I>CSpaceship</I> implementation file, use the following macros:
+
+<P><pre>BEGIN_INTERFACE_MAP(CSpaceship, CCmdTarget)
+    INTERFACE_PART(CSpaceship, IID_IMotion, Motion)
+    INTERFACE_PART(CSpaceship, IID_IVisual, Visual)
+END_INTERFACE_MAP()
+</pre>
+
+<P>These macros build the interface table used by <I>CCmdTarget::ExternalQueryInterface</I>. A typical interface member function looks like this:
+
+<P><pre>
+STDMETHODIMP_(void) CSpaceship::XMotion::Fly()
+{
+    METHOD_PROLOGUE(CSpaceship, Motion)
+    pThis-&gt;m_nPosition += 10;
+    return;
+}
+</pre>
+
+<P>Don't forget that you must implement all the functions for each interface, including <I>QueryInterface</I>, <I>AddRef</I>, and <I>Release.</I> Those three functions can delegate to functions in <I>CCmdTarget</I>.
+
+<p><DIV CLASS=note>
+<BLOCKQUOTE>
+<IMG SRC="note.jpg" width=123 height=18 BORDER=0><P>
+The <I>STDMETHOD_</I> and <I>STDMETHODIMP_</I> macros declare and implement functions with the 
+<I>__stdcall</I> parameter passing convention, as required by COM. These macros allow you to specify the return value as the first parameter. Two other macros, <I>STDMETHOD</I> and <I>STDMETHODIMP</I>, assume an <I>HRESULT</I> return value.</blockquote></div>
+
+<A NAME="519"><H2><B>The MFC <I>COleObjectFactory</I> Class</B></H2></A>
+<P>In the simulated COM example, you saw a <I>CSpaceshipFactory</I> class that was hard-coded to generate <I>CSpaceship</I> objects. The MFC library applies its dynamic creation technology to the problem. Thus, a single class, aptly named <I>COleObjectFactory</I>, can create objects of any class specified at runtime. All you need to do is use macros like these in the class declaration:
+
+<P><pre>
+DECLARE_DYNCREATE(CSpaceship)
+DECLARE_OLECREATE(CSpaceship)
+</pre>
+
+<P>And use macros like these in the implementation file:
+
+<P><pre>
+IMPLEMENT_DYNCREATE(CSpaceship, CCmdTarget)
+// {692D03A3-C689-11CE-B337-88EA36DE9E4E}
+IMPLEMENT_OLECREATE(CSpaceship, &quot;Spaceship&quot;, 0x692d03a3, 0xc689, 0x11ce,
+    0xb3, 0x37, 0x88, 0xea, 0x36, 0xde, 0x9e, 0x4e)
+</pre>
+
+<P>The <I>DYNCREATE</I> macros set up the standard dynamic creation mechanism as described in <A HREF="chaba.htm">Appendix B</A>. The <I>OLECREATE</I> macros declare and define a global object of class <I>COleObjectFactory</I> with the specified unique CLSID. In a DLL component, the exported <I>DllGetClassObject</I> function finds the specified class factory object and returns a pointer to it based on global variables set by the <I>OLECREATE</I> macros. In an EXE component, initialization code calls the static <I>COleObjectFactory::RegisterAll</I>, which finds all factory objects and registers each one by calling <I>CoRegisterClassObject</I>. The <I>RegisterAll</I> function is called also when a DLL is initialized. In that case, it merely sets a flag in the factory object(s).
+
+<P>We've really just scratched the surface of MFC's COM support. If you need more details, be sure to refer to Shepherd and Wingo's <I>MFC Internals</I> (Addison-Wesley, 1996).
+
+<A NAME="520"><H2><B>AppWizard/ClassWizard Support for COM In-Process Components</B></H2></A>
+<P>AppWizard isn't optimized for creating COM DLL components, but you can fool it by requesting a regular DLL with Automation support. The following functions in the project's main source file are of interest:
+
+<P><pre>
+BOOL CEx24bApp::InitInstance()
+{
+    COleObjectFactory::RegisterAll();
+    return TRUE;
+}
+
+STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID* ppv)
+{
+    AFX_MANAGE_STATE(AfxGetStaticModuleState());
+    return AfxDllGetClassObject(rclsid, riid, ppv);
+}
+
+STDAPI DllCanUnloadNow(void)
+{
+    AFX_MANAGE_STATE(AfxGetStaticModule_State());
+    return AfxDllCanUnloadNow();
+}
+
+STDAPI DllRegisterServer(void)
+{
+    AFX_MANAGE_STATE(AfxGetStaticModuleState());
+    COleObjectFactory::UpdateRegistryAll();
+    return S_OK;
+}
+</pre>
+
+<P>The three global functions are exported in the project's DEF file. By calling MFC functions, the global functions do everything you need in a COM in-process component. The <I>DllRegisterServer</I> function can be called by a utility program to update the system Registry.
+
+<P>Once you've created the skeleton project, your next step is to use ClassWizard to add one or more COM-creatable classes to the project. Just fill in the New Class dialog box, as shown here.
+
+<P><img src="g24og04.gif" width=404 height=366 border="0">
+
+<P>In your generated class, you end up with some Automation elements such as dispatch maps, but you can safely remove those. You can also remove the following two lines from StdAfx.h:
+
+<P><pre>
+#include &lt;afxodlgs.h&gt;
+#include &lt;afxdisp.h&gt;
+</pre>
+
+<A NAME="521"><H2><B>MFC COM Client Programs</B></H2></A>
+<P>Writing an MFC COM client program is a no-brainer. You just use AppWizard to generate a normal application. Add the following line in StdAfx.h:
+
+<P><pre>
+#include &lt;afxole.h&gt;
+</pre>
+
+<P>Then add the following line at the beginning of the application class <I>InitInstance</I> member function:
+
+<P><pre>
+AfxOleInit();
+</pre>
+
+<P>You're now ready to add code that calls <I>CoGetClassObject</I>.
+
+<A NAME="522"><H2><B>The EX24B Example&#151;An MFC COM In-Process Component</B></H2></A>
+<P>The EX24B example is an MFC regular DLL that incorporates a true COM version of the <I>CSpaceship</I> class you saw in EX24A. AppWizard generated the ex24b.cpp and ex24b.h files, as described previously. Figure 24-7 shows the Interface.h file, which declares the <I>IMotion</I> and <I>IVisual </I>interfaces. Figures 24-8 and 24-9 show the code for 
+the <I>CSpaceship</I> class. Compare the code to the code in EX24A. Do you see how the use of the MFC macros reduces code size? Note that the MFC <I>CCmdTarget</I> class takes care of the reference counting and <I>QueryInterface</I> logic.
+
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<P><B>INTERFACE.H</B>
+
+<P><pre>
+struct IMotion : public IUnknown
+{
+    STDMETHOD_(void, Fly) () = 0;
+    STDMETHOD_(int&amp;, GetPosition) () = 0;
+};
+
+struct IVisual : public IUnknown
+{
+    STDMETHOD_(void, Display) () = 0;
+};
+</pre>
+</TD></TR></TABLE>
+<P><B>Figure 24-7.</B> <I>The Interface.h file.</I>
+
+
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<P><B>SPACESHIP.H</B>
+
+<P><pre>
+void ITrace(REFIID iid, const char* str);
+
+//////////////////////////////////////////////////////////////////////
+// CSpaceship command target
+
+class CSpaceship : public CCmdTarget
+{
+    DECLARE_DYNCREATE(CSpaceship)
+
+private:
+    int m_nPosition; // We can access this from all the interfaces
+    int m_nAcceleration;
+    int m_nColor;
+protected:
+    CSpaceship();    // protected constructor used by dynamic creation
+
+// Attributes
+public:
+
+// Operations
+public:
+
+// Overrides
+    // ClassWizard generated virtual function overrides
+    //{{AFX_VIRTUAL(CSpaceship)
+    public:
+    virtual void OnFinalRelease();
+    //}}AFX_VIRTUAL
+
+// Implementation
+protected:    
+    virtual ~CSpaceship();
+
+    // Generated message map functions
+    //{{AFX_MSG(CSpaceship)
+        // NOTE - the ClassWizard will add and remove member 
+        //  functions here.
+    //}}AFX_MSG
+
+    DECLARE_MESSAGE_MAP()
+    DECLARE_OLECREATE(CSpaceship)
+    BEGIN_INTERFACE_PART(Motion, IMotion)
+        STDMETHOD_(void, Fly) ();
+
+        STDMETHOD_(int&amp;, GetPosition) ();
+    END_INTERFACE_PART(Motion)
+
+    BEGIN_INTERFACE_PART(Visual, IVisual)
+        STDMETHOD_(void, Display) ();
+    END_INTERFACE_PART(Visual)
+
+    DECLARE_INTERFACE_MAP()
+};
+//////////////////////////////////////////////////////////////////////
+</pre>
+</TD></TR>,</TABLE>
+<P><B>Figure 24-8.</B> <I>The Spaceship.h file.</I>
+
+
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<P><B>SPACESHIP.CPP</B>
+
+<p><pre>
+#include &quot;stdAfx.h&quot;
+#include &quot;ex24b.h&quot;
+#include &quot;Interface.h&quot;
+#include &quot;Spaceship.h&quot;
+
+#ifdef _DEBUG
+#undef THIS_FILE
+static char THIS_FILE[] = __FILE
+__;
+#endif
+//////////////////////////////////////////////////////////////////////
+// CSpaceship
+
+// {692D03A4-C689-11CE-B337-88EA36DE9E4E}
+static const IID IID_IMotion =
+{ 0x692d03a4, 0xc689, 0x11ce,
+    { 0xb3, 0x37, 0x88, 0xea, 0x36, 0xde, 0x9e, 0x4e } };
+
+// {692D03A5-C689-11CE-B337-88EA36DE9E4E}
+static const IID IID_IVisual =
+{ 0x692d03a5, 0xc689, 0x11ce,
+    { 0xb3, 0x37, 0x88, 0xea, 0x36, 0xde, 0x9e, 0x4e } };
+
+IMPLEMENT_DYNCREATE(CSpaceship, CCmdTarget)
+CSpaceship::CSpaceship()
+{
+    TRACE(&quot;CSpaceship ctor\n&quot;);
+    m_nPosition = 100;
+    m_nAcceleration = 101;
+    m_nColor = 102;
+    // To keep the application running as long as an OLE automation
+    //  object is active, the constructor calls AfxOleLockApp.
+
+    AfxOleLockApp();
+}
+
+CSpaceship::~CSpaceship()
+{
+    TRACE(&quot;CSpaceship dtor\n&quot;);
+    // To terminate the application when all objects created with
+    //  OLE automation, the destructor calls AfxOleUnlockApp.
+    
+    AfxOleUnlockApp();
+}
+void CSpaceship::OnFinalRelease()
+{
+    // When the last reference for an automation object is released
+    //  OnFinalRelease is called. This implementation deletes the 
+    //  object. Add additional cleanup required for your object before
+    //  deleting it from memory.
+
+    delete this;
+}
+BEGIN_MESSAGE_MAP(CSpaceship, CCmdTarget)
+    //{{AFX_MSG_MAP(CSpaceship)
+    // NOTE - ClassWizard will add and remove mapping macros here.
+    //}}AFX_MSG_MAP
+END_MESSAGE_MAP()
+
+BEGIN_INTERFACE_MAP(CSpaceship, CCmdTarget)
+    INTERFACE_PART(CSpaceship, IID_IMotion, Motion)
+    INTERFACE_PART(CSpaceship, IID_IVisual, Visual)
+END_INTERFACE_MAP()
+
+// {692D03A3-C689-11CE-B337-88EA36DE9E4E}
+IMPLEMENT_OLECREATE(CSpaceship, &quot;Spaceship&quot;, 0x692d03a3, 0xc689,
+                    0x11ce, 0xb3, 0x37, 0x88, 0xea, 0x36, 0xde,
+                    0x9e, 0x4e)
+STDMETHODIMP_(ULONG) CSpaceship::XMotion::AddRef()
+{
+    TRACE(&quot;CSpaceship::XMotion::AddRef\n&quot;);
+    METHOD_PROLOGUE(CSpaceship, Motion)
+    return pThis-&gt;ExternalAddRef();
+}
+
+STDMETHODIMP_(ULONG) CSpaceship::XMotion::Release()
+{
+    TRACE(&quot;CSpaceship::XMotion::Release\n&quot;);
+    METHOD_PROLOGUE(CSpaceship, Motion)
+    return pThis-&gt;ExternalRelease();
+}
+
+STDMETHODIMP CSpaceship::XMotion::QueryInterface(
+    REFIID iid, LPVOID* ppvObj)
+{
+    ITrace(iid, &quot;CSpaceship::XMotion::QueryInterface&quot;);
+    METHOD_PROLOGUE(CSpaceship, Motion)
+    return pThis-&gt;ExternalQueryInterface(&amp;iid, ppvObj);
+}
+STDMETHODIMP_(void) CSpaceship::XMotion::Fly()
+{
+    TRACE(&quot;CSpaceship::XMotion::Fly\n&quot;);
+    METHOD_PROLOGUE(CSpaceship, Motion)
+    TRACE(&quot;m_nPosition = %d\n&quot;, pThis-&gt;m_nPosition);
+    TRACE(&quot;m_nAcceleration = %d\n&quot;, pThis-&gt;m_nAcceleration);
+    return;
+}
+
+STDMETHODIMP_(int&amp;) CSpaceship::XMotion::GetPosition()
+{
+    TRACE(&quot;CSpaceship::XMotion::GetPosition\n&quot;);
+    METHOD_PROLOGUE(CSpaceship, Motion)
+    TRACE(&quot;m_nPosition = %d\n&quot;, pThis-&gt;m_nPosition);
+    TRACE(&quot;m_nAcceleration = %d\n&quot;, pThis-&gt;m_nAcceleration);
+    return pThis-&gt;m_nPosition;
+}
+
+//////////////////////////////////////////////////////////////////////
+STDMETHODIMP_(ULONG) CSpaceship::XVisual::AddRef()
+{
+    TRACE(&quot;CSpaceship::XVisual::AddRef\n&quot;);
+    METHOD_PROLOGUE(CSpaceship, Visual)
+    return pThis-&gt;ExternalAddRef();
+}
+
+STDMETHODIMP_(ULONG) CSpaceship::XVisual::Release()
+{
+    TRACE(&quot;CSpaceship::XVisual::Release\n&quot;);
+    METHOD_PROLOGUE(CSpaceship, Visual)
+    return pThis-&gt;ExternalRelease();
+}
+
+STDMETHODIMP CSpaceship::XVisual::QueryInterface(
+    REFIID iid, LPVOID* ppvObj)
+{
+    ITrace(iid, &quot;CSpaceship::XVisual::QueryInterface&quot;);
+
+    METHOD_PROLOGUE(CSpaceship, Visual)
+    return pThis-&gt;ExternalQueryInterface(&amp;iid, ppvObj);
+}
+STDMETHODIMP_(void) CSpaceship::XVisual::Display()
+{
+    TRACE(&quot;CSpaceship::XVisual::Display\n&quot;);
+    METHOD_PROLOGUE(CSpaceship, Visual)
+    TRACE(&quot;m_nPosition = %d\n&quot;, pThis-&gt;m_nPosition);
+    TRACE(&quot;m_nColor = %d\n&quot;, pThis-&gt;m_nColor);
+}
+
+//////////////////////////////////////////////////////////////////////
+void ITrace(REFIID iid, const char* str)
+{
+    OLECHAR* lpszIID;
+    ::StringFromIID(iid, &amp;lpszIID);
+    CString strTemp = (LPCWSTR) lpszIID;
+    TRACE(&quot;%s - %s\n&quot;, (const char*) strTemp, (const char*) str);
+    AfxFreeTaskMem(lpszIID);
+}
+
+//////////////////////////////////////////////////////////////////////
+// CSpaceship message handlers
+</pre>
+</TD></TR></TABLE>
+<P><B>Figure 24-9.</B> <I>The Spaceship.cpp file.</I>
+
+
+<A NAME="523"><H2><B>The EX24C Example&#151;An MFC COM Client</B></H2></A>
+<P>The EX24C example is an MFC program that incorporates a true COM version of the client code you saw in EX24A. This is a generic AppWizard MFC Single Document Interface (SDI) EXE program with an added 
+<I>#include</I> statement for the MFC COM headers and a call to <I>AfxOleInit</I>, which initializes the DLL. A Spaceship option on an added Test menu is mapped to the view class handler function shown in Figure 24-10. The project also contains a copy of the EX24B component's Interface.h file, shown in Figure 24-7. You can see an <I>#include</I> statement for this file at the top of ex24cView.cpp.
+
+<TABLE cellpadding=5 width="95%"><TR><TD>
+<P><pre>
+void CEx24cView::OnTestSpaceship() 
+{
+    CLSID clsid;
+    LPCLASSFACTORY pClf; 
+    LPUNKNOWN pUnk;
+    IMotion* pMot;
+    IVisual* pVis;
+
+    HRESULT hr;
+    if ((hr = ::CLSIDFromProgID(L&quot;Spaceship&quot;, &amp;clsid)) != NOERROR) {
+        TRACE(&quot;unable to find Program ID -- error = %x\n&quot;, hr);
+        return;
+    }
+    if ((hr = ::CoGetClassObject(clsid, CLSCTX_INPROC_SERVER,
+        NULL, IID_IClassFactory, (void **) &amp;pClf)) != NOERROR) {;
+        TRACE(&quot;unable to find CLSID -- error = %x\n&quot;, hr);
+        return;
+    }
+
+    pClf-&gt;CreateInstance(NULL, IID_IUnknown, (void**) &amp;pUnk);
+    pUnk-&gt;QueryInterface(IID_IMotion, (void**) &amp;pMot); // All three
+    pMot-&gt;QueryInterface(IID_IVisual, (void**) &amp;pVis); //  pointers
+                                                       //  should work
+    TRACE(&quot;main: pUnk = %p, pMot = %p, pDis = %p\n&quot;, pUnk, pMot, pVis);
+
+    // Test all the interface virtual functions
+    pMot-&gt;Fly();
+    int nPos = pMot-&gt;GetPosition();
+    TRACE(&quot;nPos = %d\n&quot;, nPos);
+    pVis-&gt;Display();
+
+    pClf-&gt;Release();
+    pUnk-&gt;Release();
+    pMot-&gt;Release();
+    pVis-&gt;Release();
+    AfxMessageBox(&quot;Test succeeded. See Debug window for output.&quot;);
+}
+</pre>
+</TD></TR></TABLE>
+<P><B>Figure 24-10.</B> <I>The client's command handler that loads and tests the </I>CSpaceship <I>component.</I>
+
+
+<P>To test the client and the component, you must first run the component to update the Registry. Several utilities can be used to do this, but you might want to try the REGCOMP program in the 
+\vcpp32\RegComp project on the companion CD-ROM. This program prompts you to select a DLL or an 
+OCX file, and then it calls the exported <I>DllRegisterServer</I> function.
+
+<P>Both client and component show their progress through <I>TRACE</I> calls, so you need the debugger. You can run either the client or the component from the debugger. If you try to run the component, you'll be prompted for the client pathname. In either case, you don't have to copy the DLL because 
+Windows finds it through the Registry.
+
+</BODY>
+</HTML>
+
+
+

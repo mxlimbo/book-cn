@@ -1,0 +1,357 @@
+<HTML>
+<HEAD>
+	<LINK REL=StyleSheet HREF="petzoldi.css" TYPE="text/css">
+<title>Becoming a Clipboard Viewer</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="396"><h1>Becoming a Clipboard Viewer</h1></A>
+A program that is notified of changes in the clipboard contents is called a &quot;clipboard 
+viewer.&quot; You get a clipboard viewer with Windows, but you can also write your own 
+clipboard viewer program. Clipboard viewers are notified of changes to the clipboard through 
+messages to the viewer's window procedure.
+
+<A NAME="397"><h2>The Clipboard Viewer Chain</h2></A>
+Any number of clipboard viewer applications can be running in Windows at the same 
+time, and they can all be notified of changes to the clipboard. From Windows' 
+perspective, however, there is only one clipboard viewer, which I'll call the &quot;current clipboard 
+viewer.&quot; Windows maintains only one window handle to identify the current clipboard viewer, 
+and it sends messages only to that window when the contents of the clipboard change.
+<P>Clipboard viewer applications have the responsibility of participating in the 
+&quot;clipboard viewer chain&quot; so that all running clipboard viewer programs receive the messages 
+that Windows sends to the current clipboard viewer. When a program registers itself as a 
+clipboard viewer, that program becomes the current clipboard viewer. Windows gives 
+that program the window handle of the previous current clipboard viewer, and the 
+program saves this handle. When the program receives a clipboard viewer message, it sends 
+that message to the window procedure of the next program in the clipboard chain.
+
+<A NAME="398"><h2>Clipboard Viewer Functions and Messages</h2></A>
+A program can become part of the clipboard viewer chain by calling the 
+<I>SetClipboardViewer</I> function. If the primary purpose of the program is to serve as a clipboard viewer, the 
+program can call this function during processing of the WM_CREATE message. The 
+function returns the window handle of the previous current clipboard viewer. The program 
+should save that handle in a static variable:
+<P><PRE>static HWND hwndNextViewer ;
+<I>[other program lines]</I>
+case WM_CREATE :
+<I>     [other program lines]</I>
+     hwndNextViewer = SetClipboardViewer (hwnd) ;</pre>
+<P>If your program is the first program to become a clipboard viewer during the 
+Windows session, then <I>hwndNextViewer</I> will be NULL.
+<P>Windows sends a WM_DRAWCLIPBOARD message to the current clipboard 
+viewer (the most recent window to register itself as a clipboard viewer) whenever the 
+contents of the clipboard change. Each program in the clipboard viewer chain should use 
+<I>SendMessage</I> to pass this message to the next clipboard viewer. The last program in the clipboard 
+viewer chain (the first window to register itself as a clipboard viewer) will have stored a 
+NULL <I>hwndNextViewer</I> value. If 
+<I>hwndNextViewer</I> is NULL, the program simply returns 
+without sending the message to another program. (Don't confuse the WM_DRAWCLIPBOARD 
+and WM_PAINTCLIPBOARD messages. The WM_PAINTCLIPBOARD message is sent by a 
+clipboard viewer to programs that use the CF_OWNERDISPLAY clipboard format. 
+The WM_ DRAWCLIPBOARD message is sent by Windows to the current clipboard viewer.)
+<P>The easiest way to process the WM_DRAWCLIPBOARD message is to send the 
+message to the next clipboard viewer (unless 
+<I>hwndNextViewer</I> is NULL) and invalidate the 
+client area of your window:
+<P><PRE>case WM_DRAWCLIPBOARD :
+     if (hwndNextViewer)
+          SendMessage (hwndNextViewer, message, wParam, lParam) ;
+
+     InvalidateRect (hwnd, NULL, TRUE) ;
+     return 0 ;</pre>
+<P>During processing of the WM_PAINT message, you can read the contents of the 
+clipboard by using the normal <I>OpenClipboard</I>, 
+<I>GetClipboardData</I>, and <I>CloseClipboard</I> calls.
+<P>When a program wants to remove itself from the clipboard viewer chain, it must 
+call <I>ChangeClipboardChain</I>. This function requires the window handle of the program 
+leaving the viewer chain and the window handle of the next clipboard viewer:
+<P><PRE>ChangeClipboardChain (hwnd, hwndNextViewer) ;</pre>
+<P>When a program calls 
+<I>ChangeClipboardChain</I>, Windows sends a 
+WM_CHANGECBCHAIN message to the current clipboard viewer. The 
+<I>wParam</I> parameter is the handle of the window removing itself from the chain (that is, the first parameter to 
+<I>ChangeClipboardChain</I>), and <I>lParam</I> is the window handle of the next clipboard viewer after the one 
+removing itself from the chain (the second argument to 
+<I>ChangeClipboardChain</I>).
+<P>When your program receives a WM_CHANGECBCHAIN message, you must 
+therefore check to see if <I>wParam</I> is equal to the value of 
+<I>hwndNextViewer</I> that you've saved. If it is, your program must set 
+<I>hwndNextViewer</I> to <I>lParam</I>. This action ensures that any 
+future WM_DRAWCLIPBOARD messages you get won't be sent to the window removing itself 
+from the clipboard viewer chain. If <I>wParam</I> isn't equal to 
+<I>hwndNextViewer</I> and <I>hwndNextViewer</I> isn't NULL, send the message to the next clipboard viewer:
+<P><PRE>case WM_CHANGECBCHAIN :
+     if ((HWND) wParam == hwndNextViewer)
+          hwndNextViewer = (HWND) lParam ;
+
+     else if (hwndNextViewer)
+          SendMessage (hwndNextViewer, message, wParam, lParam) ;
+     return 0 ;</pre>
+<P>You shouldn't really need to include the <I>else 
+if</I> statement, which checks 
+<I>hwndNextViewer</I> for a non-NULL value. A NULL 
+<I>hwndNextViewer</I> value would indicate that the 
+program executing this code is the last viewer on the chain, in which case the message should 
+never have gotten this far.
+<P>If your program is still in the clipboard viewer chain when it is about to 
+terminate, you must remove it from the chain. You can do this during processing of the 
+WM_DESTROY message by calling 
+<I>ChangeClipboardChain</I>:
+<P><PRE>case WM_DESTROY :
+     ChangeClipboardChain (hwnd, hwndNextViewer) ;
+     PostQuitMessage (0) ;
+     return 0 ;</pre>
+<P>Windows also has a function that allows a program to obtain the window handle 
+of the first clipboard viewer:
+<P><PRE>hwndViewer = GetClipboardViewer () ;</pre>
+<P>This function isn't normally needed. The return value can be NULL if there is no 
+current clipboard viewer.
+<P>Here's an example to illustrate how the clipboard viewer chain works. When 
+Windows first starts up, the current clipboard viewer is NULL:
+<P>
+<table CELLPADDING="5" WIDTH="95%">
+<TR><td valign="top"><B><I>Current clipboard viewer:</I></B></TD>
+<td valign="top">NULL</TD></TR>
+</TABLE>
+<P>A program with a window handle of <I>hwnd1</I> calls 
+<I>SetClipboardViewer</I>. The function returns NULL, which becomes the 
+<I>hwndNextViewer</I> value in this program:
+
+<P>
+<table CELLPADDING="5" WIDTH="95%">
+<TR><td valign="top"><B><I>Current clipboard viewer:</I></b></TD>
+<td valign="top"><i>hwnd1</I></td></TR>
+<tr><td valign="top"><I><B>hwnd1's next viewer:</B></I></td>
+<td valign="top">NULL</td></tr>
+</TABLE>
+
+<P>A second program, with a window handle of 
+<I>hwnd2</I>, now calls <I>SetClipboardViewer</I> and gets back 
+<I>hwnd1</I>:
+<P>
+<table CELLPADDING="5" WIDTH="95%">
+<TR><td valign="top"><B><I>Current clipboard viewer:</I></b></TD>
+<td valign="top"><i>hwnd2</I></td></TR>
+<tr><td valign="top"><B><i>hwnd2's next viewer:</i></B></td>
+<td valign="top"><i>hwnd1</i></td></tr>
+
+<tr><td valign="top"><I><B>hwnd1's next viewer:</B></I></td>
+<td valign="top">NULL</td></tr>
+</TABLE>
+<P>A third program (<I>hwnd3</I>) and then a fourth 
+
+(<I>hwnd4</I>) also call <I>SetClipboardViewer</I> 
+and get back <I>hwnd2</I> and <I>hwnd3</I>:
+<P>
+<table CELLPADDING="5" WIDTH="95%">
+<tr><td valign="top"><B><I>Current clipboard viewer:</I></b></td>
+<td valign="top"><i>hwnd4</i></td></tr>
+<tr><td valign="top"><B><i>hwnd4's next viewer:</i></B></td>
+<td valign="top"><i>hwnd3</i></td></tr>
+<tr><td valign="top"><B><i>hwnd3's next viewer:</i></B></td>
+<td valign="top"><i>hwnd2</i></td></tr>
+
+<tr><td valign="top"><B><i>hwnd2's next viewer:</i></B></td>
+
+<td valign="top"><i>hwnd1</i></td></tr>
+<tr><td valign="top"><I><B>hwnd1's next viewer:</B></I></td>
+<td valign="top">NULL</td></tr>
+</TABLE>
+
+
+<P>When the contents of the clipboard change, Windows sends a 
+WM_DRAWCLIPBOARD message to <I>hwnd4</I>, 
+<I>hwnd4</I> sends the message to <I>hwnd3</I>, 
+<I>hwnd3</I> sends it to <I>hwnd2</I>, 
+<I>hwnd2</I> sends it to <I>hwnd1</I>, and 
+<I>hwnd1</I> returns.
+<P>Now <I>hwnd2</I> decides to remove itself from the chain by calling
+<P><pre>ChangeClipboardChain (hwnd2, hwnd1) ;</pre>
+<P>Windows sends <I>hwnd4</I> a WM_CHANGECBCHAIN message with 
+<I>wParam</I> equal to <I>hwnd2</I> and 
+<I>lParam</I> equal to <I>hwnd1</I>. Because 
+<I>hwnd4</I>'s next viewer is <I>hwnd3</I>, 
+<I>hwnd4</I> sends this message to <I>hwnd3</I>. Now 
+<I>hwnd3</I> notes that <I>wParam</I> is equal to its next viewer 
+(<I>hwnd2</I>), so it sets its next viewer equal to 
+<I>lParam</I> (<I>hwnd1</I>) and returns. The mission is 
+
+accomplished. The clipboard viewer chain now looks like this:
+<P>
+<table CELLPADDING="5" WIDTH="95%">
+<tr><td valign="top"><B><I>Current clipboard viewer:</I></b></td>
+<td valign="top"><i>hwnd4</I></td></tr>
+<tr><td valign="top"><B><i>hwnd4's next viewer:</i></B></td>
+
+<td valign="top"><i>hwnd3</i></td></tr>
+<tr><td valign="top"><i><B>hwnd3's next viewer:</B></i></td>
+
+<td valign="top"><i>hwnd1</i></td></tr>
+
+<tr><td valign="top"><I><B>hwnd1's next viewer:</B></I></td>
+<td valign="top">NULL</td></tr>
+</TABLE> 
+
+<A NAME="399"><h2>A Simple Clipboard Viewer</h2></A><P>Clipboard viewers don't have to be as sophisticated as the one supplied with Windows. 
+A clipboard viewer can, for instance, display a single clipboard format. The CLIPVIEW 
+program, shown in Figure 12-2, is a clipboard viewer that displays only the CF_TEXT format.
+<P><B>Figure 12-2.</b> <i>The CLIPVIEW program.</I>
+
+<P> 
+<TABLE cellpadding=5 width="95%"><TR><TD>
+
+<A NAME="400"><h3>CLIPVIEW.C</h3></A>
+
+<pre>
+/*-----------------------------------------
+   CLIPVIEW.C -- Simple Clipboard Viewer
+                 (c) Charles Petzold, 1998
+  -----------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName[] = TEXT (&quot;ClipView&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+     
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, 
+                          TEXT (&quot;Simple Clipboard Viewer (Text Only)&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static HWND hwndNextViewer ;
+     HGLOBAL     hGlobal ;
+     HDC         hdc ;
+     PTSTR       pGlobal ;
+     PAINTSTRUCT ps ;
+     RECT        rect ;
+     
+     switch (message)
+     {
+
+     case WM_CREATE:
+          hwndNextViewer = SetClipboardViewer (hwnd) ;
+          return 0 ;
+          
+     case WM_CHANGECBCHAIN:
+          if ((HWND) wParam == hwndNextViewer)
+               hwndNextViewer = (HWND) lParam ;
+          
+          else if (hwndNextViewer)
+               SendMessage (hwndNextViewer, message, wParam, lParam) ;
+          
+          return 0 ;
+          
+     case WM_DRAWCLIPBOARD:
+          if (hwndNextViewer)
+               SendMessage (hwndNextViewer, message, wParam, lParam) ;
+          
+          InvalidateRect (hwnd, NULL, TRUE) ;
+          return 0 ;
+          
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+          GetClientRect (hwnd, &amp;rect) ;
+          OpenClipboard (hwnd) ;
+          
+#ifdef UNICODE
+          hGlobal = GetClipboardData (CF_UNICODETEXT) ;
+#else
+          hGlobal = GetClipboardData (CF_TEXT) ;
+#endif
+          
+          if (hGlobal != NULL)
+          {
+               pGlobal = (PTSTR) GlobalLock (hGlobal) ;
+               DrawText (hdc, pGlobal, -1, &amp;rect, DT_EXPANDTABS) ;
+               GlobalUnlock (hGlobal) ;
+          }
+          
+          CloseClipboard () ;
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+          
+     case WM_DESTROY:
+          ChangeClipboardChain (hwnd, hwndNextViewer) ;
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}</pre>
+</TD></TR></TABLE>
+<P>CLIPVIEW processes WM_CREATE, WM_CHANGECBCHAIN, 
+WM_DRAWCLIPBOARD, and WM_DESTROY messages as discussed above. The WM_PAINT message simply 
+opens the clipboard and uses 
+<I>GetClipboardData</I> with a format of CF_TEXT. If the function 
+returns a global memory handle, CLIPVIEW locks it and uses 
+<I>DrawText</I> to display the text in its client area.
+<P>A clipboard viewer that handles data formats beyond the standard formats (as the 
+one supplied with Windows does) has additional work to do, such as displaying the names 
+of all the formats currently in the clipboard. You can do this by calling 
+<I>EnumClipboardFormats</I> and obtaining the names of the nonstandard formats from 
+<I>GetClipboardFormatName</I>. A clipboard viewer that uses the CF_OWNERDISPLAY format must send the following 
+four messages to the clipboard owner to display the data:
+<p>
+<table CELLPADDING="5" WIDTH="95%">
+<tr><td valign="top">WM_PAINTCLIPBOARD</TD>
+<td valign="top">WM_VSCROLLCLIPBOARD</td></TR>
+<tr><td valign="top">WM_SIZECLIPBOARD</td>
+<td valign="top">WM_HSCROLLCLIPBOARD</td></tr>
+</TABLE>
+<P>If you want to write such a clipboard viewer, you have to obtain the window 
+handle of the clipboard owner using 
+<I>GetClipboardOwner</I> and send that window these 
+messages when you need to update the clipboard viewer's client area.
+</BODY>
+
+</HTML>
+
+
+
+
+
+

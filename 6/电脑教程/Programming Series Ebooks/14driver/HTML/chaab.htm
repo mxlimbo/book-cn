@@ -1,0 +1,311 @@
+<HTML>
+<HEAD>
+<TITLE>Defining Stubs for Kernel-Mode Routines</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="chaaa.htm">[Previous]</A> <A HREF="chaac.htm">[Next]</a>
+</p>
+
+<A NAME="432"><H1>Defining Stubs for Kernel-Mode Routines</H1></A>
+
+<p>The stub technique used in WDMSTUB.VXD relies on the same basic trick that Microsoft crafted
+to port several hundred kernel-mode support functions from Microsoft Windows NT to Windows
+98&#8212;that is, extending the symbol tables that the run-time loader uses when it resolves
+import references. To extend the symbol tables, you first define three data tables that will
+persist in memory:</p>
+
+<ul>
+<p><li> A name table that gives the names of the functions you're defining</li></p>
+
+<p><li> An address table that gives the addresses of the functions</li></p>
+
+<p><li> An ordinal table that correlates the name and address tables</li></p>
+</ul>
+
+
+<p>Here are some of the table entries from WDMSTUB:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>static char* names[] = {
+  &quot;PoRegisterSystemState&quot;,
+  ...
+  &quot;ExSystemTimeToLocalTime&quot;,
+  ...
+  };
+
+static WORD ordinals[] = {
+  0,
+  ...,
+  6,
+  ...
+  };
+
+static PFN addresses[] = {
+  (PFN) PoRegisterSystemState,
+  ...
+  (PFN) ExSystemTimeToLocalTime,
+  ...
+  };</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The purpose of the ordinal table is to provide the index within <b>addresses</b> of the
+entry for a given <b>names</b> entry. That is, the function named by <b>names[i]</b> is <b>
+address[ordinals[i]]</b>.</p>
+
+<p>If it weren't for a version compatibility problem I'll describe in a moment, you could
+call <b>_PELDR_AddExportTable</b> as follows:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>HPEEXPORTTABLE hExportTable = 0;
+
+extern &quot;C&quot; BOOL OnDeviceInit(DWORD dwRefData)
+  {
+  _PELDR_AddExportTable(&amp;hExportTable, 
+    &quot;ntoskrnl.exe&quot;,
+    arraysize(addresses), // <img src="images/tlarrow.jpg" width=13 height=12 border="0"> don't do it this way!
+    arraysize(names), 0, 
+    (PVOID*) names,
+    ordinals, addresses, NULL);
+  return TRUE;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The call to _PELDR_AddExportTable extends the table of symbols that the loader uses when it
+tries to resolve import references from NTOSKRNL.EXE, which is of course the Windows 2000
+kernel. NTKERN.VXD, the main support module for WDM drivers in Windows 98, initializes this
+table with the addresses of the several hundred functions it supports. WDMSTUB.VXD is a static
+VxD with an initialization order later than NTKERN and earlier than the Windows 98
+Configuration Manager. Consequently, WDMSTUB's export definitions will be in place by the
+time the system loads any WDM drivers. In effect, then, WDMSTUB is an extension to NTKERN.</p>
+
+<A NAME="433"><H2>Version Compatibility</H2></A>
+
+<p>The version compatibility problem to which I alluded earlier is this: Windows 98 supports a
+particular subset of the Windows 2000 functions used by WDM drivers. Windows 98, Second
+Edition, supports a larger subset. The next version of Windows, code-named Millennium, will
+support a still larger subset (maybe even a superset, given that it will be released after
+Windows 2000). You would not want your stub VxD to duplicate one of the functions that the OS
+supports. What WDMSTUB actually does during initialization, therefore, is dynamically construct
+the tables that it passes to _PELDR_AddExportTable:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>HPEEXPORTTABLE hExportTable = 0;
+
+extern &quot;C&quot; BOOL OnDeviceInit(DWORD dwRefData)
+  {
+  char** stubnames = (char**) _HeapAllocate(sizeof(names), HEAPZEROINIT);
+  PFN* stubaddresses = (PFN*) _HeapAllocate(sizeof(addresses),
+    HEAPZEROINIT);
+  WORD* ordinals = (WORD*) _HeapAllocate(arraysize(names) * sizeof(WORD),
+    HEAPZEROINIT);
+  int i, istub;
+  for (i = 0, istub = 0; i &lt; arraysize(names); ++i)
+    {
+    <b>if (_PELDR_GetProcAddress((HPEMODULE) &quot;ntoskrnl.exe&quot;, names[i], NULL)
+      == 0)</b> 
+      {
+      stubnames[istub] = names[i];
+      ordinals[istub] = istub;
+      stubaddresses[istub] = addresses[i];
+      ++istub;
+      }
+    }
+  _PELDR_AddExportTable(&amp;hExportTable, &quot;ntoskrnl.exe&quot;, istub,
+    istub, 0, (PVOID*) stubnames, ordinals, stubaddresses, NULL);
+  return TRUE;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The line appearing in bold face is the crucial step here&#8212;it makes sure that we
+don't inadvertently replace a function that already exists in NTKERN or another system
+VxD.</p>
+
+<p>There's one annoying glitch in the version compatibility solution I just outlined.
+Windows 98, Second Edition, exports just three of the four support functions for managing the
+IO_REMOVE_LOCK object. The missing function is <b>IoRemoveLockAndWaitEx</b>, if you care. My
+WDMSTUB.VXD driver compensates for this omission by stubbing either all or none of the remove
+lock functions based on whether or not this function is missing.</p>
+
+<A NAME="434"><H2>Stub Functions</H2></A>
+
+<p>The main purpose of WDMSTUB.VXD is to resolve symbols that your driver might reference but
+not actually call. For some functions, such as <b>PoRegisterSystemState</b> , WDMSTUB.VXD simply
+contains a stub that will return an error indication if it is ever called:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>PVOID PoRegisterSystemState(PVOID hstate, ULONG flags)
+  {
+  ASSERT(KeGetCurrentIrql() &lt; DISPATCH_LEVEL);
+  return NULL;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<P><div class="sidebar"><blockquote>
+<p><b>Building WDMSTUB</b></p>
+
+<p>To get WDMSTUB to build correctly, I needed to incorporate a couple of nonstandard features.
+Each stub function must use the <b>_ _stdcall</b> calling convention, whereas VxDs normally use
+<b>_ _cdecl</b>.</p>
+
+<p>I wanted to call <b>KeGetCurrentIrql</b> and maybe other WDM service functions from the stub
+VxD. A standard way to do this is to include WDM.H or NTDDK.H before all of the VxD header
+files and link with the WDMVXD.LIB import library. WDMVXD.LIB assumes that the functions
+you're trying to import are declared with the <b>_ _declspec(dllimport)</b> directive, which
+is normally true when you include either WDM.H or NTDDK.H. This is because they're all
+declared using a preprocessor macro named NTKERNALAPI, which normally gets #defined as
+_ _declspec(dllimport). Unfortunately, if you try to <i>define</i> a function that's marked
+as dllimport, the compiler assumes you meant to <i>export</i> the function. A VxD's first
+export must be the device description block (DDB) that defines the driver, though, and not some
+random exported stub function. I guessed that specifying ordinal number 1 for the DDB in my
+module definition file would force the DDB to be the first export, but I was mistaken. At the
+end of this rather sad story, I ended up with a VxD that wouldn't load.</p>
+
+<p>To get past all of these problems with import vs. export declarations, I had to coerce
+NTDDK.H not to define NTKERNELAPI in the normal way. (See STDVXD.H in the WDMSTUB project.)
+That leaves the module with unresolved references to symbols like <b>_KeGetCurrentIrql@0</b> 
+because of the limited vocabulary of WDMVXD.LIB. In the particular case of KeGetCurrentIrql,
+one can issue a standard <b>VxDCall</b> to a service named <b>ObsoleteKeGetCurrentIrql</b> and
+reach the right function in the Windows 98 kernel. Alternatively, one could define a function
+(with a name like MyGetCurrentIrql) that calls KeGetCurrentIrql and place it in a source module
+that you compile with the normal setting for NTKERNELAPI.</p>
+</blockquote></div>
+</P>
+
+<p>Sometimes, though, you don't need to write a stub that fails the function call&#8212;you
+can actually implement the function, as in this example:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>VOID ExLocalTimeToSystemTime(PLARGE_INTEGER localtime,
+  PLARGE_INTEGER systime)
+  {
+  systime-&gt;QuadPart = localtime-&gt;QuadPart + GetZoneBias();
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>where <b>GetZoneBias</b> is a helper routine that determines the time zone <i>
+bias</i>&#8212;that is, the number of units by which local time differs from Greenwich mean
+time&#8212;by interrogating the <b>ActiveTimeBias</b> value in the <b>TimeZoneInformation</b> 
+registry key.</p>
+
+<p>Table A-1 lists the kernel-mode support functions that WDMSTUB.VXD exports.</p>
+
+<p><b>Table A-1.</b> <i>Functions exported by WDMSTUB.VXD.</i></p>
+
+<P>
+<table cellpadding=5 width="95%">
+<tr> 
+<th> <i>Support Function</i> </th>
+<th><i>Remarks</i>  </th></tr>
+<tr>
+<td valign="top">ExLocalTimeToSystemTime  </td>
+<td valign="top">Implemented  </td></tr>
+<tr>
+<td valign="top">ExSystemTimeToLocalTime  </td>
+<td valign="top">Implemented  </td></tr>
+<tr>
+<td valign="top">IoAcquireRemoveLockEx  </td>
+<td valign="top">Implemented  </td></tr>
+<tr>
+<td valign="top">IoAllocateWorkItem  </td>
+<td valign="top">Implemented  </td></tr>
+<tr>
+<td valign="top">IoFreeWorkItem  </td>
+<td valign="top">Implemented  </td></tr>
+<tr>
+<td valign="top">IoInitializeRemoveLockEx  </td>
+<td valign="top">Implemented  </td></tr>
+<tr>
+<td valign="top">IoQueueWorkItem  </td>
+<td valign="top">Implemented  </td></tr>
+<tr>
+<td valign="top">IoReleaseRemoveLockEx  </td>
+<td valign="top">Implemented  </td></tr>
+<tr>
+<td valign="top">IoReleaseRemoveLockAndWaitEx  </td>
+<td valign="top">Implemented  </td></tr>
+<tr>
+<td valign="top">IoCreateNotificationEvent  </td>
+<td valign="top">Stub&#8212;always fails  </td></tr>
+<tr>
+<td valign="top">IoCreateSynchronizationEvent  </td>
+<td valign="top">Stub&#8212;always fails  </td></tr>
+<tr>
+<td valign="top">IoReportTargetDeviceChangeAsynchronous  </td>
+<td valign="top">Stub&#8212;always fails  </td></tr>
+<tr>
+<td valign="top">KdDebuggerEnabled  </td>
+<td valign="top">Implemented  </td></tr>
+<tr>
+<td valign="top">KeEnterCriticalRegion  </td>
+<td valign="top">Implemented  </td></tr>
+<tr>
+<td valign="top">KeLeaveCriticalRegion  </td>
+<td valign="top">Implemented  </td></tr>
+<tr>
+<td valign="top">KeNumberProcessors  </td>
+<td valign="top">Always returns 1  </td></tr>
+<tr>
+<td valign="top">KeSetTargetProcessorDpc  </td>
+<td valign="top">Implemented  </td></tr>
+<tr>
+<td valign="top">PoCancelDeviceNotify  </td>
+<td valign="top">Stub&#8212;always fails  </td></tr>
+<tr>
+<td valign="top">PoRegisterDeviceNotify  </td>
+<td valign="top">Stub&#8212;always fails  </td></tr>
+<tr>
+<td valign="top">PoRegisterSystemState  </td>
+<td valign="top">Stub&#8212;always fails  </td></tr>
+<tr>
+<td valign="top">PoSetSystemState  </td>
+<td valign="top">Stub&#8212;always fails  </td></tr>
+<tr>
+<td valign="top">PoUnregisterSystemState  </td>
+<td valign="top">Stub&#8212;always fails  </td></tr>
+<tr>
+<td valign="top">PsGetVersion  </td>
+<td valign="top">Implemented  </td></tr>
+<tr>
+<td valign="top">RtlInt64ToUnicodeString  </td>
+<td valign="top">Stub&#8212;always fails  </td></tr>
+<tr>
+<td valign="top">RtlUlongByteSwap  </td>
+<td valign="top">Implemented  </td></tr>
+<tr>
+<td valign="top">RtlUlonglongByteSwap  </td>
+<td valign="top">Implemented  </td></tr>
+<tr>
+<td valign="top">RtlUshortByteSwap  </td>
+<td valign="top">Implemented  </td></tr>
+</table></p>
+
+
+</BODY>
+</HTML>
+
+
+
+
+

@@ -1,0 +1,885 @@
+<HTML>
+ <HEAD>
+	<LINK REL=StyleSheet HREF="prowice.css" TYPE="text/css">
+<TITLE>Writing Text</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="39"><H1>Writing Text</H1></A>
+
+<P>In <A HREF="ch01a.htm">Chapter 1</a>, the HelloCE example displayed a line of text using a call to <I>DrawText</I>. That line from the example is shown here:
+
+<p><pre>
+DrawText (hdc, TEXT (&quot;Hello Windows CE!&quot;), -1, &amp;rect, 
+          DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+</pre>
+
+<P><I>DrawText</I> is a fairly high-level function that allows a program to display text while having Windows deal with most of the details. The first few parameters of <I>DrawText</I> are almost self-explanatory. The handle of the device context being used is passed, along with the text to display couched in a TEXT macro, which declares the string as a Unicode string necessary for Windows CE. The third parameter is the number of characters to print, or as is the case here, a -1 indicating that the string being passed is null terminated and Windows should compute the length.
+
+<P>The fourth parameter is a pointer to a rect structure that specifies the formatting rectangle for the text. <I>DrawText</I> uses this rectangle as a basis for formatting the text to be printed. How the text is formatted depends on the function's last parameter, the formatting flags. These flags specify how the text is to be placed within the formatting rectangle, or in the case of the DT_CALCRECT flag, the flags have <I>DrawText</I> compute the dimensions of the text that is to be printed. <I>DrawText</I> even formats multiple lines with line breaks automatically computed. In the case of HelloCE, the flags specify that the text should be centered horizontally (DT_CENTER), and centered vertically (DT_VCENTER). The DT_VCENTER flag works only on single lines of text, so the final parameter, DT_SINGLELINE, specifies that the text shouldn't be flowed across multiple lines if the rectangle isn't wide enough to display the entire string.
+
+<A NAME="40"><H2>Device Context Attributes</H2></A>
+
+<P>What I haven't mentioned yet about HelloCE's use of <I>DrawText</I> is the large number of assumptions the program makes about the DC configuration when displaying the text. Drawing in a Windows device context takes a large number of parameters, such as foreground and background color and how the text should be drawn over the background as well as the font of the text. Instead of specifying all these parameters for each drawing call, the device context keeps track of the current settings, referred to as <I>attributes</I>, and uses them as appropriate for each call to draw to the device context.
+
+<A NAME="41"><H3>Foreground and background colors</H3></A>
+
+<P>The most obvious of the text attributes are the foreground and background color. Two functions, <I>SetTextColor</I> and <I>GetTextColor</I>, allow a program to set and retrieve the current color. These functions work well with both four-color gray-scale screens as well as the color screens supported by Windows CE devices.
+
+<P>To determine how many colors a device supports, use <I>GetDeviceCaps</I> as mentioned previously. The prototype for this function is the following:
+
+<p><pre>
+int GetDeviceCaps (HDC hdc, int nIndex);
+</pre>
+
+<P>You need the handle to the DC being queried because different DCs have different capabilities. For example, a printer DC differs from a display DC. The second parameter indicates the capability being queried. In the case of returning the colors available on the device, the NUMCOLORS value returns the number of colors as long as the device supports 256 colors or fewer. Beyond that, the returned value for NUMCOLORS is -1 and the colors can be returned using the BITSPIXEL value, which returns the number of bits used to represent each pixel. This value can be converted to the number of colors by raising 2 to the power of the BITSPIXEL returned value, as in the following code sample:
+
+<p><pre>
+nNumColors = GetDeviceCaps (hdc, NUMCOLORS);
+if (nNumColors == -1)
+    nNumColors = 1 &lt;&lt; GetDeviceCaps (hdc, BITSPIXEL);
+</pre>
+
+<A NAME="42"><H3>Drawing mode</H3></A>
+
+<P>Another attribute that affects text output is the background mode. When letters are drawn on the device context, the system draws the letters themselves in the foreground color. The space between the letters is another matter. If the background mode is set to opaque, the space is drawn with the current background color. But if the background mode is set to transparent, the space between the letters is left in whatever state it was in before the text was drawn. While this might not seem like a big difference, imagine a window background filled with a drawing or graph. If text is written over the top of the graph and the background mode is set to opaque, the area around the text will be filled, and the background color will overwrite the graph. If the background mode is transparent, the text will appear as if it had been placed on the graph, and the graph will show through between the letters of the text.
+
+<A NAME="43"><H2>The TextDemo Example Program</H2></A>
+
+<P>The TextDemo program, shown in Figure 2-1, demonstrates the relationships among the text color, the background color, and the background mode.
+
+<P><B>Figure 2-1.</B> <I>The TextDemo program.</I>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><td>
+<A NAME="44"><H3>TextDemo.h</H3></A>
+<p><pre>
+//================================================================
+// Header file
+//
+
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//
+//======================================================================
+// Returns number of elements
+#define dim(x) (sizeof(x) / sizeof(x[0]))
+
+//----------------------------------------------------------------------
+// Generic defines and data types
+//
+struct decodeUINT {                             // Structure associates
+    UINT Code;                                  // messages 
+                                                // with a function. 
+    LRESULT (*Fxn)(HWND, UINT, WPARAM, LPARAM);
+}; 
+struct decodeCMD {                              // Structure associates
+    UINT Code;                                  // menu IDs with a 
+    LRESULT (*Fxn)(HWND, WORD, HWND, WORD);     // function.
+};
+
+//----------------------------------------------------------------------
+// Generic defines used by application
+#define IDC_CMDBAR       1                      // Command bar ID
+
+//----------------------------------------------------------------------
+// Function prototypes
+//
+int InitApp (HINSTANCE);
+int InitInstance (HINSTANCE, LPWSTR, int);
+int TermInstance (HINSTANCE, int);
+
+// Window procedures
+LRESULT CALLBACK MainWndProc (HWND, UINT, WPARAM, LPARAM);
+
+// Message handlers
+LRESULT DoCreateMain (HWND, UINT, WPARAM, LPARAM);
+LRESULT DoPaintMain (HWND, UINT, WPARAM, LPARAM);
+LRESULT DoDestroyMain (HWND, UINT, WPARAM, LPARAM);
+</pre>
+</td></tr></table>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><td>
+<A NAME="45"><H3>TextDemo.c</H3></A>
+<p><pre>
+//================================================================
+// TextDemo - Text output demo 
+
+//
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//
+//======================================================================
+#include &lt;windows.h&gt;                 // For all that Windows stuff
+#include &lt;commctrl.h&gt;                // Command bar includes
+#include &quot;TextDemo.h&quot;                // Program-specific stuff
+
+//----------------------------------------------------------------------
+// Global data
+//
+const TCHAR szAppName[] = TEXT (&quot;TextDemo&quot;);
+HINSTANCE hInst;                     // Program instance handle
+
+// Message dispatch table for MainWindowProc
+const struct decodeUINT MainMessages[] = {
+    WM_CREATE, DoCreateMain,
+    WM_PAINT, DoPaintMain,
+    WM_DESTROY, DoDestroyMain,
+};
+
+//======================================================================
+//
+// Program Entry Point
+//
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    LPWSTR lpCmdLine, int nCmdShow) {
+    MSG msg;
+    int rc = 0;
+
+    // Initialize application.
+    rc = InitApp (hInstance);
+    if (rc) return rc;
+
+    // Initialize this instance.
+    if ((rc = InitInstance (hInstance, lpCmdLine, nCmdShow)) != 0)
+        return rc;
+
+    // Application message loop
+    while (GetMessage (&amp;msg, NULL, 0, 0)) {
+        TranslateMessage (&amp;msg);
+        DispatchMessage (&amp;msg);
+    }
+    // Instance cleanup
+    return TermInstance (hInstance, msg.wParam);
+}
+//----------------------------------------------------------------------
+// InitApp - Application initialization
+//
+int InitApp (HINSTANCE hInstance) {
+    WNDCLASS wc;
+
+    // Register application main window class.
+    wc.style = 0;                             // Window style
+    wc.lpfnWndProc = MainWndProc;             // Callback function
+    wc.cbClsExtra = 0;                        // Extra class data
+    wc.cbWndExtra = 0;                        // Extra window data
+    wc.hInstance = hInstance;                 // Owner handle
+    wc.hIcon = NULL,                          // Application icon
+    wc.hCursor = NULL;                        // Default cursor
+    wc.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH);
+    wc.lpszMenuName =  NULL;                  // Menu name
+    wc.lpszClassName = szAppName;             // Window class name
+
+    if (RegisterClass (&amp;wc) == 0) return 1;
+
+    return 0;
+}
+//----------------------------------------------------------------------
+// InitInstance - Instance initialization
+//
+int InitInstance (HINSTANCE hInstance, LPWSTR lpCmdLine, int nCmdShow){
+    HWND hWnd;
+
+    // Save program instance handle in global variable.
+    hInst = hInstance;
+
+    // Create main window.
+    hWnd = CreateWindow (szAppName,           // Window class
+                         TEXT(&quot;TextDemo&quot;),    // Window title
+                         WS_VISIBLE,          // Style flags
+                         CW_USEDEFAULT,       // x position
+                         CW_USEDEFAULT,       // y position
+
+
+                         CW_USEDEFAULT,       // Initial width
+                         CW_USEDEFAULT,       // Initial height
+                         NULL,                // Parent
+                         NULL,                // Menu, must be null
+                         hInstance,           // Application instance
+                         NULL);               // Pointer to create
+                                              // Parameters
+    // Return fail code if window not created.
+    if ((!hWnd) || (!IsWindow (hWnd))) return 0x10;
+
+    // Standard show and update calls
+    ShowWindow (hWnd, nCmdShow);
+    UpdateWindow (hWnd);
+    return 0;
+}
+//----------------------------------------------------------------------
+// TermInstance - Program cleanup
+//
+int TermInstance (HINSTANCE hInstance, int nDefRC) {
+
+    return nDefRC;
+}
+//======================================================================
+// Message handling procedures for MainWindow
+//
+//----------------------------------------------------------------------
+// MainWndProc - Callback function for application window
+//
+LRESULT CALLBACK MainWndProc (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                              LPARAM lParam) {
+    INT i;
+    //
+    // Search message list to see if we need to handle this
+    // message.  If in list, call procedure.
+    //
+    for (i = 0; i &lt; dim(MainMessages); i++) {
+        if (wMsg == MainMessages[i].Code)
+            return (*MainMessages[i].Fxn)(hWnd, wMsg, wParam, lParam);
+    }
+    return DefWindowProc (hWnd, wMsg, wParam, lParam);
+}
+//----------------------------------------------------------------------
+// DoCreateMain - Process WM_CREATE message for window.
+//
+LRESULT DoCreateMain (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                      LPARAM lParam) {
+    HWND hwndCB;
+
+    // Create a command bar.
+    hwndCB = CommandBar_Create (hInst, hWnd, IDC_CMDBAR);
+
+    // Add exit button to command bar. 
+    CommandBar_AddAdornments (hwndCB, 0, 0);
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoPaintMain - Process WM_PAINT message for window.
+//
+LRESULT DoPaintMain (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                     LPARAM lParam) {
+    PAINTSTRUCT ps;
+    RECT rect, rectCli; 
+    HBRUSH hbrOld;
+    HDC hdc;
+    INT i, cy;
+    DWORD dwColorTable[] = {0x00000000, 0x00808080, 
+                            0x00cccccc, 0x00ffffff};
+
+    // Adjust the size of the client rect to take into account
+    // the command bar height.
+    GetClientRect (hWnd, &amp;rectCli);
+    rectCli.top += CommandBar_Height (GetDlgItem (hWnd, IDC_CMDBAR));
+
+    hdc = BeginPaint (hWnd, &amp;ps); 
+
+    // Get the height and length of the string.
+    DrawText (hdc, TEXT (&quot;Hello Windows CE&quot;), -1, &amp;rect, 
+              DT_CALCRECT | DT_CENTER | DT_SINGLELINE);
+
+    cy = rect.bottom - rect.top + 5;
+
+    // Draw black rectangle on right half of window.
+    hbrOld = SelectObject (hdc, GetStockObject (BLACK_BRUSH));
+    Rectangle (hdc, rectCli.left + (rectCli.right - rectCli.left) / 2,
+               rectCli.top, rectCli.right, rectCli.bottom);
+    SelectObject (hdc, hbrOld);
+
+    rectCli.bottom = rectCli.top + cy;
+    SetBkMode (hdc, TRANSPARENT);
+    for (i = 0; i &lt; 4; i++) {
+        SetTextColor (hdc, dwColorTable[i]);
+        SetBkColor (hdc, dwColorTable[3-i]);
+
+        DrawText (hdc, TEXT (&quot;Hello Windows CE&quot;), -1, &amp;rectCli, 
+                  DT_CENTER | DT_SINGLELINE);
+        rectCli.top += cy;
+        rectCli.bottom += cy;
+    }
+
+    SetBkMode (hdc, OPAQUE);
+    for (i = 0; i &lt; 4; i++) {
+        SetTextColor (hdc, dwColorTable[i]);
+        SetBkColor (hdc, dwColorTable[3-i]);
+
+        DrawText (hdc, TEXT (&quot;Hello Windows CE&quot;), -1, &amp;rectCli, 
+                  DT_CENTER | DT_SINGLELINE);
+        rectCli.top += cy;
+        rectCli.bottom += cy;
+    }
+    EndPaint (hWnd, &amp;ps); 
+    return 0;
+}
+//----------------------------------------------------------------------
+// DoDestroyMain - Process WM_DESTROY message for window.
+//
+LRESULT DoDestroyMain (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                       LPARAM lParam) {
+    PostQuitMessage (0);
+    return 0;
+}
+</pre>
+</td></tr></table>
+
+<P>The meat of TextDemo is in the <I>OnPaintMain</I> function. The first call to <I>DrawText</I> doesn't draw anything in the device context. Instead, the DT_CALCRECT flag instructs Windows to store the dimensions of the rectangle for the text string in <I>rect</I>. This information is used to compute the height of the string, which is stored in <I>cy</I>. Next, a black rectangle is drawn on the right side of the window. I'll talk about how a rectangle is drawn later in the chapter; it's used in this program to produce two different backgrounds before the text is written. The function then prints out the same string using different foreground and background colors and both the transparent and opaque drawing modes. The result of this combination is shown in Figure 2-2.
+
+<P><img src="f02rg02.gif" width=242 height=322 border="0">
+<P><!-- caption --><B>Figure 2-2.</B> <I>TextDemo shows how the text color, background color, and background mode relate.</I><!-- /caption -->
+
+<P>The first four lines are drawn using the transparent mode. The second four are drawn using the opaque mode. The text color is set from black to white, so that each line drawn uses a different color, while at the same time the background color is set from white to black. In transparent mode, the background color is irrelevant because it isn't used; but in opaque mode, the background color is readily apparent on each line.
+
+<A NAME="46"><H2>Fonts</H2></A>
+
+<P>If the ability to set the foreground and background colors were all the flexibility that Windows provided, we might as well be back in the days of MS-DOS and character attributes. Arguably, the most dramatic change from MS-DOS is Windows' ability to change the font used to display text. All Windows operating systems are built around the concept of WYSIWYG&#8212;what you see is what you get&#8212;and changeable fonts are a major tool used to achieve that goal.
+
+<P>Two types of fonts appear in all Windows operating systems&#8212;<I>raster</I> and <I>TrueType</I>. Raster fonts are stored as bitmaps, small pixel by pixel images, one for each character in the font. Raster fonts are easy to store and use but have one major problem: they don't scale well. Just as a small picture looks grainy when blown up to a much larger size, raster fonts begin to look blocky as they are scaled to larger and larger font sizes.
+
+<P>TrueType fonts solve the scaling problem. Instead of being stored as images, each TrueType character is stored as a description of how to draw the character. The font engine, which is the part of Windows that draws characters on the screen, then takes the description and draws it on the screen in any size needed. TrueType font support was introduced with Windows 3.1 but was only added to the Windows CE line in Windows CE 2.0. Even under Windows CE 2.0, though, some devices such as the original Palm-size PC, don't support TrueType fonts. A Windows CE system can support either TrueType or raster fonts, but not both. Fortunately, the programming interface is the same for both raster and TrueType fonts, relieving Windows developers from worrying about the font technology in all but the most exacting of applications.
+
+<P>The font functions under Windows CE closely track the same functions under other versions of Windows. Let's look at the functions used in the life of a font, from creation through selection in a DC and finally to deletion of the font. How to query the current font as well as enumerate the available fonts is also covered in the following sections.
+
+<A NAME="47"><H3>Creating a font</H3></A>
+
+<P>Before an application is able to use a font other than the default font, the font must be created and then selected into the device context. Any text drawn in a DC after the new font has been selected into the DC will then use the new font.
+
+<P>Creating a font in Windows CE can be accomplished this way:
+
+<p><pre>
+HFONT CreateFontIndirect (const LOGFONT *lplf);
+</pre>
+
+<P>This function is passed a pointer to a LOGFONT structure that must be filled with the description of the font you want.
+
+<p><pre>
+typedef struct tagLOGFONT {
+    LONG lfHeight;
+    LONG lfWidth;
+    LONG lfEscapement;
+    LONG lfOrientation;
+    LONG lfWeight;
+    BYTE lfItalic;
+    BYTE lfUnderline;
+    BYTE lfStrikeOut;
+    BYTE lfCharSet;
+    BYTE lfOutPrecision;
+    BYTE lfClipPrecision;
+    BYTE lfQuality;
+    BYTE lfPitchAndFamily;
+    TCHAR lfFaceName[LF_FACESIZE];
+} LOGFONT;
+</pre>
+
+<P>The <I>lfHeight</I> field specifies the height of the font in device units. If this field is 0, the font manager returns the default font size for the font family requested. For most applications, however, you want to create a font of a particular point size. The following equation can be used to convert point size to the <I>lfHeight</I> field:
+
+<p><pre>
+<I>lfHeight = -1 * (PointSize * GetDeviceCaps (hdc, LOGPIXELSY) / 72);</I>
+</pre>
+
+<P>Here, <I>GetDeviceCaps</I> is passed a LOGPIXELSY field instructing it to return the number of logical pixels per inch in the vertical direction. The 72 is the number of <I>points</I> (a typesetting unit of measure) per inch.
+
+<P>The <I>lfWidth</I> field specifies the average character width. Since the height of a font is more important than its width, most programs set this value to 0. This tells the font manager to compute the proper width based on the height of the font. The <I>lfEscapement</I> and <I>lfOrientation</I> fields specify the angle in tenths of degrees of the base line of the text and the <I>x</I>-axis. The <I>lfWeight</I> field specifies the boldness of the font from 0 through 1000, with 400 being a normal font and 700 being bold. The next three fields specify whether the font is to be italic, underline, or strikeout.
+
+<P>The <I>lpCharSet</I> field specifies the character set you have chosen. This field is more important in international releases of software, where it can be used to request a specific language's character set. The <I>lfOutPrecision</I> field can be used to specify how closely Windows matches your requested font. Among a number of flags available, a OUT_TT_ONLY_PRECIS flag specifies that the font created must be a TrueType font. The <I>lfClipPrecision</I> field specifies how Windows should clip characters that are partially outside the region being displayed. The <I>lfQuality</I> field is set to either DEFAULT_QUALITY or DRAFT_QUALITY, which gives Windows permission to synthesize a font that, while more closely matching the other requested fields, might look less polished.
+
+<P>The <I>lfPitchAndFamily</I> field specifies the family of the font you want. This field is handy when you're requesting a family such as Swiss, that features proportional fonts without serifs, or a family such as Roman, that features proportional fonts with serifs, but you don't have a specific font in mind. You can also use this field to specify simply a proportional or a monospaced font and allow Windows to determine which font matches the other specified characteristics passed into the LOGFONT structure. Finally, the <I>lfFaceName</I> field can be used to specify the typeface name of a specific font.
+
+<P>When <I>CreateFontIndirect</I> is called with a filled LOGFONT structure, Windows creates a logical font that best matches the characteristics provided. To use the font however, the final step of selecting the font into a device context must be made.
+
+<A NAME="48"><H3>Selecting a font into a device context</H3></A>
+
+<P>You select a font into a DC by using the following function:
+
+<p><pre>
+HGDIOBJ SelectObject (HDC hdc, HGDIOBJ hgdiobj);
+</pre>
+
+<P>This function is used for more than just setting the default font; you use this function to select other GDI objects, as we shall soon see. The function returns the previously selected object (in our case the previously selected font), which should be saved so that it can be selected back into the DC when we're finished with the new font. The line of code looks like the following:
+
+<p><pre>
+hOldFont = SelectObject (hdc, hFont);
+</pre>
+
+<P>When the logical font is selected, the system determines the closest match to the logical font from the fonts available in the system. For devices without TrueType fonts, this match could be a fair amount off from the specified parameters. Because of this, never assume that just because you've requested a particular font, the font returned exactly matches the one you requested. For example, the height of the font you asked for might not be the height of the font that's selected into the device context.
+
+<A NAME="49"><H3>Querying a font's characteristics</H3></A>
+
+<P>To determine the characteristics of the font that is selected into a device context, a call to
+
+<p><pre>
+BOOL GetTextMetrics (HDC hdc, LPTEXTMETRIC lptm);
+</pre>
+
+<P>returns the characteristics of that font. A TEXTMETRIC structure is returned with the information and is defined as
+
+<p><pre>
+typedef struct tagTEXTMETRIC {
+    LONG tmHeight;
+    LONG tmAscent;
+    LONG tmDescent;
+    LONG tmInternalLeading;
+    LONG tmExternalLeading;
+    LONG tmAveCharWidth;
+    LONG tmMaxCharWidth;
+    LONG tmWeight;
+    LONG tmOverhang;
+    LONG tmDigitizedAspectX;
+    LONG tmDigitizedAspectY;
+    char tmFirstChar;
+    char tmLastChar;
+    char tmDefaultChar;
+    char tmBreakChar;
+    BYTE tmItalic;
+    BYTE tmUnderlined;
+    BYTE tmStruckOut;
+    BYTE tmPitchAndFamily;
+    BYTE tmCharSet;
+} TEXTMETRIC;
+</pre>
+
+<P>The TEXTMETRIC structure contains a number of the fields we saw in the LOGFONT structure but this time the values listed in TEXTMETRIC are the values of the font that's selected into the device context. Figure 2-3 shows the relationship of some of the fields to actual characters.
+
+<P><A HREF="javascript:fullSize('f02rg03x.htm')"> <img src="f02rg03.jpg" width=404 height=242 border="0" ALT="Click to view at full size."></a>
+<P><!-- caption --><B>Figure 2-3.</B> <I>Fields from the TEXTMETRIC structure and how they relate to a font.</I><!-- /caption -->
+
+<P>Aside from determining whether you really got the font you wanted, the <I>GetTextmetrics</I> call has another valuable purpose&#8212;determining the height of the font. Recall that in TextDemo, the height of the line was computed using a call to <I>DrawText</I>. While that method is convenient, it tends to be slow. You can use the TEXTMETRIC data to compute this height in a much more straightforward manner. By adding the <I>tmHeight</I> field, which is the height of the characters, to the <I>tmExternalLeading</I> field, which is the distance between the bottom pixel of one row and the top pixel of the next row of characters, you can determine the vertical distance between the baselines of two lines of text.
+
+<A NAME="50"><H3>Destroying a font</H3></A>
+
+<P>Like other GDI resources, fonts must be destroyed after the program has finished using them. Failure to delete fonts before terminating a program causes what's known as a <I>resource leak</I>&#8212;an orphaned graphic resource that's taking up valuable memory but that's no longer owned by an application.
+
+<P>To destroy a font, first deselect it from any device contexts it has been selected into. You do this by calling <I>SelectObject</I>; the font passed is the font that was returned by the original <I>SelectObject</I> call made to select the font. After the font has been deselected, a call to
+
+<p><pre>
+BOOL DeleteObject (HGDIOBJ hObject);
+</pre>
+
+<P>(with <I>hObject</I> containing the font handle) deletes the font from the system.
+
+<P>As you can see from this process, font management is no small matter in Windows. The many parameters of the LOGFONT structure might look daunting, but they give an application tremendous power to specify a font exactly.
+
+<P>One problem when dealing with fonts is determining just what types of fonts are available on a specific device. Windows CE devices come with a set of standard fonts, but a specific system might have been loaded with additional fonts by either the manufacturer or the user. Fortunately, Windows provides a method for enumerating all the available fonts in a system.
+
+<A NAME="51"><H3>Enumerating fonts</H3></A>
+
+<P>To determine what fonts are available on a system, Windows provides this function:
+
+<p><pre>
+int EnumFontFamilies (HDC hdc, LPCTSTR lpszFamily,
+                      FONTENUMPROC lpEnumFontFamProc, LPARAM lParam);
+</pre>					  
+
+<P>This function lets you list all the font families as well as each font within a family. The first parameter is the obligatory handle to the device context. The second parameter is a string to the name of the family to enumerate. If this parameter is null, the function enumerates each of the available families.
+
+<P>The third parameter is something different&#8212;a pointer to a function provided by the application. The function is a callback function that Windows calls once for each font being enumerated. The final parameter, <I>lParam,</I> is a generic parameter that can be used by the application. This value is passed unmodified to the application's callback procedure.
+
+<P>While the name of the callback function can be anything, the prototype of the callback must match the declaration:
+
+<p><pre>
+int CALLBACK EnumFontFamProc (LOGFONT *lpelf, TEXTMETRIC *lpntm,
+                              DWORD FontType, LPARAM lParam);
+</pre>							  
+							  
+<P>The first parameter passed back to the callback function is a pointer to a LOGFONT structure describing the font being enumerated. The second parameter, a pointer to a textmetric structure, further describes the font. The font type parameter indicates whether the font is a raster or TrueType font.
+
+<A NAME="52"><H2>The FontList Example Program</H2></A>
+
+<P>The FontList program, shown in Figure 2-4, uses the <I>EnumFontFamilies</I> function in two ways to enumerate all fonts in the system.
+
+<P><B>Figure 2-4.</B> <I>The FontList program enumerates all fonts in the system.</I>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><td>
+<A NAME="53"><H3>FontList.h</H3></A>
+<p><pre>
+//================================================================
+
+// Header file
+//
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//
+//======================================================================
+// Returns number of elements
+#define dim(x) (sizeof(x) / sizeof(x[0]))
+
+//----------------------------------------------------------------------
+// Generic defines and data types
+//
+struct decodeUINT {                             // Structure associates
+    UINT Code;                                  // messages 
+                                                // with a function. 
+    LRESULT (*Fxn)(HWND, UINT, WPARAM, LPARAM);
+}; 
+struct decodeCMD {                              // Structure associates
+    UINT Code;                                  // menu IDs with a 
+    LRESULT (*Fxn)(HWND, WORD, HWND, WORD);     // function.
+};
+
+//----------------------------------------------------------------------
+// Generic defines used by application
+#define  IDC_CMDBAR 1                           // Command bar ID
+
+//----------------------------------------------------------------------
+// Program specific structures
+//
+#define FAMILYMAX   24
+typedef struct {
+    int nNumFonts;
+    TCHAR szFontFamily[LF_FACESIZE];
+} FONTFAMSTRUCT;
+typedef FONTFAMSTRUCT *PFONTFAMSTRUCT;
+
+typedef struct {
+    INT yCurrent;
+    HDC hdc;
+} PAINTFONTINFO;
+typedef PAINTFONTINFO *PPAINTFONTINFO;
+
+//----------------------------------------------------------------------
+// Function prototypes
+//
+int InitApp (HINSTANCE);
+HWND InitInstance (HINSTANCE, LPWSTR, int);
+int TermInstance (HINSTANCE, int);
+
+// Window procedures
+LRESULT CALLBACK MainWndProc (HWND, UINT, WPARAM, LPARAM);
+
+// Message handlers
+LRESULT DoCreateMain (HWND, UINT, WPARAM, LPARAM);
+LRESULT DoPaintMain (HWND, UINT, WPARAM, LPARAM);
+LRESULT DoDestroyMain (HWND, UINT, WPARAM, LPARAM);
+</pre>
+</td></tr></table>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><td>
+<A NAME="54"><H3>FontList.c</H3></A>
+<p><pre>
+
+//======================================================================
+// FontList - Lists the available fonts in the system
+//
+// Written for the book Programming Windows CE
+// Copyright (C) 1998 Douglas Boling
+//
+//======================================================================
+#include &lt;windows.h&gt;                 // For all that Windows stuff
+#include &lt;commctrl.h&gt;                // Command bar includes
+#include &quot;FontList.h&quot;                // Program-specific stuff
+
+//----------------------------------------------------------------------
+// Global data
+//
+const TCHAR szAppName[] = TEXT (&quot;FontList&quot;);
+HINSTANCE hInst;                     // Program instance handle
+
+FONTFAMSTRUCT ffs[FAMILYMAX];
+INT sFamilyCnt = 0;
+
+// Message dispatch table for MainWindowProc
+const struct decodeUINT MainMessages[] = {
+    WM_CREATE, DoCreateMain,
+    WM_PAINT, DoPaintMain,
+    WM_DESTROY, DoDestroyMain,
+};
+
+//======================================================================
+//
+// Program entry point
+//
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    LPWSTR lpCmdLine, int nCmdShow) {
+    MSG msg;
+    int rc = 0;
+    HWND hwndMain;
+
+    // Initialize application.
+    rc = InitApp (hInstance);
+    if (rc) return rc;
+
+    // Initialize this instance.
+    hwndMain = InitInstance (hInstance, lpCmdLine, nCmdShow);
+    if (hwndMain == 0)
+        return 0x10;
+
+    // Application message loop
+    while (GetMessage (&amp;msg, NULL, 0, 0)) {
+        TranslateMessage (&amp;msg);
+        DispatchMessage (&amp;msg);
+    }
+    // Instance cleanup
+    return TermInstance (hInstance, msg.wParam);
+}
+//----------------------------------------------------------------------
+// InitApp - Application initialization
+//
+int InitApp (HINSTANCE hInstance) {
+    WNDCLASS wc;
+
+    // Register application main window class.
+    wc.style = 0;                             // Window style
+    wc.lpfnWndProc = MainWndProc;             // Callback function
+    wc.cbClsExtra = 0;                        // Extra class data
+    wc.cbWndExtra = 0;                        // Extra window data
+    wc.hInstance = hInstance;                 // Owner handle
+    wc.hIcon = NULL,                          // Application icon
+    wc.hCursor = NULL;                        // Default cursor
+    wc.hbrBackground = (HBRUSH) GetStockObject(WHITE_BRUSH);
+    wc.lpszMenuName =  NULL;                  // Menu name
+    wc.lpszClassName = szAppName;             // Window class name
+
+    if (RegisterClass (&amp;wc) == 0) return 1;
+
+    return 0;
+}
+//----------------------------------------------------------------------
+// InitInstance - Instance initialization
+//
+HWND InitInstance (HINSTANCE hInstance, LPWSTR lpCmdLine, int nCmdShow) {
+    HWND hWnd;
+
+    // Save program instance handle in global variable.
+    hInst = hInstance;
+
+    // Create main window.
+    hWnd = CreateWindow (szAppName,           // Window class
+                         TEXT(&quot;Font Listing&quot;),// Window title
+                         WS_VISIBLE,          // Style flags
+                         CW_USEDEFAULT,       // x position
+                         CW_USEDEFAULT,       // y position
+                         CW_USEDEFAULT,       // Initial width
+                         CW_USEDEFAULT,       // Initial height
+                         NULL,                // Parent
+                         NULL,                // Menu, must be null
+                         hInstance,           // Application instance
+                         NULL);               // Pointer to create
+                                              // parameters
+    // Return fail code if window not created.
+    if (!IsWindow (hWnd)) return 0;
+    // Standard show and update calls
+    ShowWindow (hWnd, nCmdShow);
+    UpdateWindow (hWnd);
+    return hWnd;
+}
+//----------------------------------------------------------------------
+// TermInstance - Program cleanup
+//
+int TermInstance (HINSTANCE hInstance, int nDefRC) {
+
+    return nDefRC;
+}
+//======================================================================
+// Font callback functions
+//
+//----------------------------------------------------------------------
+// FontFamilyCallback - Callback function that enumerates the font 
+// families
+//
+int CALLBACK FontFamilyCallback (CONST LOGFONT *lplf, 
+                                 CONST TEXTMETRIC *lpntm, 
+                                 DWORD nFontType, LPARAM lParam) {
+    int rc = 1;
+
+    // Stop enumeration if array filled.
+    if (sFamilyCnt &gt;= FAMILYMAX)
+        return 0;
+    // Copy face name of font.
+    lstrcpy (ffs[sFamilyCnt++].szFontFamily, lplf-&gt;lfFaceName);
+
+    return rc;
+}
+//----------------------------------------------------------------------
+// EnumSingleFontFamily - Callback function that enumerates fonts
+//
+int CALLBACK EnumSingleFontFamily (CONST LOGFONT *lplf, 
+                                   CONST TEXTMETRIC *lpntm, 
+                                   DWORD nFontType, LPARAM lParam) {
+    PFONTFAMSTRUCT pffs;
+
+    pffs = (PFONTFAMSTRUCT) lParam;
+    pffs-&gt;nNumFonts++;    // Increment count of fonts in family
+    return 1;
+}
+//----------------------------------------------------------------
+// PaintSingleFontFamily - Callback function that draws a font
+//
+int CALLBACK PaintSingleFontFamily (CONST LOGFONT *lplf, 
+                                    CONST TEXTMETRIC *lpntm, 
+                                    DWORD nFontType, LPARAM lParam) {
+    PPAINTFONTINFO ppfi;
+    TCHAR szOut[256];
+    INT nFontHeight, nPointSize;
+    HFONT hFont, hOldFont;
+
+    ppfi = (PPAINTFONTINFO) lParam;  // Translate lParam into struct
+                                     // pointer.
+
+    // Create the font from the LOGFONT structure passed.
+    hFont = CreateFontIndirect (lplf);
+
+    // Select the font into the device context.
+    hOldFont = SelectObject (ppfi-&gt;hdc, hFont);
+
+    // Compute font size. 
+    nPointSize = (lplf-&gt;lfHeight * 72) / 
+                 GetDeviceCaps(ppfi-&gt;hdc,LOGPIXELSY);
+
+    // Format string and paint on display.
+    wsprintf (szOut, TEXT (&quot;%s   Point:%d&quot;), lplf-&gt;lfFaceName, 
+              nPointSize);
+    ExtTextOut (ppfi-&gt;hdc, 25, ppfi-&gt;yCurrent, 0, NULL,
+                szOut, lstrlen (szOut), NULL);
+
+    // Compute the height of the default font.
+    nFontHeight = lpntm-&gt;tmHeight + lpntm-&gt;tmExternalLeading;
+    // Update new draw point.
+    ppfi-&gt;yCurrent += nFontHeight;
+
+    // Deselect font and delete.
+    SelectObject (ppfi-&gt;hdc, hOldFont);
+    DeleteObject (hFont);
+    return 1;
+}
+//================================================================
+// Message handling procedures for MainWindow
+//
+//----------------------------------------------------------------
+// MainWndProc - Callback function for application window
+//
+LRESULT CALLBACK MainWndProc (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                              LPARAM lParam) {
+    INT i;
+    //
+    // Search message list to see if we need to handle this
+    // message.  If in list, call procedure.
+    //
+    for (i = 0; i &lt; dim(MainMessages); i++) {
+        if (wMsg == MainMessages[i].Code)
+            return (*MainMessages[i].Fxn)(hWnd, wMsg, wParam, lParam);
+    }
+    return DefWindowProc (hWnd, wMsg, wParam, lParam);
+}
+//----------------------------------------------------------------------
+// DoCreateMain - Process WM_CREATE message for window.
+//
+LRESULT DoCreateMain (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                      LPARAM lParam) {
+    HWND hwndCB;
+    HDC hdc;
+    INT i, rc;
+
+    // Create a command bar.
+    hwndCB = CommandBar_Create (hInst, hWnd, IDC_CMDBAR);
+
+    // Add exit button to command bar. 
+    CommandBar_AddAdornments (hwndCB, 0, 0);
+
+    //Enumerate the available fonts.
+    hdc = GetDC (hWnd);
+    rc = EnumFontFamilies ((HDC)hdc, (LPTSTR)NULL, 
+        FontFamilyCallback, 0);
+
+    for (i = 0; i &lt; sFamilyCnt; i++) {
+        ffs[i].nNumFonts = 0;
+        rc = EnumFontFamilies ((HDC)hdc, ffs[i].szFontFamily, 
+                               EnumSingleFontFamily, 
+                               (LPARAM)(PFONTFAMSTRUCT)&amp;ffs[i]);
+    }
+    ReleaseDC (hWnd, hdc);
+    return 0;
+}
+
+//---------------------------------------------------------------
+// DoPaintMain - Process WM_PAINT message for window.
+//
+LRESULT DoPaintMain (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                     LPARAM lParam) {
+    PAINTSTRUCT ps;
+    RECT rect;
+    HDC hdc;
+    TEXTMETRIC tm;
+    INT nFontHeight, i;
+    TCHAR szOut[256];
+    PAINTFONTINFO pfi;
+
+    // Adjust the size of the client rect to take into account
+    // the command bar height.
+    GetClientRect (hWnd, &amp;rect);
+    rect.top += CommandBar_Height (GetDlgItem (hWnd, IDC_CMDBAR));
+
+    hdc = BeginPaint (hWnd, &amp;ps); 
+
+    // Get the height of the default font.
+    GetTextMetrics (hdc, &amp;tm);
+    nFontHeight = tm.tmHeight + tm.tmExternalLeading;
+
+    // Initialize struct that is passed to enumerate function.
+    pfi.yCurrent = rect.top;
+    pfi.hdc = hdc;
+    for (i = 0; i &lt; sFamilyCnt; i++) {
+
+        // Format output string and paint font family name.
+        wsprintf (szOut, TEXT(&quot;Family: %s   &quot;),
+                  ffs[i].szFontFamily);
+        ExtTextOut (hdc, 5, pfi.yCurrent, 0, NULL,
+                    szOut, lstrlen (szOut), NULL);
+        pfi.yCurrent += nFontHeight;
+
+        // Enumerate each family to draw a sample of that font.
+        EnumFontFamilies ((HDC)hdc, ffs[i].szFontFamily, 
+                          PaintSingleFontFamily, 
+                          (LPARAM)&amp;pfi);
+    }
+    EndPaint (hWnd, &amp;ps); 
+    return 0;
+}
+//----------------------------------------------------------------
+// DoDestroyMain - Process WM_DESTROY message for window.
+//
+LRESULT DoDestroyMain (HWND hWnd, UINT wMsg, WPARAM wParam, 
+                       LPARAM lParam) {
+    PostQuitMessage (0);
+    return 0;
+}
+</pre>
+</td></tr></table>
+
+<P>Enumerating the different fonts begins when the application is processing the WM_CREATE message in <I>OnCreateMain</I>. Here, <I>EnumFontFamilies</I> is called with the <I>FontFamily</I> field set to NULL so that each family will be enumerated. The callback function is <I>FontFamilyCallback</I>, where the name of the font family is copied into an array of strings.
+
+<P>The remainder of the work is performed during the processing of the WM_PAINT message. The <I>OnPaintMain</I> function begins with the standard litany of getting the size of the area below the command bar and calling <I>BeginPaint</I>, which returns the handle to the device context of the window. <I>GetTextMetrics</I> is then called to compute the row height of the default font. A loop is then entered in which <I>EnumerateFontFamilies</I> is called for each family name that had been stored during the enumeration process in <I>OnCreateMain</I>. The callback process for this callback sequence is somewhat more complex than the code we've seen so far.
+
+<P>The <I>PaintSingleFontFamily</I> callback procedure, used in the enumeration of the individual fonts, employs the <I>lParam</I> parameter to retrieve a pointer to a PAINTFONTINFO structure defined in FontList.h. This structure contains the current vertical drawing position as well as the handle to the device context. By using the <I>lParam</I> pointer, FontList avoids having to declare global variables to communicate with the callback procedure.
+
+<P>The callback procedure next creates the font using the pointer to LOGFONT that was passed to the callback procedure. The new font is then selected into the device context, while the handle to the previously selected font is retained in <I>hOldFont</I>. The point size of the enumerated font is computed using the inverse of the equation mentioned earlier in the chapter. The callback procedure then produces a line of text showing the name of the font family along with the point size of this particular font. Instead of using <I>DrawText</I>, the callback uses a different text output function:
+
+<p><pre>
+BOOL ExtTextOut (HDC hdc, int X, int Y, UINT fuOptions,
+                 const RECT *lprc, LPCTSTR lpString,
+                 UINT cbCount, const int *lpDx);
+</pre>
+
+<P>The <I>ExtTextOut</I> function has a few advantages over <I>DrawText</I> in this situation. First, <I>ExtTextOut</I> tends to be faster for drawing single lines of text. Second, instead of formatting the text inside a rectangle, <I>x</I> and <I>y</I> starting coordinates are passed, specifying the upper left corner of the rectangle where the text will be drawn. The <I>rect</I> parameter that's passed is used as a clipping rectangle, or if the background mode is opaque, the area where the background color is drawn. This rectangle parameter can be NULL if you don't want any clipping or opaquing. The next two parameters are the text and the character count. The last parameter, <I>ExtTextOut,</I> allows an application to specify the horizontal distance between adjacent character cells. In our case, this parameter is set to NULL also, which results in the default separation between characters.
+
+<P>Windows CE differs from other versions of Windows in having only these two text drawing functions for displaying text. Most of what you can do with the other text functions typically used in other versions of Windows, such as <I>TextOut</I> and <I>TabbedTextOut</I>, can be emulated using either <I>DrawText</I> or <I>ExtTextOut</I>. This is one of the areas in which Windows CE has broken with earlier versions of Windows, sacrificing backward compatibility to achieve a smaller operating system.
+
+<P>After displaying the text, the function computes the height of the line of text just drawn using the combination of <I>tmHeight</I> and <I>tmExternalLeading</I> that was provided in the passed TEXTMETRIC structure. The new font is then deselected using a second call to <I>SelectObject</I>, this time passing the handle to the font that was the original selected font. The new font is then deleted using <I>DeleteObject</I>. Finally, the callback function returns a nonzero value to indicate to Windows that it is okay to make another call to the <I>enumerate</I> callback.
+
+<P>Figure 2-5 shows the FontListing window. Notice that the font names are displayed in that font and that each font has a specific set of available sizes.
+
+<P><A HREF="javascript:fullSize('f02rg05x.htm')"> <img src="f02rg05.jpg" width=404 height=203 border="0" ALT="Click to view at full size."></a>
+<P><!-- caption --><B>Figure 2-5.</B> <I>The FontList window shows some of the available fonts for a Handheld PC.</I><!-- /caption -->
+
+<A NAME="55"><H3>Unfinished business</H3></A>
+
+<P>If you look closely at Figure 2-5, you'll notice a problem with the display. The list of fonts just runs off the bottom edge of the FontList window. At this point in a book covering the desktop versions of Windows, the author might add a window style flag for a vertical scroll bar and a small amount of code, and magically, the program would have a scrollable window. But if you do that to a Windows CE main window, you end up with the look shown in Figure 2-6.
+
+<P><A HREF="javascript:fullSize('f02rg06x.htm')"> <img src="f02rg06.jpg" width=404 height=203 border="0" ALT="Click to view at full size."></a>
+<P><!-- caption --><B>Figure 2-6.</B> <I>The FontList window with a scrollbar attached to the main window.</I><!-- /caption -->
+
+<P>Notice how the scroll bar extends past the right side of the command bar up to the top of the window. The scroll bar should stop below the command bar and the command bar should extend to the right edge of the window. The problem is that the command bar lies in the client area of the window, and the default scroll bar style provided by all Windows operating systems places the scroll bar outside the client area, in the nonclient space along the edge of the window. The solution to this problem involves creating a child window inside our main window and letting it do the scrolling. But since I'll provide a complete explanation of child windows in <A HREF="ch04a.htm">Chapter 4</a>, I'll hold off describing how to properly implement a scroll bar until then.
+
+</BODY>
+</HTML>
+
+
+
+

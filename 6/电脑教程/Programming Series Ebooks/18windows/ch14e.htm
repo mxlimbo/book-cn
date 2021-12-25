@@ -1,0 +1,2663 @@
+<HTML>
+<HEAD>
+	<LINK REL=StyleSheet HREF="petzoldi.css" TYPE="text/css">
+<title>The GDI Bitmap Object</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff">
+<A NAME="441"><h1>The GDI Bitmap Object</h1></A>
+I mentioned earlier in this chapter that Windows has supported a GDI bitmap object 
+since version 1.0. Because of the introduction of the device-independent bitmap in Windows 
+3.0, the GDI Bitmap Object is sometimes now also known as the device-dependent 
+bitmap, or DDB. I will tend not to use the full, spelled-out term 
+<I>device-dependent bitmap</I> because at a quick glance the words can be confused with 
+<I>device-independent bitmap</I>. The abbreviation DDB is better because it is more easily visually distinguished from DIB.
+<P>The existence of two different types of bitmaps has created much confusion for 
+programmers first coming to Windows in the version 3.0 and later days. Many veteran 
+Windows programmers also have problems understanding the precise relationship 
+between the DIB and the DDB. (I'm afraid the Windows 3.0 version of this book did not help 
+clarify this subject.) Yes, the DIB and DDB are related in some ways: DIBs can be converted 
+to DDBs and vice versa (although with some loss of information). Yet the DIB and the 
+DDB are not interchangeable and are not simply alternative methods for representing the 
+same visual data.
+<P>It would certainly be convenient if we could assume that DIBs have made 
+DDBs obsolete. Yet that is not the case. The DDB still plays a very important role in 
+Windows, particularly if you care about performance.
+
+<A NAME="442"><h2>Creating a DDB</h2></A><P>The DDB is one of several graphics objects (including pens, brushes, fonts, metafiles, 
+and palettes) defined in the Windows Graphics Device Interface. These graphics objects 
+are stored internally in the GDI module and referred to by application programs with 
+numerical handles. You store a handle to a DDB in a variable of type HBITMAP (&quot;handle to a 
+bitmap&quot;). For example,
+<p><pre>
+HBITMAP hBitmap ;
+</PRE>
+<P>You then obtain the handle by calling one of the DDB-creation functions: for 
+example, <I>CreateBitmap</I>. These functions allocate and initialize some memory in GDI memory to 
+store information about the bitmap as well as the actual bitmap bits. The application 
+program does not have direct access to this memory. The bitmap is independent of any 
+device context. When the program is finished using the bitmap, it should be deleted:
+<p><pre>
+DeleteObject (hBitmap) ;
+</PRE>
+<P>You could do this when the program is terminating if you're using the DDB 
+throughout the time the program is running.
+<P>The <I>CreateBitmap</I> function looks like this:
+<p><pre>
+hBitmap = CreateBitmap (cx, cy, cPlanes, cBitsPixel, bits) ;
+</PRE>
+<P>The first two arguments are the width and height of the bitmap in pixels. The third 
+argument is the number of color planes and the fourth argument is the number of bits per 
+pixel. The fifth argument points to an array of bits organized in accordance with the 
+specified color format. You can set the last argument to NULL if you do not want to initialize 
+the DDB with the pixel bits. The pixel bits can be set later.
+<P>When you use this function, Windows will let you create any bizarre type of 
+GDI bitmap object you'd like. For example, suppose you want a bitmap with a width of 7 
+pixels, a height of 9 pixels, 5 color planes, and 3 bits per pixel. Just do it like so,
+<p><pre>
+hBitmap = CreateBitmap (7, 9, 5, 3, NULL) ;
+</PRE>
+<P>and Windows will gladly give you a valid bitmap handle.
+<P>What happens during this function call is that Windows saves the information 
+you've passed to the function and allocates memory for the pixel bits. A rough calculation 
+indicates that this bitmap requires 7 times 9 times 5 times 3, or 945 bits, which is 118 
+bytes and change.
+<P>However, when Windows allocates memory for the bitmap, each row of pixels 
+has an even number of bytes. Thus,
+<p><pre>
+iWidthBytes = 2 * ((cx * cBitsPixel + 15) / 16) ;
+</PRE>
+<P>or, as a C programmer might tend to write it,
+<p><pre>
+iWidthBytes = (cx * cBitsPixel + 15) &amp; ~15) &gt;&gt; 3 ;
+</PRE>
+<P>The memory allocated for the DDB is therefore
+<p><pre>
+iBitmapBytes = cy * cPlanes * iWidthBytes ;
+</PRE>
+<P>In our example, <I>iWidthBytes</I> is 4 bytes, and 
+<I>iBitmapBytes</I> is 180 bytes.
+<P>Now, what does it mean to have a bitmap with 5 color planes and 3 color bits 
+per pixel? Not a whole heck of a lot. It doesn't even mean enough to call it an academic 
+exercise. You have caused GDI to allocate some internal memory, and this memory has 
+a specific organization, but it doesn't mean anything, and you can't do anything useful 
+with this bitmap.
+<P>In reality, you will call <I>CreateBitmap</I> with only two types of arguments:
+<UL>
+<p><li><I>     cPlanes</I> and <I>cBitsPixel</I> both equal to 1 (indicating a monochrome bitmap); or
+<p><li><I>     cPlanes</I> and <I>cBitsPixel</I> equal to the values for a particular device context, 
+which you can obtain from the <I>GetDeviceCaps</I> function by using the PLANES 
+and BITSPIXEL indices.
+</UL>
+<P>In a much &quot;realer&quot; reality, you will call 
+<I>CreateBitmap</I> only for the first case. For 
+the second case, you can simplify things using 
+<I>CreateCompatibleBitmap</I>:
+<p><pre>
+hBitmap = CreateCompatibleBitmap (hdc, cx, cy) ;
+</PRE>
+<P>This function creates a bitmap compatible with the device whose device context handle 
+is given by the first parameter. 
+<I>CreateCompatibleBitmap</I> uses the device context handle 
+to obtain the <I>GetDeviceCaps</I> information that it then passes to 
+<I>CreateBitmap</I>. Aside from having the same memory organization as a real device context, the DDB is not 
+otherwise associated with the device context.
+<P>The <I>CreateDiscardableBitmap</I> function has the same parameters as 
+<I>CreateCompatibleBitmap</I> and is functionally equivalent to it. In earlier versions of Windows, 
+<I>CreateDiscardableBitmap</I> created a bitmap that Windows could discard from memory if 
+memory got low. The program would then have to regenerate the bitmap data.
+<P>The third bitmap-creation function is 
+<I>CreateBitmapIndirect</I>,
+<p><pre>
+hBitmap CreateBitmapIndirect (&amp;bitmap) ;
+</PRE>
+<P>where <I>bitmap</I> is a structure of type BITMAP. The BITMAP structure is defined like so:
+<p><pre>
+typedef struct _tagBITMAP
+{
+     LONG   bmType ;        // set to 0
+     LONG   bmWidth ;       // width in pixels
+     LONG   bmHeight ;      // height in pixels
+     LONG   bmWidthBytes ;  // width of row in bytes
+     WORD   bmPlanes ;      // number of color planes
+     WORD   bmBitsPixel ;   // number of bits per pixel
+     LPVOID bmBits ;        // pointer to pixel bits
+}
+BITMAP, * PBITMAP ;
+</PRE>
+<P>When calling the <I>CreateBitmapIndirect</I> function, you don't need to set the 
+<I>bmWidthBytes</I> field. Windows will calculate that for you. You can also set the 
+<I>bmBits</I> field to NULL or to the address of pixel bits to initialize the bitmap.
+<p>The BITMAP structure is also used in the 
+<I>GetObject</I> function. First define a 
+structure of type BITMAP,
+<p><pre>
+BITMAP bitmap ;
+</PRE>
+<P>and call the function like so:
+<p><pre>
+GetObject (hBitmap, sizeof (BITMAP), &amp;bitmap) ;
+</PRE>
+<P>Windows will fill in the fields of the BITMAP structure with information about the 
+bitmap. However, the <I>bmBits</I> field will be equal to NULL.
+<P>You should eventually destroy any bitmap that you create in a program with a 
+call to <I>DeleteObject</I>.
+
+<A NAME="443"><h2>The Bitmap Bits</h2></A><P>When you create a device-dependent GDI bitmap object by using 
+<I>CreateBitmap</I> or <I>CreateBitmapIndirect</I>, you can specify a pointer to the bitmap pixel bits. Or you can leave 
+the bitmap uninitialized. Windows also supplies two functions to get and set the pixel bits 
+after the bitmap has been created.
+<P>To set the pixel bits, call
+<p><pre>
+SetBitmapBits (hBitmap, cBytes, &amp;bits) ;
+</PRE>
+<P>The <I>GetBitmapBits</I> function has the same syntax:
+<p><pre>
+GetBitmapBits (hBitmap, cBytes, &amp;bits) ;
+</PRE>
+<P>In both functions, <I>cBytes</I> indicates the number of bytes to copy and 
+<I>bits</I> is a buffer of at least <I>cBytes</I> size.
+<P>The pixel bits in DDBs are arranged beginning with the top row. As I 
+mentioned earlier, each row has an even number of bytes. Beyond that, there's not too much to 
+say. If the bitmap is monochrome, which means it has 1 plane and 1 bit per pixel, then 
+each pixel is either 1 or 0. The leftmost pixel in each row is the most significant bit of the 
+first byte in the row. We'll make a monochrome DDB later in this chapter after we figure 
+out how to display them.
+<P>For nonmonochrome bitmaps, you should avoid situations where you need to 
+know what the pixel bits mean. For example, suppose Windows is running on an 8-bit VGA. 
+You call <I>CreateCompatibleBitmap</I>. You can determine from 
+<I>GetDeviceCaps</I> that you're dealing with a device that has 1 color plane and 8 bits per pixel. Each pixel is stored in 1 byte. But what does a pixel of value 0x37 mean? It obviously refers to some color, but what color?
+<P>The pixel actually doesn't refer to any fixed specific color. It's just a value. DDBs 
+do not have a color table. The essential question is: 
+<I>what color is the pixel when the DDB gets displayed on the 
+screen?</I> It has to be some color, so what is it? The displayed pixel will 
+be the RGB color referenced by an index value of 0x37 in the palette lookup table on the 
+video board. Now that's device dependence for you.
+<P>However, do not assume that the nonmonochrome DDB is useless just because 
+we don't know what the pixel values mean. We'll see shortly how useful they can be. And 
+in the next chapter we'll see how the 
+<I>SetBitmapBits</I> and <I>GetBitmapBits</I> functions have 
+been superseded by the more useful 
+<I>SetDIBits</I> and <I>GetDIBits</I> functions.
+<P>So, the basic rule is this: you will not be using 
+<I>CreateBitmap</I> or <I>CreateBitmapIndirect</I> or 
+<I>SetBitmapBits</I> to set the bits of a color DDB. You can safely set the bits of only a 
+monochrome DDB. (The exception to this rule is if you get the bits from another DDB of 
+the same format through a call to 
+<I>GetBitmapBits</I>.)
+<P>Before we move on, let me just mention the 
+<I>SetBitmapDimensionEx</I> and 
+<I>GetBitmapDimensionEx</I> functions. These functions let you set (and obtain) a metrical 
+dimension of a bitmap in 0.1 millimeter units. This information is stored in GDI along with the 
+bitmap definition, but it's not used for anything. It's just a tag that you can use to associate a 
+metrical dimension with a DDB.
+
+<A NAME="444"><h2>The Memory Device Context</h2></A><P>The next concept we must tackle is that of the 
+<I>memory device context</I>. You need a memory device context to use a GDI bitmap object.
+<P>Normally, a device context refers to a particular graphics output device (such as 
+a video display or a printer) together with its device driver. A memory device context 
+exists only in memory. It is not a real graphics output device, but is said to be &quot;compatible&quot; 
+with a particular real device.
+<P>To create a memory device context, you must first have a device context handle 
+for a real device. If it's <I>hdc</I>, you create a memory device context like so:
+<p><pre>
+hdcMem = CreateCompatibleDC (hdc) ;
+</PRE>
+<P>Usually the function call is even simpler than this. If you specify NULL as the 
+argument, Windows will create a memory device context compatible with the video display. 
+Any memory device context that an application creates should eventually be destroyed with 
+a call to <I>DeleteDC</I>.
+<P>The memory device context has a display surface just like a real raster device. 
+However, this display surface is initially very small&#8212;it's monochrome, 1 pixel wide and 1 
+pixel high. The display surface is just a single bit.
+<P>You can't do much with a 1-bit display surface, of course, so the only practical 
+next step is to make the display surface larger. You do this by selecting a GDI bitmap 
+object into the memory device context, like so:
+<p><pre>
+SelectObject (hdcMem, hBitmap) ;
+</PRE>
+<P>This is the same function you use for selecting pens, brushes, fonts, regions, and 
+palettes into device contexts. However, the memory device context is the only type of device 
+context into which you can select a bitmap. (You can also select other GDI objects into a 
+memory device context if you need to.)
+<P><I>SelectObject</I> will work only if the bitmap you select into the memory device 
+context is either monochrome or has the same color organization as the device with which 
+the memory device context is compatible. That's why creating a bizarre DDB (for 
+example, with 5 planes and 3 bits per pixel) is not useful.
+<P>Now get this: Following the <I>SelectObject</I> call, 
+<I>the DDB is the display surface of the memory device 
+context</I>. You can do almost anything with this memory device context 
+that you can do with a real device context. For example, if you use GDI drawing functions 
+to draw on the memory device context, the images are drawn on the bitmap. This can be 
+very useful. You can also call <I>BitBlt</I> using the memory device context as a source and the 
+video device context as a destination. This is how you can draw a bitmap on the display. 
+And you can call <I>BitBlt</I> using the video device context as a source and a memory device 
+context as a destination to copy something from the screen to a bitmap. We'll be looking 
+at all these possibilities.
+
+<A NAME="445"><h2>Loading Bitmap Resources</h2></A><P>Besides the various bitmap creation functions, another way to get a handle to a GDI 
+bitmap object is through the <I>LoadBitmap</I> function. With this function, you don't have to worry 
+about bitmap formats. You simply create a bitmap as a resource in your program, similar to 
+the way you create icons or mouse cursors. The 
+<I>LoadBitmap</I> function has the same syntax as 
+<I>LoadIcon</I> and <I>LoadCursor</I>:
+<p><pre>
+hBitmap = LoadBitmap (hInstance, szBitmapName) ;
+</PRE>
+<P>The first argument can be NULL if you want to load a system bitmap. These are the 
+various bitmaps used for little parts of the Windows visual interface such as the close box 
+and check marks, with identifiers beginning with the letters OBM. The second argument 
+can use the MAKEINTRESOURCE macro if the bitmap is associated with an integer 
+identifier rather than a name. All bitmaps loaded by 
+<I>LoadBitmap</I> should eventually be deleted using 
+<I>DeleteObject</I>.
+<P>If the bitmap resource is monochrome, the handle returned from 
+<I>LoadBitmap</I> will reference a monochrome bitmap object. If the bitmap resource is not monochrome, 
+then the handle returned from <I>LoadBitmap</I> will reference a GDI bitmap object with a 
+color organization the same as the video display on which the program is running. Thus, 
+the bitmap is always compatible with the video display and can always be selected into 
+a memory device context compatible with the video display. Don't worry right now 
+about any color conversions that may have gone on behind the scenes during the 
+<I>LoadBitmap</I> call. We'll understand how this works after the next chapter.
+<P>The BRICKS1 program shown in Figure 14-5 shows how to load a small 
+monochrome bitmap resource. This bitmap doesn't exactly look like a brick by itself but when 
+repeated horizontally and vertically resembles a wall of bricks.
+
+<p><B>Figure 14-5.</b> <i>The BRICKS1 program.</I>
+<TABLE cellpadding=5 width="95%"><tr><td>
+
+<A NAME="446"><H3>BRICKS1.C</H3></A>
+<pre>/*----------------------------------------
+   BRICKS1.C -- LoadBitmap Demonstration
+                (c) Charles Petzold, 1998
+  ----------------------------------------*/
+
+
+#include &lt;windows.h&gt;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+ {
+     static TCHAR szAppName [] = TEXT (&quot;Bricks1&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;LoadBitmap Demo&quot;), 
+                          WS_OVERLAPPEDWINDOW, 
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static HBITMAP hBitmap ;
+     static int     cxClient, cyClient, cxSource, cySource ;
+     BITMAP         bitmap ;
+     HDC            hdc, hdcMem ;
+     HINSTANCE      hInstance ;
+     int            x, y ;
+     PAINTSTRUCT    ps ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+          hInstance = ((LPCREATESTRUCT) lParam)-&gt;hInstance ;
+
+          hBitmap = LoadBitmap (hInstance, TEXT (&quot;Bricks&quot;)) ;
+
+          GetObject (hBitmap, sizeof (BITMAP), &amp;bitmap) ;
+
+          cxSource = bitmap.bmWidth ;
+          cySource = bitmap.bmHeight ;
+
+          return 0 ;
+
+     case WM_SIZE:
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+          return 0 ;
+
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+
+          hdcMem = CreateCompatibleDC (hdc) ;
+          SelectObject (hdcMem, hBitmap) ;
+
+          for (y = 0 ; y &lt; cyClient ; y += cySource)
+          for (x = 0 ; x &lt; cxClient ; x += cxSource)
+          {
+               BitBlt (hdc, x, y, cxSource, cySource, hdcMem, 0, 0, SRCCOPY) ;
+          }
+
+          DeleteDC (hdcMem) ;
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+
+     case WM_DESTROY:
+          DeleteObject (hBitmap) ;
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}</pre>
+</td></tr></table>
+<p><table cellpadding=5 width="95%"><tr><td>
+<A NAME="447"><H3>BRICKS1.RC (excerpts)</H3></A>
+<P><pre>
+//Microsoft Developer Studio generated resource script.
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+// Bitmap
+
+BRICKS                  BITMAP  DISCARDABLE     &quot;Bricks.bmp&quot;
+</PRE>
+</td></tr></table>
+<A NAME="448"><H3>BRICKS.BMP</H3></A><P><IMG SRC="F14zg05.GIF" width=49 height=49 ALIGN="BOTTOM" border=0> 
+<P>When creating the bitmap in Visual C++ Developer Studio, specify that the 
+bitmap's height and width are 8 pixels, that it's monochrome, and that it has a name of &quot;Bricks&quot;. 
+The BRICKS1 program loads the bitmap during the WM_CREATE message and uses 
+<I>GetObject</I> to determine its pixel dimensions (so that the program will still work if the bitmap isn't 
+8 pixels square). BRICKS1 later deletes the bitmap handle during the WM_DESTROY message.
+<P>During the WM_PAINT message, BRICKS1 creates a memory device context 
+compatible with the display and selects the bitmap into it. Then it's just a series of 
+<I>BitBlt</I> calls from the memory device context to the client area device context. The memory device 
+context handle is then deleted. The program is shown running in Figure 14-6.
+<P>By the way, the BRICKS.BMP file that Developer Studio creates is a 
+device-independent bitmap. You may want to try creating a color BRICKS.BMP file in Developer Studio 
+(of whatever color format you choose) and assure yourself that everything works just fine.
+<P>We've seen that DIBs can be converted to GDI bitmap objects that are 
+compatible with the video display. We'll see how this works in the next chapter.
+<P><A HREF="javascript:fullSize('F14zg06x.htm')"><IMG SRC="F14zg06.JPG" width=404 height=285 ALIGN="BOTTOM" border=0 ALT="Click to view at full size."></a> 
+<P><!-- caption --><B>Figure 14-6.</b> <i>The BRICKS1 display.</I><!-- /caption -->
+
+<A NAME="449"><h2>The Monochrome Bitmap Format</h2></A>
+If you're working with small monochrome images, you don't have to create them as 
+resources. Unlike color bitmap objects, the format of monochrome bits is relatively 
+simple and can almost be derived directly from the image you want to create. For instance, 
+suppose you want to create a bitmap that looks like this:
+<P><A HREF="javascript:fullSize('G14zg02x.htm')"><IMG SRC="G14zg02.JPG" width=404 height=101 ALIGN="BOTTOM" border=0 ALT="Click to view at full size."></a>
+<P>You can write down a series of bits (0 for black and 1 for white) that directly 
+corresponds to this grid. Reading these bits from left to right, you can then assign each 
+group of 8 bits a hexadecimal byte. If the width of the bitmap is not a multiple of 16, pad 
+the bytes to the right with zeros to get an even number of bytes:
+<pre>
+<P>0 1 0 1 0 0 0 1 0 1 1 1 0 1 1 1 0 0 0 1 = 51 77 10 00
+<P>0 1 0 1 0 1 1 1 0 1 1 1 0 1 1 1 0 1 0 1 = 57 77 50 00
+<P>0 0 0 1 0 0 1 1 0 1 1 1 0 1 1 1 0 1 0 1 = 13 77 50 00
+<P>0 1 0 1 0 1 1 1 0 1 1 1 0 1 1 1 0 1 0 1 = 57 77 50 00
+<p>0 1 0 1 0 0 0 1 0 0 0 1 0 0 0 1 0 0 0 1 = 51 11 10 00
+</pre>
+
+<p>The width in pixels is 20, the height in scan lines is 5, and the width in bytes is 
+4. You can set up a BITMAP structure for this bitmap with this statement,
+<p><pre>
+static BITMAP bitmap    = { 0, 20, 5, 4, 1, 1 } ;
+</PRE>
+<P>and you can store the bits in a BYTE array:
+<p><pre>
+static BYTE  bits [] = { 0x51, 0x77, 0x10, 0x00,
+                         0x57, 0x77, 0x50, 0x00,
+                         0x13, 0x77, 0x50, 0x00,
+                         0x57, 0x77, 0x50, 0x00,
+                         0x51, 0x11, 0x10, 0x00 } ;
+</PRE>
+<P>Creating the bitmap with 
+<I>CreateBitmapIndirect</I> requires two statements:
+<p><pre>
+bitmap.bmBits = (PSTR) bits ;
+hBitmap = CreateBitmapIndirect (&amp;bitmap) ;
+</PRE>
+<P>Another approach is
+<p><pre>
+hBitmap = CreateBitmapIndirect (&amp;bitmap) ;
+SetBitmapBits (hBitmap, sizeof bits, bits) ;
+</PRE>
+<P>You can also create the bitmap in one statement:
+<p><pre>
+hBitmap = CreateBitmap (20, 5, 1, 1, bits) ;
+</PRE>
+<P>The BRICKS2 program shown in Figure 14-7 uses this technique to create the 
+bricks bitmap directly without requiring a resource.
+<p><B>Figure 14-7.</b> <i>The BRICKS2 program.     </I>
+<TABLE cellpadding=5 width="95%"><tr><td>
+
+<A NAME="450"><H3>BRICKS2.C</H3></A><pre>/*-----------------------------------------
+   BRICKS2.C -- CreateBitmap Demonstration
+                (c) Charles Petzold, 1998
+
+  -----------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName [] = TEXT (&quot;Bricks2&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;CreateBitmap Demo&quot;), 
+                          WS_OVERLAPPEDWINDOW, 
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static BITMAP  bitmap = { 0, 8, 8, 2, 1, 1 } ;
+     static BYTE    bits [8][2] = { 0xFF, 0, 0x0C, 0, 0x0C, 0, 0x0C, 0,
+                                    0xFF, 0, 0xC0, 0, 0xC0, 0, 0xC0, 0 } ;
+     static HBITMAP hBitmap ;
+     static int     cxClient, cyClient, cxSource, cySource ;
+     HDC            hdc, hdcMem ;
+     int            x, y ;
+     PAINTSTRUCT    ps ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+          bitmap.bmBits = bits ;
+          hBitmap = CreateBitmapIndirect (&amp;bitmap) ;
+          cxSource = bitmap.bmWidth ;
+          cySource = bitmap.bmHeight ;
+          return 0 ;
+
+     case WM_SIZE:
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+          return 0 ;
+
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+
+          hdcMem = CreateCompatibleDC (hdc) ;
+          SelectObject (hdcMem, hBitmap) ;
+
+          for (y = 0 ; y &lt; cyClient ; y += cySource)
+          for (x = 0 ; x &lt; cxClient ; x += cxSource)
+          {
+               BitBlt (hdc, x, y, cxSource, cySource, hdcMem, 0, 0, SRCCOPY) ;
+          }
+
+          DeleteDC (hdcMem) ;
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+
+     case WM_DESTROY:
+          DeleteObject (hBitmap) ;
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</pre>
+</td></tr></table>
+
+<p>You may be tempted to try something similar with a color bitmap. For example, 
+if your video display is running in a 256-color mode, you can use the table shown earlier 
+in this chapter to define each pixel for a color brick. However, this code 
+will not work when the program runs under any other video mode. Dealing with color 
+bitmaps in a device-independent manner requires use of the DIB discussed in the next chapter.
+
+<A NAME="451"><h2>Brushes from Bitmaps</h2></A>
+The final entry in the BRICKS series is BRICKS3, shown in Figure 14-8. At first glance 
+this program might provoke the reaction &quot;Where's the code?&quot;
+
+<p><B>Figure 14-8.</b> <i>The BRICKS3 program. </I>
+<table cellpadding=5 width="95%"><tr><td>
+<A NAME="452"><H3>BRICKS3.C</H3></A><pre>
+/*-----------------------------------------------
+   BRICKS3.C -- CreatePatternBrush Demonstration
+                (c) Charles Petzold, 1998
+  -----------------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName [] = TEXT (&quot;Bricks3&quot;) ;
+     HBITMAP      hBitmap ;
+     HBRUSH       hBrush ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+
+     hBitmap = LoadBitmap (hInstance, TEXT (&quot;Bricks&quot;)) ;
+     hBrush = CreatePatternBrush (hBitmap) ;
+     DeleteObject (hBitmap) ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = hBrush ; 
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;CreatePatternBrush Demo&quot;), 
+                          WS_OVERLAPPEDWINDOW, 
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+
+     DeleteObject (hBrush) ;
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     switch (message)
+     {
+     case WM_DESTROY:
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}</pre>
+</td></tr></table>
+<p><table cellpadding=5 width="95%"><tr><td>
+
+
+<A NAME="453"><H3>BRICKS3.RC (excerpts)</H3></A>
+<pre>//Microsoft Developer Studio generated resource script.
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+// Bitmap
+
+BRICKS                  BITMAP  DISCARDABLE     &quot;Bricks.bmp&quot;
+</pre>
+</td></tr></table>
+
+<p>This program uses the same BRICKS.BMP file as BRICKS1, and the window 
+looks the same.
+<p>As you can see, the window procedure doesn't do much of anything. BRICKS3 
+actually uses the bricks pattern as the window class background brush, which is defined 
+in the <I>hbrBackground</I> field of the WNDCLASS structure.
+<P>As you may have guessed by now, GDI brushes are tiny bitmaps, usually 8 
+pixels square. You can make a brush out of a bitmap by calling 
+<I>CreatePatternBrush</I> or by calling 
+<I>CreateBrushIndirect</I> with the <I>lbStyle</I> field of the LOGBRUSH structure set to BS_PATTERN. The bitmap must be least 8 pixels wide and 8 pixels high. If it's larger, 
+Windows 98 uses only the upper left corner of the bitmap for the brush. Windows NT, on the 
+other hand, doesn't have that restriction and will use the whole bitmap.
+<P>Remember that brushes and bitmaps are both GDI objects and you should delete 
+any that you create in your program before the program terminates. When you create a 
+brush based on a bitmap, Windows makes a copy of the bitmap bits for use when drawing 
+with the brush. You can delete the bitmap immediately after calling 
+<I>CreatePatternBrush</I> (or 
+<I>CreateBrushIndirect</I>) without affecting the brush. Similarly, you can delete the brush 
+without affecting the original bitmap you selected into it. Notice that BRICKS3 deletes the 
+bitmap after creating the brush and deletes the brush before terminating the program.
+
+<A NAME="454"><h2>Drawing on Bitmaps</h2></A><P>We've been using bitmaps as a source for drawing on our windows. This requires 
+selecting the bitmap into a memory device context and calling 
+<I>BitBlt</I> or <I>StretchBlt</I>. You can also use the handle to the memory device context as the first argument to virtually all the 
+GDI function calls. The memory device context behaves the same as a real device context 
+except that the display surface is the bitmap.
+<P>The HELLOBIT program shown in Figure 14-9 shows this technique. The 
+program displays the text string &quot;Hello, world!&quot; on a small bitmap and then does a 
+<I>BitBlt</I> or a <I>StretchBlt</I> (based on a menu selection) from the bitmap to the program's client area.
+<p><B>Figure 14-9.</b> <i>The HELLOBIT program. </I>
+<TABLE cellpadding=5 width="95%"><tr><td>
+
+<A NAME="455"><H3>HELLOBIT.C</H3></A><pre>/*-----------------------------------------
+   HELLOBIT.C -- Bitmap Demonstration
+
+                 (c) Charles Petzold, 1998
+  -----------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &quot;resource.h&quot;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName [] = TEXT (&quot;HelloBit&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+
+     WNDCLASS     wndclass ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = szAppName ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;HelloBit&quot;), 
+                          WS_OVERLAPPEDWINDOW, 
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static HBITMAP hBitmap ;
+     static HDC     hdcMem ;
+     static int     cxBitmap, cyBitmap, cxClient, cyClient, iSize = IDM_BIG ;
+     static TCHAR * szText = TEXT (&quot; Hello, world! &quot;) ;
+     HDC            hdc ;
+     HMENU          hMenu ;
+     int            x, y ;
+     PAINTSTRUCT    ps ;
+     SIZE           size ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+          hdc = GetDC (hwnd) ;
+          hdcMem  = CreateCompatibleDC (hdc) ;
+
+          GetTextExtentPoint32 (hdc, szText, lstrlen (szText), &amp;size) ;
+          cxBitmap = size.cx ;
+          cyBitmap = size.cy ;
+          hBitmap = CreateCompatibleBitmap (hdc, cxBitmap, cyBitmap) ;
+
+          ReleaseDC (hwnd, hdc) ;
+
+          SelectObject (hdcMem, hBitmap) ;
+          TextOut (hdcMem, 0, 0, szText, lstrlen (szText)) ;
+          return 0 ;
+
+     case WM_SIZE:
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+          return 0 ;
+
+     case WM_COMMAND:
+          hMenu = GetMenu (hwnd) ;
+
+          switch (LOWORD (wParam))
+          {
+          case IDM_BIG:
+          case IDM_SMALL:
+               CheckMenuItem (hMenu, iSize, MF_UNCHECKED) ;
+               iSize = LOWORD (wParam) ;
+               CheckMenuItem (hMenu, iSize, MF_CHECKED) ;
+               InvalidateRect (hwnd, NULL, TRUE) ;
+               break ;
+          }
+          return 0 ;
+
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+
+          switch (iSize)
+          {
+          case IDM_BIG:
+               StretchBlt (hdc, 0, 0, cxClient, cyClient, 
+                           hdcMem, 0, 0, cxBitmap, cyBitmap, SRCCOPY) ;
+               break ;
+
+          case IDM_SMALL:
+               for (y = 0 ; y &lt; cyClient ; y += cyBitmap)
+               for (x = 0 ; x &lt; cxClient ; x += cxBitmap)
+               {
+                    BitBlt (hdc, x, y, cxBitmap, cyBitmap, 
+                            hdcMem, 0, 0, SRCCOPY) ;
+               }
+               break ;
+          }
+
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+
+     case WM_DESTROY:
+          DeleteDC (hdcMem) ;
+          DeleteObject (hBitmap) ;
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</PRE>
+</td></tr></table>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<A NAME="456"><H3>HELLOBIT.RC (excerpts)</H3></A><PRE>//Microsoft Developer Studio generated resource script.
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+// Menu
+
+HELLOBIT MENU DISCARDABLE 
+BEGIN
+    POPUP &quot;&amp;Size&quot;
+    BEGIN
+        MENUITEM &quot;&amp;Big&quot;,                        IDM_BIG, CHECKED
+        MENUITEM &quot;&amp;Small&quot;,                      IDM_SMALL
+    END
+END
+</PRE>
+</td></tr></table>
+<p><table cellpadding=5 width="95%"><tr><td>
+
+<A NAME="457"><H3>RESOURCE.H (excerpts)</H3></A><PRE>// Microsoft Developer Studio generated include file.
+// Used by HelloBit.rc
+
+#define IDM_BIG                         40001
+#define IDM_SMALL                       40002
+</PRE>
+</td></tr></table>
+<P>The program begins by determining the pixel dimensions of the text string 
+through a call to <I>GetTextExtentPoint32</I>. These dimensions become the size of a bitmap 
+compatible with the video display. Once this bitmap is selected into a memory device context 
+(also compatible with the video display), a call to 
+<I>TextOut</I> puts the text on the bitmap. The memory device context is retained throughout the duration of the program. While 
+processing the WM_DESTROY message, HELLOBIT deletes both the bitmap and the memory 
+device context.
+<P>A menu selection in HELLOBIT allows you to display the bitmap at actual size 
+repeated horizontally and vertically in the client area or stretched to the size of the 
+client area as shown in Figure 14-10. As you can see, this is 
+<I>not</I> a good way to display text of large point sizes! It's just a magnified version of the smaller font, with all the jaggies 
+magnified as well.
+<P><A HREF="javascript:fullSize('F14zg10x.htm')"><IMG SRC="F14zg10.JPG" width=404 height=285 ALIGN="BOTTOM" border=0> </A>
+<P><!-- caption --><B>Figure 14-10.</b> <i>The HELLOBIT display.</I><!-- /caption -->
+<P>You may wonder if a program such as HELLOBIT needs to process the WM_DISPLAYCHANGE message. An application receives this message whenever the user 
+(or another application) changes the video display size or color depth. It could be that a 
+change to the color depth would cause the memory device context and the video device 
+context to become incompatible. Well, that doesn't happen because Windows automatically 
+changes the color resolution of the memory device context when the video mode is changed. 
+The bitmap selected into the memory device context remains the same, but that doesn't 
+seem to cause any problems.
+
+<A NAME="458"><h2>The Shadow Bitmap</h2></A><P>The technique of drawing on a memory device context (and hence a bitmap) is the 
+key to implementing a &quot;shadow bitmap.&quot; This is a bitmap that contains everything 
+displayed in the window's client area. WM_PAINT message processing thus reduces to a simple 
+<I>BitBlt</I>.
+<P>
+Shadow bitmaps are most useful in paint programs. The SKETCH program shown 
+in Figure 14-11 is not exactly the most sophisticated paint program around, but it's a start.
+<p><B>Figure 14-11.</b> <i>The SKETCH program.     </I>
+<table cellpadding=5 width="95%"><tr><td>
+<H3>SKETCH.C</H3>
+<PRE>/*-----------------------------------------
+   SKETCH.C -- Shadow Bitmap Demonstration
+               (c) Charles Petzold, 1998
+  -----------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName [] = TEXT (&quot;Sketch&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Sketch&quot;), 
+                          WS_OVERLAPPEDWINDOW, 
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+
+     if (hwnd == NULL)
+     {
+          MessageBox (NULL, TEXT (&quot;Not enough memory to create bitmap!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+void GetLargestDisplayMode (int * pcxBitmap, int * pcyBitmap)
+{
+     DEVMODE devmode ;
+     int     iModeNum = 0 ;
+
+     * pcxBitmap = * pcyBitmap = 0 ;
+
+     ZeroMemory (&amp;devmode, sizeof (DEVMODE)) ;
+     devmode.dmSize = sizeof (DEVMODE) ;
+     
+     while (EnumDisplaySettings (NULL, iModeNum++, &amp;devmode))
+     {
+          * pcxBitmap = max (* pcxBitmap, (int) devmode.dmPelsWidth) ;
+          * pcyBitmap = max (* pcyBitmap, (int) devmode.dmPelsHeight) ;
+     }
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static BOOL    fLeftButtonDown, fRightButtonDown ;
+     static HBITMAP hBitmap ;
+     static HDC     hdcMem ;
+     static int     cxBitmap, cyBitmap, cxClient, cyClient, xMouse, yMouse ;
+     HDC            hdc ;
+     PAINTSTRUCT    ps ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+          GetLargestDisplayMode (&amp;cxBitmap, &amp;cyBitmap) ;
+
+          hdc = GetDC (hwnd) ;
+          hBitmap = CreateCompatibleBitmap (hdc, cxBitmap, cyBitmap) ;
+          hdcMem  = CreateCompatibleDC (hdc) ;
+          ReleaseDC (hwnd, hdc) ;
+
+          if (!hBitmap)       // no memory for bitmap
+          {
+               DeleteDC (hdcMem) ;
+               return -1 ;
+          }
+
+          SelectObject (hdcMem, hBitmap) ;
+          PatBlt (hdcMem, 0, 0, cxBitmap, cyBitmap, WHITENESS) ;
+          return 0 ;
+
+     case WM_SIZE:
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+          return 0 ;
+
+     case WM_LBUTTONDOWN:
+          if (!fRightButtonDown)
+               SetCapture (hwnd) ;
+
+          xMouse = LOWORD (lParam) ;
+          yMouse = HIWORD (lParam) ;
+          fLeftButtonDown = TRUE ;
+          return 0 ;
+
+     case WM_LBUTTONUP:
+          if (fLeftButtonDown)
+               SetCapture (NULL) ;
+          
+          fLeftButtonDown = FALSE ;
+          return 0 ;
+          
+     case WM_RBUTTONDOWN:
+          if (!fLeftButtonDown)
+               SetCapture (hwnd) ;
+          
+          xMouse = LOWORD (lParam) ;
+          yMouse = HIWORD (lParam) ;
+          fRightButtonDown = TRUE ;
+          return 0 ;
+          
+     case WM_RBUTTONUP:
+          if (fRightButtonDown) 
+               SetCapture (NULL) ;
+          
+          fRightButtonDown = FALSE ;
+          return 0 ;
+
+     case WM_MOUSEMOVE:
+          if (!fLeftButtonDown &amp;&amp; !fRightButtonDown)
+               return 0 ;
+
+          hdc = GetDC (hwnd) ;
+
+          SelectObject (hdc, 
+               GetStockObject (fLeftButtonDown ? BLACK_PEN : WHITE_PEN)) ;
+
+          SelectObject (hdcMem,
+               GetStockObject (fLeftButtonDown ? BLACK_PEN : WHITE_PEN)) ;
+
+          MoveToEx (hdc,    xMouse, yMouse, NULL) ;
+          MoveToEx (hdcMem, xMouse, yMouse, NULL) ;
+
+          xMouse = (short) LOWORD (lParam) ;
+          yMouse = (short) HIWORD (lParam) ;
+
+          LineTo (hdc,    xMouse, yMouse) ;
+          LineTo (hdcMem, xMouse, yMouse) ;
+
+          ReleaseDC (hwnd, hdc) ;
+          return 0 ;
+
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+
+          BitBlt (hdc, 0, 0, cxClient, cyClient, hdcMem, 0, 0, SRCCOPY) ;
+
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+
+     case WM_DESTROY:
+          DeleteDC (hdcMem) ;
+          DeleteObject (hBitmap) ;
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</PRE>
+</td></tr></table>
+<P>To draw lines in SKETCH, you press the left mouse button and move the mouse. 
+To erase (or more precisely, to draw white lines), you press the right mouse button and 
+move the mouse. To clear the entire window, you&#8230;well, you have to end the program, load 
+it again, and start all over. Figure 14-12 shows the SKETCH program paying homage to 
+the early advertisements for the Apple Macintosh.
+<P><A HREF="javascript:fullSize('F14zg12x.htm')"><IMG SRC="F14zg12.JPG" width=404 height=285 ALIGN="BOTTOM" border=0> </A>
+<P><!-- caption --><B>Figure 14-12.</b> <i>The SKETCH display.</I><!-- /caption -->
+<P>How large should the shadow bitmap be? In this program, it should be large 
+enough to encompass the entire client area of a maximized window. This is easy enough to 
+calculate from <I>GetSystemMetrics</I> information, but what happens if the user changes the 
+display settings and makes the display, and hence the maximum window size, larger? 
+SKETCH implements a brute force solution to this problem with the help of the 
+<I>EnumDisplaySettings</I> function. This function uses a DEVMODE structure to return information on all the 
+available video display modes. Set the second argument to 
+<I>EnumDisplaySettings</I> to 0 the first time you call the function, and increase the value for each subsequent call. When 
+<I>EnumDisplaySettings</I> returns FALSE, you're finished.
+<P>With that information, SKETCH will create a shadow bitmap that can have more 
+than four times the surface area of the current video display mode and require multiple 
+megabytes of memory. For this reason, SKETCH checks to see if the bitmap has been 
+created and returns -1 from WM_CREATE to indicate an error if it has not.
+<P>SKETCH captures the mouse when the left or right mouse button is pressed and 
+draws lines on both the memory device context and the device context for the client area 
+during the WM_MOUSEMOVE message. If the drawing logic were any more complex, you'd 
+probably want to implement it in a function that the program calls twice&#8212;once for the 
+video device context and again for the memory device context.
+<P>Here's an interesting experiment: Make the SKETCH window less than the size 
+of the full screen. With the left mouse button depressed, draw something and let the 
+mouse pass outside the window at the right and bottom. Because SKETCH captures the 
+mouse, it continues to receive and process WM_MOUSEMOVE messages. Now expand the 
+window. You'll discover that the shadow bitmap includes the drawing you did 
+outside SKETCH's window!
+
+<A NAME="459"><h2>Using Bitmaps in Menus</h2></A>
+<P>You can also use bitmaps to display items in menus. If you immediately recoiled at 
+the thought of pictures of file folders, paste jars, and trash cans in a menu, don't think 
+of pictures. Think instead of how useful menu bitmaps might be for a drawing 
+program. Think of using different fonts and font sizes, line widths, hatch patterns, and colors 
+in your menus.
+<P>The sample program that demonstrates graphical menu items is called 
+GRAFMENU. The top-level menu of this program is shown in Figure 14-13 below. 
+The enlarged block letters are obtained from 40-by-16-pixel monochrome bitmap files 
+created in Visual C++ Developer Studio. Choosing FONT from the menu invokes a 
+popup containing three options&#8212;Courier New, Arial, and Times New Roman. These are the 
+standard Windows TrueType fonts, and each is displayed in its respective font, as you 
+can see in Figure 14-14 below. These bitmaps were created in the 
+program using a memory device context.
+<P><A HREF="javascript:fullSize('F14zg13x.htm')"><IMG SRC="F14zg13.JPG" width=404 height=286 ALIGN="BOTTOM" border=0> </A>
+<P><!-- caption --><B>Figure 14-13.</b> <i>The GRAFMENU program's top-level menu.</i><!-- /caption -->
+<P><A HREF="javascript:fullSize('F14zg14x.htm')"><IMG SRC="F14zg14.JPG" width=404 height=286 ALIGN="BOTTOM" border=0> </A>
+<P><!-- caption --><B>Figure 14-14.</b> <i>The GRAFMENU program's popup FONT menu.</I><!-- /caption -->
+<P>Finally, when you pull down the system menu, you see that you have access to 
+some &quot;help&quot; information, with the word &quot;Help&quot; perhaps mirroring the desperation of a 
+new user. (See Figure 14-15.) This 64-by-64-pixel monochrome bitmap was created in 
+Developer Studio.
+<P><A HREF="javascript:fullSize('F14zg15x.htm')"><IMG SRC="F14zg15.JPG" width=404 height=286 ALIGN="BOTTOM" border=0> </A>
+<P><!-- caption --><B>Figure 14-15.</b> <i>The GRAFMENU program's system menu.</I><!-- /caption -->
+<P>The GRAFMENU program, including the four bitmaps created in Developer 
+Studio, is shown in Figure 14-16.
+<p><B>Figure 14-16.</b> <i>The GRAFMENU program.</I>
+<table cellpadding=5 width="95%"><tr><td>
+<A NAME="460"><H3>GRAFMENU.C</H3></A>
+
+<P><PRE>
+/*----------------------------------------------
+   GRAFMENU.C -- Demonstrates Bitmap Menu Items
+                 (c) Charles Petzold, 1998
+  ----------------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &quot;resource.h&quot;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+void    AddHelpToSys     (HINSTANCE, HWND) ;
+HMENU   CreateMyMenu     (HINSTANCE) ;
+HBITMAP StretchBitmap    (HBITMAP) ;
+HBITMAP GetBitmapFont    (int) ;
+void    DeleteAllBitmaps (HWND) ;
+
+TCHAR szAppName[] = TEXT (&quot;GrafMenu&quot;) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+
+     HWND     hwnd ;
+     MSG      msg ;
+     WNDCLASS wndclass ;
+     
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Bitmap Menu Demonstration&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+     
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
+{
+     HMENU      hMenu ;
+     static int iCurrentFont = IDM_FONT_COUR ;
+     
+     switch (iMsg)
+     {
+     case WM_CREATE:
+          AddHelpToSys (((LPCREATESTRUCT) lParam)-&gt;hInstance, hwnd) ;
+          hMenu = CreateMyMenu (((LPCREATESTRUCT) lParam)-&gt;hInstance) ;
+          SetMenu (hwnd, hMenu) ;
+          CheckMenuItem (hMenu, iCurrentFont, MF_CHECKED) ;
+          return 0 ;
+          
+     case WM_SYSCOMMAND:
+          switch (LOWORD (wParam))
+          {
+          case IDM_HELP:
+               MessageBox (hwnd, TEXT (&quot;Help not yet implemented!&quot;),
+                           szAppName, MB_OK | MB_ICONEXCLAMATION) ;
+               return 0 ;
+          }
+          break ;
+          
+     case WM_COMMAND:
+          switch (LOWORD (wParam))
+          {
+          case IDM_FILE_NEW:
+          case IDM_FILE_OPEN:
+          case IDM_FILE_SAVE:
+          case IDM_FILE_SAVE_AS:
+          case IDM_EDIT_UNDO:
+          case IDM_EDIT_CUT:
+          case IDM_EDIT_COPY:
+          case IDM_EDIT_PASTE:
+          case IDM_EDIT_CLEAR:
+               MessageBeep (0) ;
+               return 0 ;
+                    
+          case IDM_FONT_COUR:
+          case IDM_FONT_ARIAL:
+          case IDM_FONT_TIMES:
+               hMenu = GetMenu (hwnd) ;
+               CheckMenuItem (hMenu, iCurrentFont, MF_UNCHECKED) ;
+               iCurrentFont = LOWORD (wParam) ;
+               CheckMenuItem (hMenu, iCurrentFont, MF_CHECKED) ;
+               return 0 ;
+          }
+          break ;
+               
+     case WM_DESTROY:
+          DeleteAllBitmaps (hwnd) ;
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowPr
+oc (hwnd, iMsg, wParam, lParam) ;
+}
+
+/*----------------------------------------------------
+   AddHelpToSys: Adds bitmap Help item to system menu
+  ----------------------------------------------------*/
+
+void AddHelpToSys (HINSTANCE hInstance, HWND hwnd)
+{
+     HBITMAP hBitmap ;
+     HMENU   hMenu ;
+
+     hMenu = GetSystemMenu (hwnd, FALSE);
+     hBitmap = StretchBitmap (LoadBitmap (hInstance, TEXT (&quot;BitmapHelp&quot;))) ;
+     AppendMenu (hMenu, MF_SEPARATOR, 0, NULL) ;
+     AppendMenu (hMenu, MF_BITMAP, IDM_HELP, (PTSTR) (LONG) hBitmap) ;
+}
+
+/*----------------------------------------------
+   CreateMyMenu: Assembles menu from components
+  ----------------------------------------------*/
+
+HMENU CreateMyMenu (HINSTANCE hInstance)
+{
+     HBITMAP hBitmap ;
+     HMENU   hMenu, hMenuPopup ;
+     int     i ;
+
+     hMenu = CreateMenu () ;
+     
+     hMenuPopup = LoadMenu (hInstance, TEXT (&quot;MenuFile&quot;)) ;
+     hBitmap = StretchBitmap (LoadBitmap (hInstance, TEXT (&quot;BitmapFile&quot;))) ;
+     AppendMenu (hMenu, MF_BITMAP | MF_POPUP, (int) hMenuPopup,
+                        (PTSTR) (LONG) hBitmap) ;
+     
+     hMenuPopup = LoadMenu (hInstance, TEXT (&quot;MenuEdit&quot;)) ;
+     hBitmap = StretchBitmap (LoadBitmap (hInstance, TEXT (&quot;BitmapEdit&quot;))) ;
+     AppendMenu (hMenu, MF_BITMAP | MF_POPUP, (int) hMenuPopup,
+                        (PTSTR) (LONG) hBitmap) ;
+     
+     hMenuPopup = CreateMenu () ;
+     
+     for (i = 0 ; i &lt; 3 ; i++)
+     {
+          hBitmap = GetBitmapFont (i) ;
+          AppendMenu (hMenuPopup, MF_BITMAP, IDM_FONT_COUR + i, 
+                                  (PTSTR) (LONG) hBitmap) ;
+     }
+
+     hBitmap = StretchBitmap (LoadBitmap (hInstance, TEXT (&quot;BitmapFont&quot;))) ;
+     AppendMenu (hMenu, MF_BITMAP | MF_POPUP, (int) hMenuPopup,
+                        (PTSTR) (LONG) hBitmap) ;
+     return hMenu ;
+}
+
+/*----------------------------------------------------
+   StretchBitmap: Scales bitmap to display resolution
+  ----------------------------------------------------*/
+
+HBITMAP StretchBitmap (HBITMAP hBitmap1)
+{
+     BITMAP     bm1, bm2 ;
+     HBITMAP    hBitmap2 ;
+     HDC        hdc, hdcMem1, hdcMem2 ;
+     int        cxChar, cyChar ;
+
+          // Get the width and height of a system font character
+
+     cxChar = LOWORD (GetDialogBaseUnits ()) ;
+     cyChar = HIWORD (GetDialogBaseUnits ()) ;
+
+          // Create 2 memory DCs compatible with the display
+     
+     hdc = CreateIC (TEXT (&quot;DISPLAY&quot;), NULL, NULL, NULL) ;
+     hdcMem1 = CreateCompatibleDC (hdc) ;
+     hdcMem2 = CreateCompatibleDC (hdc) ;
+     DeleteDC (hdc) ;
+
+          // Get the dimensions of the bitmap to be stretched
+     
+     GetObject (hBitmap1, sizeof (BITMAP), (PTSTR) &amp;bm1) ;
+
+          // Scale these dimensions based on the system font size
+     
+     bm2 = bm1 ;
+     bm2.bmWidth      = (cxChar * bm2.bmWidth)  / 4 ;
+     bm2.bmHeight     = (cyChar * bm2.bmHeight) / 8 ;
+     bm2.bmWidthBytes = ((bm2.bmWidth + 15) / 16) * 2 ;
+
+          // Create a new bitmap of larger size
+     
+     hBitmap2 = CreateBitmapIndirect (&amp;bm2) ;
+
+          // Select the bitmaps in the memory DCs and do a StretchBlt
+     
+     SelectObject (hdcMem1, hBitmap1) ;
+     SelectObject (hdcMem2, hBitmap2) ;
+     StretchBlt (hdcMem2, 0, 0, bm2.bmWidth, bm2.bmHeight,
+                 hdcMem1, 0, 0, bm1.bmWidth, bm1.bmHeight, SRCCOPY) ;
+
+          // Clean up
+     
+     DeleteDC (hdcMem1) ;
+     DeleteDC (hdcMem2) ;
+     DeleteObject (hBitmap1) ;
+     
+     return hBitmap2 ;
+}
+
+/*------------------------------------------------
+   GetBitmapFont: Creates bitmaps with font names
+  ------------------------------------------------*/
+
+HBITMAP GetBitmapFont (int i)
+{
+     static TCHAR  * szFaceName[3] = { TEXT (&quot;Courier New&quot;), TEXT (&quot;Arial&quot;), 
+                                       TEXT (&quot;Times New Roman&quot;) } ;
+     HBITMAP         hBitmap ;
+     HDC             hdc, hdcMem ;
+     HFONT           hFont ;
+     SIZE            size ;
+     TEXTMETRIC      tm ;
+     
+     hdc = CreateIC (TEXT (&quot;DISPLAY&quot;), NULL, NULL, NULL) ;
+     GetTextMetrics (hdc, &amp;tm) ;
+     
+     hdcMem = CreateCompatibleDC (hdc) ;
+     hFont  = CreateFont (2 * tm.tmHeight, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                          szFaceName[i]) ;
+
+     hFont = (HFONT) SelectObject (hdcMem, hFont) ;
+     GetTextExtentPoint32 (hdcMem, szFaceName[i], 
+                           lstrlen (szFaceName[i]), &amp;size);
+     
+     hBitmap = CreateBitmap (size.cx, size.cy, 1, 1, NULL) ;
+     SelectObject (hdcMem, hBitmap) ;
+     
+     TextOut (hdcMem, 0, 0, szFaceName[i], lstrlen (szFaceName[i])) ;
+     
+     DeleteObject (SelectObject (hdcMem, hFont)) ;
+     DeleteDC (hdcMem) ;
+     DeleteDC (hdc) ;
+     
+     return hBitmap ;
+}
+
+/*------------------------------------------------------- 
+   DeleteAllBitmaps: Deletes all the bitmaps in the menu
+  -------------------------------------------------------*/
+
+void DeleteAllBitmaps (HWND hwnd)
+{
+     HMENU        hMenu ;
+     int          i ;
+     MENUITEMINFO mii = { sizeof (MENUITEMINFO), MIIM_SUBMENU | MIIM_TYPE } ;
+
+          // Delete Help bitmap on system menu
+
+     hMenu = GetSystemMenu (hwnd, FALSE);
+     GetMenuItemInfo (hMenu, IDM_HELP, FALSE, &amp;mii) ;
+     DeleteObject ((HBITMAP) mii.dwTypeData) ;
+
+          // Delete top-level menu bitmaps
+
+     hMenu = GetMenu (hwnd) ;
+
+     for (i = 0 ; i &lt; 3 ; i++)
+     {
+          GetMenuItemInfo (hMenu, i, TRUE, &amp;mii) ;
+          DeleteObject ((HBITMAP) mii.dwTypeData) ;
+     }
+
+          // Delete bitmap items on Font menu
+
+     hMenu = mii.hSubMenu ;;
+
+     for (i = 0 ; i &lt; 3 ; i++)
+     {
+          GetMenuItemInfo (hMenu, i, TRUE, &amp;mii) ;
+          DeleteObject ((HBITMAP) mii.dwTypeData) ;
+     }
+}
+</PRE>
+</td></tr></table>
+<p><table cellpadding=5 width="95%"><tr><td>
+
+<A NAME="461"><H3>GRAFMENU.RC (excerpts)</H3></A>
+<P><pre>
+//Microsoft Developer Studio generated resource script.
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+// Menu
+MENUFILE MENU DISCARDABLE 
+BEGIN
+    MENUITEM &quot;&amp;New&quot;,                        IDM_FILE_NEW
+    MENUITEM &quot;&amp;Open...&quot;,                    IDM_FILE_OPEN
+    MENUITEM &quot;&amp;Save&quot;,                       IDM_FILE_SAVE
+    MENUITEM &quot;Save &amp;As...&quot;,                 IDM_FILE_SAVE_AS
+END
+
+MENUEDIT MENU DISCARDABLE 
+BEGIN
+    MENUITEM &quot;&amp;Undo&quot;,                       IDM_EDIT_UNDO
+    MENUITEM SEPARATOR
+    MENUITEM &quot;Cu&amp;t&quot;,                        IDM_EDIT_CUT
+    MENUITEM &quot;&amp;Copy&quot;,                       IDM_EDIT_COPY
+    MENUITEM &quot;&amp;Paste&quot;,                      IDM_EDIT_PASTE
+    MENUITEM &quot;De&amp;lete&quot;,                     IDM_EDIT_CLEAR
+END
+
+/////////////////////////////////////////////////////////////////////////////
+// Bitmap
+
+BITMAPFONT              BITMAP  DISCARDABLE     &quot;Fontlabl.bmp&quot;
+BITMAPHELP              BITMAP  DISCARDABLE     &quot;Bighelp.bmp&quot;
+BITMAPEDIT              BITMAP  DISCARDABLE     &quot;Editlabl.bmp&quot;
+BITMAPFILE              BITMAP  DISCARDABLE     &quot;Filelabl.bmp&quot;
+</PRE>
+</td></tr></table>
+<table cellpadding=5 width="95%"><tr><td>
+<A NAME="462"><H3>RESOURCE.H (excerpts</H3></A>
+<P><pre>
+// Microsoft Developer Studio generated include file.
+// Used by GrafMenu.rc
+
+#define IDM_FONT_COUR                   101
+#define IDM_FONT_ARIAL                  102
+#define IDM_FONT_TIMES                  103
+#define IDM_HELP                        104
+#define IDM_EDIT_UNDO                   40005
+#define IDM_EDIT_CUT                    40006
+#define IDM_EDIT_COPY                   40007
+#define IDM_EDIT_PASTE                  40008
+#define IDM_EDIT_CLEAR                  40009
+#define IDM_FILE_NEW                    40010
+#define IDM_FILE_OPEN                   40011
+#define IDM_FILE_SAVE                   40012
+#define IDM_FILE_SAVE_AS                40013
+</PRE>
+</td></tr></table>
+
+
+<P><img src="F14zg16a.GIF" width=241 height=97 border=0>
+<p><!-- caption --><B>EDITLABL.BMP</B><!-- /caption -->
+<P><img src="F14zg16b.GIF" width=241 height=97 border=0>
+<P><!-- caption --><B>FILELABL.BMP</B><!-- /caption -->
+<P><img src="F14zg16c.GIF" width=241 height=97 border=0>
+<P><!-- caption --><B>FONTLABL.BMP</B><!-- /caption -->
+
+<P><img src="F14zg16d.GIF" width=385 height=385 border=0>
+<P><!-- caption --><B>BIGHELP.BMP</B><!-- /caption -->
+<P>To insert a bitmap into a menu, you use 
+<I>AppendMenu</I> or <I>InsertMenu</I>. The bitmap can come from one of two places. You can create a bitmap in Visual C++ Developer 
+Studio, include the bitmap file in your resource script, and within the program use 
+<I>LoadBitmap</I> to load the bitmap resource into memory. You then call 
+
+<I>AppendMenu</I> or <I>InsertMenu</I> to attach it to the menu. There's a problem with this approach, however. The bitmap 
+might not be suitable for all types of video resolutions and aspect ratios; you probably want 
+to stretch the loaded bitmap to account for this. Alternatively, you can create the bitmap 
+right in the program, select it into a memory device context, draw on it, and then attach it 
+to the menu.
+<P>The <I>GetBitmapFont</I> function in GRAFMENU takes a parameter of 0, 1, or 2 and 
+returns a handle to a bitmap. This bitmap contains the string &quot;Courier New,&quot; &quot;Arial,&quot; or 
+&quot;Times New Roman&quot; in the appropriate font and about twice the size of the normal system 
+font. Let's see how <I>GetBitmapFont</I> does it. (The code that follows is not the same as that in 
+the GRAFMENU.C file. For purposes of clarity, I've replaced references to the 
+<I>szFaceName</I> array with the values appropriate for the Arial font.)
+<P>The first steps are to determine the size of the system font by using the 
+TEXTMETRIC structure and to create a memory device context compatible with the screen:
+<p><pre>
+hdc = CreateIC (TEXT (&quot;DISPLAY&quot;), NULL, NULL, NULL) ;
+GetTextMetrics (hdc, &amp;tm) ;
+hdcMem = CreateCompatibleDC (hdc) ;
+</PRE>
+<P>The <I>CreateFont</I> function creates a logical font that is twice the height of the 
+system font and has a facename of &quot;Arial&quot;:
+<p><pre>
+hFont = CreateFont (2 * tm.tmHeight, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    TEXT (&quot;Arial&quot;)) ;
+</PRE>
+<P>This font is selected in the memory device context and the default font handle is saved:
+<p><pre>
+hFont = (HFONT) SelectObject (hdcMem, hFont) ;
+</PRE>
+<P>Now when we write some text to the memory device context, Windows will use 
+the TrueType Arial font selected into the device context.
+<P>But this memory device context initially has a one-pixel monochrome device 
+surface. We have to create a bitmap large enough for the text we want to display on it. You 
+can obtain the dimensions of the text through 
+<I>GetTextExtentPoint32</I> and create a bitmap 
+based on these dimensions with <I>CreateBitmap</I>:
+<p><pre>
+GetTextExtentPoint32 (hdcMem, TEXT (&quot;Arial&quot;), 5, &amp;size) ;
+hBitmap = CreateBitmap (size.cx, size.cy, 1, 1, NULL) ;
+SelectObject (hdcMem, hBitmap) ;
+</PRE>
+<P>This device context now has a monochrome display surface exactly the size of the 
+text. Now all we have to do is write the text to it:
+<p><pre>
+TextOut (hdcMem, 0, 0, TEXT (&quot;Arial&quot;), 5) ;
+</PRE>
+<P>We're finished, except for cleaning up. To do so, we select the system font 
+(with handle <I>hFont</I>) back into the device context by using 
+<I>SelectObject</I>, and we delete the previous font handle that 
+<I>SelectObject</I> returns, which is the handle to the Arial font:
+<p><pre>
+DeleteObject (SelectObject (hdcMem, hFont)) ;
+</PRE>
+<P>Now we can also delete the two device contexts:
+<p><pre>
+DeleteDC (hdcMem) ;
+DeleteDC (hdc) ;
+</PRE>
+<P>We're left with a bitmap that has the text &quot;Arial&quot; in an Arial font.
+<P>The memory device context also comes to the rescue when we need to scale 
+fonts to a different display resolution or aspect ratio. I created the four bitmaps used in 
+GRAFMENU to be the correct size for a display that has a system font height of 8 pixels and 
+width of 4 pixels. For other system font dimensions, the bitmap has to be stretched. This is 
+done in GRAFMENU's <I>StretchBitmap</I> function.
+<p>The first step is to get the device context for the screen, obtain the text metrics 
+for the system font, and create two memory device contexts:
+<p><pre>
+hdc = CreateIC (TEXT (&quot;DISPLAY&quot;), NULL, NULL, NULL) ;
+GetTextMetrics (hdc, &amp;tm) ;
+hdcMem1 = CreateCompatibleDC (hdc) ;
+hdcMem2 = CreateCompatibleDC (hdc) ;
+DeleteDC (hdc) ;
+</PRE>
+<P>The bitmap handle passed to the function is 
+<I>hBitmap1</I>. The program can obtain the dimensions of this bitmap using 
+<I>GetObject</I>:
+<p><pre>
+GetObject (hBitmap1, sizeof (BITMAP), (PSTR) &amp;bm1) ;
+</PRE>
+<P>This copies the dimensions into a structure 
+<I>bm1</I> of type BITMAP. The structure 
+<I>bm2</I> is set equal to <I>bm1</I>, and then certain fields are modified based on the system font dimensions:
+<p><pre>
+bm2 = bm1 ;
+bm2.bmWidth      = (tm.tmAveCharWidth * bm2.bmWidth)  / 4 ;
+bm2.bmHeight     = (tm.tmHeight       * bm2.bmHeight) / 8 ;
+bm2.bmWidthBytes = ((bm2.bmWidth + 15) / 16) * 2 ;
+</PRE>
+<P>Next a new bitmap with handle <I>hBitmap2</I> can be created that is based on the 
+altered dimensions:
+<p><pre>
+hBitmap2 = CreateBitmapIndirect (&amp;bm2) ;
+</PRE>
+<P>You can then select these two bitmaps into the two memory device contexts:
+<p><pre>
+SelectObject (hdcMem1, hBitmap1) ;
+SelectObject (hdcMem2, hBitmap2) ;
+</PRE>
+<P>We want to copy the first bitmap to the second bitmap and stretch it in the process. 
+This involves the <I>StretchBlt</I> call:
+<p><pre>
+StretchBlt (hdcMem2, 0, 0, bm2.bmWidth, bm2.bmHeight,
+            hdcMem1, 0, 0, bm1.bmWidth, bm1.bmHeight, SRCCOPY) ;
+</PRE>
+<P>Now the second bitmap has the properly scaled bitmap. We'll use that one in the 
+menu. As you can see below, cleanup is simple.
+<p><pre>
+DeleteDC (hdcMem1) ;
+DeleteDC (hdcMem2) ;
+DeleteObject (hBitmap1) ;
+</PRE>
+<P>The <I>CreateMyMenu</I> function in GRAFMENU uses the 
+<I>StretchBitmap</I> and <I>GetBitmapFont</I> functions when constructing the menu. GRAFMENU has two menus already 
+defined in the resource script. These will become popups for the File and Edit options. The 
+function begins by obtaining a handle to an empty menu:
+<p><pre>
+hMenu = CreateMenu () ;
+</PRE>
+<P>The popup menu for File (containing the four options New, Open, Save, and Save As) 
+is loaded from the resource script:
+<p><pre>
+hMenuPopup = LoadMenu (hInstance, TEXT (&quot;MenuFile&quot;)) ;
+</PRE>
+<P>The bitmap containing the word &quot;FILE&quot; is also loaded from the resource script and 
+stretched using <I>StretchBitmap</I>:
+<p><pre>
+hBitmapFile = StretchBitmap (LoadBitmap (hInstance, TEXT (&quot;BitmapFile&quot;))) ;
+</PRE>
+<P>The bitmap handle and popup menu handle become arguments to the 
+<I>AppendMenu</I> call:
+<p><pre>
+AppendMenu (hMenu, MF_BITMAP &#166; MF_POPUP, hMenuPopup, (PTSTR) (LONG) hBitmapFile) ;
+</PRE>
+<P>The same procedure is followed for the Edit menu:
+<p><pre>
+hMenuPopup = LoadMenu (hInstance, TEXT (&quot;MenuEdit&quot;)) ;
+hBitmapEdit = StretchBitmap (LoadBitmap (hInstance, TEXT (&quot;BitmapEdit&quot;))) ;
+AppendMenu (hMenu, MF_BITMAP &#166; MF_POPUP, hMenuPopup, (PTSTR) (LONG) hBitmapEdit) ;
+</PRE>
+<P>The popup menu for the three fonts is constructed from calls to the 
+<I>GetBitmapFont</I> function:
+<p><pre>
+hMenuPopup = CreateMenu () ;
+for (i = 0 ; i &lt; 3 ; i++)
+{
+     hBitmapPopFont [i] = GetBitmapFont (i) ;
+     AppendMenu (hMenuPopup, MF_BITMAP, IDM_FONT_COUR + i,
+                            (PTSTR) (LONG) hMenuPopupFont [i]) ;
+}
+</PRE>
+<P>The popup is then added to the menu:
+<p><pre>
+hBitmapFont = StretchBitmap (LoadBitmap (hInstance, &quot;BitmapFont&quot;)) ;
+AppendMenu (hMenu, MF_BITMAP &#166; MF_POPUP, hMenuPopup, (PTSTR) (LONG) hBitmapFont) ;
+</PRE>
+<P>The window menu is now complete, and 
+<I>WndProc</I> makes it the window's menu by a 
+call to <I>SetMenu</I>.
+<P>GRAFMENU also alters the system menu in the 
+<I>AddHelpToSys</I> function. The function first obtains a handle to the system menu:
+<p><pre>
+hMenu = GetSystemMenu (hwnd, FALSE) ;
+</PRE>
+<P>This loads the &quot;Help&quot; bitmap and stretches it to an appropriate size:
+<p><pre>
+hBitmapHelp = StretchBitmap (LoadBitmap (hInstance, TEXT (&quot;BitmapHelp&quot;))) ;
+</PRE>
+<P>This adds a separator bar and the stretched bitmap to the system menu:
+<p><pre>
+AppendMenu (hMenu, MF_SEPARATOR, 0, NULL) ;
+AppendMenu (hMenu, MF_BITMAP, IDM_HELP, (PTSTR)(LONG) hBitmapHelp) ;
+</PRE>
+<P>GRAFMENU devotes a whole function to cleaning up and deleting all the 
+bitmaps before the program terminates.
+<P>A couple of miscellaneous notes on using bitmap in menus now follow.
+<P>In a top-level menu, Windows adjusts the menu bar height to accommodate the 
+tallest bitmap. Other bitmaps (or character strings) are aligned at the top of the menu bar. 
+The size of the menu bar obtained from 
+<I>GetSystemMetrics</I> with the SM_CYMENU constant 
+is no longer valid after you put bitmaps in a top-level menu.
+<P>As you can see from playing with GRAFMENU, you can use check marks with 
+bitmapped menu items in popups, but the check mark is of normal size. If that bothers 
+you, you can create a customized check mark and use 
+<I>SetMenuItemBitmaps</I>.
+<P>Another approach to using nontext (or text in a font other than the system font) 
+on a menu is the &quot;owner-draw&quot; menu.
+<P>The keyboard interface to menus is another problem. When the menu contains 
+text, Windows automatically adds a keyboard interface. You can select a menu item using 
+the Alt key in combination with a letter of the character string. But once you put a bitmap 
+in a menu, you've eliminated that keyboard interface. Even if the bitmap says 
+something, Windows doesn't know about it.
+<P>This is where the WM_MENUCHAR message comes in handy. Windows sends 
+a WM_MENUCHAR message to your window procedure when you press Alt with a 
+character key that does not correspond to a menu item. GRAFMENU would need to 
+intercept WM_MENUCHAR messages and check the value of 
+<I>wParam</I> (the ASCII character of the pressed key). If this corresponds to a menu item, it would have to return a double 
+word to Windows, where the high word is set to 2 and the low word is set to the index of 
+the menu item we want associated with that key. Windows does the rest.
+
+<A NAME="463"><h2>Nonrectangular Bitmap Images</h2></A>
+Bitmaps are always rectangular, but they needn't be displayed like that. For 
+example, suppose you have a rectangular bitmap image that you want to be displayed as an ellipse.
+<P>At first, this sounds simple. You just load the image into Visual C++ Developer 
+Studio or the Windows Paint program (or a more expensive application) and you start 
+drawing around the outside of the image with a white pen. You're left with an elliptical image 
+with everything outside the ellipse painted white. This will work&#8212;but only when you 
+display the bitmap on a white background. If you display it on any other color background, 
+you'll have an elliptical image on top of a white rectangle on top of a colored background. 
+That's no good.
+<P>There's a very common technique to solve problems like this. The technique 
+involves a &quot;mask&quot; bitmap and some raster operations. A mask is a monochrome bitmap of the 
+same dimensions as the rectangular bitmap image you want to display. Each mask pixel 
+corresponds with a pixel of the bitmap image. The mask pixels are 1 (white) wherever the original 
+bitmap pixel is to be displayed, and 0 (black) wherever you want to preserve the destination 
+background. (Or the mask bitmap can be opposite this, with some corresponding changes to 
+the raster operations you use.)
+<P>Let's see how this works in real life in the BITMASK program shown in Figure 14-17.
+
+
+<p><B>Figure 14-17.</b> <i>The BITMASK program.     </I>
+<table cellpadding=5 width="95%"><tr><td>
+<A NAME="464"><H3>BITMASK.C</H3></A><pre>/*-------------------------------------------
+   BITMASK.C -- Bitmap Masking Demonstration
+                (c) Charles Petzold, 1998
+  -------------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName [] = TEXT (&quot;BitMask&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (LTGRAY_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Bitmap Masking Demo&quot;), 
+                          WS_OVERLAPPEDWINDOW, 
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static HBITMAP   hBitmapImag, hBitmapMask ;
+     static HINSTANCE hInstance ;
+     static int       cxClient, cyClient, cxBitmap, cyBitmap ;
+     BITMAP           bitmap ;
+     HDC              hdc, hdcMemImag, hdcMemMask ;
+     int              x, y ;
+     PAINTSTRUCT      ps ;
+     
+     switch (message)
+     {
+     case WM_CREATE:
+          hInstance = ((LPCREATESTRUCT) lParam)-&gt;hInstance ;
+
+               // Load the original image and get its size
+
+          hBitmapImag = LoadBitmap (hInstance, TEXT (&quot;Matthew&quot;)) ;
+          GetObject (hBitmapImag, sizeof (BITMAP), &amp;bitmap) ;
+          cxBitmap = bitmap.bmWidth ;
+          cyBitmap = bitmap.bmHeight ;
+
+               // Select the original image into a memory DC
+          hdcMemImag  = CreateCompatibleDC (NULL) ;
+          SelectObject (hdcMemImag, hBitmapImag) ;
+
+               // Create the monochrome mask bitmap and memory DC
+
+          hBitmapMask = CreateBitmap (cxBitmap, cyBitmap, 1, 1, NULL) ;
+          hdcMemMask = CreateCompatibleDC (NULL) ;
+          SelectObject (hdcMemMask, hBitmapMask) ;
+
+               // Color the mask bitmap black with a white ellipse
+          
+          SelectObject (hdcMemMask, GetStockObject (BLACK_BRUSH)) ;
+          Rectangle (hdcMemMask, 0, 0, cxBitmap, cyBitmap) ;
+          SelectObject (hdcMemMask, GetStockObject (WHITE_BRUSH)) ;
+          Ellipse (hdcMemMask, 0, 0, cxBitmap, cyBitmap) ;
+
+               // Mask the original image
+
+          BitBlt (hdcMemImag, 0, 0, cxBitmap, cyBitmap, 
+                  hdcMemMask, 0, 0, SRCAND) ;
+
+          DeleteDC (hdcMemImag) ;
+          DeleteDC (hdcMemMask) ;
+          return 0 ;
+
+     case WM_SIZE:
+          cxClient = LOWORD (lParam) ;
+          cyClient = HIWORD (lParam) ;
+          return 0 ;
+
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+
+               // Select bitmaps into memory DCs
+
+          hdcMemImag = CreateCompatibleDC (hdc) ;
+          SelectObject (hdcMemImag, hBitmapImag) ;
+
+          hdcMemMask = CreateCompatibleDC (hdc) ;
+          SelectObject (hdcMemMask, hBitmapMask) ;
+
+               // Center image
+
+          x = (cxClient - cxBitmap) / 2 ;
+          y = (cyClient - cyBitmap) / 2 ;
+               
+               // Do the bitblts
+
+          BitBlt (hdc, x, y, cxBitmap, cyBitmap, hdcMemMask, 0, 0, 0x220326) ;
+          BitBlt (hdc, x, y, cxBitmap, cyBitmap, hdcMemImag, 0, 0, SRCPAINT) ;
+
+          DeleteDC (hdcMemImag) ;
+          DeleteDC (hdcMemMask) ;
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+
+     case WM_DESTROY:
+          DeleteObject (hBitmapImag) ;
+          DeleteObject (hBitmapMask) ;
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</pre>
+</td></tr></table>
+<p><table cellpadding=5 width="95%"><tr><td>
+<A NAME="465"><H3>BITMASK.RC</H3></A><pre>// Microsoft Developer Studio generated resource script.
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+// Bitmap
+
+MATTHEW                 BITMAP  DISCARDABLE     &quot;matthew.bmp&quot;
+</PRE>
+</td></tr></table>
+
+<p>The MATTHEW.BMP file referred to in the resource script is a digitized 
+black-and-white photograph of a nephew of mine. It's 200 pixels wide, 320 pixels high, and has 8 bits 
+per pixel. However, BITMASK is written so that this file can be just about anything.
+<P>Notice that BITMASK colors its window background with a light gray brush. This is 
+to assure ourselves that we're properly masking the bitmap and not just coloring part of it white.
+<P>Let's look at WM_CREATE processing. BITMASK uses the 
+<I>LoadBitmap</I> function to obtain a handle to the original image in the variable 
+<I>hBitmapImag</I>. The <I>GetObject</I> function obtains the bitmap width and height. The bitmap handle is then selected in a 
+memory device context whose handle is 
+<I>hdcMemImag</I>.
+<P>Next the program creates a monochrome bitmap the same size as the original 
+image. The handle is stored in <I>hBitmapMask</I> and selected into a memory device context 
+whose handle is <I>hdcMemMask</I>. The mask bitmap is colored with a black background and a 
+white ellipse by using GDI functions on the memory device context:
+<p><pre>
+SelectObject (hdcMemMask, GetStockObject (BLACK_BRUSH)) ;
+Rectangle (hdcMemMask, 0, 0, cxBitmap, cyBitmap) ;
+SelectObject (hdcMemMask, GetStockObject (WHITE_BRUSH)) ;
+Ellipse (hdcMemMask, 0, 0, cxBitmap, cyBitmap) ;
+</PRE>
+<P>Because this is a monochrome bitmap, the black area is really 0 bits and the white area 
+is really 1 bits.
+<p>Then a <I>BitBlt</I> call alters the original image by using this mask:
+<p><pre>
+BitBlt (hdcMemImag, 0, 0, cxBitmap, cyBitmap, 
+        hdcMemMask, 0, 0, SRCAND) ;
+</PRE>
+<P>The SRCAND raster operation performs a bitwise AND operation between the bits of 
+the source (the mask bitmap) and the bits of the destination (the original image). Wherever 
+the mask bitmap is white, the destination is preserved. Wherever the mask bitmap is 
+black, the destination becomes black as well. An elliptical area in the original image is now 
+surrounded by black.
+<P>Now let's look at WM_PAINT processing. Both the altered image bitmap and the 
+mask bitmap are selected into memory device contexts. Two 
+<I>BitBlt</I> calls perform the magic. The first does a 
+<I>BitBlt</I> of the mask bitmap on the window:
+<p><pre>
+BitBlt (hdc, x, y, cxBitmap, cyBitmap, hdcMemMask, 0, 0, 0x220326) ;
+</PRE>
+<P>This uses a raster operation for which there is no name. The logical operation is D &amp; 
+~S. Recall that the source&#8212;the mask bitmap&#8212;is a white ellipse (1 bits) surrounded by 
+black (0 bits). The raster operation inverts the source so that it's a black ellipse surrounded 
+by white. The raster operation then performs a bitwise AND of this inverted source with 
+the destination&#8212;the surface of the window. When the destination is ANDed with 1 bits, 
+it remains unchanged. When ANDed with 0 bits, the destination becomes black. Thus, 
+this <I>BitBlt</I> operation draws a black ellipse in the window.
+<P>The second <I>BitBlt</I> call draws the image bitmap on the window:
+<p><pre>
+BitBlt (hdc, x, y, cxBitmap, cyBitmap, hdcMemImag, 0, 0, SRCPAINT) ;
+</PRE>
+<P>The raster operation performs a bitwise OR operation between the source and the 
+destination. The outside of the source bitmap is black, so it leaves the destination 
+unchanged. Within the ellipse, the destination is black, so the image is copied unchanged. The 
+result is shown in Figure 14-18.
+<P>A few notes:
+<P>You may need a mask that is quite complex&#8212;for example, one that blots out 
+the whole background of the original image. You'll probably need to create this manually 
+in a paint program and save it to a file.
+<P><A HREF="javascript:fullSize('F14zg18x.htm')"><IMG SRC="F14zg18.JPG" width=404 height=285 ALIGN="BOTTOM" border=0> </A>
+<P><B>Figure 14-18.</b> <i>The BITMASK display.</I>
+<P>If you're writing applications specifically for Windows NT, you can use the 
+<I>MaskBlt</I> function to do something similar to the MASKBIT program with fewer function calls. 
+Windows NT also includes another <I>BitBlt</I>-like function not supported under Windows 98. 
+This is the <I>PlgBlt</I> (&quot;parallelogram blt&quot;) function that lets you rotate or skew bitmap images.
+<P>Finally, if you run BITMASK on your machine and you see only black, white, and 
+a couple of gray shades, it's because you're running in a 16-color or 256-color video 
+mode. With the 16-color mode, there's not much you can do to improve things, but an 
+application running in a 256-color mode can alter the color palette to display shades of gray. 
+You'll find out how in <a href="ch16a.htm#520">Chapter 16</a>.
+
+<A NAME="466"><h2>Some Simple Animation</h2></A>
+Because the display of small bitmaps is quite fast, you can use bitmaps in combination 
+with the Windows timer for some rudimentary animation.
+<P>Yes, it's time for the bouncing ball program.
+
+<P>The BOUNCE program, shown in Figure 14-19 below, 
+constructs a ball that bounces around in the window's client area. The program uses the 
+timer to pace the ball. The ball itself is a bitmap. The program first creates the ball by 
+creating the bitmap, selecting it into a memory device context, and then making simple GDI 
+function calls. The program draws the bitmapped ball on the display using a 
+<I>BitBlt</I> from a memory device context.
+<P><B>Figure 14-19.</b> <i>The BOUNCE program.     </I>
+<table cellpadding=5 width="95%"><tr><td>
+
+<A NAME="467"><H3>BOUNCE.C</H3></A><PRE>/*---------------------------------------
+   BOUNCE.C -- Bouncing Ball Program
+               (c) Charles Petzold, 1998
+  ---------------------------------------*/
+
+#include &lt;windows.h&gt;
+#define ID_TIMER    1
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName[] = TEXT (&quot;Bounce&quot;) ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = NULL ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Bouncing Ball&quot;),
+                          WS_OVERLAPPEDWINDOW,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+     
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          TranslateMessage (&amp;msg) ;
+          DispatchMessage (&amp;msg) ;
+     }
+     return msg.wParam ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
+{
+     static HBITMAP hBitmap ;
+     static int     cxClient, cyClient, xCenter, yCenter, cxTotal, cyTotal,
+                    cxRadius, cyRadius, cxMove, cyMove, xPixel, yPixel ;
+     HBRUSH         hBrush ;
+     HDC            hdc, hdcMem ;
+     int            iScale ;
+     
+     switch (iMsg)
+     {
+     case WM_CREATE:
+          hdc = GetDC (hwnd) ;
+          xPixel = GetDeviceCaps (hdc, ASPECTX) ;
+          yPixel = GetDeviceCaps (hdc, ASPECTY) ;
+          ReleaseDC (hwnd, hdc) ;
+          
+          SetTimer (hwnd, ID_TIMER, 50, NULL) ;
+          return 0 ;
+          
+     case WM_SIZE:
+          xCenter = (cxClient = LOWORD (lParam)) / 2 ;
+          yCenter = (cyClient = HIWORD (lParam)) / 2 ;
+          
+          iScale = min (cxClient * xPixel, cyClient * yPixel) / 16 ;
+          
+          cxRadius = iScale / xPixel ;
+          cyRadius = iScale / yPixel ;
+          
+          cxMove = max (1, cxRadius / 2) ;
+          cyMove = max (1, cyRadius / 2) ;
+          
+          cxTotal = 2 * (cxRadius + cxMove) ;
+          cyTotal = 2 * (cyRadius + cyMove) ;
+          
+          if (hBitmap)
+               DeleteObject (hBitmap) ;
+          hdc = GetDC (hwnd) ;
+          hdcMem = CreateCompatibleDC (hdc) ;
+          hBitmap = CreateCompatibleBitmap (hdc, cxTotal, cyTotal) ;
+          ReleaseDC (hwnd, hdc) ;
+          
+          SelectObject (hdcMem, hBitmap) ;
+          Rectangle (hdcMem, -1, -1, cxTotal + 1, cyTotal + 1) ;
+          
+          hBrush = CreateHatchBrush (HS_DIAGCROSS, 0L) ;
+          SelectObject (hdcMem, hBrush) ;
+          SetBkColor (hdcMem, RGB (255, 0, 255)) ;
+          Ellipse (hdcMem, cxMove, cyMove, cxTotal - cxMove, cyTotal - cyMove) ;
+          DeleteDC (hdcMem) ;
+          DeleteObject (hBrush) ;
+          return 0 ;
+          
+     case WM_TIMER:
+          if (!hBitmap)
+               break ;
+          
+          hdc = GetDC (hwnd) ;
+          hdcMem = CreateCompatibleDC (hdc) ;
+          SelectObject (hdcMem, hBitmap) ;
+          
+          BitBlt (hdc, xCenter - cxTotal / 2,
+                       yCenter - cyTotal / 2, cxTotal, cyTotal,
+                  hdcMem, 0, 0, SRCCOPY) ;
+          
+          ReleaseDC (hwnd, hdc) ;
+          DeleteDC (hdcMem) ;
+          
+          xCenter += cxMove ;
+          yCenter += cyMove ;
+          
+          if ((xCenter + cxRadius &gt;= cxClient) || (xCenter - cxRadius &lt;= 0))
+               cxMove = -cxMove ;
+          
+          if ((yCenter + cyRadius &gt;= cyClient) || (yCenter - cyRadius &lt;= 0))
+               cyMove = -cyMove ;
+          
+          return 0 ;
+          
+     case WM_DESTROY:
+          if (hBitmap)
+               DeleteObject (hBitmap) ;
+          
+          KillTimer (hwnd, ID_TIMER) ;
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, iMsg, wParam, lParam) ;
+}
+</PRE>
+</td></tr></table>
+<P>BOUNCE reconstructs the ball whenever the program gets a WM_SIZE message. 
+This requires a memory device context compatible with the video display:
+<p><pre>
+hdcMem = CreateCompatibleDC (hdc) ;
+</PRE>
+<P>The diameter of the ball is set at one-sixteenth of either the height or the width 
+of the client area, whichever is shorter. However, the program constructs a bitmap that is 
+larger than the ball: On each of its four sides, the bitmap extends beyond the ball's 
+dimensions by one-half of the ball's radius:
+<p><pre>
+hBitmap = CreateCompatibleBitmap (hdc, cxTotal, cyTotal) ;
+</PRE>
+<P>After the bitmap is selected into a memory device context, the entire bitmap is 
+colored white for the background:
+<p><pre>
+Rectangle (hdcMem, -1, -1, xTotal + 1, yTotal + 1) ;
+</PRE>
+<P>Those odd coordinates cause the rectangle boundary to be painted outside the bitmap. 
+A diagonally hatched brush is selected into the memory device context, and the ball is 
+drawn in the center of the bitmap:
+<p><pre>
+Ellipse (hdcMem, xMove, yMove, xTotal - xMove, yTotal - yMove) ;
+</PRE>
+<P>The margins around the edges of the ball effectively erase the previous image of 
+the ball when the ball is moved. Redrawing the ball at another position requires only a 
+simple <I>BitBlt</I> call using the ROP code of SRCCOPY:
+<p><pre>
+BitBlt (hdc, xCenter - cxTotal / 2, yCenter - cyTotal / 2, cxTotal, cyTotal,
+        hdcMem, 0, 0, SRCCOPY) ;
+</PRE>
+<P>BOUNCE demonstrates the simplest way to move an image around the display, 
+but this approach isn't satisfactory for general purposes. If you're interested in animation, 
+you'll want to explore some of the other ROP codes (such as SRCINVERT) that perform an 
+exclusive OR operation on the source and destination. Other techniques for animation 
+involve the Windows palette (and the 
+<I>AnimatePalette</I> function) and the 
+<I>CreateDIBSection</I> function. For more sophisticated animation, you may need to abandon GDI and 
+explore the DirectX interface.
+
+<A NAME="468"><h2>Bitmaps Outside the Window</h2></A>
+The SCRAMBLE program, shown in Figure 14-20 beginning below, is 
+very rude and I probably shouldn't be showing it to you. But it demonstrates some 
+interesting techniques and uses a memory device context as a temporary holding space for 
+<I>BitBlt</I> operations that swap the contents of pairs of display rectangles.
+
+<P><B>Figure 14-20.</b> <i>The SCRAMBLE program.     </I>
+<table cellpadding=5 width="95%"><tr><td>
+<A NAME="469"><H3>SCRAMBLE.C</H3></A><PRE>/*------------------------------------------------
+   SCRAMBLE.C -- Scramble (and Unscramble) Screen
+                 (c) Charles Petzold, 1998
+  ------------------------------------------------*/
+
+#include &lt;windows.h&gt;
+
+#define NUM 300
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static int iKeep [NUM][4] ;
+     HDC        hdcScr, hdcMem ;
+     int        cx, cy ;
+     HBITMAP    hBitmap ;
+     HWND       hwnd ;
+     int        i, j, x1, y1, x2, y2 ;
+
+     if (LockWindowUpdate (hwnd = GetDesktopWindow ()))
+     {
+          hdcScr  = GetDCEx (hwnd, NULL, DCX_CACHE | DCX_LOCKWINDOWUPDATE) ;
+          hdcMem  = CreateCompatibleDC (hdcScr) ;
+          cx      = GetSystemMetrics (SM_CXSCREEN) / 10 ;
+          cy      = GetSystemMetrics (SM_CYSCREEN) / 10 ;
+          hBitmap = CreateCompatibleBitmap (hdcScr, cx, cy) ;
+         
+          SelectObject (hdcMem, hBitmap) ;
+
+          srand ((int) GetCurrentTime ()) ;
+          
+          for (i = 0 ; i &lt; 2   ; i++)
+          for (j = 0 ; j &lt; NUM ; j++)
+          {
+               if (i == 0)
+               {
+                    iKeep [j] [0] = x1 = cx * (rand () % 10) ;
+                    iKeep [j] [1] = y1 = cy * (rand () % 10) ;
+
+                    iKeep [j] [2] = x2 = cx * (rand () % 10) ;
+                    iKeep [j] [3] = y2 = cy * (rand () % 10) ;
+               }
+               else
+               {
+                    x1 = iKeep [NUM - 1 - j] [0] ;
+                    y1 = iKeep [NUM - 1 - j] [1] ;
+                    x2 = iKeep [NUM - 1 - j] [2] ;
+                    y2 = iKeep [NUM - 1 - j] [3] ;
+               }
+               BitBlt (hdcMem,  0,  0, cx, cy, hdcScr, x1, y1, SRCCOPY) ;
+               BitBlt (hdcScr, x1, y1, cx, cy, hdcScr, x2, y2, SRCCOPY) ;
+               BitBlt (hdcScr, x2, y2, cx, cy, hdcMem,  0,  0, SRCCOPY) ;
+                    
+               Sleep (10) ;
+          }
+               
+          DeleteDC (hdcMem) ;
+          ReleaseDC (hwnd, hdcScr) ;
+          DeleteObject (hBitmap) ;
+             
+          LockWindowUpdate (NULL) ;
+     }
+     return FALSE ;
+}
+</PRE>
+</td></tr></table>
+<P>SCRAMBLE doesn't have a window procedure. In 
+<I>WinMain</I>, it first calls 
+<I>LockWindowUpdate</I> with the desktop window handle. This function temporarily prevents any 
+other program from updating the screen. SCRAMBLE then obtains a device context for the 
+entire screen by calling <I>GetDCEx</I> with a DCX_LOCKWINDOWUPDATE argument. This 
+lets SCRAMBLE write on the screen when no other program can.
+<P>SCRAMBLE then determines the dimensions of the full screen and divides them 
+by 10. The program uses these dimensions (named 
+<I>cx</I> and <I>cy</I>) to create a bitmap and 
+then selects the bitmap into the memory device context.
+<P>Using the C <I>rand</I> function, SCRAMBLE calculates four random values (two 
+coordinate points) that are multiples of the 
+<I>cx</I> and <I>cy</I> values. The program swaps two 
+rectangular blocks of the display through the use of three 
+<I>BitBlt</I> functions. The first copies the rectangle beginning at the first coordinate point to the memory device context. The 
+second <I>BitBlt</I> copies the rectangle beginning at the second point to the location beginning 
+at the first point. The third copies the rectangle in the memory device context to the 
+area beginning at second coordinate point.
+<P>This process effectively swaps the contents of the two rectangles on the 
+display. SCRAMBLE does this 300 times, after which the screen should be thoroughly 
+scrambled. But do not fear, because SCRAMBLE keeps track of this mess and then unscrambles 
+the screen, returning it to normal (and unlocking the screen) before exiting.
+<P>You can also use memory device contexts to copy the contents of one bitmap 
+to another. For instance, suppose you want to create a bitmap that contains only the 
+upper left quadrant of another bitmap. If the original bitmap has the handle 
+<I>hBitmap</I>, you can copy the dimensions into a structure of type BITMAP,
+<p><pre>
+GetObject (hBitmap, sizeof (BITMAP), &amp;bm) ;
+</PRE>
+<P>and create a new uninitialized bitmap of one-quarter the size:
+<p><pre>
+hBitmap2 = CreateBitmap (bm.bmWidth / 2, bm.bmHeight / 2,
+                         bm.bmPlanes, bm.bmBitsPixel, NULL) ;
+</PRE>
+<P>Now create two memory device contexts and select the original bitmap and the new 
+bitmap into them:
+<p><pre>
+hdcMem1 = CreateCompatibleDC (hdc) ;
+hdcMem2 = CreateCompatibleDC (hdc) ;
+
+SelectObject (hdcMem1, hBitmap) ;
+SelectObject (hdcMem2, hBitmap2) ;
+</PRE>
+<P>Finally, copy the upper left quadrant of the first bitmap to the second:
+<p><pre>
+BitBlt (hdcMem2, 0, 0, bm.bmWidth / 2, bm.bmHeight / 2,
+        hdcMem1, 0, 0, SRCCOPY) ;
+</PRE>
+<P>You're done, except for cleaning up:
+<p><pre>
+DeleteDC (hdcMem1) ;
+DeleteDC (hdcMem2) ;
+DeleteObject (hBitmap) ;
+</PRE>
+<P>The BLOWUP.C program, shown in Figure 14-21, also uses window update 
+locking to display a capture rectangle outside the border of the program's window. This 
+program lets you use the mouse to block out any rectangular area of the screen. BLOWUP then 
+copies the contents of that rectangular area to a bitmap. During the WM_PAINT message, 
+the bitmap is copied to the program's client area and stretched or compressed, if 
+necessary. (See Figure 14-22)
+
+<P><B>Figure 14-21.</b> <i>The BLOWUP program.     </I>
+
+<table cellpadding=5 width="95%"><tr><td>
+<A NAME="470"><H3>BLOWUP.C</H3></A><PRE>/*---------------------------------------
+   BLOWUP.C -- Video Magnifier Program
+               (c) Charles Petzold, 1998
+  ---------------------------------------*/
+
+#include &lt;windows.h&gt;
+#include &lt;stdlib.h&gt;      // for abs definition
+#include &quot;resource.h&quot;
+
+
+LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM) ;
+
+int WINAPI WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                    PSTR szCmdLine, int iCmdShow)
+{
+     static TCHAR szAppName [] = TEXT (&quot;Blowup&quot;) ;
+     HACCEL       hAccel ;
+     HWND         hwnd ;
+     MSG          msg ;
+     WNDCLASS     wndclass ;
+
+     wndclass.style         = CS_HREDRAW | CS_VREDRAW ;
+     wndclass.lpfnWndProc   = WndProc ;
+     wndclass.cbClsExtra    = 0 ;
+     wndclass.cbWndExtra    = 0 ;
+     wndclass.hInstance     = hInstance ;
+     wndclass.hIcon         = LoadIcon (NULL, IDI_APPLICATION) ;
+     wndclass.hCursor       = LoadCursor (NULL, IDC_ARROW) ;
+     wndclass.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
+     wndclass.lpszMenuName  = szAppName ;
+     wndclass.lpszClassName = szAppName ;
+     
+     if (!RegisterClass (&amp;wndclass))
+     {
+          MessageBox (NULL, TEXT (&quot;This program requires Windows NT!&quot;),
+                      szAppName, MB_ICONERROR) ;
+          return 0 ;
+     }
+     
+     hwnd = CreateWindow (szAppName, TEXT (&quot;Blow-Up Mouse Demo&quot;), 
+                          WS_OVERLAPPEDWINDOW, 
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          CW_USEDEFAULT, CW_USEDEFAULT,
+                          NULL, NULL, hInstance, NULL) ;
+
+     ShowWindow (hwnd, iCmdShow) ;
+     UpdateWindow (hwnd) ;
+
+     hAccel = LoadAccelerators (hInstance, szAppName) ;
+
+     while (GetMessage (&amp;msg, NULL, 0, 0))
+     {
+          if (!TranslateAccelerator (hwnd, hAccel, &amp;msg))
+          {
+               TranslateMessage (&amp;msg) ;
+               DispatchMessage (&amp;msg) ;
+          }
+     }
+     return msg.wParam ;
+}
+
+void InvertBlock (HWND hwndScr, HWND hwnd, POINT ptBeg, POINT ptEnd)
+{
+     HDC hdc ;
+
+     hdc = GetDCEx (hwndScr, NULL, DCX_CACHE | DCX_LOCKWINDOWUPDATE) ;
+     ClientToScreen (hwnd, &amp;ptBeg) ;
+     ClientToScreen (hwnd, &amp;ptEnd) ;
+     PatBlt (hdc, ptBeg.x, ptBeg.y, ptEnd.x - ptBeg.x, ptEnd.y - ptBeg.y,
+             DSTINVERT) ;
+     ReleaseDC (hwndScr, hdc) ;
+}
+
+HBITMAP CopyBitmap (HBITMAP hBitmapSrc)
+{
+     BITMAP  bitmap ;
+     HBITMAP hBitmapDst ;
+     HDC     hdcSrc, hdcDst ;
+
+     GetObject (hBitmapSrc, sizeof (BITMAP), &amp;bitmap) ;
+     hBitmapDst = CreateBitmapIndirect (&amp;bitmap) ;
+
+     hdcSrc = CreateCompatibleDC (NULL) ;
+     hdcDst = CreateCompatibleDC (NULL) ;
+
+     SelectObject (hdcSrc, hBitmapSrc) ;
+     SelectObject (hdcDst, hBitmapDst) ;
+
+     BitBlt (hdcDst, 0, 0, bitmap.bmWidth, bitmap.bmHeight,
+             hdcSrc, 0, 0, SRCCOPY) ;
+
+     DeleteDC (hdcSrc) ;
+     DeleteDC (hdcDst) ;
+
+     return hBitmapDst ;
+}
+
+LRESULT CALLBACK WndProc (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+     static BOOL    bCapturing, bBlocking ;
+     static HBITMAP hBitmap ;
+     static HWND    hwndScr ;
+     static POINT   ptBeg, ptEnd ;
+     BITMAP         bm ;
+     HBITMAP        hBitmapClip ;
+     HDC            hdc, hdcMem ;
+     int            iEnable ;
+     PAINTSTRUCT    ps ;
+     RECT           rect ;
+
+     switch (message)
+     {
+     case WM_LBUTTONDOWN:
+          if (!bCapturing)
+          {
+               if (LockWindowUpdate (hwndScr = GetDesktopWindow ()))
+               {
+                    bCapturing = TRUE ;
+                    SetCapture (hwnd) ;
+                    SetCursor (LoadCursor (NULL, IDC_CROSS)) ;
+               }
+               else
+                    MessageBeep (0) ;
+          }
+          return 0 ;
+
+     case WM_RBUTTONDOWN:
+          if (bCapturing)
+          {
+               bBlocking = TRUE ;
+               ptBeg.x = LOWORD (lParam) ;
+               ptBeg.y = HIWORD (lParam) ;
+               ptEnd = ptBeg ;
+               InvertBlock (hwndScr, hwnd, ptBeg, ptEnd) ;
+          }
+          return 0 ;
+
+     case WM_MOUSEMOVE:
+          if (bBlocking)
+          {
+               InvertBlock (hwndScr, hwnd, ptBeg, ptEnd) ;
+               ptEnd.x = LOWORD (lParam) ;
+               ptEnd.y = HIWORD (lParam) ;
+               InvertBlock (hwndScr, hwnd, ptBeg, ptEnd) ;
+          }
+          return 0 ;
+
+     case WM_LBUTTONUP:
+     case WM_RBUTTONUP:
+          if (bBlocking)
+          {
+               InvertBlock (hwndScr, hwnd, ptBeg, ptEnd) ;
+               ptEnd.x = LOWORD (lParam) ;
+               ptEnd.y = HIWORD (lParam) ;
+
+               if (hBitmap)
+               {
+                    DeleteObject (hBitmap) ;
+                    hBitmap = NULL ;
+               }
+
+               hdc = GetDC (hwnd) ;
+               hdcMem = CreateCompatibleDC (hdc) ;
+               hBitmap = CreateCompatibleBitmap (hdc, 
+                                   abs (ptEnd.x - ptBeg.x),
+                                   abs (ptEnd.y - ptBeg.y)) ;
+
+               SelectObject (hdcMem, hBitmap) ;
+
+               StretchBlt (hdcMem, 0, 0, abs (ptEnd.x - ptBeg.x),
+                                         abs (ptEnd.y - ptBeg.y), 
+                           hdc, ptBeg.x, ptBeg.y, ptEnd.x - ptBeg.x, 
+                                                  ptEnd.y - ptBeg.y, SRCCOPY) ;
+
+               DeleteDC (hdcMem) ;
+               ReleaseDC (hwnd, hdc) ;
+               InvalidateRect (hwnd, NULL, TRUE) ;
+          }
+          if (bBlocking || bCapturing)
+          {
+               bBlocking = bCapturing = FALSE ;
+               SetCursor (LoadCursor (NULL, IDC_ARROW)) ;
+               ReleaseCapture () ;
+               LockWindowUpdate (NULL) ;
+          }
+          return 0 ;
+
+     case WM_INITMENUPOPUP:
+          iEnable = IsClipboardFormatAvailable (CF_BITMAP) ? 
+                              MF_ENABLED : MF_GRAYED ;
+
+          EnableMenuItem ((HMENU) wParam, IDM_EDIT_PASTE, iEnable) ;
+
+          iEnable = hBitmap ? MF_ENABLED : MF_GRAYED ;
+
+          EnableMenuItem ((HMENU) wParam, IDM_EDIT_CUT,    iEnable) ;
+          EnableMenuItem ((HMENU) wParam, IDM_EDIT_COPY,   iEnable) ;
+          EnableMenuItem ((HMENU) wParam, IDM_EDIT_DELETE, iEnable) ;
+          return 0 ;
+
+     case WM_COMMAND:
+          switch (LOWORD (wParam))
+          {
+          case IDM_EDIT_CUT:
+          case IDM_EDIT_COPY:
+               if (hBitmap)
+               {
+                    hBitmapClip = CopyBitmap (hBitmap) ;
+                    OpenClipboard (hwnd) ;
+                    EmptyClipboard () ;
+                    SetClipboardData (CF_BITMAP, hBitmapClip) ;
+               }
+               if (LOWORD (wParam) == IDM_EDIT_COPY)
+                    return 0 ;
+                                        // fall through for IDM_EDIT_CUT
+          case IDM_EDIT_DELETE:
+               if (hBitmap)
+               {
+                    DeleteObject (hBitmap) ;
+                    hBitmap = NULL ;
+               }
+               InvalidateRect (hwnd, NULL, TRUE) ;
+               return 0 ;
+
+          case IDM_EDIT_PASTE:
+               if (hBitmap)
+               {
+                    DeleteObject (hBitmap) ;
+                    hBitmap = NULL ;
+               }
+               OpenClipboard (hwnd) ;
+               hBitmapClip = GetClipboardData (CF_BITMAP) ;
+
+               if (hBitmapClip)
+                    hBitmap = CopyBitmap (hBitmapClip) ;
+
+               CloseClipboard () ;
+               InvalidateRect (hwnd, NULL, TRUE) ;
+               return 0 ;
+          }
+          break ;
+     case WM_PAINT:
+          hdc = BeginPaint (hwnd, &amp;ps) ;
+
+          if (hBitmap)
+          {
+               GetClientRect (hwnd, &amp;rect) ;
+
+               hdcMem = CreateCompatibleDC (hdc) ;
+               SelectObject (hdcMem, hBitmap) ;
+               GetObject (hBitmap, sizeof (BITMAP), (PSTR) &amp;bm) ;
+               SetStretchBltMode (hdc, COLORONCOLOR) ;
+
+               StretchBlt (hdc,    0, 0, rect.right, rect.bottom,
+                           hdcMem, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY) ;
+
+               DeleteDC (hdcMem) ;
+          }
+          EndPaint (hwnd, &amp;ps) ;
+          return 0 ;
+
+     case WM_DESTROY:
+          if (hBitmap)
+               DeleteObject (hBitmap) ;
+
+          PostQuitMessage (0) ;
+          return 0 ;
+     }
+     return DefWindowProc (hwnd, message, wParam, lParam) ;
+}
+</PRE>
+</td></tr></table>
+<P><table cellpadding=5 width="95%"><tr><td>
+<A NAME="471"><H3>BLOWUP.RC (excerpts)</H3></A><pre>//Microsoft Developer Studio generated resource script.
+
+#include &quot;resource.h&quot;
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+// Menu
+
+BLOWUP MENU DISCARDABLE 
+BEGIN
+    POPUP &quot;&amp;Edit&quot;
+    BEGIN
+        MENUITEM &quot;Cu&amp;t\tCtrl+X&quot;,                IDM_EDIT_CUT
+        MENUITEM &quot;&amp;Copy\tCtrl+C&quot;,               IDM_EDIT_COPY
+        MENUITEM &quot;&amp;Paste\tCtrl+V&quot;,              IDM_EDIT_PASTE
+        MENUITEM &quot;De&amp;lete\tDelete&quot;,             IDM_EDIT_DELETE
+    END
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+// Accelerator
+
+BLOWUP ACCELERATORS DISCARDABLE 
+BEGIN
+    &quot;C&quot;,            IDM_EDIT_COPY,          VIRTKEY, CONTROL, NOINVERT
+    &quot;V&quot;,            IDM_EDIT_PASTE,         VIRTKEY, CONTROL, NOINVERT
+    VK_DELETE,      IDM_EDIT_DELETE,        VIRTKEY, NOINVERT
+    &quot;X&quot;,            IDM_EDIT_CUT,           VIRTKEY, CONTROL, NOINVERT
+END</pre>
+</td></tr></table>
+<table cellpadding=5 width="95%"><tr><td>
+<A NAME="472"><H3>RESOURCE.H (excerpts)</H3></A>
+<pre>// Microsoft Developer Studio generated include file.
+// Used by Blowup.rc
+
+#define IDM_EDIT_CUT                    40001
+#define IDM_EDIT_COPY                   40002
+#define IDM_EDIT_PASTE                  40003
+#define IDM_EDIT_DELETE                 40004
+</PRE>
+</td></tr></table>
+<P><A HREF="javascript:fullSize('F14zg22x.htm')"><IMG SRC="F14zg22.JPG" width=404 height=285 ALIGN="BOTTOM" border=0> </A>
+<P><!-- caption --><B>Figure 14-22.</b> <i>A sample BLOWUP display.</I><!-- /caption -->
+<P>Because of restrictions on mouse capturing, using BLOWUP is a little 
+complicated at first and takes some getting used to. Here's how to use the program:
+<OL>
+<p><B><li></B>      Press the left mouse button in BLOWUP's client area, and keep the left 
+button held down. The mouse cursor changes to a crosshair.
+<p><B><li></B>        Still holding the left button down, move the mouse cursor anywhere on 
+the screen. Position the mouse cursor at the upper left corner of the rectangular 
+area you want to capture.
+<p><B><li></B>     Still holding the left button down, press the right mouse button and drag 
+the mouse to the lower right corner of the rectangular area you want to 
+capture. Release the left and right mouse buttons. (The order in which you release 
+the buttons doesn't matter.)
+</OL>
+<P>The mouse cursor changes back to an arrow, and the area that you blocked out is 
+copied to BLOWUP's client area and compressed or expanded appropriately.
+<P>If you block out a rectangle by moving from the upper right corner to the lower 
+left corner, BLOWUP displays a mirror image. If you move from the lower left to the 
+upper right, BLOWUP displays an upside-down image. And if you move from the upper right 
+to the upper left, the program combines the two effects.
+<P>BLOWUP also contains logic to copy the bitmap to the clipboard, and to copy 
+any bitmap in the clipboard to the program. BLOWUP processes the 
+WM_INITMENUPOPUP message to enable or disable the various items on its Edit menu and the 
+WM_COMMAND message to process these menu items. The structure of this code should look 
+familiar because it is essentially the same as that shown in <a href="ch12a.htm#381">Chapter 12</a> to copy and paste text items.
+<P>For bitmaps, however, the clipboard items are not global handles but bitmap 
+handles. When you use the CF_BITMAP, the 
+<I>GetClipboardData</I> function returns an HBITMAP 
+object and the <I>SetClipboardData</I> function accepts an HBITMAP object. If you want to 
+transfer a bitmap to the clipboard but still have a copy of it for use by the program itself, 
+
+you must make a copy of the bitmap. Similarly, if you paste a bitmap from the clipboard, 
+you should also make a copy. The <I>CopyBitmap</I> function in BLOWUP does this by obtaining 
+a BITMAP structure of the existing bitmap and using this structure in the 
+<I>CreateBitmapIndirect</I> function to create a new bitmap. (The 
+<I>Src</I> and <I>Dst</I> suffixes on the variable names 
+stand for &quot;source&quot; and &quot;destination.&quot;) Both bitmaps are selected into memory device contexts 
+and the bitmap bits transferred with a call to 
+<I>BitBlt</I>. (Alternatively, to copy the bits, you 
+can allocate a block of memory the size of the bitmap and call 
+<I>GetBitmapBits</I> for the source bitmap and 
+<I>SetBitmapBits</I> for the destination bitmap.)
+<P>I find BLOWUP to be very useful for examining the multitude of little bitmaps 
+and pictures that are scattered throughout Windows and its applications.
+</BODY>
+</HTML>
+
+
+
+
+

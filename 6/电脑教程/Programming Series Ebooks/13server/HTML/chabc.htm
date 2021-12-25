@@ -1,0 +1,197 @@
+<HTML>
+<HEAD>
+<TITLE>The Print Buffer C++ Class (PrintBuf.h)</TITLE>
+<link rel="STYLESHEET" type="text/css" href="prosrvwin.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR = "#ffffff">
+<A HREF="chabb.htm">[Previous]</A> <A HREF="chabd.htm">[Next]</A><P>
+
+<A NAME="317"><h1>The Print Buffer C++ Class (PrintBuf.h)</h1></A>
+<p>Many of the book's sample applications construct strings of information. This information is then placed in a static control or read-only edit control or displayed in a message box. The CPrintBuf class, shown in Listing B-2, makes it easier to construct these strings.</p>
+
+<p>Internally, a CPrintBuf object keeps track of a string buffer. Each time the <i>Print</i> or <i>PrintError</i> method is called, new string information is appended to the end of the string. As you can see, predicting how much storage is necessary for the string is difficult because the applications don't know ahead of time what will be placed into the string.</p>
+
+<p>So that memory is used efficiently, CPrintBuf's string buffer is initialized by reserving a large region of memory. We default to 64 KB because it doesn't make sense to use a value smaller than the system's allocation granularity value (64 KB on all Windows platforms to date). After this region is reserved, one page of storage is committed to it. If the string data attempts to exceed this storage, an exception is raised and the CPrintBuf object commits more storage to the buffer, growing it as necessary.</p>
+
+<p>The class overloads the PCTSTR cast operator so an instance of the class can be passed directly to functions that require a pointer to a buffer containing a zero-terminated string. </p>
+
+<p><b>Listing B-2.</b> <i>The PrintBuf.h header file</i></p>
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+<p><b>PrintBuf.h</b></p>
+/******************************************************************************
+Module:  PrintBuf.h
+Notices: Copyright (c) 2000 Jeffrey Richter
+Purpose: This class wraps allows sprintf-like operations while automatically
+         growing the resulting data buffer.
+         See Appendix B.
+******************************************************************************/
+
+
+#pragma once   // Include this header file once per compilation unit
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+#include &quot;..\CmnHdr.h&quot;                 // See Appendix A.
+#include &lt;StdIO.h&gt;                     // For _vstprintf
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+class CPrintBuf {
+public:
+   CPrintBuf(SIZE_T nMaxSizeInBytes = 64 * 1024); // 64KB is default
+   virtual ~CPrintBuf();
+
+   BOOL Print(PCTSTR pszFmt, ...);
+   BOOL PrintError(DWORD dwError = GetLastError());
+   operator PCTSTR() { return(m_pszBuffer); }
+   void Clear();
+
+private:
+   LONG Filter(EXCEPTION_POINTERS* pep);
+
+private:
+   int   m_nMaxSizeInBytes;
+   int   m_nCurSize;
+   PTSTR m_pszBuffer;
+};
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+#ifdef PRINTBUF_IMPL
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+CPrintBuf::CPrintBuf(SIZE_T nMaxSizeInBytes) {
+
+   // This constructor sets initial values of members, and reserves a block
+   // of addresses of size nMaxSizeInBytes and commits a single page.
+   m_nMaxSizeInBytes = nMaxSizeInBytes;
+   m_nCurSize = 0;
+   m_pszBuffer = (PTSTR) 
+      VirtualAlloc(NULL, m_nMaxSizeInBytes, MEM_RESERVE, PAGE_READWRITE);
+   chASSERT(m_pszBuffer != NULL);
+   chVERIFY(VirtualAlloc(m_pszBuffer, 1, MEM_COMMIT, PAGE_READWRITE) != NULL);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+CPrintBuf::~CPrintBuf() {
+
+   VirtualFree(m_pszBuffer, 0, MEM_RELEASE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void CPrintBuf::Clear() {
+
+   VirtualFree(m_pszBuffer, m_nMaxSizeInBytes, MEM_DECOMMIT);
+   chVERIFY(VirtualAlloc(m_pszBuffer, 1, MEM_COMMIT, PAGE_READWRITE) != NULL);
+   m_nCurSize = 0;
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+LONG CPrintBuf::Filter(EXCEPTION_POINTERS* pep) {
+
+   LONG lDisposition = EXCEPTION_EXECUTE_HANDLER;
+   EXCEPTION_RECORD* per = pep-&gt;ExceptionRecord;
+   __try {
+      // Is exception is an access violation in the data buffer's region?
+      if (per-&gt;ExceptionCode != EXCEPTION_ACCESS_VIOLATION) 
+         __leave;
+
+      if (!chINRANGE(m_pszBuffer, (PVOID) per-&gt;ExceptionInformation[1], 
+         ((PBYTE) m_pszBuffer) + m_nMaxSizeInBytes - 1)) {
+         __leave;
+         }
+
+      // Attempt to commit storage to the region
+      if (VirtualAlloc((PVOID) pep-&gt;ExceptionRecord-&gt;ExceptionInformation[1], 
+         1, MEM_COMMIT, PAGE_READWRITE) == NULL) {
+         __leave;
+      }
+
+      lDisposition = EXCEPTION_CONTINUE_EXECUTION;
+   }
+   __finally {
+   }
+   return(lDisposition);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+int CPrintBuf::Print(PCTSTR pszFmt , ...) {
+
+   // This function appends text to the formatted print buffer.
+   int nLength = -1; // Assume failure
+   va_list arglist;
+   va_start(arglist, pszFmt);   
+   __try {
+      // Append string to end of buffer
+      nLength = _vstprintf(m_pszBuffer + m_nCurSize, pszFmt, arglist);
+      if (nLength &gt; 0) 
+         m_nCurSize += nLength;  
+ }
+   __except (Filter(GetExceptionInformation())) {
+      chMB(&quot;CPrintBuf attempted to go over the maximum size.&quot;);
+      DebugBreak();
+   }
+   va_end(arglist);
+   return(nLength);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL CPrintBuf::PrintError(DWORD dwErr) {
+
+   // Append the last error string text to the buffer.
+   PTSTR pszMsg = NULL;
+   BOOL fOk = (0 != FormatMessage(
+      FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM, NULL, 
+      dwErr, 0, (PTSTR) &amp;pszMsg, 0, NULL));
+   fOk = fOk &amp;&amp; (Print(TEXT(&quot;Error %d: %s&quot;), dwErr, pszMsg) &gt;= 0);
+   if (pszMsg != NULL)
+      LocalFree(pszMsg);
+   return(fOk);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+#endif   // PRINTBUF_IMPL
+
+
+///////////////////////////////// End of File /////////////////////////////////
+</pre></td></tr></table>
+</p>
+
+</BODY>
+</HTML>
+
+
+
+

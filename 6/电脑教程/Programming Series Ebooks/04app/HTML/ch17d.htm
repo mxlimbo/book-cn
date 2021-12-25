@@ -1,0 +1,1095 @@
+<HTML>
+<HEAD>
+<TITLE>Using Memory-Mapped Files</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch17c.htm">[Previous]</A> <A HREF="ch17e.htm">[Next]</A><P>
+
+<A NAME="218"><H1>Using Memory-Mapped Files</H1></A>
+
+<p>To use a memory-mapped file, you must perform three steps:</p>
+
+<ol>
+<p><li>Create or open a file kernel object that identifies the file on
+disk that you want to use as a memory-mapped file.</li></p>
+
+<p><li>Create a file-mapping kernel object that tells the system the
+size of the file and how you intend to access the file.</li></p>
+
+<p><li>Tell the system to map all or part of the file-mapping object
+into your process's address space.</li></p>
+</ol>
+
+<p>When you are finished using the memory-mapped file, you must perform
+three steps to clean up:</p>
+
+<ol>
+<p><li>Tell the system to unmap the file-mapping kernel object from
+your process's address space.</li></p>
+
+<p><li>Close the file-mapping kernel object.</li></p>
+
+<p><li>Close the file kernel object.</li></p>
+</ol>
+
+<p>The next five sections discuss all these steps in more detail.</p>
+
+<A NAME="219"><H2>Step 1: Creating or Opening a File Kernel Object</H2></A>
+
+<p>To create or open a file kernel object, always call the <i>
+CreateFile</i> function:</p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<pre>
+HANDLE CreateFile(
+   PCSTR pszFileName, 
+   DWORD dwDesiredAccess,
+   DWORD dwShareMode, 
+   PSECURITY_ATTRIBUTES psa,
+   DWORD dwCreationDisposition, 
+   DWORD dwFlagsAndAttributes,
+   HANDLE hTemplateFile);
+</pre></td></tr></table></p>
+
+<p>The <i>CreateFile</i> function takes quite a few parameters. For
+this discussion, I'll concentrate only on the first three: <i>
+pszFileName</i>, <i>dwDesiredAccess</i>, and <i>dwShareMode</i>.</p>
+
+<p>As you might guess, the first parameter, <i>pszFileName</i>, identifies
+the name (including an optional path) of the file that you want to
+create or open. The second parameter, <i>dwDesiredAccess</i>, specifies
+how you intend to access the contents of the file. You can specify one
+of the four following values.</p>
+
+<p><table width="95%" cellpadding="5">
+<tr><th>Value</th>
+<th>Meaning</th></tr>
+<tr><td valign="TOP">0</td>
+<td valign="TOP">You cannot read from or write to the file's contents. Specify 0 when you just want to get a file's attributes.</td></tr>
+<tr><td valign="TOP">GENERIC_READ</td>
+<td valign="TOP">You can read from the file.</td></tr>
+<tr><td valign="TOP">GENERIC_WRITE</td>
+<td valign="TOP">You can write to the file.</td></tr>
+<tr><td valign="TOP">GENERIC_READ | GENERIC_WRITE</td>
+<td valign="TOP">You can read from the file and write to the file.</td></tr>
+</table></p>
+
+<p>When creating or opening a file for use as a memory-mapped file, select
+the access flag or flags that make the most sense for how you intend to
+access the file's data. For memory-mapped files, you must open the
+file for read-only access or read-write access, so you'll want to
+specify either GENERIC_READ or GENERIC_READ | GENERIC_WRITE,
+respectively.</p>
+
+<p>The third parameter, <i>dwShareMode</i>, tells the system how you want
+to share this file. You can specify one of the four following values
+for <i>dwShareMode</i>.</p>
+
+<p><table width="95%" cellpadding="5">
+<tr><th>Value</th>
+<th>Meaning</th></tr>
+<tr><td valign="TOP">0</td>
+<td valign="TOP">Any other attempts to open the file fail.</td></tr>
+<tr><td valign="TOP">FILE_SHARE_READ</td>
+<td valign="TOP">Other attempts to open the file using GENERIC_WRITE fail.</td></tr>
+<tr><td valign="TOP">FILE_SHARE_WRITE</td>
+<td valign="TOP">Other attempts to open the file using GENERIC_READ fail.</td></tr>
+<tr><td valign="TOP">FILE_SHARE_READ | FILE_SHARE_WRITE</td>
+<td valign="TOP">Other attempts to open the file succeed.</td></tr>
+</table></p>
+
+<p>If <i>CreateFile</i> successfully creates or opens the specified file,
+a handle to a file kernel object is returned; otherwise,
+INVALID_HANDLE_VALUE is returned.</p>
+
+<p><div class="note"><blockquote><b>NOTE</b><hr>
+Most Windows functions that return a handle return NULL when they are
+unsuccessful. <i>CreateFile</i>, however, returns INVALID_HANDLE_ 
+VALUE, which is defined as ((HANDLE) -1).</blockquote></div></p>
+
+<A NAME="220"><H2>Step 2: Creating a File-Mapping Kernel Object</H2></A>
+
+<p>Calling <i>CreateFile</i> tells the operating system the location of
+the file mapping's physical storage. The pathname that you pass
+indicates the exact location on the disk (or on the network or the
+CD-ROM, for example) of the physical storage that is backing the file
+mapping. Now you must tell the system how much physical storage the
+file-mapping object requires. You do this by calling <i>CreateFileMapping</i>:</p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<pre>
+HANDLE CreateFileMapping(
+   HANDLE hFile, 
+   PSECURITY_ATTRIBUTES psa,
+   DWORD fdwProtect, 
+   DWORD dwMaximumSizeHigh, 
+   DWORD dwMaximumSizeLow,
+   PCTSTR pszName);
+</pre></td></tr></table></p>
+
+<p>The first parameter, <i>hFile</i>, identifies the handle of the file
+you want mapped into the process's address space. This handle is
+returned by the previous call to <i>CreateFile</i>. The <i>psa</i>
+parameter is a pointer to a SECURITY_ATTRIBUTES structure for the
+file-mapping kernel object; usually NULL is passed (which provides
+default security and the returned handle is noninheritable).</p>
+
+<p>As I pointed out at the beginning of this chapter, creating a
+memory-mapped file is just like reserving a region of address space and
+then committing physical storage to the region. It's just that the
+physical storage for a memory-mapped file comes from a file on a disk
+rather than from space allocated from the system's paging file.
+When you create a file-mapping object, the system does not reserve a
+region of address space and map the file's storage to the region.
+(I'll describe how to do this in the next section.) However, when
+the system does map the storage to the process's address space, the
+system must know what protection attribute to assign to the pages of
+physical storage. <i>CreateFileMapping</i>'s <i>fdwProtect</i>
+parameter allows you to specify the protection attributes. Most of the
+time, you will specify one of the three protection attributes listed in
+the table below.</p>
+
+<p><table width="95%" cellpadding="5">
+<tr><th>Protection Attribute</th>
+<th>Meaning</th></tr>
+<tr><td valign="TOP">PAGE_READONLY</td>
+<td valign="TOP">When the file-mapping object is mapped, you can read the file's data. You must have passed GENERIC_READ to <i>CreateFile</i>.</td></tr>
+<tr><td valign="TOP">PAGE_READWRITE</td>
+<td valign="TOP">When the file-mapping object is mapped, you can read and write the file's data. You must have passed GENERIC_READ | GENERIC_WRITE to <i>CreateFile</i>.</td></tr>
+<tr><td valign="TOP">PAGE_WRITECOPY</td>
+<td valign="TOP">When the file-mapping object is mapped, you can read and write the file's data. Writing causes a private copy of the page to be created. You must have passed either GENERIC_READ or GENERIC_READ | GENERIC_WRITE to <i>CreateFile</i></td></tr>
+</table></p>
+
+<p><div class="note"><blockquote><b>Windows 98</b><hr>
+Under Windows 98, you can pass the PAGE_WRITECOPY flag to <i>
+CreateFileMapping</i>; this tells the system to commit storage from the
+paging file. This paging file storage is reserved for a copy of the
+data file's data; only modified pages are actually written to the
+paging file. Any changes you make to the file's data are not
+propagated back to the original data file. The end result is that the
+PAGE_WRITECOPY flag has the same effect on both Windows 2000 and
+Windows 98.</blockquote></div></p>
+
+<p>In addition to the above page protections, there are four section
+attributes that you can bitwise OR in the <i>CreateFileMapping</i>
+function's <i>fdwProtect</i> parameter. A section is just another
+word for a memory mapping.</p>
+
+<p>The first of these attributes, SEC_NOCACHE, tells the system that none
+of the file's memory-mapped pages are to be cached. So as you write
+data to the file, the system will update the file's data on the
+disk more often than it normally would. This flag, like the
+PAGE_NOCACHE protection attribute, exists for the device driver
+developer and is not usually used by applications.</p>
+
+<p><div class="note"><blockquote><b>Windows 98</b><hr>
+Windows 98 ignores the SEC_NOCACHE flag.
+</blockquote></div></p>
+
+<p>The second section attribute, SEC_IMAGE, tells the system that the
+file you are mapping is a portable executable (PE) file image. When the
+system maps this file into your process's address space, the system
+examines the file's contents to determine which protection
+attributes to assign to the various pages of the mapped image. For
+example, a PE file's code section (.text) is usually mapped with
+PAGE_EXECUTE_READ attributes, whereas the PE file's data section
+(.data) is usually mapped with PAGE_READWRITE attributes. Specifying
+the SEC_IMAGE attribute tells the system to map the file's image
+and to set the appropriate page protections.</p>
+
+<p><div class="note"><blockquote><b>Windows 98</b><hr>
+Windows 98 ignores the SEC_IMAGE flag.
+</blockquote></div></p>
+
+<p>The last two attributes, SEC_RESERVE and SEC_COMMIT, are mutually
+exclusive and do not apply when you are using a memory-mapped data
+file. These two flags will be discussed in the section &quot;Sparsely
+Committed Memory-Mapped Files&quot; later in this chapter. When
+creating a memory-mapped data file, you should not specify either of
+these flags. <i>CreateFileMapping</i> will ignore them.</p>
+
+<p><i>CreateFileMapping</i>'s next two parameters, <i>
+dwMaximumSizeHigh</i> and <i>dwMaximumSizeLow</i>, are the most
+important parameters. The main purpose of the <i>CreateFileMapping</i>
+function is to ensure that enough physical storage is available for the
+file-mapping object. These two parameters tell the system the maximum
+size of the file in bytes. Two 32-bit values are required because
+Windows supports file sizes that can be expressed using a 64-bit value;
+the <i>dwMaximumSizeHigh</i> parameter specifies the high 32 bits, and
+the <i>dwMaximumSizeLow</i> parameter specifies the low 32 bits. For
+files that are 4 GB or less, <i>dwMaximumSizeHigh</i> will always be
+0.</p>
+
+<p>Using a 64-bit value means that Windows can process files as large
+as 16 EB (exabytes). If you want to create the file-mapping object so
+that it reflects the current size of the file, you can pass 0 for both
+parameters. If you intend only to read from the file or to access the
+file without changing its size, pass 0 for both parameters. If you
+intend to append data to the file, you will want to choose a maximum
+file size that leaves you some breathing room. If the file on disk
+currently contains 0 bytes, you can't pass two zeros to <i>
+CreateFileMapping</i>'s <i>dwMaximumSizeHigh</i> and <i>
+dwMaximumSizeLow</i> parameters. Doing so tells the system that you
+want a file-mapping object with 0 bytes of storage in it. This is an
+error and <i>CreateFileMapping</i> will return NULL.</p>
+
+<p>If you've paid attention so far, you must be thinking that
+something is terribly wrong here. It's nice that Windows supports
+files and file-mapping objects that can be anywhere up to 16 EB, but
+how are you ever going to map a file that big into a 32-bit
+process's address space, which has a maximum limit of 4 GB (little
+of which is even usable)? I'll explain how you can accomplish this
+in the next section. Of course, a 64-bit process has a 16-EB address
+space so you can work with much larger file mappings, but a similar
+limitation still exists if the file is super-big.</p>
+
+<p>To really understand how <i>CreateFile</i> and <i>
+CreateFileMapping</i> work, I suggest you try the following experiment.
+Take the code below, build it, and then run it in a debugger. As you
+single-step through each statement, jump to a command shell and execute
+a &quot;dir&quot; command on the C:\ directory. Notice the changes that
+are appearing in the directory as you execute each statement in the
+debugger.</p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<pre>
+int WINAPI _tWinMain(HINSTANCE hinstExe, HINSTANCE,
+   PTSTR pszCmdLine, int nCmdShow) {
+
+   // Before executing the line below, C:\ does not have 
+   // a file called &quot;MMFTest.Dat.&quot;
+   HANDLE hfile = CreateFile(&quot;C:\\MMFTest.dat&quot;, 
+      GENERIC_READ | GENERIC_WRITE,
+      FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS,
+      FILE_ATTRIBUTE_NORMAL, NULL);
+
+   // Before executing the line below, the MMFTest.Dat 
+   // file does exist but has a file size of 0 bytes.
+   HANDLE hfilemap = CreateFileMapping(hfile, NULL, PAGE_READWRITE,
+      0, 100, NULL);
+
+   // After executing the line above, the MMFTest.Dat 
+   // file has a size of 100 bytes.
+
+   // Cleanup
+   CloseHandle(hfilemap);
+   CloseHandle(hfile);
+
+   // When the process terminates, MMFTest.Dat remains 
+   // on the disk with a size of 100 bytes.
+   return(0);
+}
+</pre></td></tr></table></p>
+
+<p>If you call <i>CreateFileMapping</i>, passing the PAGE_READWRITE
+flag, the system will check to make sure that the associated data file
+on the disk is at least the same size as the size specified in the <i>
+dwMaximumSizeHigh</i> and <i>dwMaximumSizeLow</i> parameters. If the
+file is smaller than the specified size, <i>CreateFileMapping</i> will
+make the file on the disk larger by extending its size. This
+enlargement is required so that the physical storage will already exist
+when the file is used later as a memory-mapped file. If the
+file-mapping object is being created with the PAGE_READONLY or the
+PAGE_WRITECOPY flag, the size specified to <i>CreateFileMapping</i>
+must be no larger than the physical size of the disk file. This is
+because you won't be able to append any data to the file.</p>
+
+<p>The last parameter of <i>CreateFileMapping</i>, <i>pszName</i>, is a
+zero-terminated string that assigns a name to this file-mapping object.
+The name is used to share the object with another process. (An example
+of this is shown later in this chapter. <A HREF="ch03a.htm">Chapter 3</A> also discusses kernel
+object sharing in greater detail.) A memory-mapped data file usually
+doesn't need to be shared; therefore, this parameter is usually
+NULL.</p>
+
+<p>The system creates the file-mapping object and returns a handle
+identifying the object back to the calling thread. If the system cannot
+create the file-mapping object, a NULL handle value is returned. Again,
+please remember that <i>CreateFile</i> returns INVALID_HANDLE_VALUE
+(defined as -1) when it fails and <i>CreateFileMapping</i> returns NULL
+when it fails. Don't get these error values confused.</p>
+
+<A NAME="221"><H2>Step 3: Mapping the File's Data into the Process's Address Space</H2></A>
+
+<p>After you have created a file-mapping object, you still need to have
+the system reserve a region of address space for the file's data
+and commit the file's data as the physical storage that is mapped
+to the region. You do this by calling <i>MapViewOfFile</i>:</p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<pre>
+PVOID MapViewOfFile(
+   HANDLE hFileMappingObject, 
+   DWORD dwDesiredAccess,
+   DWORD dwFileOffsetHigh, 
+   DWORD dwFileOffsetLow,
+   SIZE_T dwNumberOfBytesToMap);
+</pre></td></tr></table></p>
+
+<p>The <i>hFileMappingObject</i> parameter identifies the handle of the
+file-mapping object, which was returned by the previous call to either
+<i>CreateFileMapping</i> or <i>OpenFileMapping</i> (discussed later in
+this chapter). The <i>dwDesiredAccess</i> parameter identifies how the
+data can be accessed. That's right, we must again specify how we
+intend to access the file's data. You can specify one of four
+possible values shown in the table below.</p>
+
+<p><table width="95%" cellpadding="5">
+<tr><th>Value</th>
+<th>Meaning</th></tr>
+<tr><td valign="TOP">FILE_MAP_WRITE</td>
+<td valign="TOP">You can read and write file data. <i>CreateFileMapping</i> had to be called by passing PAGE_READWRITE.</td></tr>
+<tr><td valign="TOP">FILE_MAP_READ</td>
+<td valign="TOP">You can read file data. <i>CreateFileMapping</i> could be called with any of the protection attributes: PAGE_READONLY, PAGE_READWRITE, or PAGE_WRITECOPY.</td></tr>
+<tr><td valign="TOP">FILE_MAP_ALL_ACCESS</td>
+<td valign="TOP">Same as FILE_MAP_WRITE.</td></tr>
+<tr><td valign="TOP">FILE_MAP_COPY</td>
+<td valign="TOP">You can read and write file data. Writing causes a private copy of the page to be created. In Windows 2000, <i>CreateFileMapping</i> could be called with any of the protection attributes: PAGE_READONLY, PAGE_READWRITE, or PAGE_WRITECOPY. Windows 98 requires that <i>CreateFileMapping</i> be called with PAGE_WRITECOPY.</td></tr>
+</table></p>
+
+<p>It certainly seems strange and annoying that Windows requires all
+these protection attributes to be set over and over again. I assume
+this was done to give an application as much control as possible over
+data protection.</p>
+
+<p>The remaining three parameters have to do with reserving the region
+of address space and mapping the physical storage to the region. When
+you map a file into your process's address space, you don't
+have to map the entire file at once. Instead, you can map only a small
+portion of the file into the address space. A portion of a file that is
+mapped into your process's address space is called a <i>view,</i>
+which explains how <i>MapViewOfFile</i> got its name.</p>
+
+<p>When you map a view of a file into your process's address space,
+you must specify two things. First, you must tell the system which byte
+in the data file should be mapped as the first byte in the view. You do
+this using the <i>dwFileOffsetHigh</i> and <i>dwFileOffsetLow</i>
+parameters. Because Windows supports files that can be up to 16 EB, you
+must specify this byte-offset using a 64-bit value of which the high 32
+bits are passed in the <i>dwFileOffsetHigh</i> parameter and the low 32
+bits are passed in the <i>dwFileOffsetLow</i> parameter. Note that the
+offset in the file must be a multiple of the system's allocation
+granularity. (To date, all implementations of Windows have an
+allocation granularity of 64 KB.) The section &quot;System
+Information&quot; in <A HREF="ch14a.htm">Chapter 14</A> shows how to obtain the allocation
+granularity value for a given system.</p>
+
+<p>Second, you must tell the system how much of the data file to map
+into the address space. This is the same thing as specifying how large
+a region of address space to reserve. You specify this size using the
+<i>dwNumberOfBytesToMap</i> parameter. If you specify a size of 0, the
+system will attempt to map a view starting with the specified offset
+within the file to the end of the entire file.</p>
+
+<p><div class="note"><blockquote><b>Windows 98</b><hr>
+In Windows 98, if <i>MapViewOfFile</i> cannot find a region large enough
+to contain the entire file-mapping object, <i>MapViewOfFile</i> returns
+NULL regardless of the size of the view requested.</blockquote></div></p>
+
+<p><div class="note"><blockquote><b>Windows 2000</b><hr>In
+Windows 2000, <i>MapViewOfFile</i> needs only to find a region large
+enough for the view requested, regardless of the size of the entire
+file-mapping object.</blockquote></div></p>
+
+<p>If you specify the FILE_MAP_COPY flag when calling <i>
+MapViewOfFile</i>, the system commits physical storage from the
+system's paging file. The amount of space committed is determined
+by the <i>dwNumberOfBytesToMap</i> parameter. As long as you do nothing
+more than read from the file's mapped view, the system never uses
+these committed pages in the paging file. However, the first time any
+thread in your process writes to any memory address within the
+file's mapped view, the system will grab one of the committed pages
+from the paging file, copy the page of original data to this
+paging-file page, and then map this copied page into your process's
+address space. From this point on, the threads in your process are
+accessing a local copy of the data and cannot read or modify the
+original data.</p>
+
+<p>When the system makes the copy of the original page, the system changes
+the protection of the page from PAGE_WRITECOPY to PAGE_READWRITE. The
+following code fragment explains it all:</p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<pre>
+// Open the file that we want to map.
+HANDLE hFile = CreateFile(pszFileName, GENERIC_READ | GENERIC_WRITE, 0, NULL,
+   OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+
+// Create a file-mapping object for the file.
+HANDLE hFileMapping = CreateFileMapping(hFile, NULL, PAGE_WRITECOPY,
+   0, 0, NULL);
+
+// Map a copy-on-write view of the file; the system will commit
+// enough physical storage from the paging file to accommodate
+// the entire file. All pages in the view will initially have
+// PAGE_WRITECOPY access.
+PBYTE pbFile = (PBYTE) MapViewOfFile(hFileMapping, FILE_MAP_COPY,
+   0, 0, 0);
+
+// Read a byte from the mapped view.
+BYTE bSomeByte = pbFile[0];
+// When reading, the system does not touch the committed pages in
+// the paging file. The page keeps its PAGE_WRITECOPY attribute.
+
+// Write a byte to the mapped view.
+pbFile[0] = 0;
+// When writing for the first time, the system grabs a committed
+// page from the paging file, copies the original contents of the
+// page at the accessed memory address, and maps the new page
+// (the copy) into the process's address space. The new page has
+// an attribute of PAGE_READWRITE.
+
+// Write another byte to the mapped view.
+pbFile[1] = 0;
+// Because this byte is now in a PAGE_READWRITE page, the system
+// simply writes the byte to the page (backed by the paging file).
+
+// When finished using the file's mapped view, unmap it.
+// UnmapViewOfFile is discussed in the next section.
+UnmapViewOfFile(pbFile);
+// The system decommits the physical storage from the paging file.
+// Any writes to the pages are lost.
+
+// Clean up after ourselves.
+CloseHandle(hFileMapping);
+CloseHandle(hFile);
+</pre></td></tr></table></p>
+
+<p><div class="note"><blockquote><b>Windows 98</b><hr>
+As mentioned earlier, Windows 98 must commit storage in the paging file
+for the memory-mapped file up front. However, it will write modified
+pages to the paging file only as necessary.</blockquote></div></p>
+
+<A NAME="222"><H2>Step 4: Unmapping the File's Data from the Process's Address Space</H2></A>
+
+<p>When you no longer need to keep a file's data mapped to a region
+of your process's address space, you can release the region by
+calling</p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<pre>
+BOOL UnmapViewOfFile(PVOID pvBaseAddress);
+</pre></td></tr></table></p>
+
+<p>The only parameter, <i>pvBaseAddress</i>, specifies the base address
+of the returned region. This value must be the same value returned from
+a call to <i>MapViewOfFile</i>. You must remember to call <i>
+UnmapViewOfFile</i>. If you do not call this function, the reserved
+region won't be released until your process terminates. Whenever
+you call <i>MapViewOfFile</i>, the system always reserves a new region
+within your process's address space&#8212;any previously reserved
+regions are <i>not</i> released.</p>
+
+<p>In the interest of speed, the system buffers the pages of the
+file's data and doesn't update the disk image of the file
+immediately while working with the file's mapped view. If you need
+to ensure that your updates have been written to disk, you can force
+the system to write a portion or all of the modified data back to the
+disk image by calling <i>FlushViewOfFile</i>:</p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<pre>
+BOOL FlushViewOfFile(
+   PVOID pvAddress, 
+   SIZE_T dwNumberOfBytesToFlush);
+</pre></td></tr></table></p>
+
+<p>The first parameter is the address of a byte contained within a view
+of a memory-mapped file. The function rounds down the address you pass
+here to a page boundary. The second parameter indicates the number of
+bytes that you want flushed. The system will round this number up so
+that the total number of bytes is an integral number of pages. If you
+call <i>FlushViewOfFile</i> and none of the data has been changed, the
+function simply returns without writing anything to the disk.</p>
+
+<p>For a memory-mapped file whose storage is over a network, <i>
+FlushViewOfFile</i> guarantees that the file's data has been
+written from the workstation. However, <i>FlushViewOfFile</i> cannot
+guarantee that the server machine that is sharing the file has written
+the data to the remote disk drive because the server might be caching
+the file's data. To ensure that the server writes the file's
+data, you should pass the FILE_FLAG_WRITE_THROUGH flag to the <i>
+CreateFile</i> function whenever you create a file-mapping object for
+the file and then map the view of the file-mapping object. If you use
+this flag to open the file, <i>FlushViewOfFile</i> will return only
+when all of the file's data has been stored on the server's
+disk drive.</p>
+
+<p>Keep in mind one special characteristic of the <i>UnmapViewOfFile</i>
+function. If the view was originally mapped using the FILE_MAP_COPY
+flag, any changes you made to the file's data were actually made to
+a copy of the file's data stored in the system's paging file.
+In this case, if you call <i>UnmapViewOfFile</i>, the function has
+nothing to update on the disk file and simply causes the pages in the
+paging file to be freed&#8212;the data is lost.</p>
+
+<p>If you want to preserve the changed data, you must take additional
+measures yourself. For example, you might want to create another
+file-mapping object (using PAGE_READWRITE) from the same file and map
+this new file-mapping object into your process's address space
+using the FILE_MAP_WRITE flag. Then you could scan the first view looking for pages with
+the PAGE_READWRITE protection attribute. Whenever you found a page with
+this attribute, you could examine its contents and decide whether to
+write the changed data to the file. If you do not want to update the
+file with the new data, keep scanning the remaining pages in the view
+until you reach the end. If you do want to save the changed page of
+data, however, just call <i>MoveMemory</i> to copy the page of data
+from the first view to the second view. Because the second view is
+mapped with PAGE_READWRITE protection, the <i>MoveMemory</i> function
+will be updating the actual contents of the file on the disk. You can
+use this method to determine changes and preserve your file's
+data.</p>
+
+<p><div class="note"><blockquote><b>Windows 98</b><hr>
+Windows 98 does not support the copy-on-write protection attribute, so you
+cannot test for pages marked with the PAGE_READWRITE flag when scanning
+the first view of the memory-mapped file. You will have to devise a
+method of your own for determining which pages in the first view you
+have actually modified.</blockquote></div></p>
+
+<A NAME="223"><H2>Steps 5 and 6: Closing the File-Mapping Object and the File Object</H2></A>
+
+<p>It goes without saying that you should always close any kernel
+objects you open. Forgetting to do so will cause resource leaks while
+your process continues to run. Of course, when your process terminates,
+the system automatically closes any objects your process opened but
+forgot to close. But if your process does not terminate for a while,
+you will accumulate resource handles. You should always write clean,
+&quot;proper&quot; code that closes any objects you have opened. To
+close the file-mapping object and the file object, you simply need to
+call the <i>CloseHandle</i> function twice&#8212;once for each
+handle.</p>
+
+<p>Let's look at this process a little more closely. The following
+pseudocode shows an example of memory-mapping a file:</p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<pre>
+HANDLE hFile = CreateFile(...); 
+HANDLE hFileMapping = CreateFileMapping(hFile, ...);
+PVOID pvFile = MapViewOfFile(hFileMapping, ...);
+
+// Use the memory-mapped file.
+
+UnmapViewOfFile(pvFile);
+CloseHandle(hFileMapping);
+CloseHandle(hFile);
+</pre></td></tr></table></p>
+
+<p>The above code shows the &quot;expected&quot; method for
+manipulating memory-mapped files. However, what it does not show is
+that the system increments the usage counts of the file object and the
+file-mapping object when you call <i>MapViewOfFile</i>. This side
+effect is significant because it means that we could rewrite the code
+fragment above as follows:</p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<pre>
+HANDLE hFile = CreateFile(...); 
+HANDLE hFileMapping = CreateFileMapping(hFile, ...);
+CloseHandle(hFile);
+PVOID pvFile = MapViewOfFile(hFileMapping, ...);
+CloseHandle(hFileMapping);
+
+// Use the memory-mapped file.
+
+UnmapViewOfFile(pvFile);
+</pre></td></tr></table></p>
+
+<p>When you work with memory-mapped files, you will commonly open the
+file, create the file-mapping object, and then use the file-mapping
+object to map a view of the file's data into the process's
+address space. Because the system increments the internal usage counts
+of the file object and the file-mapping object, you can close these
+objects at the beginning of your code and eliminate potential resource
+leaks.</p>
+
+<p>If you will be creating additional file-mapping objects from the
+same file or mapping multiple views of the same file-mapping object,
+you cannot call <i>CloseHandle</i> early&#8212;you'll need the
+handles later to make the additional calls to <i>CreateFileMapping</i>
+and <i>MapViewOfFile</i>, respectively.</p>
+
+<A NAME="224"><H2>The File Reverse Sample Application</H2></A>
+
+<p>The FileRev application (&quot;17 FileRev.exe&quot;) listed in
+Figure 17-2 demonstrates how to use memory-mapped
+files to reverse the contents of an ANSI or a Unicode text file. The
+source code and resource files for the application are in the
+17-FileRev directory on the companion CD-ROM. When you start the
+program, the following window appears.</p>
+
+<p>
+<img src="images/G17si06.JPG" width=330 height=100 border="0">  
+</p>
+
+<p>FileRev first allows you to select a file and then, when you click
+on the Reverse File Contents button, the function reverses all of the
+characters contained within the file. The program will work correctly
+only on text files; it will not work correctly on binary files. FileRev
+determines whether the text file is ANSI or Unicode by calling the <i>
+IsTextUnicode</i> function (discussed in <A HREF="ch02a.htm">Chapter 2</A>).</p>
+
+<p><div class="note"><blockquote><b>Windows 98</b><hr>
+In Windows 98, the <i>IsTextUnicode</i> function has no useful
+implementation and simply returns FALSE; calling <i>GetLastError</i>
+returns ERROR_CALL_NOT_IMPLEMENTED. This means that the FileRev sample
+application always thinks that it is manipulating an ANSI text file
+when it is run under Windows 98.</blockquote></div></p>
+
+<p>When you click on the Reverse File Contents button, FileRev makes a
+copy of the specified file called FileRev.dat. It does this so that the
+original file won't become unusable because its contents have been
+reversed. Next FileRev calls the <i>FileReverse</i> function, which is
+responsible for reversing the file; <i>FileReverse</i> calls the <i>
+CreateFile</i> function, opening FileRev.dat for reading and
+writing.</p>
+
+<p>As I said earlier, the easiest way to reverse the contents of the
+file is to call the C run-time function <i>_strrev</i>. As with all C
+strings, the last character of the string must be a zero terminator.
+Because text files do not end with a zero character, FileRev must
+append one to the file. It does so by first calling <i>
+GetFileSize</i>:</p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<pre>
+dwFileSize = GetFileSize(hFile, NULL);
+</pre></td></tr></table></p>
+
+<p>Now that you're armed with the length of the file, you can
+create the file-mapping object by calling <i>CreateFileMapping</i>. The
+file-mapping object is created with a length of <i>dwFileSize</i> plus
+the size of a wide character (for the zero character). After the
+file-mapping object is created, a view of the object is mapped into
+FileRev's address space. The <i>pvFile</i> variable contains the
+return value from <i>MapViewOfFile</i> and points to the first byte of
+the text file.</p>
+
+<p>The next step is to write a zero character at the end of the file and
+to reverse the string:</p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<pre>
+PSTR pchANSI = (PSTR) pvFile;
+pchANSI[dwFileSize / sizeof(CHAR)] = 0;
+</pre></td></tr></table></p>
+
+<p>In a text file, every line is terminated by a return character
+('\r') followed by a newline character ('\n'). Unfortunately,
+when we call <i>_strrev</i> to reverse the file, these characters also
+get reversed. For the reversed text file to be loaded into a text
+editor, every occurrence of the &quot;\n\r&quot; pair needs to be
+converted back to its original &quot;\r\n&quot; order. This conversion
+is the job of the following loop:</p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<pre>
+while (pchANSI != NULL) {
+   // We have found an occurrence....
+   *pchANSI++ = '\r';   // Change '\n' to '\r'.
+   *pchANSI++ = '\n';   // Change '\r' to '\n'.
+   pchANSI = strchr(pchANSI, '\n'); // Find the next occurrence.
+}
+</pre></td></tr></table></p>
+
+<p>When you examine simple code like this, you can easily forget that
+you are actually manipulating the contents of a file on a disk drive
+(which shows you how powerful memory-mapped files are).</p>
+
+<p>After the file has been reversed, FileRev must clean up by unmapping
+the view of the file-mapping object and closing all the kernel object
+handles. In addition, FileRev must remove the zero character added to
+the end of the file (remember that _<i>strrev</i> doesn't reverse
+the position of the terminating zero character). If you don't
+remove the zero character, the reversed file would be 1 character
+larger, and calling FileRev again would not reverse the file back to
+its original form. To remove the trailing zero character, you need to
+drop back a level and use the file-management functions instead of
+manipulating the file through memory mapping.</p>
+
+<p>Forcing the reversed file to end at a specific location requires
+positioning the file pointer at the desired location (the end of the
+original file) and calling the <i>SetEndOfFile</i> function:</p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<pre>
+SetFilePointer(hFile, dwFileSize, NULL, FILE_BEGIN);
+SetEndOfFile(hFile);
+</pre></td></tr></table></p>
+
+<p><div class="note"><blockquote><b>NOTE</b><hr>
+<i>SetEndOfFile</i> must be called after the view is unmapped and the
+file-mapping object is closed; otherwise, the function returns FALSE
+and <i>GetLastError</i> returns ERROR_USER_MAPPED_FILE. This error
+indicates that the end-of-file operation cannot be performed on a file
+that is associated with a file-mapping object.</blockquote></div></p>
+
+<p>The last thing FileRev does is spawn an instance of Notepad so that
+you can look at the reversed file. The following window shows the result of running FileRev on its own FileRev.cpp file.</p>
+
+<p>
+<A HREF="javascript:fullSize('g17si07x.htm')"> <img src="images/g17si07.JPG" width=404 height=293 border=0 ALT="Click to view at full size."> </A>  
+</p>
+<p>&nbsp;</p>
+<p><b>Figure 17-2.</b> <i>The FileRev sample application</i></p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<p><b>FileRev.cpp</b></p>
+<pre>
+/******************************************************************************
+Module:  FileRev.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#include &quot;..\CmnHdr.h&quot;     /* See Appendix A. */
+#include &lt;windowsx.h&gt;
+#include &lt;tchar.h&gt;
+#include &lt;commdlg.h&gt;
+#include &lt;string.h&gt;        // For _strrev
+#include &quot;Resource.h&quot;
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+#define FILENAME  TEXT(&quot;FILEREV.DAT&quot;)
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL FileReverse(PCTSTR pszPathname, PBOOL pfIsTextUnicode) {
+
+   *pfIsTextUnicode = FALSE;  // Assume text is Unicode.
+
+   // Open the file for reading and writing.
+   HANDLE hFile = CreateFile(pszPathname, GENERIC_WRITE | GENERIC_READ, 0, 
+      NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+
+   if (hFile == INVALID_HANDLE_VALUE) {
+      chMB(&quot;File could not be opened.&quot;);
+      return(FALSE);
+   }
+
+   // Get the size of the file (I assume the whole file can be mapped).
+   DWORD dwFileSize = GetFileSize(hFile, NULL);
+
+   // Create the file-mapping object. The file-mapping object is 1 character 
+   // bigger than the file size so that a zero character can be placed at the 
+   // end of the file to terminate the string (file). Because I don't yet know
+   // if the file contains ANSI or Unicode characters, I assume worst case
+   // and add the size of a WCHAR instead of CHAR.
+   HANDLE hFileMap = CreateFileMapping(hFile, NULL, PAGE_READWRITE, 
+      0, dwFileSize + sizeof(WCHAR), NULL);
+
+   if (hFileMap == NULL) {
+      chMB(&quot;File map could not be opened.&quot;);
+      CloseHandle(hFile);
+      return(FALSE);
+   }
+
+   // Get the address where the first byte of the file is mapped into memory.
+   PVOID pvFile = MapViewOfFile(hFileMap, FILE_MAP_WRITE, 0, 0, 0);
+
+   if (pvFile == NULL) {
+      chMB(&quot;Could not map view of file.&quot;);
+      CloseHandle(hFileMap);
+      CloseHandle(hFile);
+      return(FALSE);
+   }
+
+   // Does the buffer contain ANSI or Unicode?
+   int iUnicodeTestFlags = -1;   // Try all tests.
+   *pfIsTextUnicode = IsTextUnicode(pvFile, dwFileSize, &amp;iUnicodeTestFlags);
+
+   if (!*pfIsTextUnicode) {
+      // For all the file manipulations below, we explicitly use ANSI 
+      // functions because we are processing an ANSI file.
+
+      // Put a zero character at the very end of the file.
+      PSTR pchANSI = (PSTR) pvFile;
+      pchANSI[dwFileSize / sizeof(CHAR)] = 0;
+
+      // Reverse the contents of the file.
+      _strrev(pchANSI);
+
+      // Convert all &quot;\n\r&quot; combinations back to &quot;\r\n&quot; to 
+      // preserve the normal end-of-line sequence.
+      pchANSI = strchr(pchANSI, '\n'); // Find first '\n'.
+
+      while (pchANSI != NULL) {
+         // We have found an occurrence....
+         *pchANSI++ = '\r';   // Change '\n' to '\r'.
+         *pchANSI++ = '\n';   // Change '\r' to '\n'.
+         pchANSI = strchr(pchANSI, '\n'); // Find the next occurrence.
+      }
+
+   } else {
+      // For all the file manipulations below, we explicitly use Unicode
+      // functions because we are processing a Unicode file.
+
+      // Put a zero character at the very end of the file.
+      PWSTR pchUnicode = (PWSTR) pvFile;
+      pchUnicode[dwFileSize / sizeof(WCHAR)] = 0;
+
+      if ((iUnicodeTestFlags &amp; IS_TEXT_UNICODE_SIGNATURE) != 0) {
+         // If the first character is the Unicode BOM (byte-order-mark), 
+         // 0xFEFF, keep this character at the beginning of the file.
+         pchUnicode++;
+      }
+
+      // Reverse the contents of the file.
+      _wcsrev(pchUnicode);
+
+      // Convert all &quot;\n\r&quot; combinations back to &quot;\r\n&quot; to 
+      // preserve the normal end-of-line sequence.
+      pchUnicode = wcschr(pchUnicode, L'\n'); // Find first '\n'.
+
+      while (pchUnicode != NULL) {
+         // We have found an occurrence....
+         *pchUnicode++ = L'\r';   // Change '\n' to '\r'.
+         *pchUnicode++ = L'\n';   // Change '\r' to '\n'.
+         pchUnicode = wcschr(pchUnicode, L'\n'); // Find the next occurrence.
+      }
+   }
+
+   // Clean up everything before exiting.
+   UnmapViewOfFile(pvFile);
+   CloseHandle(hFileMap);
+
+   // Remove trailing zero character added earlier.
+   SetFilePointer(hFile, dwFileSize, NULL, FILE_BEGIN);
+   SetEndOfFile(hFile);
+   CloseHandle(hFile);
+
+   return(TRUE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL Dlg_OnInitDialog(HWND hwnd, HWND hwndFocus, LPARAM lParam) {
+
+   chSETDLGICONS(hwnd, IDI_FILEREV);
+
+   // Initialize the dialog box by disabling the Reverse button.
+   EnableWindow(GetDlgItem(hwnd, IDC_REVERSE), FALSE);
+   return(TRUE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify) {
+   
+   TCHAR szPathname[MAX_PATH];
+
+   switch (id) {
+      case IDCANCEL:
+         EndDialog(hwnd, id);
+         break;
+
+      case IDC_FILENAME:
+         EnableWindow(GetDlgItem(hwnd, IDC_REVERSE), 
+            Edit_GetTextLength(hwndCtl) &gt; 0);
+         break;
+
+      case IDC_REVERSE:
+         GetDlgItemText(hwnd, IDC_FILENAME, szPathname, chDIMOF(szPathname));
+
+         // Make a copy of input file so that we don't destroy it.
+         if (!CopyFile(szPathname, FILENAME, FALSE)) {
+            chMB(&quot;New file could not be created.&quot;);
+            break;
+         }
+
+         BOOL fIsTextUnicode;
+         if (FileReverse(FILENAME, &amp;fIsTextUnicode)) {
+            SetDlgItemText(hwnd, IDC_TEXTTYPE, 
+               fIsTextUnicode ? TEXT(&quot;Unicode&quot;) : TEXT(&quot;ANSI&quot;));
+
+            // Spawn Notepad to see the fruits of our labors.
+            STARTUPINFO si = { sizeof(si) };
+            PROCESS_INFORMATION pi;
+            TCHAR sz[] = TEXT(&quot;Notepad &quot;) FILENAME;
+            if (CreateProcess(NULL, sz,
+               NULL, NULL, FALSE, 0, NULL, NULL, &amp;si, &amp;pi)) {
+
+               CloseHandle(pi.hThread);
+               CloseHandle(pi.hProcess);
+            }
+         }
+         break;
+
+      case IDC_FILESELECT:
+         OPENFILENAME ofn = { OPENFILENAME_SIZE_VERSION_400 };
+         ofn.hwndOwner = hwnd;
+         ofn.lpstrFile = szPathname;
+         ofn.lpstrFile[0] = 0;
+         ofn.nMaxFile = chDIMOF(szPathname);
+         ofn.lpstrTitle = TEXT(&quot;Select file for reversing&quot;);
+         ofn.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST;
+         GetOpenFileName(&amp;ofn);
+         SetDlgItemText(hwnd, IDC_FILENAME, ofn.lpstrFile);
+         SetFocus(GetDlgItem(hwnd, IDC_REVERSE));
+         break;
+   }
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+INT_PTR WINAPI Dlg_Proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+   
+   switch (uMsg) {
+      chHANDLE_DLGMSG(hwnd, WM_INITDIALOG,  Dlg_OnInitDialog);
+      chHANDLE_DLGMSG(hwnd, WM_COMMAND,     Dlg_OnCommand);
+   }
+   return(FALSE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+int WINAPI _tWinMain(HINSTANCE hinstExe, HINSTANCE, PTSTR pszCmdLine, int) {
+
+   DialogBox(hinstExe, MAKEINTRESOURCE(IDD_FILEREV), NULL, Dlg_Proc);
+   return(0);
+}
+
+
+//////////////////////////////// End of File//////////////////////////////////
+</pre></td></tr></table></p>
+<p><table width="95%" cellpadding="5"><tr><td>
+<p><b>FileRev.rc</b></p>
+<pre>
+//Microsoft Developer Studio generated resource script.
+//
+#include &quot;Resource.h&quot;
+
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+/////////////////////////////////////////////////////////////////////////////
+// English (U.S.) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+#ifdef _WIN32
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(1252)
+#endif //_WIN32
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+// Icon with lowest ID value placed first to ensure application icon
+// remains consistent on all systems.
+IDI_FILEREV             ICON    DISCARDABLE     &quot;FileRev.Ico&quot;
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// TEXTINCLUDE
+//
+
+1 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;Resource.h\0&quot;
+END
+
+2 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;#include &quot;&quot;afxres.h&quot;&quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+3 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+#endif    // APSTUDIO_INVOKED
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
+
+IDD_FILEREV DIALOG DISCARDABLE  15, 24, 216, 46
+STYLE WS_MINIMIZEBOX | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
+CAPTION &quot;File Reverse&quot;
+FONT 8, &quot;MS Sans Serif&quot;
+BEGIN
+    LTEXT           &quot;&amp;Pathname:&quot;,IDC_STATIC,4,4,35,8
+    EDITTEXT        IDC_FILENAME,44,4,168,12,ES_AUTOHSCROLL
+    PUSHBUTTON      &quot;&amp;Browse...&quot;,IDC_FILESELECT,4,16,36,12,WS_GROUP
+    DEFPUSHBUTTON   &quot;&amp;Reverse file contents&quot;,IDC_REVERSE,4,32,80,12
+    LTEXT           &quot;Type of characters in file:&quot;,IDC_STATIC,88,34,80,8
+    LTEXT           &quot;(unknown)&quot;,IDC_TEXTTYPE,172,34,34,8
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// DESIGNINFO
+//
+
+#ifdef APSTUDIO_INVOKED
+GUIDELINES DESIGNINFO DISCARDABLE 
+BEGIN
+    IDD_FILEREV, DIALOG
+    BEGIN
+        RIGHTMARGIN, 192
+        BOTTOMMARGIN, 42
+    END
+END
+#endif    // APSTUDIO_INVOKED
+
+#endif    // English (U.S.) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 3 resource.
+//
+
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED
+
+
+</pre></td></tr></table></p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

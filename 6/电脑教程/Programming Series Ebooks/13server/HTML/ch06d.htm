@@ -1,0 +1,896 @@
+<HTML>
+<HEAD>
+<TITLE>Building Message DLLs and EXEs</TITLE>
+<link rel="STYLESHEET" type="text/css" href="prosrvwin.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR = "#ffffff">
+<A HREF="ch06c.htm">[Previous]</A> <A HREF="ch06e.htm">[Next]</A><P>
+
+<A NAME="97"><h1>Building Message DLLs and EXEs</h1></A>
+<p>The questions we have yet to answer are as follows:</p>
+
+
+<ul>
+<p><li>How is the text in the message file associated with an event?</li></p>
+
+<p><li>How does the <i>ppszStrings</i> parameter of <i>ReportEvent</i> get utilized?</li></p>
+
+<p><li>How do we create a message DLL?</li></p>
+</ul>
+
+ 
+
+<p>In this section, I'll answer all of these questions. Figure 6-3 shows the whole event logging architecture including the steps necessary for building a message DLL. You'll want to refer to this figure as the discussion continues.</p>
+
+<p>Your first step in creating a message DLL is to create a text file for your message source. This message source is generally referred to as an &quot;MC&quot; file and can have any name you choose as long as it has an .mc extension. An example is MyMsgs.mc.</p>
+
+<p>Your .mc file is structured as a series of message entries, arranged in any order. See the Platform SDK documentation for a complete description of the message file syntax. Here is an example of a message file:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+;/**************************************************************
+;Module name: MyMsgs.mc
+;**************************************************************/
+
+;//********************* MESSAGE SECTION ***********************
+MessageIdTypedef=DWORD
+
+MessageId=0x1
+SymbolicName=MSG_DATE
+Language=English
+Today's date is %1.  %%536871912
+.
+
+MessageId=0x2
+SymbolicName=MSG_TIME
+Language=English
+The current time is %1. %%536871912
+.
+
+MessageId=
+SymbolicName=MSG_SEC
+Language=English
+The seconds are %1. %%536871912
+.
+
+
+;//**************** STRING PARAMETERS SECTION ******************
+MessageIdTypedef=DWORD
+
+MessageId=0x100
+Language=English
+I hope you enjoy today.
+.
+
+;//************************ END OF FILE ************************
+</pre></td></tr></table>
+</p>
+
+<p>
+<A HREF="javascript:fullSize('F06fj03x.htm')"> <img src="images/F06fj03.JPG" width=404 height=442 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!-- caption --><b>Figure 6-3.</b> <i>The event logging architecture, including steps for building a message DLL</i><!-- /caption -->
+</p>
+
+<p>The <i>MessageId</i> is the ID associated with the text. Notice that you can omit an explicit value for the <i>MessageId</i> field in the message file. This will cause the compiler to generate an ID that is one more than the previous message ID. The <i>SymbolicNam</i>e field refers to the name that will be given to the macro defined in the generated header file. You can include the generated header file with your event reporting code and use the macro defined by the <i>SymbolicName</i> field to identify a message. The <i>Language</i> line defines the language for the message. In this way you can create a single message resource that has multiple language support for a single message ID. Since a message can be several lines long, you use a line with a single period to denote the end of the message. Note that the trailing period is required, and the last
+entry in your .mc file should have a carriage return after the trailing period.</p>
+
+<p> When you log an event using <i>ReportEvent</i>, the <i>dwEventID</i> parameter designates the ID of the event. Later the Event Viewer snap-in searches the event message file for a human-readable string by using the value of the event ID. Likewise, the <i>wCategory</i> parameter of <i>ReportEvent</i> correlates to a message with the same ID in the category message file.</p>
+
+<p> As you can see, the message file syntax is quite simple, but a few aspects require some additional discussion. As I mentioned earlier, one of the main goals of event logging is language independence. The message resource allows you to easily include messages for multiple languages. To do this, you just append an additional <i>Language</i> line followed by the message in the desired language to each message's entry. It is also common to compile different languages into parallel message DLLs. For example, your project might include a MsgEnglish.dll and a
+MsgFrench.dll. As long as both of these DLLs are included in the registry entry for your message file, the Event Viewer snap-in can find the message for the appropriate language.</p>
+
+<p> With the knowledge you have so far, you might think that for any given event ID, the Event Viewer snap-in would report an unchanging detailed message. If you think that an event logging mechanism made up of static strings defined at compile time is not very useful, you are right. We need the ability to report multiple events of the same ID but with different text, depending on the situation. For example, if your application is reporting that it is unable to open a file, you want it to dynamically include the name of the culprit file in the description text of the event. You might have guessed that event logging's solution to this lies in <i>ReportEvent</i>'s <i>ppszString</i> parameter.</p>
+
+<p> When you create a message, the message can contain special character sequences that indicate where the event-specific strings should be
+placed in the text. For example, the following event string indicates two replaceable strings:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+&quot;The file %1 was replaced with the file %2&quot; 
+</pre></td></tr></table>
+</p>
+
+<p>If you pass an array of two strings using <i>ReportEvent</i>'s <i>ppszStrings</i> parameter, the Event Viewer snap-in substitutes &quot;%1&quot; with the first string and &quot;%2&quot; with the second string.</p>
+
+<p>As a rule, you should only pass string values that are not language dependent, such as numbers, filenames, and names of other resources. Although you could pass any text and the Event Viewer snap-in will substitute it, passing an English phrase, for instance, breaks the language independence of event logging.</p>
+
+<p>Parameter replacement can be used in conjunction with string expansion to include additional detailed strings from the parameter message file. When expanding an event string, a &quot;%%&quot; character sequence followed by a number indicates a replaceable parameter. For example, the following event string indicates one replaceable parameter string:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+&quot;This is an example %%237&quot;
+</pre></td></tr></table>
+</p>
+
+<p>When expanding this string, the Event Viewer snap-in searches the parameter message file's message table resource for a string with an ID of 237 and replaces the event string's &quot;%%237&quot; with the parameter string.</p>
+
+<p>Additionally, parameter expansion is performed after string expansion, which allows for complex expansions. Assume the message string &quot;Replace with a dynamic parameter %%%1&quot; and a string of value &quot;237&quot; were passed to <i>ReportEvent</i>. The Event Viewer snap-in first replaces the &quot;%1&quot; with &quot;237&quot;, and then continues to replace &quot;%%237&quot; with the parameter in the parameter message file that has the ID of 237.</p>
+
+<p>If you set your event source's ParameterMessageFile registry value to Kernel32.dll, you can dynamically insert error message text using values returned from <i>GetLastError</i>. For example, assume Kernel32.dll is your parameter message file, and your message string is &quot;GetLastError() returned the following error: %%%1&quot;. You could call <i>ReportEvent</i> with a single string value of &quot;5&quot;, indicating access denied. The resulting event message would be as follows:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+&quot;GetLastError() returned the following error: Access is denied&quot;. 
+</pre></td></tr></table>
+</p>
+
+<p>Being able to insert the last error message text in your event description is a useful feature, indeed.</p>
+
+<A NAME="98"><h2>Compiling Your Messages</h2></A>
+<p>After you create your .mc file, you need to compile it using the Message Compiler (MC.exe) that ships with Microsoft Visual Studio. The following text shows the message compiler's usage:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+C:\&gt;mc.exe
+Microsoft (R) Message Compiler  Version 1.00.5239
+Copyright (c) Microsoft Corp 1992-1995. All rights reserved.
+
+usage: MC [-?vcdwso] [-m maxmsglen] [-h dirspec] [-e extension] 
+          [-r dirspec] [-x dbgFileSpec] [-u] [-U] filename.mc
+   -? - displays this message
+   -v - gives verbose output.
+   -c - sets the Customer bit in all the message Ids.
+   -d - FACILTY and SEVERITY values in header file in decimal.
+        Sets message values in header to decimal initially.
+   -w - warns if message text contains non-OS/2 compatible inserts.
+   -s - insert symbolic name as first line of each message.
+   -o - generate OLE2 header file (use HRESULT definition instead of
+        status code definition)
+   -m maxmsglen - generate a warning if the size of any message exceeds
+                  maxmsglen characters.
+   -h pathspec - gives the path of where to create the C include file
+                 Default is .\
+   -e extension - Specify the extension for the header file.
+                  From 1 - 3 chars.
+   -r pathspec - gives the path of where to create the RC include file
+                 and the binary message resource files it includes.
+                 Default is .\
+   -x pathspec - gives the path of where to create the .dbg C include
+                    file that maps message Ids to their symbolic name.
+   -u - input file is Unicode.
+   -U - messages in .BIN file should be Unicode.
+   filename.mc - gives the names of a message text file
+                 to compile.
+   Generated files have the Archive bit cleared.
+</pre></td></tr></table>
+</p>
+
+<p>The message compiler parses your .mc file and produces three files:</p>
+
+
+<ul>
+<p><li><b>MSG00001.bin</b> This file contains all the message strings in binary format. It also contains information to map a message ID number to its string.</li></p>
+
+<p><li><b><i>MyMsgs</i>.rc</b> This resource script file contains just a reference to the binary information contained in the MSG00001.bin file.</li></p>
+
+<p><li><b><i>MyMsgs</i>.h</b> This file is a C/C++ header file that contains a <i>#define</i> for every symbol name appearing in the .mc file. You should include this file in any of your source code modules that call the <i>ReportEvent</i> function.</li></p>
+</ul>
+
+ 
+
+<A NAME="99"><h2>The Resource File</h2></A>
+<p>After running MyMsgs.mc through the message compiler, I end up with a very simple resource script file (MyMsgs.rc) that looks like Figure 6-4:</p> 
+
+<p>
+<img src="images/F06fj04.JPG" width=210 height=139 border="0">
+</p><p>
+<!-- caption --><b>Figure 6-4.</b> <i>A resource script file generated by the message compiler</i><!-- /caption -->
+</p>
+
+<p>You are probably already familiar with icon, bitmap, and dialog box template resources. Well, a message table is just another type of resource. Like icons and bitmaps, message table resources are binary files that are referred to in the resource script, unlike dialog box templates and menu templates, which are embedded in the script.</p>
+
+<p>If you open the WinUser.h header file in the Platform SDK, you will find the following set of defined symbols:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+#define RT_CURSOR           MAKEINTRESOURCE(1)
+#define RT_BITMAP           MAKEINTRESOURCE(2)
+#define RT_ICON             MAKEINTRESOURCE(3)
+#define RT_MENU             MAKEINTRESOURCE(4)
+#define RT_DIALOG           MAKEINTRESOURCE(5)
+#define RT_STRING           MAKEINTRESOURCE(6)
+#define RT_FONTDIR          MAKEINTRESOURCE(7)
+#define RT_FONT             MAKEINTRESOURCE(8)
+#define RT_ACCELERATOR      MAKEINTRESOURCE(9)
+#define RT_RCDATA           MAKEINTRESOURCE(10)
+#define RT_MESSAGETABLE     MAKEINTRESOURCE(11)   // Look Here!
+#define RT_GROUP_CURSOR     MAKEINTRESOURCE(12)
+#define RT_GROUP_ICON       MAKEINTRESOURCE(14)
+#define RT_VERSION          MAKEINTRESOURCE(16)
+#define RT_DLGINCLUDE       MAKEINTRESOURCE(17)
+#define RT_PLUGPLAY         MAKEINTRESOURCE(19)
+#define RT_VXD              MAKEINTRESOURCE(20)
+#define RT_ANICURSOR        MAKEINTRESOURCE(21)
+#define RT_ANIICON          MAKEINTRESOURCE(22)
+#define RT_HTML             MAKEINTRESOURCE(23)
+</pre></td></tr></table>
+</p>
+
+<p>Message table resources have been assigned the number 11. When you add resources to a resource script (.rc ) file, you must assign each type of resource a unique number. For example, I can add an icon to my resource script with an ID of 53, and I can add another icon to a resource script file with an ID of 172. The numbers don't actually matter as long as they're unique.</p> 
+
+<p>Message table resources work a little  differently than other resources. A resource script file can have only one message table resource, and that resource must be assigned an ID of 1. If you assign a different ID to a message table resource, tools such as the Event Viewer snap-in will not be able to convert the event and category IDs to human-readable strings.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+If your message DLL or EXE contains additional resources, just copy the contents of the message compiler_generated .rc file into your own .rc file. Then you can discard the .rc file generated by the message compiler.</blockquote>
+</div>
+</p>
+
+<A NAME="100"><h2>Using Visual Studio to Create a Message File Project</h2></A>
+<p>Although you can run the message compiler utility manually each time you change your messages, doing so can become tedious and cumbersome. I strongly recommend incorporating the message-compiling step into your Visual Studio project for your message DLL or EXE. For some unknown reason, the Visual Studio environment is not aware of the message compiler and .mc files. So you need to add custom build steps to your project. Here are the steps:</p>
+
+<ol>
+<p><li>Add your .mc file to your EXE or DLL project.</li></p>
+
+<p><li>Display the Project Settings dialog box.</li></p>
+
+<p><li>Select the .mc file and click on the Custom Build tab.</li></p>
+
+<p><li>Set the Description text box to whatever you like. I always use &quot;Message Compiler&quot;.</li></p>
+
+<p><li>Set the Commands text box to &quot;mc -s -U -h $(ProjDir) -r $(ProjDir) $(InputName)&quot; and &quot;del $(ProjDir)\$(InputName).rc&quot;.</li></p>
+
+<p><li>In the Outputs section, add two entries: &quot;$(InputName).h&quot; and &quot;Msg00001.bin&quot;. The dialog box should look like Figure 6-5.</li></p>
+
+<p>Click OK.</p>
+
+<p>
+<A HREF="javascript:fullSize('F06FJ05x.htm')"> <img src="images/F06FJ05.JPG" width=404 height=260 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!-- caption --><b>Figure 6-5.</b> <i>The Project Settings dialog box, after adding message compiler commands for the .mc file</i><!-- /caption -->
+</p>
+
+<p><li>Include the generated header file in the source files that call the <i>ReportEvent</i> function.</li></p>
+
+<p><li>In your project's .rc file, add the lines to include resource number 1 and resource type 11, as well as a filename of MSG00001.bin. For example,</li></p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+1 11 MSG00001.bin
+</pre></td></tr></table>
+</p>
+
+</ol>
+
+<p>After performing these steps, Visual Studio will know how to compile your message text file and include the resource when producing the final EXE or DLL file. Note that if you are creating a DLL module that contains only resources and no code, you should use the /NOENTRY linker switch to prevent linking an entry point and thus reducing the size of the resulting module.</p>
+
+<p>The only code you have left to write is that which configures the registry so that the Event Viewer snap-in is able to locate the message EXE or message DLL.</p>
+
+<A NAME="101"><h2>The MsgTableDump Sample Application</h2></A>
+<p>The MsgTableDump sample application (&quot;06 MsgTableDump.exe&quot;) is a simple utility that opens the message table resource contained inside an EXE or DLL and dumps all the strings in the table. The source code and resource files for the application are in the 06-MsgTableDump directory on the companion CD. The code is very simple and straightforward. It locates the message table resource in the specified module and walks the resource placing each string in a read-only edit control. Figure 6-6 shows what the output looks like when MsgTableDump performs its magic on Kernel32.dll.</p>
+
+<p>
+<A HREF="javascript:fullSize('F06FJ06x.htm')"> <img src="images/F06FJ06.JPG" width=404 height=261 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!-- caption --><b>Figure 6-6.</b> <i>The MsgTableDump sample application showing the message strings for Kernel32.dll  </i><!-- /caption -->
+</p>
+
+
+
+<A NAME="102"><h2>The AppLog Sample Application</h2></A>
+<p>The AppLog sample application (&quot;06 AppLog.exe&quot;), shown in Listing 6-1, demonstrates event reporting from an application. The source code and resource files for the application are in the 06-AppLog directory on the companion CD. The AppLog sample application is implemented as a standard application, but code that reports events would be identical if the code were residing in a service.</p>
+
+<p>When AppLog starts, it opens the local system's Application log and adds an entry indicating that the application has started executing. AppLog also adds an entry just before it terminates. Normally, you would not report these types of informational events to the event log in order to improve performance and not waste space in the event log's database.</p>
+
+<p>Once AppLog is running, you can enter a Win32 error code in the edit box and click the Simulate Error button. This button causes AppLog to append an event to the system's Application log. You can simulate as many Win32 errors as you like while AppLog is running. To see the errors, click the Open Event Viewer button, which causes the Event Viewer snap-in to display in the MMC.</p>
+
+<p>If you look at the entries using the Event Viewer snap-in, you'll see the category and message ID numbers as well as the replaceable string values (your simulated error code numbers). Event Viewer can't map the category and message IDs to their English strings until the registry has been configured properly. To install the message file module information into the registry, click the Install Event Message File In Registry button. Then go back to the Event Viewer snap-in and look at the events added by AppLog. This time, you should see the ID numbers converted to the appropriate strings. AppLog also allows you to delete the registry information by clicking the Remove Event Message File From Registry button. Figure 6-7 shows AppLog simulating an error.</p>
+
+<p>
+<A HREF="javascript:fullSize('F06FJ07x.htm')"> <img src="images/F06FJ07.JPG" width=404 height=358 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!-- caption --><b>Figure 6-7.</b> <i>The AppLog sample application simulating the &quot;Access is denied&quot; (5) Win32 error </i><!-- /caption -->
+</p>
+
+<p><b>Listing 6-1.</b> <i>The AppLog sample application</i> </p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+<p><b>AppLog.cpp</b></p>
+/******************************************************************************
+Module:  AppLog.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+#include &quot;..\CmnHdr.h&quot;              // See Appendix A.
+#include &lt;WindowsX.h&gt;
+
+#define EVENTLOG_IMPL
+#include &quot;EventLog.h&quot;
+
+#include &quot;Resource.h&quot;
+#include &quot;AppLogMsgs.h&quot;             // Generated by MC.exe
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+CEventLog g_EventLog(TEXT(&quot;AppLog&quot;));
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL Dlg_OnInitDialog(HWND hwnd, HWND hwndFocus, LPARAM lParam) {
+
+   chSETDLGICONS(hwnd, IDI_APPLOG);
+   return(TRUE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify) {
+   
+   switch (id) {
+   case IDCANCEL:
+      EndDialog(hwnd, id);
+      break;
+
+   case IDC_SPAWNEVENTVIEWER:
+      // Spawn the Event Viewer Snap-In
+      ShellExecute(hwnd, TEXT(&quot;Open&quot;), TEXT(&quot;eventvwr.msc&quot;), TEXT(&quot;/s&quot;), 
+         NULL, SW_SHOWDEFAULT);
+      break;
+
+   case IDC_INSTALL:
+      // Install the event log parameter file info into the registry
+      chVERIFY(g_EventLog.Install(
+         EVENTLOG_INFORMATION_TYPE | EVENTLOG_ERROR_TYPE, NULL, 
+         TEXT(&quot;Kernel32.dll&quot;), 2, NULL));
+      break;
+
+   case IDC_REMOVE:
+      // Uninstall the event log parameter file info from the registry
+      chVERIFY(g_EventLog.Uninstall());
+      break;
+
+   case IDC_SIMULATEERROR:
+      // Report a Win32 error code event
+      TCHAR szErrorCode[10];
+      PCTSTR pszErrorCode = szErrorCode;
+      GetDlgItemText(hwnd, IDC_ERRORCODE, szErrorCode, chDIMOF(szErrorCode));
+      chVERIFY(g_EventLog.ReportEvent(EVENTLOG_ERROR_TYPE, CAT_APPEVENT, 
+         MSG_ERROR, CEventLog::REUSER_NOTAPPLICABLE, 
+         1, (PCTSTR*) &amp;pszErrorCode));
+      break;
+   }
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+INT_PTR WINAPI Dlg_Proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+
+   switch (uMsg) {
+   chHANDLE_DLGMSG(hwnd, WM_INITDIALOG, Dlg_OnInitDialog);
+   chHANDLE_DLGMSG(hwnd, WM_COMMAND,    Dlg_OnCommand);
+   }
+   return(FALSE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+int WINAPI _tWinMain(HINSTANCE hinstExe, HINSTANCE, PTSTR pszCmdLine, int) {
+
+   // Report an event that this application is starting
+   g_EventLog.ReportEvent(EVENTLOG_INFORMATION_TYPE, 
+      CAT_APPEXECSTATUS, MSG_APPSTART);
+   DialogBox(hinstExe, MAKEINTRESOURCE(IDD_APPLOG), NULL, Dlg_Proc);
+
+   // Report an event that this application is stopping
+   g_EventLog.ReportEvent(EVENTLOG_INFORMATION_TYPE, 
+      CAT_APPEXECSTATUS, MSG_APPSTOP);
+   return(0);
+}
+
+
+//////////////////////////////// End of File //////////////////////////////////</pre>
+</td></tr></table>
+</p>
+
+<p><table cellpadding=5 width="95%"><tr><td><pre>
+<p><b>EventLog.h</b></p>
+/******************************************************************************
+Module:  EventLog.h
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#pragma once   // Include this header file once per compilation unit
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+#include &quot;..\CmnHdr.h&quot;                 /* See Appendix A. */
+
+
+/******************************************************************************
+
+
+To add a message compiler file to Visual Studio's Build Environment,
+perform the following steps:
+
+  1) Insert the *.mc file into the project
+  2) Select the MC file in the Project Settings dialog box
+  3) Change the description to &quot;Message Compiler&quot;
+  4) Add the following 2 Build Command(s):
+     &quot;mc -s -U -h $(ProjDir) -r $(ProjDir) $(InputName)&quot;
+     &quot;del $(ProjDir)\$(InputName).rc&quot;
+  5) Add the following 2 Output file(s):
+     &quot;$(InputName).h&quot;
+     &quot;Msg00001.bin&quot;
+  6) Include the generated header file in the source file(s)
+     that call the ReportEvent function
+  7) Since I delete the MC generated .rc file, you must manually
+     import the MSG0001.bin file into your project's .rc file
+     using a resource type of 11 and a resource ID of 1.
+
+
+******************************************************************************/
+
+
+class CEventLog {
+public:
+   CEventLog(PCTSTR pszAppName);
+   ~CEventLog();
+   BOOL Install(DWORD dwTypesSupported, 
+      PCTSTR pszEventMsgFilePaths = NULL, 
+      PCTSTR pszParameterMsgFilePaths = NULL, 
+      DWORD dwCategoryCount = 0, 
+      PCTSTR pszCategoryMsgFilePaths = NULL);
+   BOOL Uninstall();
+
+   // Records an event into the event log
+   enum REPORTEVENTUSER { REUSER_NOTAPPLICABLE, REUSER_SERVICE, REUSER_CLIENT }; 
+   BOOL ReportEvent(WORD wType,     WORD wCategory, 
+      DWORD dwEventID, REPORTEVENTUSER reu = REUSER_NOTAPPLICABLE, 
+      WORD  wNumStrings = 0, PCTSTR *pStrings = NULL, 
+      DWORD dwDataSize = 0, PVOID pvRawData = NULL);     
+
+private:
+   PCTSTR m_pszAppName;
+   HANDLE m_hEventLog;
+};
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+#ifdef EVENTLOG_IMPL
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+CEventLog::CEventLog(PCTSTR pszAppName) {
+   m_pszAppName = pszAppName;
+   m_hEventLog = NULL;
+}
+
+
+CEventLog::~CEventLog() {
+   if (m_hEventLog != NULL) { 
+      ::DeregisterEventSource(m_hEventLog);
+   }
+}
+
+
+//////////////////////////////////////////////////////////////////////////////
+
+
+BOOL CEventLog::Install(DWORD dwTypesSupported, 
+   PCTSTR pszEventMsgFilePaths, PCTSTR pszParameterMsgFilePaths, 
+   DWORD dwCategoryCount, PCTSTR pszCategoryMsgFilePaths) {
+
+   // Make sure at least one valid Support Type is specified
+   chASSERT(0 != (dwTypesSupported &amp; 
+      (EVENTLOG_INFORMATION_TYPE | EVENTLOG_WARNING_TYPE | 
+      EVENTLOG_ERROR_TYPE)));
+
+   BOOL fOk = TRUE;
+   TCHAR szSubKey[_MAX_PATH];
+   wsprintf(szSubKey, 
+      TEXT(&quot;System\\CurrentControlSet\\Services\\EventLog\\Application\\%s&quot;),
+      m_pszAppName);
+
+   // If the application doesn't support any types (the default), 
+   // don't install an event log for this service
+   HKEY hkey = NULL;
+   __try {
+      LONG l;
+      l = RegCreateKeyEx(HKEY_LOCAL_MACHINE, szSubKey, 0, NULL, 
+         REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, NULL, &amp;hkey, NULL);
+      if (l != NO_ERROR) __leave;
+      
+      l = RegSetValueEx(hkey, TEXT(&quot;TypesSupported&quot;), 0, REG_DWORD, 
+         (PBYTE) &amp;dwTypesSupported, sizeof(dwTypesSupported));
+      if (l != NO_ERROR) __leave;
+
+      TCHAR szModulePathname[MAX_PATH];
+      GetModuleFileName(NULL, szModulePathname, chDIMOF(szModulePathname));
+
+      if (pszEventMsgFilePaths == NULL) 
+         pszEventMsgFilePaths = szModulePathname;
+      l = RegSetValueEx(hkey, TEXT(&quot;EventMessageFile&quot;), 0, REG_EXPAND_SZ, 
+         (PBYTE) pszEventMsgFilePaths, chSIZEOFSTRING(pszEventMsgFilePaths));
+      if (l != NO_ERROR) __leave;
+
+      if (pszParameterMsgFilePaths == NULL) 
+         pszParameterMsgFilePaths = szModulePathname;
+      l = RegSetValueEx(hkey, TEXT(&quot;ParameterMessageFile&quot;), 0, REG_EXPAND_SZ,  
+         (PBYTE) pszParameterMsgFilePaths, 
+         chSIZEOFSTRING(pszParameterMsgFilePaths));
+      if (l != NO_ERROR) __leave;
+
+      if (dwCategoryCount &gt; 0) {
+         if (pszCategoryMsgFilePaths == NULL) 
+            pszCategoryMsgFilePaths = szModulePathname;
+         l = RegSetValueEx(hkey, TEXT(&quot;CategoryMessageFile&quot;), 0, 
+            REG_EXPAND_SZ,  (PBYTE) pszCategoryMsgFilePaths, 
+            chSIZEOFSTRING(pszCategoryMsgFilePaths));
+         if (l != NO_ERROR) __leave;
+
+         l = RegSetValueEx(hkey, TEXT(&quot;CategoryCount&quot;), 0, REG_DWORD, 
+            (PBYTE) &amp;dwCategoryCount, sizeof(dwCategoryCount));
+         if (l != NO_ERROR) __leave;
+      }
+      fOk = TRUE;
+   }
+   __finally {
+      if (hkey != NULL) RegCloseKey(hkey);
+   }
+   return(fOk);
+}
+
+
+//////////////////////////////////////////////////////////////////////////////
+
+
+BOOL CEventLog::Uninstall() {
+
+   // Install each service's event log
+   TCHAR szSubKey[_MAX_PATH];
+   wsprintf(szSubKey, 
+      TEXT(&quot;System\\CurrentControlSet\\Services\\EventLog\\Application\\%s&quot;), 
+      m_pszAppName);
+   return(NO_ERROR == RegDeleteKey(HKEY_LOCAL_MACHINE, szSubKey));
+}
+
+
+//////////////////////////////////////////////////////////////////////////////
+
+
+BOOL CEventLog::ReportEvent(WORD wType, WORD wCategory, DWORD dwEventID, 
+   REPORTEVENTUSER reu, WORD wNumStrings, PCTSTR* pStrings, DWORD dwDataSize, 
+   PVOID pvRawData) {
+
+   BOOL fOk = TRUE;    // Assume success
+
+   if (m_hEventLog == NULL) {
+      // This is the first time that ReportEvent is being 
+      // called, open the log first
+      m_hEventLog = ::RegisterEventSource(NULL, m_pszAppName);
+   }
+   if (m_hEventLog != NULL) {
+      PSID psidUser = NULL;
+      if (reu != REUSER_NOTAPPLICABLE) {
+         HANDLE hToken;
+         if (REUSER_SERVICE == reu)
+            fOk = OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &amp;hToken);
+         else 
+            fOk = OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, 
+               &amp;hToken);
+         if (fOk) {
+            BYTE bTokenUser[1024];
+            PTOKEN_USER ptuUserSID = (PTOKEN_USER) bTokenUser;
+            DWORD dwReturnLength;
+            GetTokenInformation(hToken, TokenUser, ptuUserSID, 
+               sizeof(bTokenUser), &amp;dwReturnLength);  
+            CloseHandle(hToken);
+            psidUser = ptuUserSID-&gt;User.Sid;
+         }
+      }
+
+      fOk = fOk &amp;&amp; ::ReportEvent(m_hEventLog, wType, wCategory, dwEventID, 
+         psidUser, wNumStrings, dwDataSize, pStrings, pvRawData);
+   }
+   return(fOk);
+}
+
+   
+///////////////////////////////////////////////////////////////////////////////
+
+
+#endif   // SERVICECTRL_IMPL
+
+
+///////////////////////////////// End of File /////////////////////////////////</pre>
+</td></tr></table>
+</p>
+
+<p><table cellpadding=5 width="95%"><tr><td><pre>
+<p><b>AppLogMsgs.h</b></p>
+/**************************************************************
+Module:  AppLogMsgs.mc
+Notices: Copyright (c) 2000 Jeffrey Richter
+**************************************************************/
+//******************** CATEGORY SECTION ***********************
+// Category IDs are 16-bit values
+//
+//  Values are 32 bit values layed out as follows:
+//
+//   3 3 2 2 2 2 2 2 2 2 2 2 1 1 1 1 1 1 1 1 1 1
+//   1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0
+//  +---+-+-+-----------------------+-------------------------------+
+//  |Sev|C|R|     Facility          |               Code            |
+//  +---+-+-+-----------------------+-------------------------------+
+//
+//  where
+//
+//      Sev - is the severity code
+//
+//          00 - Success
+//          01 - Informational
+//          10 - Warning
+//          11 - Error
+//
+//      C - is the Customer code flag
+//
+//      R - is a reserved bit
+//
+//      Facility - is the facility code
+//
+//      Code - is the facility's status code
+//
+//
+// Define the facility codes
+//
+
+
+//
+// Define the severity codes
+//
+
+
+//
+// MessageId: CAT_APPEXECSTATUS
+//
+// MessageText:
+//
+//  Application execution status
+//
+#define CAT_APPEXECSTATUS                ((WORD)0x20000001L)
+
+//
+// MessageId: CAT_APPEVENT
+//
+// MessageText:
+//
+//  Application event
+//
+#define CAT_APPEVENT                     ((WORD)0x20000002L)
+
+//********************* MESSAGE SECTION ***********************
+// Event IDs are 32-bit values
+//
+// MessageId: MSG_APPSTART
+//
+// MessageText:
+//
+//  Application started.
+//
+#define MSG_APPSTART                     ((DWORD)0x20000064L)
+
+//
+// MessageId: MSG_APPSTOP
+//
+// MessageText:
+//
+//  Application stopped.
+//
+#define MSG_APPSTOP                      ((DWORD)0x20000065L)
+
+//
+// MessageId: MSG_ERROR
+//
+// MessageText:
+//
+//  Application generated error code %1: &quot;%%%1&quot;
+//
+#define MSG_ERROR                        ((DWORD)0x20000066L)
+
+//************************ END OF FILE ************************</pre>
+</td></tr></table>
+</p>
+
+<p><table cellpadding=5 width="95%"><tr><td><pre>
+<p><b>AppLogMsgs.mc</b></p>
+;/**************************************************************
+;Module:  AppLogMsgs.mc
+;Notices: Copyright (c) 2000 Jeffrey Richter
+;**************************************************************/
+
+
+;//******************** CATEGORY SECTION ***********************
+;// Category IDs are 16-bit values
+MessageIdTypedef=WORD
+
+MessageId=1
+SymbolicName=CAT_APPEXECSTATUS
+Language=English
+Application execution status
+.
+
+MessageId=2
+SymbolicName=CAT_APPEVENT
+Language=English
+Application event
+.
+
+
+;//********************* MESSAGE SECTION ***********************
+;// Event IDs are 32-bit values
+MessageIdTypedef=DWORD
+
+MessageId=100
+SymbolicName=MSG_APPSTART
+Language=English
+Application started.
+.
+
+MessageId=
+SymbolicName=MSG_APPSTOP
+Language=English
+Application stopped.
+.
+
+MessageId=
+SymbolicName=MSG_ERROR
+Language=English
+Application generated error code %1: &quot;%%%1&quot;
+.
+
+
+;//************************ END OF FILE ************************</pre>
+</td></tr></table>
+</p>
+
+<p><table cellpadding=5 width="95%"><tr><td><pre>
+<p><b>AppLog.rc</b></p>
+//Microsoft Developer Studio generated resource script.
+//
+#include &quot;Resource.h&quot;
+
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+/////////////////////////////////////////////////////////////////////////////
+// English (U.S.) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+#ifdef _WIN32
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(1252)
+#endif //_WIN32
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+// Icon with lowest ID value placed first to ensure application icon
+// remains consistent on all systems.
+IDI_APPLOG              ICON    DISCARDABLE     &quot;AppLog.ico&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
+
+IDD_APPLOG DIALOG DISCARDABLE  15, 24, 280, 41
+STYLE DS_CENTER | WS_MINIMIZEBOX | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
+CAPTION &quot;Application Log&quot;
+FONT 8, &quot;MS Sans Serif&quot;
+BEGIN
+    LTEXT           &quot;Win32 &amp;error code:&quot;,IDC_STATIC,4,6,58,8
+    EDITTEXT        IDC_ERRORCODE,68,4,40,12,ES_AUTOHSCROLL | ES_NUMBER
+    DEFPUSHBUTTON   &quot;&amp;Simulate error&quot;,IDC_SIMULATEERROR,112,4,53,14
+    PUSHBUTTON      &quot;Open Event &amp;Viewer&quot;,IDC_SPAWNEVENTVIEWER,196,4,80,14
+    PUSHBUTTON      &quot;&amp;Install event message file in registry&quot;,IDC_INSTALL,4,
+                    24,132,14
+    PUSHBUTTON      &quot;&amp;Remove event message file from registry&quot;,IDC_REMOVE,
+                    144,24,132,14
+END
+
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// TEXTINCLUDE
+//
+
+1 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;Resource.h\0&quot;
+END
+
+2 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;#include &quot;&quot;afxres.h&quot;&quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+3 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+#endif    // APSTUDIO_INVOKED
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// DESIGNINFO
+//
+
+#ifdef APSTUDIO_INVOKED
+GUIDELINES DESIGNINFO DISCARDABLE 
+BEGIN
+    IDD_APPLOG, DIALOG
+    BEGIN
+        RIGHTMARGIN, 276
+        BOTTOMMARGIN, 37
+    END
+END
+#endif    // APSTUDIO_INVOKED
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// 11
+//
+
+LANGUAGE 0x9,0x1
+1 11 MSG00001.bin
+
+#endif    // English (U.S.) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 3 resource.
+//
+
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED
+</pre></td></tr></table>
+</p>
+
+</BODY>
+</HTML>
+
+
+
+

@@ -1,0 +1,1629 @@
+<HTML>
+<HEAD>
+<TITLE>Receiving Completed I/O Request Notifications</TITLE>
+<link rel="STYLESHEET" type="text/css" href="prosrvwin.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR = "#ffffff">
+<A HREF="ch02e.htm">[Previous]</A> <A HREF="ch03a.htm">[Next]</A><P>
+
+<A NAME="26"><H1>Receiving Completed I/O Request Notifications</H1></A>
+
+<p>At this point you know how to queue an asynchronous device I/O request, 
+but I haven't discussed how the device driver notifies you after the I/O request 
+has completed.</p>
+
+<p>Windows offers four different methods (briefly described in Table 2-9) 
+for receiving I/O completion notifications, and this chapter covers all of 
+them. The methods are shown in order of complexity, from easiest to understand 
+and implement (signaling a device kernel object) to hardest to understand and 
+implement (I/O completion ports).</p>
+
+<p><b>Table 2-9.</b> <i>Methods for receiving I/O completion notifications</i></p>
+
+<p>
+<table cellpadding=5 width="95%">
+<tr> 
+<th>Technique  </th>
+<th>Summary  </th></tr>
+<tr>
+<td valign="top">Signaling a device kernel object  </td>
+<td valign="top">Not useful for performing multiple 
+simultaneous I/O requests against a single device. Allows one thread to issue an I/O 
+request and another thread to process it.  </td></tr>
+<tr>
+<td valign="top">Signaling an event kernel object  </td>
+<td valign="top">Allows multiple simultaneous I/O 
+requests against a single device. Allows one thread 
+to issue an I/O request and another thread to process it.  </td></tr>
+<tr>
+<td valign="top">Using alertable I/O  </td>
+<td valign="top">Allows multiple simultaneous I/O 
+requests against a single device. The thread that 
+issued an I/O request must also process it.  </td></tr>
+<tr>
+<td valign="top">Using I/O completion ports  </td>
+<td valign="top">Allows multiple simultaneous I/O 
+requests against a single device. Allows one thread 
+to issue an I/O request and another thread to process it. This technique is highly 
+scalable and has the most flexibility.  </td></tr>
+</table></p>
+
+
+<p>As stated at the beginning of this chapter, the I/O completion port is 
+the hands-down best method of the four for receiving I/O completion 
+notifications. By studying all four, you'll learn why Microsoft added the I/O completion 
+port to Windows and how the I/O completion port solves all the problems that 
+exist for the other methods.</p>
+
+<A NAME="27"><H2>Signaling a Device Kernel Object</H2></A>
+
+<p>Once a thread issues an asynchronous I/O request, the thread continues 
+executing, doing useful work. Eventually, the thread needs to synchronize with 
+the completion of the I/O operation. In other words, you'll hit a point in 
+your thread's code at which the thread can't continue to execute unless the data 
+from the device is fully loaded into the buffer.</p>
+
+<p>In Windows, a device kernel object can be used for thread 
+synchronization, so the object can either be in a signaled or nonsignaled state. The 
+<I>ReadFile </I>and <I>WriteFile </I>functions set the device kernel object to the nonsignaled state 
+just before queuing the I/O request. When the device driver completes the 
+request, the driver sets the device kernel object to the signaled state.</p>
+
+<p>A thread can determine whether an asynchronous I/O request has 
+completed by calling either 
+<I>WaitForSingleObject</I> or 
+<I>WaitForMultipleObjects</I>. Here is a simple example:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>HANDLE hfile = CreateFile(..., FILE_FLAG_OVERLAPPED, ...);
+BYTE bBuffer[100]; 
+OVERLAPPED o = { 0 };
+o.Offset = 345; 
+
+BOOL fReadDone = ReadFile(hfile, bBuffer, 100, NULL, &amp;o);
+DWORD dwError = GetLastError();
+
+if (!fReadDone &amp;&amp; (dwError == ERROR_IO_PENDING)) {
+   // The I/O is being performed asynchronously; wait for it to complete
+   WaitForSingleObject(hfile, INFINITE);
+   fReadDone = TRUE;
+}
+
+if (fReadDone) {
+   // o.Internal contains the I/O error 
+   // o.InternalHigh contains the number of bytes transferred
+   // bBuffer contains the read data
+} else {
+   // An error occurred; see dwError
+}
+</pre></td></tr></table>
+</p>
+
+<p>This code issues an asynchronous I/O request and then immediately 
+waits for the request to finish, defeating the purpose of asynchronous I/O! 
+Obviously you would never actually write code similar to this, but the code does 
+demonstrate important concepts, which I'll summarize here:</p>
+<UL>
+
+<p><li>The device must be opened for asynchronous I/O by using 
+the FILE_FLAG_OVERLAPPED flag.</li></p>
+
+<p><li>The OVERLAPPED structure must have its 
+<I>Offset</I>, <I>OffsetHigh</I>, and <I>hEvent 
+</I>members initialized. In the code example, I set them all to 
+0 except for <I>Offset, </I>which I set to 345 so that 
+<I>ReadFile </I>reads data from the file starting at byte 346.</li></p>
+
+<p><li><I>     
+ReadFile</I>'s return value is saved in 
+<I>fReadDone</I>, which indicates whether the I/O request was performed synchronously.</li></p>
+
+<p><li>If the I/O request was not performed synchronously, I check to 
+see whether an error occurred or whether the I/O is being 
+performed asynchronously. Comparing the result of 
+<I>GetLastError </I>with ERROR_IO_PENDING gives me this information.</li></p>
+
+<p><li>To wait for the data, I call 
+<I>WaitForSingleObject</I>, passing the 
+handle of the device kernel object. Calling the function suspends the 
+thread until the kernel object becomes signaled. The device driver 
+signals the object when it completes the I/O. After 
+<I>WaitForSingleObject </I>returns, the I/O is complete and I set 
+<I>fReadDone </I>to TRUE.</li></p>
+
+<p><li>After the read completes, you can examine the data in 
+<I>bBuffer</I>, the error code in the OVERLAPPED structure's 
+<I>Internal </I>member, and the number of bytes transferred in the OVERLAPPED 
+structure's <I>InternalHigh </I>member.</li></p>
+
+<p><li>If a true error occurred, 
+<I>dwError </I>contains the error code giving more information.</li></p>
+</UL>
+ 
+<A NAME="28"><H2>Signaling an Event Kernel Object</H2></A>
+
+<p>The method for receiving I/O completion notifications just described is 
+very simple and straightforward, but it turns out not to be all that useful because 
+it does not handle multiple I/O requests well. For example, suppose you 
+were trying to carry out multiple asynchronous operations on a single file at the 
+same time. Say that you wanted to read 10 bytes from the file and write 10 bytes 
+to the file simultaneously. The code might look like this:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>HANDLE hfile = CreateFile(..., FILE_FLAG_OVERLAPPED, ...);
+
+BYTE bBuffer[10]; 
+OVERLAPPED oRead = { 0 };
+oRead.Offset = 0;
+ReadFile(hfile, bBuffer, 10, NULL, &amp;oRead);
+
+OVERLAPPED oWrite = { 0 };
+oWrite.Offset = 10;
+WriteFile(hfile, &quot;Jeff&quot;, 5, NULL, &amp;oWrite);
+<img src="images/grayvellip.JPG" width=3 height=13 border="0">
+
+WaitForSingleObject(hfile, INFINITE);
+
+// We don't know what completed: Read? Write? Both?
+</pre></td></tr></table>
+</p>
+
+<p>You can't synchronize your thread by waiting for the device to 
+become signaled because the object becomes signaled as soon as either of the 
+operations completes. If you call 
+<I>WaitForSingleObject</I>, passing it the device handle, you 
+will be unsure whether the function returned because the read operation 
+completed, the write operation completed, or both operations completed. 
+Clearly, there needs to be a better way to perform multiple, simultaneous asynchronous 
+I/O requests so that you don't run into this predicament&#8212;fortunately, there is.</p>
+
+<p>The last member of the OVERLAPPED structure, 
+<I>hEvent</I>, identifies an event kernel object. You must create this event object by calling 
+<I>CreateEvent</I>. When an asynchronous I/O request completes, the device driver checks to 
+see whether the <I>hEvent</I> member of the OVERLAPPED structure is NULL. 
+If <I>hEvent</I> is not NULL, the driver signals the event by calling 
+<I>SetEvent</I>. The driver also sets the device object to the signaled state just as it did before. 
+However, if you are using events to determine when a device operation has 
+completed, you shouldn't wait for the device object to become signaled&#8212;wait for the 
+event instead.</p>
+
+<p>If you want to perform multiple asynchronous device I/O requests 
+simultaneously, you must create a separate event object for each request, initialize 
+the <I>hEvent</I> member in each request's OVERLAPPED structure, and then 
+call <I>ReadFile</I> or <I>WriteFile</I>. When you reach the point in your code at which you 
+need to synchronize with the completion of the I/O request, simply 
+call <I>WaitForMultipleObjects</I>, passing in the event handles associated with each 
+outstanding I/O request's OVERLAPPED structures. With this scheme, you 
+can easily and reliably perform multiple asynchronous device I/O operations 
+simultaneously and use the same device object. The following code demonstrates 
+this approach:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>HANDLE hfile = CreateFile(..., FILE_FLAG_OVERLAPPED, ...);
+
+BYTE bBuffer[10]; 
+OVERLAPPED oRead = { 0 };
+oRead.Offset = 0;
+oRead.hEvent = CreateEvent(...);
+ReadFile(hfile, bBuffer, 10, NULL, &amp;oRead);
+
+OVERLAPPED oWrite = { 0 };
+oWrite.Offset = 10;
+oWrite.hEvent = CreateEvent(...);
+WriteFile(hfile, &quot;Jeff&quot;, 5, NULL, &amp;oWrite);
+<img src="images/grayvellip.JPG" width=3 height=13 border="0">
+
+HANDLE h[2];
+h[0] = oRead.hEvent;
+h[1] = oWrite.hEvent;
+DWORD dw = WaitForMultipleObjects(2, h, FALSE, INFINITE);
+switch (dw _ WAIT_OBJECT_0) {
+   case 0:   // Read completed
+      break;
+
+   case 1:   // Write completed
+      break;
+}
+</pre></td></tr></table>
+</p>
+
+<p>This code is somewhat contrived and is not <I>exactly 
+</I>what you'd do in a real-life application, but it does illustrate my point. Typically, a real-life 
+application would have a loop that waits for I/O requests to complete. As each 
+request completes, the thread would perform the desired task, queue another 
+asynchronous I/O request, and loop back around, waiting for more I/O requests 
+to complete.</p>
+
+<A NAME="29"><H3><I>GetOverlappedResult</I></H3></A>
+
+<p>Recall that originally Microsoft was not going to document the 
+OVERLAPPED structure's <I>Internal </I>and <I>InternalHigh 
+</I>members, which meant it needed to provide another way for you to know how many bytes were transferred during 
+the I/O processing and get the I/O's error code. To make this information 
+available to you, Microsoft created the <I>GetOverlappedResult 
+</I>function:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>BOOL GetOverlappedResult(
+   HANDLE      hfile, 
+   OVERLAPPED* pOverlapped,
+   PDWORD      pdwNumBytes, 
+   BOOL        fWait);
+</pre></td></tr></table>
+</p>
+
+<p>Microsoft now documents the <I>Internal </I>and 
+<I>InternalHigh </I>members, so the 
+<I>GetOverlappedResult</I> function is not very useful. However, when I was 
+first learning asynchronous I/O, I decided to reverse engineer the function to 
+help solidify concepts in my head. The following code shows how 
+<I>GetOverlappedResult </I>is implemented internally:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>BOOL GetOverlappedResult(
+   HANDLE hfile, 
+   OVERLAPPED* po,
+   PDWORD pdwNumBytes,
+   BOOL fWait) {
+
+   if (po-&gt;Internal == STATUS_PENDING) {
+      DWORD dwWaitRet = WAIT_TIMEOUT;
+      if (fWait) {
+         // Wait for the I/O to complete
+         dwWaitRet = WaitForSingleObject(
+            (po-&gt;hEvent != NULL) ? po-&gt;hEvent : hfile, INFINITE);
+      }
+
+      if (dwWaitRet == WAIT_TIMEOUT) {
+         // I/O not complete and we're not supposed to wait
+         SetLastError(ERROR_IO_INCOMPLETE);
+         return(FALSE);
+      }
+
+      if (dwWaitRet != WAIT_OBJECT_0) {
+         // Error calling WaitForSingleObject
+         return(FALSE);
+      }
+   }
+
+   // I/O is complete; return number of bytes transferred
+   *pdwNumBytes = po-&gt;InternalHigh;
+
+   if (SUCCEEDED(po-&gt;Internal)) {
+      return(TRUE);   // No I/O error
+   }
+
+   // Set last error to I/O error
+   SetLastError(po-&gt;Internal);
+   return(FALSE);
+}
+</pre></td></tr></table>
+</p>
+
+<A NAME="30"><H2>Alertable I/O</H2></A>
+
+<p>The third method available to you for receiving I/O completion 
+notifications is called <I>alertable I/O</I>. At first, Microsoft touted alertable I/O as the 
+absolute best mechanism for developers who wanted to create high-performance, 
+scalable applications. But as developers started using alertable I/O, they soon 
+realized that it was not going to live up to the promise.</p>
+
+<p>I have worked with alertable I/O quite a bit, and I'll be the first to 
+tell you that alertable I/O is horrible and should be avoided. However, to 
+make alertable I/O work, Microsoft added some infrastructure into the 
+operating system that I have found to be extremely useful and valuable. As you read 
+this section, concentrate on the infrastructure that is in place and don't get 
+bogged down in the I/O aspects.</p>
+
+<p>Whenever a thread is created, the system also creates a queue that is 
+associated with the thread. This queue is called the asynchronous procedure 
+call (APC) queue. When issuing an I/O request, you can tell the device driver 
+to append an entry to the calling thread's APC queue. To have completed 
+I/O notifications queued to your thread's APC queue, you call the 
+<I>ReadFileEx</I> and <I>WriteFileEx</I> functions:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>BOOL ReadFileEx(
+   HANDLE      hfile, 
+   PVOID       pvBuffer,
+   DWORD       nNumBytesToRead, 
+   OVERLAPPED* pOverlapped,
+   LPOVERLAPPED_COMPLETION_ROUTINE pfnCompletionRoutine);
+
+BOOL WriteFileEx(
+   HANDLE      hfile, 
+   CONST VOID  *pvBuffer,
+   DWORD       nNumBytesToWrite, 
+   OVERLAPPED* pOverlapped,
+   LPOVERLAPPED_COMPLETION_ROUTINE pfnCompletionRoutine);
+</pre></td></tr></table>
+</p>
+
+<p>Like <I>ReadFile</I> and <I>WriteFile, 
+ReadFileEx</I> and <I>WriteFileEx</I> issue I/O requests to a device driver, and the functions return immediately. The 
+<I>ReadFileEx</I> and <I>WriteFileEx</I> functions have the same parameters as the 
+<I>ReadFile</I> and <I>WriteFile</I> functions, with two exceptions. First, the 
+<I>*Ex</I> functions are not passed a pointer to a DWORD that gets filled with the number of bytes 
+transferred; this information can be retrieved only by the callback function. Second, the 
+<I>*Ex</I> functions require that you pass the address of a callback function, called a 
+<I>completion</I> <I>routine</I>. This routine must have the following prototype:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>VOID WINAPI CompletionRoutine(
+   DWORD       dwError, 
+   DWORD       dwNumBytes, 
+   OVERLAPPED* po);
+</pre></td></tr></table>
+</p>
+
+<p>When you issue an asynchronous I/O request with 
+<I>ReadFileEx </I>and <I>WriteFileEx</I>, the functions pass the address of this function to the device 
+driver. When the device driver has completed the I/O request, it appends an entry 
+in the issuing thread's APC queue. This entry contains the address of the 
+completion routine function and the address of the OVERLAPPED structure used 
+to initiate the I/O request.</p>
+
+
+<p><div class="note"><blockquote><b>NOTE</b><hr> By the way, when an alertable I/O completes, the device driver will 
+not attempt to signal an event object. In fact, the device does not 
+reference the OVERLAPPED structure's <I>hEvent 
+</I>member at all. Therefore, you can use the 
+<I>hEvent</I> member for your own purposes if you like.
+</blockquote></div>
+</p>
+
+<p>When the thread is in an alertable state (discussed shortly), the 
+system examines its APC queue and, for every entry in the queue, the system calls 
+the completion function, passing it the I/O error code, the number of bytes 
+transferred, and the address of the OVERLAPPED structure. Note that the 
+error code and number of bytes transferred can also be found in the 
+OVERLAPPED structure's <I>Internal </I>and <I>InternalHigh 
+</I>members. (As I mentioned earlier, Microsoft originally didn't want to document these, so it passed them as 
+parameters to the function.)</p>
+
+<p>I'll get back to this completion routine function shortly. First let's look 
+at how the system handles the asynchronous I/O requests. The following 
+code queues three different asynchronous operations:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>hfile = CreateFile(..., FILE_FLAG_OVERLAPPED, ...);
+
+ReadFileEx(hfile, ...);    // Perform first ReadFileEx
+WriteFileEx(hfile, ...);   // Perform first WriteFileEx
+ReadFileEx(hfile, ...);    // Perform second ReadFileEx
+
+SomeFunc();
+</pre></td></tr></table>
+</p>
+
+<p>If the call to <I>SomeFunc</I> takes some time to execute, the system 
+completes the three operations before 
+<I>SomeFunc</I> returns. While the thread is executing 
+the <I>SomeFunc</I> function, the device driver is appending completed I/O entries to 
+the thread's APC queue. The APC queue might look something like this:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>first WriteFileEx completed
+second ReadFileEx completed
+first ReadFileEx completed
+</pre></td></tr></table>
+</p>
+
+<p>The APC queue is maintained internally by the system. You'll also 
+notice from the list that the system can execute your queued I/O requests in any 
+order, and that the I/O requests that you issue last might be completed first 
+and vice versa. Each entry in your thread's APC queue contains the address of 
+a callback function and a value that is passed to the function.</p>
+
+<p>As I/O requests complete, they are simply queued to your thread's 
+APC queue&#8212;the callback routine is not immediately called because your thread 
+might be busy doing something else and cannot be interrupted. To process entries 
+in your thread's APC queue, the thread must put itself in an alertable state. 
+This simply means that your thread has reached a position in its execution where 
+it can handle being interrupted. Windows offers five functions that can place 
+a thread in an alertable state:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>DWORD SleepEx(
+   DWORD dwTimeout, 
+   BOOL  fAlertable);
+DWORD WaitForSingleObjectEx(
+   HANDLE hObject, 
+   DWORD  dwTimeout,
+   BOOL   fAlertable);
+
+DWORD WaitForMultipleObjectsEx(
+   DWORD   cObjects,
+   PHANDLE phObjects, 
+   BOOL    fWaitAll, 
+   DWORD   dwTimeout,
+   BOOL    fAlertable);
+
+BOOL SignalObjectAndWait(
+   HANDLE hObjectToSignal, 
+   HANDLE hObjectToWaitOn, 
+   DWORD  dwMilliseconds, 
+   BOOL   fAlertable);
+
+DWORD MsgWaitForMultipleObjectsEx(
+   DWORD   nCount, 
+   PHANDLE pHandles,
+   DWORD   dwMilliseconds, 
+   DWORD   dwWakeMask, 
+   DWORD   dwFlags);
+</pre></td></tr></table>
+</p>
+
+<p>The last argument to the first four functions is a Boolean value 
+indicating whether the calling thread should place itself in an alertable state. 
+For <I>MsgWaitForMultipleObjectsEx</I>, you must use the MWMO_ALERTABLE 
+flag to have the thread enter an alertable state. If you're familiar with the 
+<I>Sleep</I>, <I>WaitForSingleObject</I>, and 
+<I>WaitForMultipleObjects</I> functions, you shouldn't 
+be surprised to learn that, internally, these 
+non-<I>Ex</I> functions call their <I>*Ex</I> counterparts, always passing FALSE for the 
+<I>fAlertable</I> parameter.</p>
+
+<p>When you call one of the five functions just mentioned and place 
+your thread in an alertable state, the system first checks your thread's APC 
+queue. If at least one entry is in the queue, the system does not put your thread to 
+sleep; instead, the system pulls the entry from the APC queue and your thread 
+calls the callback routine, passing the routine the completed I/O request's error 
+code, number of bytes transferred, and address of the OVERLAPPED structure. 
+When the callback routine returns to the system, the system checks for more 
+entries in the APC queue. If more entries exist, they are processed. However, if no 
+more entries exist, your call to the alertable function returns. Something to keep 
+in mind is that if any entries are in your thread's APC queue when you call any 
+of these functions, your thread never sleeps!</p>
+
+<p>The only time these functions suspend your thread is when no entries 
+are in your thread's APC queue at the time you call the function. While your 
+thread is suspended, the thread will wake up if the kernel object (or objects) that 
+you're waiting on becomes signaled or if an APC entry appears in your thread's 
+queue. Since your thread is in an alertable state, as soon as an APC entry appears, 
+the system wakes your thread and empties the queue (by calling the callback 
+routines). Then the functions immediately return to the caller&#8212;your thread 
+does not go back to sleep waiting for kernel objects to become signaled.</p>
+
+<p>The return value from these five functions indicates why they have 
+returned. If the return value is WAIT_IO_COMPLETION, you know that 
+the thread is continuing to execute because at least one entry was processed 
+from the thread's APC queue. If the return value is anything else, the thread 
+woke up because the sleep period expired, the specified kernel object or objects 
+became signaled, or a mutex was abandoned.</p>
+
+<A NAME="31"><H3>The Bad and the Good of Alertable I/O</H3></A>
+
+<p>At this point, we've discussed the mechanics of performing alertable I/O. 
+Now you need to know about the two issues that make alertable I/O a 
+horrible method for doing device I/O.</p>
+<UL>
+
+<p><li><B>Callback functions</B> Alertable I/O requires that you create 
+callback functions, which makes implementing your code much 
+more difficult. These callback functions typically don't have enough 
+contextual information about a particular problem to guide you, so 
+you end up placing a lot of information in global variables. 
+Fortunately, these global variables don't need to be synchronized because 
+the thread calling one of the five alterable functions is the same 
+thread executing the callback functions. A single thread can't be in 
+two places at one time, so the variables are safe.</li></p>
+
+<p><li><B>Threading issues</B> The real big problem with alertable I/O is 
+this: The thread issuing the I/O request must also handle the 
+completion notification. If a thread issues several requests, that thread must 
+respond to each request's completion notification, even if 
+other threads are sitting completely idle. Since there is no load 
+balancing, the application doesn't scale well.</li></p>
+</UL>
+ 
+<p>Both of these problems are pretty severe, so I strongly discourage the 
+use of alertable I/O for device I/O. I'm sure you guessed by now that the 
+I/O completion port mechanism, discussed in the next section, solves both of 
+the problems I just described. I promised to tell you some good stuff about 
+the alertable I/O infrastructure, so before I move on to the I/O completion 
+port, I'll do that.</p>
+
+<p>Windows offers a function that allows you to manually queue an entry 
+to a thread's APC queue:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>DWORD QueueUserAPC(
+   PAPCFUNC  pfnAPC, 
+   HANDLE    hThread, 
+   ULONG_PTR dwData);
+</pre></td></tr></table>
+</p>
+
+<p>The first parameter is a pointer to an APC function that must have 
+the following prototype:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>VOID WINAPI APCFunc(ULONG_PTR dwParam);
+</pre></td></tr></table>
+</p>
+
+<p>The second parameter is the handle of the thread for which you want 
+to queue the entry. Note that this thread can be any thread in the system. If 
+<I>hThread</I> identifies a thread in a different process's address space, 
+<I>pfnAPC</I> must specify the memory address of a function that is in the address space of the 
+target thread's process. The last parameter to 
+<I>QueueUserAPC</I>, <I>dwData</I>, is a value 
+that simply gets passed to the callback function.</p>
+
+<p>Even though <I>QueueUserAPC</I> is prototyped as returning a DWORD, 
+the function actually returns a BOOL indicating success or failure. You can 
+use <I>QueueUserAPC</I> to perform extremely efficient interthread 
+communication, even across process boundaries. Unfortunately, however, you can pass only 
+a single value.</p>
+
+<p><I>QueueUserAPC</I> can also be used to force a thread out of a wait 
+state. Suppose you have a thread calling 
+<I>WaitForSingleObject</I>, waiting for a kernel object to become signaled. While the thread is waiting, the user wants to 
+terminate the application. You know that threads should cleanly destroy 
+themselves, but how do you force the thread waiting on the kernel object to wake up 
+and kill itself? <I>QueueUserAPC </I>is the answer.</p>
+
+<p>The following code demonstrates how to force a thread out of a wait 
+state so that the thread can exit cleanly. The main function spawns a new 
+thread, passing it the handle of some kernel object. While the secondary thread is 
+running, the primary thread is also running. The secondary thread (executing 
+the <I>ThreadFunc </I>function) calls 
+<I>WaitForSingleObjectEx</I>,<I> </I>which suspends the 
+thread, placing it in an alertable state. Now, say that the user tells the primary 
+thread to terminate the application. Sure, the primary thread could just exit, and 
+the system would kill the whole process, but this approach is not very clean, and 
+in many scenarios, you'll just want to kill an operation without terminating 
+the whole process.</p>
+
+<p>So the primary thread calls <I>QueueUserAPC, </I>which places an APC 
+entry in the secondary thread's APC queue. Since the secondary thread is in 
+an alertable state, it now wakes and empties its APC queue by calling the 
+<I>APCFunc </I>function. This function does absolutely nothing and just returns. Since the 
+APC queue is now empty, the thread returns from its call to 
+<I>WaitForSingleObjectEx </I>with a return value of WAIT_IO_COMPLETION. The 
+<I>ThreadFunc </I>function checks specifically for this return value, knowing that it received an APC 
+entry indicating that the thread should exit.</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>// The APC callback function has nothing to do
+VOID WINAPI APCFunc(ULONG_PTR dwParam) {
+   // Nothing to do in here
+}
+
+
+UINT WINAPI ThreadFunc(PVOID pvParam) {
+   HANDLE hEvent = (HANDLE) pvParam;   // Handle is passed to this thread
+
+   // Wait in an alertable state so that we can be forced to exit cleanly
+   DWORD dw = WaitForSingleObjectEx(hEvent, INFINITE, TRUE);
+   if (dw == WAIT_OBJECT_0) {
+      // Object became signaled
+   }
+   if (dw == WAIT_IO_COMPLETION) {
+      // QueueUserAPC forced us out of a wait state
+      return(0);   // Thread dies cleanly
+   }
+   <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+   return(0);
+}
+
+
+void main() {
+   HANDLE hEvent = CreateEvent(...);
+   HANDLE hThread = (HANDLE) _beginthreadex(NULL, 0, 
+      ThreadFunc, (PVOID) hEvent, 0, NULL);
+   <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+   // Force the secondary thread to exit cleanly
+   QueueUserAPC(APCFunc, hThread, NULL);
+   WaitForSingleObject(hThread, INFINITE);
+   CloseHandle(hThread);
+   CloseHandle(hEvent);
+}
+</pre></td></tr></table>
+</p>
+
+<p>I know that some of you are thinking that this problem could have 
+been solved by replacing the call to <I>WaitForSingleObjectEx 
+</I>with a call to <I>WaitForMultipleObjects </I>and by creating another event kernel object to signal the 
+secondary thread to terminate. For my simple example, your solution would 
+work. However, if my secondary thread called <I>WaitForMultipleObjects 
+</I>to wait until <I>all </I>objects became signaled, 
+<I>QueueUserAPC </I>would be the only way to force 
+the thread out of a wait state.</p>
+
+<p>For good examples showing how to use <I>QueueUserAPC 
+</I>this way, please see the RegNotify sample application in <A HREF="ch05a.htm">Chapter 5</A> of this book and 
+the WaitForMultipleExpressions sample application in Chapter 11 of 
+<I>Programming Applications for Microsoft Windows, Fourth Edition 
+</I>(Jeffrey Richter, Microsoft Press, 1999).</p>
+
+<A NAME="32"><H2>I/O Completion Ports</H2></A>
+
+<p>Windows 2000 is designed to be a secure, robust operating system 
+running applications that service literally thousands of users. Historically, you've 
+been able to architect a service application by following one of two models:</p>
+<UL>
+
+<p><li><B>Serial model</B> A single thread waits for a client to make a 
+request (usually over the network). When the request comes in, the 
+thread wakes and handles the client's request.</li></p>
+
+<p><li><B>Concurrent model</B> A single thread waits for a client request 
+and then creates a new thread to handle the request. While the 
+new thread is handling the client's request, the original thread loops 
+back around and waits for another client request. When the thread that 
+is handling the client's request is completely processed, the thread dies.</li></p>
+</UL>
+ 
+<p>The problem with the serial model is that it does not handle 
+multiple, simultaneous requests well. If two clients make requests at the same time, 
+only one can be processed at a time; the second request must wait for the first 
+request to finish processing. A service that is designed using the serial 
+approach cannot take advantage of multiprocessor machines. Obviously, the serial 
+model is good only for the simplest of server applications, in which few client 
+requests are made and requests can be handled very quickly. A Ping server is a 
+good example of a serial server.</p>
+
+<p>Because of the limitations in the serial model, the concurrent model 
+is extremely popular. In the concurrent model, a thread is created to handle 
+each client request. The advantage is that the thread waiting for incoming 
+requests has very little work to do. Most of the time, this thread is sleeping. When a 
+client request comes in, the thread wakes, creates a new thread to handle the 
+request, and then waits for another client request. This means that incoming client 
+requests are handled expediently. Also, because each client request gets its 
+own thread, the server application scales well and can easily take advantage of 
+multiprocessor machines. So if you are using the concurrent model and upgrade 
+the hardware (add another CPU), the performance of the server application improves.</p>
+
+<p>Service applications using the concurrent model were implemented 
+using Windows. The Windows team noticed that application performance was not 
+as high as desired. In particular, the team noticed that handling many 
+simultaneous client requests meant that many threads were running in the system 
+concurrently. Because all these threads were runnable (not suspended and waiting for 
+something to happen), Microsoft realized that the Windows kernel spent too 
+much time context switching between the running threads, and the threads were 
+not getting as much CPU time to do their work. To make Windows an 
+awesome server environment, Microsoft needed to address this problem. The result is 
+the I/O completion port kernel object.</p>
+
+<A NAME="33"><H3>Creating an I/O Completion Port</H3></A>
+
+<p>The theory behind the I/O completion port is that the number of 
+threads running concurrently must have an upper bound; that is, 500 simultaneous 
+client requests cannot allow 500 runnable threads to exist. What, then, is the 
+proper number of concurrent, runnable threads? Well, if you think about this 
+question for a moment, you'll come to the realization that if a machine has two 
+CPUs, having more than two runnable threads&#8212;one for each processor&#8212;really 
+doesn't make sense. As soon as you have more runnable threads than CPUs 
+available, the system has to spend time performing thread context switches, which 
+wastes precious CPU cycles&#8212;a potential deficiency of the concurrent model.</p>
+
+<p>Another deficiency of the concurrent model is that a new thread is 
+created for each client request. Creating a thread is cheap when compared to 
+creating a new process with its own virtual address space, but creating threads is far 
+from free. The service application's performance can be improved if a pool of 
+threads is created when the application initializes, and these threads hang around 
+for the duration of the application. I/O completion ports were designed to 
+work with a pool of threads.</p>
+
+<p>An I/O completion port is probably the most complex kernel object. 
+To create an I/O completion port, you call 
+<I>CreateIoCompletionPort</I>:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>HANDLE CreateIoCompletionPort(
+   HANDLE    hfile,
+   HANDLE    hExistingCompPort, 
+   ULONG_PTR CompKey,
+   DWORD     dwNumberOfConcurrentThreads);
+</pre></td></tr></table>
+</p>
+
+<p>This function performs two different tasks: it creates an I/O 
+completion port, and it associates a device with an I/O completion port. This function 
+is overly complex, and in my opinion, Microsoft should have split it into two 
+separate functions. When I work with I/O completion ports, I separate these 
+two capabilities by creating two tiny functions that abstract the call to 
+<I>CreateIoCompletionPort</I>. The first function I write is called 
+<I>CreateNewCompletionPort</I>, and I implement it as follows:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>HANDLE CreateNewCompletionPort(DWORD dwNumberOfConcurrentThreads) {
+
+   return(CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0,
+      dwNumberOfConcurrentThreads));
+}
+</pre></td></tr></table>
+</p>
+
+<p>This function takes a single argument, 
+<I>dwNumberOfConcurrentThreads</I>, and then calls the Windows 
+<I>CreateIoCompletionPort</I> function, passing in 
+hard-coded values for the first three parameters and 
+<I>dwNumberOfConcurrentThreads</I> for the last parameter. You see, the first three parameters to 
+<I>CreateIoCompletionPort</I> are used only when you are associating a device with a completion 
+port. (I'll talk about this shortly.) To create just a completion port, I pass INVALID_HANDLE_VALUE, NULL, and 0, respectively, to 
+<I>CreateIoCompletionPort</I>'s first three parameters.</p>
+
+<p>The <I>dwNumberOfConcurrentThreads</I> parameter tells the I/O 
+completion port the maximum number of threads that should be runnable at the same 
+time. If you pass 0 for the 
+<I>dwNumberOfConcurrentThreads</I> parameter, the 
+completion port defaults to allowing as many concurrent threads as there are CPUs 
+on the host machine. This is usually exactly what you want so that extra 
+context switching is avoided. You might want to increase this value if the 
+processing of a client request requires a lengthy computation that rarely blocks, but 
+increasing this value is strongly discouraged. You might experiment with 
+the <I>dwNumberOfConcurrentThreads</I> parameter by trying different values and 
+comparing your application's performance.</p>
+
+<p>You'll notice that 
+<I>CreateIoCompletionPort</I> is about the only 
+Windows function that creates a kernel object but does not have a parameter that 
+allows you to pass the address of a SECURITY_ATTRIBUTES structure. This is 
+because completion ports are intended for use within a single process only. 
+The reason will be clear to you when I explain how to use completion ports.</p>
+
+<A NAME="34"><H3>Associating a Device with an I/O Completion Port</H3></A>
+
+<p>When you create an I/O completion port, the kernel actually creates five 
+different data structures, as shown in Figure 2-1. You should refer to this 
+figure as you continue reading.</p>
+
+<p>
+<A HREF="javascript:fullSize('F02fj01ax.htm')"> <img src="images/F02fj01a.JPG" width=404 height=320 border=0 ALT = "Click to view at full size."> </A>
+<p><A HREF="javascript:fullSize('F02fj01bx.htm')"> <img src="images/F02fj01b.JPG" width=404 height=469 border=0 ALT = "Click to view at full size."> </A></p>
+</p><p>
+<!-- caption --><b>Figure 2-1. </b> <i>The internal workings of an I/O completion port </i><!-- /caption -->
+</p>
+
+
+<p>The first data structure is a device list indicating the device or 
+devices associated with the port. You associate a device with the port by 
+calling <I>CreateIoCompletionPort</I>. Again, I created my own function, 
+<I>AssociateDeviceWithCompletionPort</I>, which abstracts the call to 
+<I>CreateIoCompletionPort</I>:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>BOOL AssociateDeviceWithCompletionPort(
+   HANDLE hCompPort, HANDLE hDevice, DWORD dwCompKey) {
+
+   HANDLE h = CreateIoCompletionPort(hDevice, hCompPort, dwCompKey, 0);
+   return(h == hCompPort);
+}
+</pre></td></tr></table>
+</p>
+
+<p><I>AssociateDeviceWithCompletionPort</I> appends an entry to an 
+existing completion port's device list. You pass to the function the handle of an 
+existing completion port (returned by a previous call to 
+<I>CreateNewCompletionPort</I>), the handle of the device (this can be a file, a socket, a mailslot, a pipe, and 
+so on), and a completion key (a value that has meaning to you; the operating 
+system doesn't care what you pass here). Each time you associate a device with 
+the port, the system appends this information to the completion port's device list.</p>
+
+
+<p><div class="note"><blockquote><b>NOTE</b><hr> The <I>CreateIoCompletionPort 
+</I>function<I> </I>is complex, and I recommend 
+that you mentally separate the two reasons for calling it. There is one 
+advantage to having the function be so complex: you can create an 
+I/O completion port and associate a device with it at the same time. 
+For example, the following code opens a file and creates a new 
+completion port, associating the file with it. All I/O requests to the file will 
+complete with a completion key of CK_FILE, and the port will allow as 
+many as two threads to execute concurrently.
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>#define CK_FILE   1
+HANDLE hfile = CreateFile(...);
+HANDLE hCompPort = CreateIoCompletionPort(hfile, NULL, CK_FILE, 2);</pre>
+</td></tr></table>
+</p>
+</blockquote></div>
+</p>
+
+<p>The second data structure is an I/O completion queue. When an 
+asynchronous I/O request for a device completes, the system checks to see 
+whether the device is associated with a completion port and, if it is, the system 
+appends the completed I/O request entry to the end of the completion port's 
+I/O completion queue. Each entry in this queue indicates the number of bytes 
+transferred, the completion key value that was set when the device was associated 
+with the port, the pointer to the I/O request's OVERLAPPED structure, and 
+an error code. I'll discuss how entries are removed from this queue shortly.</p>
+
+<p><div class="note"><blockquote><b>NOTE</b><hr>Issuing an I/O request to a device and not having an I/O 
+completion entry queued to the I/O completion port is possible. This is not 
+usually necessary, but it can come in handy occasionally&#8212;for example, 
+when you send data over a socket and you don't care whether the data 
+actually makes it or not.
+
+<p>To issue an I/O request without having a completion 
+entry queued, you must load the OVERLAPPED structure's 
+<I>hEvent</I> member with a valid event handle and bitwise-OR this value with 1, like this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>Overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+Overlapped.hEvent = (HANDLE) ((DWORD_PTR) Overlapped.hEvent | 1);
+ReadFile(..., &amp;Overlapped);</pre>
+</td></tr></table>
+</p>
+
+<p>Now you can issue your I/O request, passing the address of 
+this OVERLAPPED structure to the desired function (such as 
+<I>ReadFile</I> above).</p>
+
+<p>It would be nice if you didn't have to create an event just to 
+stop the queuing of the I/O completion. I would like to be able to do 
+the following, but it doesn't work:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>Overlapped.hEvent = 1;
+ReadFile(..., &amp;Overlapped);</pre>
+</td></tr></table>
+</p>
+
+<p>Also, don't forget to reset the low-order bit before closing 
+this event handle:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>CloseHandle((HANDLE) ((DWORD_PTR) Overlapped.hEvent &amp; ~1));</pre>
+</td></tr></table>
+</p>
+</blockquote></div>
+</p>
+
+<A NAME="35"><H3>Architecting Around an I/O Completion Port</H3></A>
+
+<p>When your service application initializes, it should create the I/O 
+completion port by calling a function like 
+<I>CreateNewCompletionPort</I>. The application 
+should then create a pool of threads to handle client requests. The question you 
+ask now is, &quot;How many threads should be in the pool?&quot; This is a tough 
+question to answer, and I will address it in more detail later in the section &quot;<A HREF="ch02f.htm#37">How Many Threads in the Pool?</A>&quot; For right now, a standard rule of thumb is to take 
+the number of CPUs on the host machine and multiply it by 2. So on a dual-processor machine, you should create a pool of four threads.</p>
+
+<p>All the threads in the pool should execute the same function. 
+Typically, this thread function performs some sort of initialization and then enters a 
+loop that should terminate when the service process is instructed to stop. Inside 
+the loop, the thread puts itself to sleep waiting for device I/O requests to 
+complete to the completion port. Calling <I>GetQueuedCompletionStatus 
+</I>does this:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>BOOL GetQueuedCompletionStatus(
+   HANDLE       hCompPort,
+   PDWORD       pdwNumBytes,
+   PULONG_PTR   CompKey,
+   OVERLAPPED** ppOverlapped,
+   DWORD        dwMilliseconds);
+</pre></td></tr></table>
+</p>
+
+<p>The first parameter, <I>hCompPort</I>, indicates which completion port 
+the thread is interested in monitoring. Many service applications will use a 
+single I/O completion port and have all I/O request notifications complete to 
+this one port. Basically, the job of 
+<I>GetQueuedCompletionStatus</I> is to put the 
+calling thread to sleep until an entry appears in the specified completion port's 
+I/O completion queue or until the specified time-out occurs (as specified in 
+the <I>dwMilliseconds</I> parameter).</p>
+
+<p>The third data structure associated with an I/O completion port is 
+the waiting thread queue. As each thread in the thread pool calls 
+<I>GetQueuedCompletionStatus</I>, the ID of the calling thread is placed in this waiting 
+thread queue, enabling the I/O completion port kernel object to always know 
+which threads are currently waiting to handle completed I/O requests. When an 
+entry appears in the port's I/O completion queue, the completion port wakes 
+one of the threads in the waiting thread queue. This thread gets the pieces of 
+information that make up a completed I/O entry: the number of bytes 
+transferred, the completion key, and the address of the OVERLAPPED structure. 
+This information is returned to the thread via the 
+<I>pdwNumBytes</I>, <I>pCompKey</I>, and 
+<I>ppOverlapped</I> parameters passed to 
+<I>GetQueuedCompletionStatus</I>.</p>
+
+<p>Determining the reason that 
+<I>GetQueuedCompletionStatus</I> returned is somewhat difficult; the following code demonstrates the proper way to do it:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>DWORD dwNumBytes;
+ULONG_PTR CompKey;
+OVERLAPPED* pOverlapped;
+
+// hIOCP is initialized somewhere else in the program
+BOOL fOk = GetQueuedCompletionStatus(hIOCP,
+   &amp;dwNumBytes, &amp;CompKey, &amp;pOverlapped, 1000);
+DWORD dwError = GetLastError();
+
+if (fOk) {
+   // Process a successfully completed I/O request
+} else {
+   if (pOverlapped != NULL) {
+      // Process a failed completed I/O request
+      // dwError contains the reason for failure
+   } else {
+      if (dwError == WAIT_TIMEOUT) {
+         // Time-out while waiting for completed I/O entry
+      } else {
+         // Bad call to GetQueuedCompletionStatus
+         // dwError contains the reason for the bad call
+      }
+   }
+}
+</pre></td></tr></table>
+</p>
+
+<p>As you would expect, entries are removed from the I/O completion 
+queue in a first-in first-out fashion. However, as you might not expect, threads 
+that call <I>GetQueuedCompletionStatus</I> are awakened in a last-in first-out (LIFO) 
+fashion. The reason for this is again to improve performance. For example, say 
+that four threads are waiting in the waiting thread queue. If a single completed 
+I/O entry appears, the last thread to call 
+<I>GetQueuedCompletionStatus</I> wakes up to process the entry. When this last thread is finished processing the entry, 
+the thread again calls 
+<I>GetQueuedCompletionStatus</I> to enter the waiting thread 
+queue. Now if another I/O completion entry appears, the same thread that 
+processed the first entry is awakened to process the new entry.</p>
+
+<p>As long as I/O requests complete so slowly that a single thread can 
+handle them, the system will just keep waking the one thread, and the other 
+three threads will continue to sleep. By using this LIFO algorithm, threads that 
+don't get scheduled can have their memory resources (such as stack space) 
+swapped out to the disk and flushed from a processor's cache. This means having 
+many threads waiting on a completion port isn't bad. If you do have several 
+threads waiting but few I/O requests completing, the extra threads have most of 
+their resources swapped out of the system anyway.</p>
+
+<A NAME="36"><H3>How the I/O Completion Port Manages the Thread Pool</H3></A>
+
+<p>Now it's time to discuss why I/O completion ports are so useful. First, 
+when you create the I/O completion port, you specify the number of threads that 
+can run concurrently. As I said, you usually set this value to the number of 
+CPUs on the host machine. As completed I/O entries are queued, the I/O 
+completion port wants to wake up waiting threads. However, the completion port 
+will wake up only as many threads as you have specified. So if four I/O 
+requests complete and four threads are waiting in a call to 
+<I>GetQueuedCompletionStatus</I>, the I/O completion port will allow only two threads to wake up; the other 
+two threads continue to sleep. As each thread processes a completed I/O entry, 
+the thread again calls 
+<I>GetQueuedCompletionStatus</I>. The system sees that more 
+entries are queued and wakes the same threads to process the remaining entries.</p>
+
+<p>If you're thinking about this carefully, you should notice that 
+something just doesn't make a lot of sense: if the completion port only ever allows 
+the specified number of threads to wake up concurrently, why have more 
+threads waiting in the thread pool? For example, suppose I'm running on a machine 
+with two CPUs, and I create the I/O completion port, telling it to allow no 
+more than two threads to process entries concurrently. But I create four threads 
+(twice the number of CPUs) in the thread pool. It seems as though I am creating 
+two additional threads that will never be awakened to process anything.</p>
+
+<p>But I/O completion ports are very smart. When a completion port 
+wakes a thread, the completion port places the thread's ID in the fourth data 
+structure associated with the completion port, a released thread list. (See Figure 
+2-1.) This allows the completion port to remember which threads it awakened and 
+to monitor the execution of these threads. If a released thread calls any 
+function that places the thread in a wait state, the completion port detects this and 
+updates its internal data structures by moving the thread's ID from the 
+released thread list to the paused thread list (the fifth and final data structure that is 
+part of an I/O completion port).</p>
+
+<p>The goal of the completion port is to keep as many entries in the 
+released thread list as is specified by the concurrent number of threads value used 
+when creating the completion port. If a released thread enters a wait state for 
+any reason, the released thread list shrinks and the completion port releases 
+another waiting thread. If a paused thread wakes, it leaves the paused thread list 
+and reenters the released thread list. This means that the released thread list can 
+now have more entries in it than are allowed by the maximum concurrency value.</p>
+
+<p><div class="note"><blockquote><b>NOTE</b><hr> Once a thread calls 
+<I>GetQueuedCompletionStatus</I>, the thread is 
+&quot;assigned&quot; to the specified completion port. The system assumes that 
+all assigned threads are doing work on behalf of the completion port. 
+The completion port wakes threads from the pool only if the number 
+of running assigned threads is less than the completion port's 
+maximum concurrency value.
+
+<p>You can break the thread/completion port assignment in one 
+of three ways:</p>
+<ul>
+<p><li>     Have the thread exit.</li></p>
+
+<p><li>     Have the thread call 
+<I>GetQueuedCompletionStatus</I>, passing 
+the handle of a different I/O completion port.</li></p>
+
+<p><li>     Destroy the I/O completion port that the thread is 
+currently assigned to.</li></p></ul>
+</blockquote></div>
+</p>
+
+<p>Let's tie all of this together now. Say that we are again running on a 
+machine with two CPUs. We create a completion port that allows no more 
+than two threads to wake concurrently, and we create four threads that are 
+waiting for completed I/O requests. If three completed I/O requests get queued 
+to the port, only two threads are awakened to process the requests, reducing 
+the number of runnable threads and saving context switching time. Now if one 
+of the running threads calls <I>Sleep</I>, 
+<I>WaitForSingleObject</I>, <I>WaitForMultipleObjects</I>, <I>SignalObjectAndWait</I>, a synchronous I/O call, or any function that would 
+cause the thread not to be runnable, the I/O completion would detect this and 
+wake a third thread immediately. The goal of the completion port is to keep the 
+CPUs saturated with work.</p>
+
+<p>Eventually, the first thread will become runnable again. When this 
+happens, the number of runnable threads will be higher than the number of 
+CPUs in the system. However, the completion port again is aware of this and will 
+not allow any additional threads to wake up until the number of threads drops 
+below the number of CPUs. The I/O completion port architecture presumes that 
+the number of runnable threads will stay above the maximum for only a short 
+time and will die down quickly as the threads loop around and again call 
+<I>GetQueuedCompletionStatus</I>. This explains why the thread pool should contain 
+more threads than the concurrent thread count set in the completion port.</p>
+
+<A NAME="37"><H3>How Many Threads in the Pool?</H3></A>
+
+<p>Now is a good time to discuss how many threads should be in the thread 
+pool. Consider two issues. First, when the service application initializes, you want 
+to create a minimum set of threads so that you don't have to create and 
+destroy threads on a regular basis. Remember that creating and destroying threads 
+wastes CPU time, so you're better off minimizing this process as much as 
+possible. Second, you want to set a maximum number of threads because creating 
+too many threads wastes system resources. Even if most of these resources can 
+be swapped out of RAM, minimizing the use of system resources and not 
+wasting even paging file space is to your advantage, if you can help it.</p>
+
+<p>You will probably want to experiment with different numbers of 
+threads. Most services (including Microsoft Internet Information Services) use 
+heuristic algorithms to manage their thread pools. I recommend that you do the 
+same. For example, you can create the following variables to manage the thread pool:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>LONG g_nThreadsMin;    // Minimum number of threads in pool
+LONG g_nThreadsMax;    // Maximum number of threads in pool
+LONG g_nThreadsCrnt;   // Current number of threads in pool
+LONG g_nThreadsBusy;   // Number of busy threads in pool
+</pre></td></tr></table>
+</p>
+
+<p>When your application initializes, you can create the 
+<I>g_nThreadsMin </I>number of threads, all executing the same thread pool function. The 
+following pseudo-code shows how this thread function might look:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>DWORD WINAPI ThreadPoolFunc(PVOID pv) {
+
+   // Thread is entering pool
+   InterlockedIncrement(&amp;g_nThreadsCrnt);
+   InterlockedIncrement(&amp;g_nThreadsBusy);
+
+   for (BOOL fStayInPool = TRUE; fStayInPool;) {
+
+      // Thread stops executing and waits for something to do
+      InterlockedDecrement(&amp;m_nThreadsBusy);
+      BOOL fOk = GetQueuedCompletionStatus(...);
+      DWORD dwIOError = GetLastError();
+
+      // Thread has something to do, so it's busy
+      int nThreadsBusy = InterlockedIncrement(&amp;m_nThreadsBusy);
+
+      // Should we add another thread to the pool?
+      if (nThreadsBusy == m_nThreadsCrnt) {    // All threads are busy
+         if (nThreadsBusy &lt; m_nThreadsMax) {   // The pool isn't full
+            if (GetCPUUsage() &lt; 75) {   // CPU usage is below 75%
+
+               // Add thread to pool
+               CloseHandle(chBEGINTHREADEX(...));
+            }
+         }
+      }
+
+      if (!fOk &amp;&amp; (dwIOError == WAIT_TIMEOUT)) {   // Thread timed-out
+         if (!ThreadHasIoPending()) {
+            // There isn't much for the server to do, and this thread
+            // can die because it has no outstanding I/O requests
+            fStayInPool = FALSE;
+         }
+      }
+
+      if (fOk || (po != NULL)) {
+         // Thread woke to process something; process it
+         ...
+
+         if (GetCPUUsage() &gt; 90) {       // CPU usage is above 90%
+            if (!ThreadHasIoPending()) { // No pending I/O requests
+               if (g_nThreadsCrnt &gt; g_nThreadsMin)) { // Pool above min
+
+                  fStayInPool = FALSE;   // Remove thread from pool
+               }
+            }
+         }
+      }
+   }
+
+   // Thread is leaving pool
+   InterlockedDecrement(&amp;g_nThreadsBusy);
+   InterlockedDecrement(&amp;g_nThreadsCurrent);
+   return(0);
+}
+</pre></td></tr></table>
+</p>
+
+<p>This pseudo-code shows how creative you can get when using an 
+I/O completion port. The <I>GetCPUUsage </I>and 
+<I>ThreadHasIoPending </I>functions are not part of the Windows API. If you want their behavior, you'll have to 
+implement the functions yourself. In addition, you must make sure that the thread 
+pool always contains at least one thread in it, or clients will never get tended to. 
+Use my pseudo-code as a guide, but your particular service might perform better 
+if structured differently.</p>
+
+
+<p><div class="note"><blockquote><b>NOTE</b><hr> Earlier in this chapter, in the section &quot;<A HREF="ch02e.htm#25">Canceling Queued Device I/O Requests</A>,&quot; I said that the system automatically cancels all pending 
+I/O requests issued by a thread when that thread terminates. This is why 
+a function similar to <I>ThreadHasIoPending </I>is necessary in the 
+pseudo-code. Do not allow threads to terminate if they have outstanding I/O requests.
+</blockquote></div>
+</p>
+
+<p>Many services offer a management tool that allows an administrator to 
+have some control over the thread pool's behavior&#8212;for example, to set the 
+minimum and maximum number of threads, the CPU time usage thresholds, and also 
+the maximum concurrency value used when creating the I/O completion port.</p>
+
+<A NAME="38"><H3>Simulating Completed I/O Requests</H3></A>
+
+<p>I/O completion ports do not have to be used with device I/O at all. This 
+chapter is also about interthread communication techniques, and the I/O 
+completion port kernel object is an awesome mechanism to use to help with this. In 
+the &quot;<A HREF="ch02f.htm#30">Alertable I/O</A>&quot; section of this chapter, I presented the 
+<I>QueueUserAPC </I>function, which allows a thread to post an APC entry to another thread. I/O 
+completion ports have an analogous function, 
+<I>PostQueuedCompletionStatus</I>:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>BOOL PostQueuedCompletionStatus(
+   HANDLE      hCompPort,
+   DWORD       dwNumBytes, 
+   ULONG_PTR   CompKey, 
+   OVERLAPPED* pOverlapped);
+</pre></td></tr></table>
+</p>
+
+<p>This function appends a completed I/O notification to an I/O 
+completion port's queue. The first parameter, 
+<I>hCompPort</I>, identifies the completion port that you wish to queue the entry for. The remaining three 
+parameters, <I>dwNumBytes</I>, <I>CompKey</I>, and 
+<I>pOverlapped</I>, indicate the values that should 
+be returned by a thread's call to 
+<I>GetQueuedCompletionStatus</I>. When a thread 
+pulls a simulated entry from the I/O completion queue, 
+<I>GetQueuedCompletionStatus</I> returns TRUE, indicating a successfully executed I/O request.</p>
+
+<p>The <I>PostQueuedCompletionStatus</I> function is incredibly useful&#8212;it gives 
+you a way to communicate with all the threads in your pool. For example, when 
+the user terminates a service application, you want all the threads to exit cleanly. 
+But if the threads are waiting on the completion port and no I/O requests are 
+coming in, the threads can't wake up. By calling 
+<I>PostQueuedCompletionStatus</I> once for each thread in the pool, each thread can wake up, examine the values 
+returned from <I>GetQueuedCompletionStatus</I>, see that the application is terminating, 
+and clean up and exit appropriately.</p>
+
+<p>You must be careful when using a thread termination technique like 
+the one I just described. My example works because the threads in the pool are 
+dying and not calling 
+<I>GetQueuedCompletionStatus</I> again. However, if you want 
+to notify each of the pool's threads of something and have them loop back 
+around to call <I>GetQueuedCompletionStatus</I> again, you will have a problem because 
+the threads wake up in a LIFO order. So you will have to employ some 
+additional thread synchronization in your application to ensure that each pool thread 
+gets the opportunity to see its simulated I/O entry. Without this additional 
+thread synchronization, one thread might see the same notification several times.</p>
+
+<A NAME="39"><H3>The FileCopy Sample Application</H3></A>
+
+<p>The FileCopy sample application (&quot;02 FileCopy.exe&quot;), shown in Listing 2-1 
+at the end of this chapter, demonstrates the use of I/O completion ports. The 
+source code and resource files for the application are in the 02-FileCopy directory 
+on the companion CD. The program simply copies a file specified by the user to 
+a new file called FileCopy.cpy. When the user executes FileCopy, the dialog 
+box shown in Figure 2-2 appears.</p>
+
+<p>
+<img src="images/F02FJ02.JPG" width=336 height=80 border="0">
+</p><p>
+<!-- caption --><b>Figure 2-2. </b> <i>The dialog box for the FileCopy sample application </i><!-- /caption -->
+</p>
+
+
+
+<p>The user clicks on the Pathname button to select the file to be copied, 
+and the Pathname and File Size fields are updated. When the user clicks on the 
+Copy button, the program calls the <I>FileCopy</I> function, which does all the hard 
+work. Let's concentrate our discussion on the 
+<I>FileCopy </I>function.</p>
+
+<p>When preparing to copy, <I>FileCopy </I>opens the source file and retrieves 
+its size, in bytes. I want the file copy to execute as blindingly fast as possible, 
+so the file is opened using the FILE_FLAG_NO_BUFFERING flag. Opening 
+the file with the FILE_FLAG_NO_BUFFERING flag allows me to access the 
+file directly, bypassing the additional memory copy overhead incurred when 
+allowing the system's cache to &quot;help&quot; access the file. Of course, accessing the file 
+directly means slightly more work for me: I must always access the file using offsets 
+that are multiples of the disk volume's sector size, and I must read and write 
+data that is a multiple of the sector's size as well. I chose to transfer the file's data 
+in BUFFSIZE (64 KB) chunks, which is guaranteed to be a multiple of the 
+sector size. This is why I round up the source file's size to a multiple of 
+BUFFSIZE. You'll also notice that the source file is opened with the FILE_FLAG_
+OVERLAPPED flag so that I/O requests against the file are performed 
+asynchronously.</p>
+
+<p>The destination file is opened similarly: both the FILE_FLAG_NO_
+BUFFERING and FILE_FLAG_OVERLAPPED flags are specified. I also 
+pass the handle of the source file as 
+<I>CreateFile</I>'s <I>hfileTemplate </I>parameter when 
+creating the destination file, causing the destination file to have the same 
+attributes as the source.</p>
+
+
+<p><div class="note"><blockquote><b>NOTE</b><hr> Once both files are open, the destination file size is immediately set 
+to its maximum size by calling 
+<I>SetFilePointerEx</I> and <I>SetEndOfFile</I>. 
+Adjusting the destination file's size now is extremely important because 
+NTFS maintains a high-water marker that indicates the highest point at 
+which the file was written. If you read past this marker, the system knows 
+to return zeroes. If you write past the marker, the file's data from the 
+old high-water marker to the write offset is filled with zeroes, your data 
+is written to the file, and the file's high-water marker is updated. 
+This behavior satisfies C2 security requirements pertaining to not 
+presenting prior data. When you write to the end of a file on an NTFS 
+partition, causing the high-water marker to move, NTFS must perform 
+the I/O request synchronously even if asynchronous I/O was desired. 
+If the <I>FileCopy </I>function didn't set the size of the destination file, none 
+of the overlapped I/O requests would be performed asynchronously.
+</blockquote></div>
+</p>
+
+<p>Now that the files are opened and ready to be processed, 
+<I>FileCopy </I>creates an I/O completion port. To make working with I/O completion ports 
+easier, I created a small C++ class, CIOCP, that is a very simple wrapper around 
+the I/O completion port functions. This class can be found in the IOCP.h file 
+discussed in <a href="chaba.htm">Appendix B</a>, &quot;Class Library.&quot; 
+<I>FileCopy </I>creates an I/O completion port by creating an instance (named iocp) of my CIOCP class.</p>
+
+<p>The source file and destination file are associated with the completion 
+port by calling the CIOCP's <I>AssociateDevice 
+</I>member function. When associated with the completion port, each device is assigned a completion key. When an 
+I/O request completes against the source file, the completion key is 
+CK_READ, indicating that a read operation must have completed. Likewise, when an 
+I/O request completes against the destination file, the completion key is 
+CK_WRITE, indicating that a write operation must have completed.</p>
+
+<p>Now we're ready to initialize a set of I/O requests (OVERLAPPED 
+structures) and their memory buffers. The <I>FileCopy 
+</I>function keeps 4 (MAX_
+PENDING_IO_REQS) I/O requests outstanding at any one time. For 
+applications of your own, you might prefer to allow the number of I/O requests 
+to dynamically grow or shrink as necessary. In the FileCopy program, the 
+CIOReq class encapsulates a single I/O request. As you can see, this C++ class is 
+derived from an OVERLAPPED structure but contains some additional context 
+information. FileCopy allocates an array of CIOReq objects and calls the 
+<I>AllocBuffer </I>method to associate a BUFFSIZE-sized data buffer with each I/O 
+request object. The data buffer is allocated using the 
+<I>VirtualAlloc </I>function. Using 
+<I>VirtualAlloc</I> ensures that the block begins on an even 
+allocation-granularity boundary, which satisfies the requirement of the FILE_FLAG_NO_BUFFERING flag: the buffer must begin on an address that is 
+evenly divisible by the volume's sector size.</p>
+
+<p>To issue the initial read requests against the source file, I perform a 
+little trick: I post four CK_WRITE I/O completion notifications to the I/O 
+completion port. When the main loop runs, the thread waits on the port and 
+wakes immediately, thinking that a write operation has completed. This causes 
+the thread to issue a read request against the source file, which really starts 
+the file copy.</p>
+
+<p>The main loop terminates when there are no outstanding I/O 
+requests. As long as I/O requests are outstanding, the interior of the loop waits on 
+the completion port by calling CIOCP's <I>GetStatus 
+</I>method (which calls <I>GetQueuedCompletionStatus 
+</I>internally). This call puts the thread to sleep until an 
+I/O request completes to the completion port. When 
+<I>GetQueuedCompletionStatus</I> returns, the returned completion key, 
+<I>CompKey</I>, is checked. If <I>CompKey</I> is CK_READ, an I/O request against the source file is completed. I then call 
+the CIOReq's <I>Write </I>method to issue a write I/O request against the 
+destination file. If <I>CompKey</I> is CK_WRITE, an I/O request against the destination file 
+is completed. If I haven't read beyond the end of the source file, I call 
+CIOReq's <I>Read </I>method to continue reading the source file.</p>
+
+<p>When there are no more outstanding I/O requests, the loop 
+terminates and cleans up by closing the source and destination file handles. Before 
+<I>FileCopy </I>returns, it must do one more task: it must fix the size of the destination file 
+so that it is the same size as the source file. To do this, I reopen the 
+destination file without specifying the FILE_FLAG_NO_BUFFERING flag. Because I 
+am not using this flag, file operations do not have to be performed on sector 
+boundaries. This allows me to shrink the size of the destination file to the same 
+size as the source file.</p>
+
+
+
+<p><b>Listing 2-1.</b> <i>The FileCopy sample application</i></p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+<p><b>FileCopy.cpp</b></p>
+/******************************************************************************
+Module:  FileCopy.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#include &quot;..\CmnHdr.h&quot;                    // See Appendix A.
+#include &lt;WindowsX.h&gt;
+
+#include &quot;..\ClassLib\IOCP.h&quot;             // See Appendix B.
+#include &quot;..\ClassLib\EnsureCleanup.h&quot;    // See Appendix B.
+#include &quot;Resource.h&quot;
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+// Each I/O Request needs an OVERLAPPED structure and a data buffer
+class CIOReq : public OVERLAPPED {
+public:
+   CIOReq() {
+      Internal = InternalHigh = 0;   
+      Offset = OffsetHigh = 0;   
+      hEvent = NULL;
+      m_nBuffSize = 0;
+      m_pvData = NULL;
+   }
+
+   ~CIOReq() {
+      if (m_pvData != NULL)
+         VirtualFree(m_pvData, 0, MEM_RELEASE);
+   }
+
+   BOOL AllocBuffer(SIZE_T nBuffSize) {
+      m_nBuffSize = nBuffSize;
+      m_pvData = VirtualAlloc(NULL, m_nBuffSize, MEM_COMMIT, PAGE_READWRITE);
+      return(m_pvData != NULL);
+   }
+
+   BOOL Read(HANDLE hDevice, PLARGE_INTEGER pliOffset = NULL) {
+      if (pliOffset != NULL) {
+         Offset     = pliOffset-&gt;LowPart;
+         OffsetHigh = pliOffset-&gt;HighPart;
+      }
+      return(::ReadFile(hDevice, m_pvData, m_nBuffSize, NULL, this));
+   }
+
+   BOOL Write(HANDLE hDevice, PLARGE_INTEGER pliOffset = NULL) {
+      if (pliOffset != NULL) {
+         Offset     = pliOffset-&gt;LowPart;
+         OffsetHigh = pliOffset-&gt;HighPart;
+      }
+      return(::WriteFile(hDevice, m_pvData, m_nBuffSize, NULL, this));
+   }
+
+private:
+   SIZE_T m_nBuffSize;
+   PVOID  m_pvData;
+};
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+#define BUFFSIZE              (64 * 1024) // The size of an I/O buffer
+#define MAX_PENDING_IO_REQS   4           // The maximum # of of I/Os
+
+
+// The completion key values indicate the type of completed I/O.
+#define CK_READ  1
+#define CK_WRITE 2
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL FileCopy(PCTSTR pszFileSrc, PCTSTR pszFileDst) {
+
+   BOOL fOk = FALSE;    // Assume file copy fails
+   LARGE_INTEGER liFileSizeSrc = { 0 }, liFileSizeDst;
+
+   try {
+      {
+      // Open the source file without buffering &amp; get its size
+      CEnsureCloseFile hfileSrc = CreateFile(pszFileSrc, GENERIC_READ, 
+         FILE_SHARE_READ, NULL, OPEN_EXISTING, 
+         FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED, NULL);
+      if (hfileSrc.IsInvalid()) goto leave;
+
+      // Get the file's size
+      GetFileSizeEx(hfileSrc, &amp;liFileSizeSrc);
+
+      // Non-buffered I/O requires sector-sized transfers.
+      // I'll use buffer-size transfers since it's easier to calculate.
+      liFileSizeDst.QuadPart = chROUNDUP(liFileSizeSrc.QuadPart, BUFFSIZE);
+
+      // Open the destination file without buffering &amp; set its size
+      CEnsureCloseFile hfileDst = CreateFile(pszFileDst, GENERIC_WRITE, 
+         0, NULL, CREATE_ALWAYS, 
+         FILE_FLAG_NO_BUFFERING | FILE_FLAG_OVERLAPPED, hfileSrc);
+      if (hfileDst.IsInvalid()) goto leave;
+
+      // File systems extend files synchronously. Extend the destination file 
+      // now so that I/Os execute asynchronously improving performance.
+      SetFilePointerEx(hfileDst, liFileSizeDst, NULL, FILE_BEGIN);
+      SetEndOfFile(hfileDst);
+
+      // Create an I/O completion port and associate the files with it.
+      CIOCP iocp(0);
+      iocp.AssociateDevice(hfileSrc, CK_READ);  // Read from source file
+      iocp.AssociateDevice(hfileDst, CK_WRITE); // Write to destination file
+
+      // Initialize record-keeping variables
+      CIOReq ior[MAX_PENDING_IO_REQS];
+      LARGE_INTEGER liNextReadOffset = { 0 };
+      int nReadsInProgress  = 0;
+      int nWritesInProgress = 0;
+
+      // Prime the file copy engine by simulating that writes have completed.
+      // This causes read operations to be issued.
+      for (int nIOReq = 0; nIOReq &lt; chDIMOF(ior); nIOReq++) {
+
+         // Each I/O request requires a data buffer for transfers
+         chVERIFY(ior[nIOReq].AllocBuffer(BUFFSIZE));
+         nWritesInProgress++;
+         iocp.PostStatus(CK_WRITE, 0, &amp;ior[nIOReq]);
+      }
+
+      // Loop while outstanding I/O requests still exist
+      while ((nReadsInProgress &gt; 0) || (nWritesInProgress &gt; 0)) {
+
+         // Suspend the thread until an I/O completes
+         ULONG_PTR CompKey;
+         DWORD dwNumBytes;
+         CIOReq* pior;
+         iocp.GetStatus(&amp;CompKey, &amp;dwNumBytes, (OVERLAPPED**) &amp;pior, 
+            INFINITE);
+
+         switch (CompKey) {
+         case CK_READ:  // Read completed, write to destination
+            nReadsInProgress--;
+            pior-&gt;Write(hfileDst);  // Write to same offset read from source
+            nWritesInProgress++;
+            break;
+
+         case CK_WRITE: // Write completed, read from source
+            nWritesInProgress--;
+            if (liNextReadOffset.QuadPart &lt; liFileSizeDst.QuadPart) {
+               // Not EOF, read the next block of data from the source file.
+               pior-&gt;Read(hfileSrc, &amp;liNextReadOffset);
+               nReadsInProgress++;
+               liNextReadOffset.QuadPart += BUFFSIZE; // Advance source offset
+            }
+            break;
+         }
+      }
+      fOk = TRUE;
+      }
+   leave:;
+   }
+   catch (...) {
+   }
+
+   if (fOk) {
+      // The destination file size is a multiple of the page size. Open the
+      // file WITH buffering to shrink its size to the source file's size.
+      CEnsureCloseFile hfileDst = CreateFile(pszFileDst, GENERIC_WRITE, 
+         0, NULL, OPEN_EXISTING, 0, NULL);
+      if (hfileDst.IsValid()) {
+         
+         SetFilePointerEx(hfileDst, liFileSizeSrc, NULL, FILE_BEGIN);
+         SetEndOfFile(hfileDst);
+      }
+   }
+
+   return(fOk);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL Dlg_OnInitDialog(HWND hwnd, HWND hwndFocus, LPARAM lParam) {
+
+   chSETDLGICONS(hwnd, IDI_FILECOPY);
+
+   // Disable Copy button since no file is selected yet.
+   EnableWindow(GetDlgItem(hwnd, IDOK), FALSE);
+   return(TRUE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify) {
+   
+   TCHAR szPathname[_MAX_PATH];
+
+   switch (id) {
+   case IDCANCEL:
+      EndDialog(hwnd, id);
+      break;
+
+   case IDOK:
+      // Copy the source file to the destination file.
+      Static_GetText(GetDlgItem(hwnd, IDC_SRCFILE), 
+         szPathname, sizeof(szPathname));
+      SetCursor(LoadCursor(NULL, IDC_WAIT));
+      chMB(FileCopy(szPathname, TEXT(&quot;FileCopy.cpy&quot;)) 
+         ? &quot;File Copy Successful&quot; : &quot;File Copy Failed&quot;);
+      break;
+
+   case IDC_PATHNAME:
+      OPENFILENAME ofn = { OPENFILENAME_SIZE_VERSION_400 };
+      ofn.hwndOwner = hwnd;
+      ofn.lpstrFilter = TEXT(&quot;*.*\0&quot;);
+      lstrcpy(szPathname, TEXT(&quot;*.*&quot;));
+      ofn.lpstrFile = szPathname;
+      ofn.nMaxFile = chDIMOF(szPathname);
+      ofn.lpstrTitle = TEXT(&quot;Select file to copy&quot;);
+      ofn.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST;
+      BOOL fOk = GetOpenFileName(&amp;ofn);
+      if (fOk) {
+         // Show user the source file's size
+         Static_SetText(GetDlgItem(hwnd, IDC_SRCFILE), szPathname);
+         CEnsureCloseFile hfile = CreateFile(szPathname, 0, 0, NULL, 
+            OPEN_EXISTING, 0, NULL);
+         if (hfile.IsValid()) {
+            LARGE_INTEGER liFileSize;
+            GetFileSizeEx(hfile, &amp;liFileSize);
+            // NOTE: Only shows bottom 32-bits of size
+            SetDlgItemInt(hwnd, IDC_SRCFILESIZE, liFileSize.LowPart, FALSE);
+         }
+      }
+      EnableWindow(GetDlgItem(hwnd, IDOK), fOk);
+      break;
+   }
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+INT_PTR WINAPI Dlg_Proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+
+   switch (uMsg) {
+   chHANDLE_DLGMSG(hwnd, WM_INITDIALOG, Dlg_OnInitDialog);
+   chHANDLE_DLGMSG(hwnd, WM_COMMAND,    Dlg_OnCommand);
+   }
+   return(FALSE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+
+int WINAPI _tWinMain(HINSTANCE hinstExe, HINSTANCE, PTSTR pszCmdLine, int) {
+
+   DialogBox(hinstExe, MAKEINTRESOURCE(IDD_FILECOPY), NULL, Dlg_Proc);
+   return(0);
+}
+
+
+//////////////////////////////// End of File //////////////////////////////////</pre></td></tr></table>
+</p>
+</BODY>
+</HTML>
+
+
+
+
