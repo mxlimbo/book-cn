@@ -1,0 +1,525 @@
+<HTML>
+<HEAD>
+<TITLE>Programming User Context</TITLE>
+<link rel="STYLESHEET" type="text/css" href="prosrvwin.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR = "#ffffff">
+<A HREF="ch11b.htm">[Previous]</A> <A HREF="ch11d.htm">[Next]</A><P>
+
+<A NAME="238"><h1>Programming User Context</h1></A>
+<p>We will be learning a number of powerful and interesting techniques that can be performed by manipulating tokens in Windows 2000. The first step down the path to all the fun is to acquire a handle to a token. So let's begin our journey by obtaining a handle to a process's token:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+BOOL OpenProcessToken(
+   HANDLE  hProcessHandle,
+   DWORD   dwDesiredAccess,
+   PHANDLE phTokenHandle);
+</pre></td></tr></table>
+</p>
+
+<p>The <i>OpenProcessToken</i> function retrieves a handle to a process's token. The <i>hProcessHandle</i> parameter is the handle to the process for which we wish to open the token. Unfortunately the system does not allow you to pass NULL to indicate your desire to retrieve a handle to your own process's token. But a quick call to <i>GetCurrentProcess</i> returns a pseudo-handle that can be passed as the <i>hProcessHandle</i> parameter. The <i>dwDesiredAccess</i> parameter indicates how the token is to be used. You should request only the rights that your code needs. Table 11-2 describes the available token access rights. Many of the functions listed in the table will be discussed later in this chapter.</p>
+
+<p>The variable whose address you pass as <i>phTokenHandle</i> receives a handle to the requested token. If the return value of <i>OpenProcessToken</i> is TRUE, the function succeeded; otherwise the function failed, in which case you should call <i>GetLastError</i> for more information.</p>
+
+<p><b>Table 11-2.</b> <i>Token access rights</i></p>
+<p>
+<table valign="top" cellpadding="5" width="95%">
+<tr>
+<th>Value</th>
+<th>Description</th>
+</tr>
+<tr>
+<td valign="top">TOKEN_ADJUST_DEFAULT</td>
+<td valign="top">Required when calling <i>SetTokenInformtion</i> (discussed shortly) to change features of the token, such as the default owner, primary group, or default DACL.</td>
+</tr>
+<tr>
+<td valign="top">TOKEN_ADJUST_GROUPS</td>
+<td valign="top">Required in a call to <i>AdjustTokenGroups</i>.</td>
+</tr>
+<tr>
+<td valign="top">TOKEN_ADJUST_PRIVILEGES</td>
+<td valign="top">Required in a call to <i>AdjustTokenPrivileges</i>.</td>
+</tr>
+<tr>
+<td valign="top">TOKEN_ADJUST_SESSIONID</td>
+<td valign="top">Required to adjust the session ID of token and requires the SE_TCB_NAME privilege.</td>
+</tr>
+<tr>
+<td valign="top">TOKEN_ASSIGN_PRIMARY</td>
+<td valign="top">Required when using the token in calls to <i>CreateProcessAsUser</i>.</td>
+</tr>
+<tr>
+<td valign="top">TOKEN_DUPLICATE</td>
+<td valign="top">Required to duplicate the token.</td>
+</tr>
+<tr>
+<td valign="top">TOKEN_EXECUTE</td>
+<td valign="top">Equals STANDARD_RIGHTS_EXECUTE. See <A HREF="ch10a.htm">Chapter 10</A> for further discussion of standard rights.</td>
+</tr>
+<tr>
+<td valign="top">TOKEN_IMPERSONATE</td>
+<td valign="top">Required to use this token with <i>ImpersonateLoggedOnUser</i>.</td>
+</tr>
+<tr>
+<td valign="top">TOKEN_QUERY</td>
+<td valign="top">Required to read any token information other than its source using <i>GetTokenInformation</i>.</td>
+</tr>
+<tr>
+<td valign="top">TOKEN_QUERY_SOURCE</td>
+<td valign="top">Required to read the token's source using <i>GetTokenInformation</i>.</td>
+</tr>
+<tr>
+<td valign="top">TOKEN_READ</td>
+<td valign="top">Combines STANDARD_RIGHTS_READ and TOKEN_QUERY. See <A HREF="ch10a.htm">Chapter 10</A> for further discussion of standard rights.</td>
+</tr>
+<tr>
+<td valign="top">TOKEN_WRITE</td>
+<td valign="top">Combines STANDARD_RIGHTS_WRITE, TOKEN_ADJUST_PRIVILEGES, TOKEN_ADJUST_GROUPS, and TOKEN_ADJUST_DEFAULT. See <A HREF="ch10a.htm">Chapter 10</A> for further discussion of standard rights.</td>
+</tr>
+<tr>
+<td valign="top">TOKEN_ALL_ACCESS</td>
+<td valign="top">Complete access to the token, combining all rights.</td>
+</tr>
+</table>
+</p>
+
+<p>The most likely reason for <i>OpenProcessToken</i> to fail is insufficient access rights; however, if your service is running in the LocalSystem user context, it will probably have sufficient access to any process's token. (For more information on access control, see <A HREF="ch10a.htm">Chapter 10</A>.)</p>
+
+<p>Token objects are kernel objects, and as with most kernel objects, you should pass the token object's handle to <i>CloseHandle</i> when you are finished using the resource.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+The handle you receive when calling <i>OpenProcessToken</i> is the handle of the token, which affects the user context of that process. Anything you do to adjust the token can have dramatic and immediate effects on the secure behavior of the process from which you retrieved the token. I will be discussing what you can do to a token shortly. For information on how to obtain the handle to a process (other than the current process), see the discussion of <i>OpenProcess</i> in Chapter 22 of <i>Programming Applications for Microsoft Windows, Fourth Edition</i> (Jeffrey Richter, Microsoft Press, 1999).</blockquote>
+</div>
+</p>
+
+<p>If you guessed that there must also be a way to obtain a thread's token (assuming the thread is impersonating at the time), you are correct. You can do this using <i>OpenThreadToken</i>:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+BOOL OpenThreadToken(
+   HANDLE  hThreadHandle,
+   DWORD   dwDesiredAccess,
+   BOOL    fOpenAsSelf,
+   PHANDLE phTokenHandle);
+</pre></td></tr></table>
+</p>
+
+<p>Notice that <i>OpenThreadToken</i> is very similar to <i>OpenProcessToken</i> except that the first parameter is a handle to a thread rather than a process, and it has the additional parameter <i>fOpenAsSelf</i>. This parameter indicates to the system <i>who</i> you want to open the token as. Let me explain.</p>
+
+<p>Remember that when you call <i>OpenThreadToken</i> you are requesting a token, which is a secured object in Windows. This means that you might or might not have access to the object. Remember also that you are running in a thread that could be impersonating a security context other than your process's security context. Because it is very common for a thread to retrieve a handle to its own token when it is impersonating, the system allows you to indicate that you want all access checks that are necessary to open a thread's token to be performed against your process's token. You should pass TRUE for the <i>fOpenAsSelf</i> parameter of <i>OpenThreadToken</i> if you want access checks to be performed against your process's token. You should pass FALSE if you want access checks to be performed against your thread's impersonation token. This parameter has no meaning if your thread is not currently impersonating. (I will discuss impersonation in more detail later in this chapter.)</p>
+
+<p>Like <i>OpenProcessToken</i>, the <i>phTokenHandle</i> parameter of <i>OpenThreadToken</i> returns a handle to the requested token. If the return value of <i>OpenThreadToken</i> is TRUE, the function succeeded; otherwise the function failed, in which case you should call <i>GetLastError</i> for more information.</p>
+
+<p>If the thread is not impersonating, the <i>OpenThreadToken</i> function will fail and <i>GetLastError</i> will return ERROR_NO_TOKEN.</p>
+
+<p>So now you have a handle to a token. What can you do with it? you ask. Read on.</p>
+
+<A NAME="239"><h2>Reading Token Information</h2></A>
+<p>Most of the token information listed in Table 11-1 can also be read from a token, assuming that the calling code has TOKEN_QUERY (or TOKEN_QUERY_SOURCE) access to the object. You should use the <i>GetTokenInformation</i> function to find the contents of a token:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+BOOL GetTokenInformation(
+   HANDLE hTokenHandle,
+   TOKEN_INFORMATION_CLASS tokenInformationClass,
+   PVOID  pTokenInformation,
+   DWORD  dwTokenInformationLength,
+   PDWORD pdwReturnLength);
+</pre></td></tr></table>
+</p>
+
+<p>You should pass a handle to a token as the <i>hTokenHandle</i> parameter. The <i>tokenInformationClass</i> parameter indicates what information you wish to obtain from the token, and the <i>pTokenInformation</i> parameter is a pointer to a buffer that the system fills with the requested information. The <i>dwTokenInformationLength</i> parameter indicates the length of the buffer you passed, and the <i>pdwReturnLength</i> parameter points to a variable that receives the size of the buffer necessary to retrieve the information.</p>
+
+<p>The buffer pointed to by the <i>pTokenInformation</i> parameter varies in type, depending on the <i>tokenInformationClass</i> parameter. The following list describes the information that you can retrieve from a token: the information class value and the data type used. (The TOKEN_INFORMATION_CLASS is also used with the <i>SetTokenInformation</i> function, discussed later in this chapter.)</p>
+
+
+<ul>
+<p><li><b><i>TokenUser</i></b> Returns the SID of the token user. This is the user whose account name was used to create the token during logon. (This value is not used with <i>SetTokenInformation</i>.)</li></p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>typedef struct _TOKEN_USER {
+   SID_AND_ATTRIBUTES User;
+} TOKEN_USER;</pre>
+</td></tr>
+</table>
+</p>
+
+
+<p><li><b><i>TokenDefaultDacl</i></b> Used to read or set a token's default DACL. See <A HREF="ch10a.htm">Chapter 10</A> for further discussion of default DACLs as well as detailed discussion on building a DACL. The TOKEN_ADJUST_DEFAULT access right is required to set information in the DACL.</li></p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td><pre>
+typedef struct _TOKEN_DEFAULT_DACL {
+   PACL DefaultDacl;
+} TOKEN_DEFAULT_DACL;</pre>
+</td></tr>
+</table>
+</p>
+
+
+<p><li><b><i>TokenOwner</i></b> Used to read or set the default owner of the token object. (See <A HREF="ch10a.htm">Chapter 10</A> for discussion of object ownership.) The TOKEN_ADJUST_DEFAULT access right is necessary to set the owner of a token.</li></p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>typedef struct _TOKEN_OWNER {
+   PSID Owner;
+} TOKEN_OWNER;</pre>
+</td></tr>
+</table>
+</p>
+
+
+<p><li><b><i>TokenPrimaryGroup</i></b> Reads or sets the token's primary group. The TOKEN_ADJUST_DEFAULT access right is required in calls to <i>SetTokenInformation</i>.</li></p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>typedef struct _TOKEN_PRIMARY_GROUP {
+   PSID PrimaryGroup;
+} TOKEN_PRIMARY_GROUP;</pre>
+</td></tr>
+</table>
+</p>
+
+
+<p><li><b><i>TokenGroups</i></b> Returns the SIDs of the groups associated with the token. (This value is not used with <i>SetTokenInformation</i>.)</li></p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>typedef struct _TOKEN_GROUPS {
+   DWORD GroupCount;
+   SID_AND_ATTRIBUTES Groups[ANYSIZE_ARRAY];
+} TOKEN_GROUPS;</pre>
+</td></tr>
+</table>
+</p>
+
+
+<p><li><b><i>TokenPrivileges</i></b> Returns the privileges associated with the token. (This value is not used with <i>SetTokenInformation</i>.)</li></p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>typedef struct _TOKEN_PRIVILEGES {
+   DWORD PrivilegeCount;
+   LUID_AND_ATTRIBUTES Privileges[ANYSIZE_ARRAY];
+} TOKEN_PRIVILEGES;</pre>
+</td></tr>
+</table>
+</p>
+
+
+<p><li><b><i>TokenSource</i></b> Returns the token's source. This is a textual string representing the creating entity of the token. The TOKEN_QUERY_SOURCE access right is necessary to retrieve this information. (This value is not used with <i>SetTokenInformation</i>.)</li></p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>typedef struct _TOKEN_SOURCE {
+   CHAR SourceName[8];
+   LUID SourceIdentifier;
+} TOKEN_SOURCE;</pre>
+</td></tr>
+</table>
+</p>
+
+
+<p><li><b><i>TokenType</i></b>  Returns the token's type. The possible values are TokenPrimary and TokenImpersonation. The <i>pTokenInformation</i> parameter of <i>GetTokenInformation</i> will return a single TOKEN_TYPE indicating the token's type. (This value is not used with <i>SetTokenInformation</i>.)</li></p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>typedef enum _TOKEN_TYPE {
+   TokenPrimary = 1,
+   TokenImpersonation
+} TOKEN_TYPE;</pre>
+</td></tr>
+</table>
+</p>
+
+
+<p><li><b><i>TokenImpersonationLevel</i></b> Returns impersonation level. See Table 11-3 for more information. (This value is not used with <i>SetTokenInformation</i>.)</li></p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>typedef enum _SECURITY_IMPERSONATION_LEVEL {
+   SecurityAnonymous,
+   SecurityIdentification,
+   SecurityImpersonation,
+   SecurityDelegation
+} SECURITY_IMPERSONATION_LEVEL;</pre>
+</td></tr>
+</table>
+</p>
+
+
+<p><li><b><i>TokenStatistics</i></b> Returns general information about the token. Members of note include <i>GroupCount</i>, <i>PrivilegeCount</i>, and <i>ModifiedId</i>. The <i>ModifiedId</i> member is a locally unique identifier (LUID) that changes each time the token is modified. Your code can use this value to detect whether or not a token has changed since the last time you checked. This detection ability can be very useful in writing fault-tolerant code that calls into third party DLLs or libraries. (This value is not used with <i>SetTokenInformation</i>.)</li></p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>typedef struct _TOKEN_STATISTICS {
+   LUID TokenId;
+   LUID AuthenticationId;
+   LARGE_INTEGER ExpirationTime;
+   TOKEN_TYPE TokenType;
+   SECURITY_IMPERSONATION_LEVEL ImpersonationLevel;
+   DWORD DynamicCharged;
+   DWORD DynamicAvailable;
+   DWORD GroupCount;
+   DWORD PrivilegeCount;
+   LUID ModifiedId;
+} TOKEN_STATISTICS;</pre>
+</td></tr>
+</table>
+</p>
+
+
+<p><li><b><i>TokenRestrictedSids</i></b> Returns the token's restricted SIDs. Restricted tokens are covered in detail later in this chapter. (This value is not used with <i>SetTokenInformation</i>.)</li></p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>typedef struct _TOKEN_GROUPS {
+   DWORD GroupCount;
+   SID_AND_ATTRIBUTES Groups[ANYSIZE_ARRAY];
+} TOKEN_GROUPS;</pre>
+</td></tr>
+</table>
+</p>
+
+
+<p><li><b><i>TokenSessionId</i></b> Indicates a Terminal Server session ID for the token. The <i>pTokenInformation</i> parameter of <i>GetTokenInformation</i> will return a DWORD. The value of the DWORD is 0 if Terminal Server is not installed on the local machine or if the token is associated with the Terminal Server console. Otherwise the token is associated with a Terminal Server client, and the value of the DWORD is a session ID for the client. (This value is not used with <i>SetTokenInformation</i>.)</li></p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>DWORD</pre>
+</td></tr>
+</table>
+</p>
+
+</ul>
+
+<p>As the previous list shows, you can read a great deal of information from a token. Here are the most common items to retrieve from a token:</p>
+
+
+<ul>
+<p><li><b>The token user SID</b> The user account that the token represents. This information is commonly received from a token to find out who is executing the code. You can pass this SID to <i>LookupAccountSid</i> (discussed in <A HREF="ch09a.htm">Chapter 9</A>) to get the textual name of the user account.</li></p>
+
+<p><li><b>The logon SID</b> This SID is buried in with the token groups, so it takes a little digging to retrieve (which I will discuss in a moment). However, the logon SID can be very convenient for uniquely identifying the session. If a user logs on to a machine running Windows 2000 more than once (either interactively or through other means), the system creates a unique logon SID for each session, regardless of whether the token user is the same from session to session.</li></p>
+
+<p><li><b>Token groups</b> Useful for finding the groups associated with a token. However, if you want to find out whether a token has a single group, you can use the <i>CheckTokenMembership</i> function.</li></p>
+
+<p><li><b>Token default DACL</b> Useful for finding out exactly what the DACL of a newly created object will be if you pass NULL for the security attributes when creating the object.</li></p>
+</ul>
+
+ 
+
+<p>When retrieving information from a token, you will typically have to call <i>GetTokenInformation</i> to find out the required length of the buffer, and then call it again to actually retrieve the information. To create truly fault-tolerant code, you should be prepared to call <i>GetTokenInformation</i> repeatedly until you have successfully retrieved the desired information. This is because the size of token information (such as the default DACL) can change between the time you call <i>GetTokenInformation</i> to retrieve the buffer size and the time you call <i>GetTokenInformation</i> to retrieve the actual data. This condition in multithreaded programming is known as a <i>race condition</i> and can cause those hard-to-find bugs that appear only once every several months or so.</p>
+
+<p>The following function shows how to call <i>GetTokenInformation</i> properly to receive information about a token. It also returns the token information in a buffer allocated using <i>LocalAlloc</i>. If you use this function in your code, you should free the returned buffer using <i>LocalFree</i> when you are finished with the buffer.</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+LPVOID AllocateTokenInformation(HANDLE hToken, 
+   TOKEN_INFORMATION_CLASS tokenClass ){
+   PVOID    pvBuffer = NULL;
+   __try{
+      BOOL fSuccess;
+      // Initial buffer size
+      ULONG    lSize = 0 ;
+      do
+      {
+         // Do we have a size yet?
+         if (lSize != 0)
+         {
+            // Do we already have a buffer?
+            if (pvBuffer != NULL)
+               LocalFree(pvBuffer);// Then free it
+            // Allocate a new buffer 
+            pvBuffer = LocalAlloc(LPTR, lSize) ;
+            if(pvBuffer == NULL)
+               __leave;
+         }
+
+         // Try again
+         fSuccess = GetTokenInformation( hToken, tokenClass, 
+            pvBuffer, lSize, &amp;lSize ) ;
+      // Still not enough buffer?
+      }while( !fSuccess &amp;&amp; (GetLastError() ==
+         ERROR_INSUFFICIENT_BUFFER)) ;
+      
+      // If we failed for some other reason, back out
+      if(!fSuccess)
+      {
+         if(pvBuffer)
+            LocalFree(pvBuffer) ;
+         pvBuffer = NULL;
+      }
+   }__finally{}
+   // Return locally allocated buffer
+   return (pvBuffer) ;
+}
+</pre></td></tr></table>
+</p>
+
+<p>The following code fragment shows the use of this function to retrieve the token's user SID and default DACL for the current process.</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+HANDLE hToken;
+
+if(!OpenProcessToken( GetCurrentProcess(), TOKEN_QUERY, &amp;hToken)){
+   // Error
+}
+
+TOKEN_USER* ptUser = (TOKEN_USER*)AllocateTokenInformation(hToken,
+   TokenUser); 
+if ( ptUser != NULL){
+   // Do something with the SID pointed to by ptUser-&gt;User
+}
+
+TOKEN_DEFAULT_DACL* ptDACL = 
+   (TOKEN_DEFAULT_DACL*)AllocateTokenInformation(hToken,
+   TokenDefaultDacl); 
+if ( ptDACL != NULL){
+   // Do something with the DACL pointed to by ptDACL-&gt;DefaultDacl
+}
+</pre></td></tr></table>
+</p>
+
+<p>Notice that a number of the structures returned by <i>GetTokenInformation</i> use the SID_AND_ATTRIBUTES structure, which is defined as follows:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+typedef struct _SID_AND_ATTRIBUTES { 
+   PSID  Sid; 
+   DWORD Attributes; 
+} SID_AND_ATTRIBUTES ;
+</pre></td></tr></table>
+</p>
+
+<p>This structure includes a SID for a trustee account and an <i>Attributes</i> member, which includes information about the SID. See the Platform SDK documentation for the meaning of the <i>Attributes</i> member for specific structures that include a SID_AND_ATTRIBUTES structure.</p>
+
+<p>The following function, <i>AllocateTokenLogonSID</i>, uses the <i>AllocateTokenInformation</i> sample function to retrieve the token's group SIDs, and then iterates through the SIDs to find the logon SID discussed earlier in this section. The function finds the logon SID by checking the <i>Attributes</i> member for the SE_GROUP_LOGON_ID flag. The returned PSID should be freed using <i>LocalFree</i>.</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+PSID AllocateTokenLogonSID(HANDLE hToken){
+   PSID psidLogon = NULL;
+   TOKEN_GROUPS* ptGroups = NULL;
+   __try{
+      // Get the token groups
+      ptGroups = (TOKEN_GROUPS*)
+         AllocateTokenInformation(hToken, TokenGroups);
+      if (ptGroups == NULL)
+         __leave;
+
+      // Find the logon SID
+      int nCount = ptGroups-&gt;GroupCount;
+      while (nCount--){
+         if ((ptGroups-&gt;Groups[nCount].Attributes &amp; SE_GROUP_LOGON_ID) 
+            != 0)
+            break;
+      }
+      if (nCount == -1)
+         __leave; // No logon SID found
+
+      // Get memory for the returned SID
+      ULONG lLen = GetLengthSid(ptGroups-&gt;Groups[nCount].Sid);
+      psidLogon = (PSID)LocalAlloc(LPTR, lLen);
+      if (psidLogon == NULL)
+         __leave;
+
+      // Copy the logon SID
+      if(!CopySid(lLen, psidLogon, ptGroups-&gt;Groups[nCount].Sid)){
+         LocalFree(psidLogon);
+         psidLogon = NULL;
+         __leave;
+      }
+   }__finally{
+      if (ptGroups != NULL)
+         LocalFree(ptGroups);
+   }
+   return (psidLogon);
+}
+</pre></td></tr></table>
+</p>
+
+<A NAME="240"><h2>The TokenMaster Sample Application</h2></A>
+<p>The TokenMaster sample application (&quot;11 TokenMaster.exe&quot;) demonstrates the use of the token-related system functions, including <i>GetTokenInformation</i> and <i>SetTokenInformation</i>. The source code and resource files for the sample application are in the 11-TokenMaster directory on the companion CD. The program allows you to acquire a token from one of four sources: a process, a thread, a user's credentials, or via duplication. The program also allows you to view and modify token information. When the user executes TokenMaster, the dialog box in Figure 11-1 appears.</p> 
+
+<p>
+<A HREF="javascript:fullSize('F11FJ01x.htm')"> <img src="images/F11FJ01.JPG" width=404 height=359 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!-- caption --><b>Figure 11-1.</b> <i>User interface for the TokenMaster sample application</i><!-- /caption -->
+</p>
+
+<p>The source code for this sample will help you understand how to apply the concepts discussed in this chapter. As a user of the TokenMaster sample application, you can explore the many capabilities of user context in Windows 2000. I will describe TokenMaster before I discuss some of the coding techniques so that you can use the sample to test some of the concepts in the chapter.</p> 
+
+<p>When TokenMaster is executed, its first task is to check its own user identity. If it is running under any account other than the LocalSystem account, it does the following in an attempt to upgrade itself:</p>
+
+<ol>
+<p><li>Enumerates the processes running in the system, and locates the System process.</li></p>
+
+<p><li>Uses <i>OpenProcessToken</i> to acquire a handle to the System process's token.</li></p>
+
+<p><li>Uses <i>CreateProcessAsUser</i> (which is discussed later in this chapter) to re-execute itself under the LocalSystem user context.</li></p>
+
+<p><li>If all three steps succeed, TokenMaster exits knowing that a new and more powerful instance of itself has been launched.</li></p>
+</ol>
+
+<p>The features of TokenMaster are far more educational for you if you run the sample application under the LocalSystem account, but special privileges are required to take the first three steps. If you are interested in executing TokenMaster to its full potential, you must do the following:</p>
+
+<ol>
+<p><li>Log on as an administrator of the system.</li></p>
+
+<p><li>Add the &quot;Increase Quotas&quot; and &quot;Replace a Process Level Token&quot; privileges to your user account using the TrusteeMan sample application from <A HREF="ch09a.htm">Chapter 9</A> or the Microsoft Management Console (MMC) Group Policy snap-in.</li></p>
+
+<p><li>Log out, and then log on again so that the new privileges take effect.</li></p>
+
+<p><li>Launch TokenMaster.</li></p>
+</ol>
+
+<p>If you are successful, when you execute TokenMaster, the Status window in the application should contain the following message: &quot;Token Master, Status - Token Master running as SYSTEM&quot;. Otherwise, the window will report that TokenMaster is running as the account you used to launch the application.</p>
+
+<p>The primary function of the application is to view information about a token and modify the information that can be changed. The following are ways to acquire a token:</p>
+
+
+<ul>
+<p><li><b>Open a token from an existing process or thread</b> You can select a process and additionally a thread (if you are interested in opening an impersonation token) by using the Processes and Threads combo boxes. Click the button labeled OpenProcessToken or OpenThreadToken to grab the token.</li></p>
+
+<p><li><b>Retrieve a process from the system by using a user's credentials</b> You can type in a username and password and select a logon type and provider. TokenMaster uses <i>LogonUser</i> (discussed later in this chapter) to retrieve a token from the system.</li></p>
+
+<p><li><b>Duplicate an existing token</b> If you have already acquired a token for use by TokenMaster, you can make a duplicate token by clicking the DuplicateTokenEx button. This duplication option allows you to set the impersonation level and the token type of the new token. If TokenMaster has a token that can be duplicated, the Token Information window will display the token information.</li></p>
+</ul>
+
+<p>After you have acquired a token, you will see a listing of information about the token in the Token Information window. You can view all retrievable information for a token by using the <i>GetTokenInformation</i> function.</p>
+
+<p>Using TokenMaster, you can modify and adjust the token in a variety of ways:</p>
+
+
+<ul>
+<p><li>Adjust token groups and privileges, including the ability to enable or disable individual items.</li></p>
+
+<p><li>Modify a token's default DACL. See <A HREF="ch10a.htm">Chapter 10</A> for more information on default DACLs.</li></p>
+
+<p><li>Create a restricted token.</li></p>
+
+<p><li>Launch executables using a token. This is a particularly useful feature of TokenMaster. You can create a new process by using a token that you have modified using TokenMaster. This allows you to change a token or restrict it in some way, and then launch code to see how the process is affected.</li></p>
+</ul>
+
+<p>I strongly suggest that you spend some time using the TokenMaster sample application to become familiar with the user context-related features of Windows.</p>
+
+<p>You will also find that TokenMaster can be used to ease the process of debugging. For example, I often launch the application and &quot;steal&quot; a token from the LocalSystem process. I then use this token to execute the Microsoft Visual Studio development environment, with which I can compile and test code from the LocalSystem user account. In terms of security, using the LocalSystem token when testing approximates the behavior of code running in a service.</p>
+
+<p>The source code for this sample application demonstrates a number of useful programming tactics. First, it calls nearly every system function covered in this chapter. It also offers some tips that might be useful to you if you are new to security programming for Windows.</p>
+
+<p>Windows security functions often require the allocation and reallocation of small buffers. This requirement can often be viewed as troublesome by developers, including myself. As a result, it is often tempting to hard-code buffer sizes or make other concessions that can lead to code that isn't airtight. The TokenMaster sample application addresses this requirement by making use of a simple template class known as CAutoBuf. You will see that this class greatly simplifies code where variable-sized buffers are required for system functions.</p>
+
+</BODY>
+</HTML>
+
+
+
+

@@ -1,0 +1,532 @@
+<HTML>
+<HEAD>
+<TITLE>Starting and Stopping Your Device</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch06b.htm">[Previous]</A> <A HREF="ch06d.htm">[Next]</a>
+</p>
+
+<A NAME="182"><H1>Starting and Stopping Your Device</H1></A>
+
+<p>Working with the bus driver, the PnP Manager automatically detects hardware and assigns I/O
+resources in Windows 2000 and Windows 98. Most modern devices have Plug and Play features that
+allow system software to detect them automatically and to electronically determine which I/O
+resources they require. In the case of legacy devices that have no electronic means of
+identifying themselves to the operating system or of expressing their resource requirements,
+the registry database contains the information needed for the detection and assignment
+operations.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+I find it hard to give an abstract definition of the term <i>I/O resource</i>
+that isn't circular (for example, a resource used for I/O), so I'll give a concrete one
+instead. The WDM encompasses four standard I/O resource types: I/O ports, memory registers,
+direct memory access (DMA) channels, and interrupt requests.</blockquote></div>
+</p>
+
+<p>When the PnP Manager detects hardware, it consults the registry to learn which filter
+drivers and function drivers will manage the hardware. As I discussed in Chapter 2, &quot;<A HREF="ch02a.htm#30">Basic Structure of a WDM Driver</A>,&quot; it loads these drivers (if necessary&#8212;one or more of them
+might already be present, having been called into memory on behalf of some other hardware) and
+calls their <b>AddDevice</b> functions. The AddDevice functions, in turn, create device objects
+and link them into a stack. At this point, the stage is set for the PnP Manager, working with
+all of the device drivers, to assign I/O resources.</p>
+
+<p>The PnP Manager initially creates a list of resource requirements for each device and allows
+the drivers to <i>filter</i> that list. I'm going to ignore the filtering step for now
+because not every driver will need to take this step. Given a list of requirements, the PnP
+Manager can then assign resources so as to harmonize the potentially conflicting requirements
+of all the hardware present on the system. Figure 6-2 illustrates how the PnP Manager can
+arbitrate between two different devices that have overlapping requirements for an interrupt
+request number, for example.</p>
+
+<p>
+<A HREF="javascript:fullSize('F06wi02x.htm')"> <img src="images/F06wi02.JPG" width=404 height=310 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 6-2.</b> <i>Arbitration of conflicting I/O resource requirements.</i><!--/caption-->
+</p>
+
+
+<p>Once the resource assignments are known, the PnP Manager notifies each device by sending it
+a PnP request with the minor function code IRP_MN_START_DEVICE. Filter drivers are typically
+not interested in this IRP, so they usually pass the request down the stack by using the
+DefaultPnpHandler technique I showed you in &quot;<A HREF="ch06b.htm#181">IRP_MJ_PNP Dispatch Function</A>.&quot; Function
+drivers, on the other hand, need to do a great deal of work on the IRP to allocate and
+configure additional software resources and to prepare the device for operation. This work
+needs to be done, furthermore, at PASSIVE_LEVEL <i>after</i> the lower layers in the device
+hierarchy have processed this IRP.</p>
+
+<A NAME="183"><H2>Forwarding and Awaiting the IRP</H2></A>
+
+<p>To regain control of the IRP_MN_START_DEVICE request after passing it down, the dispatch
+routine needs to wait for a kernel event that will be signalled by the eventual completion of
+the IRP in the lower layers. In Chapter 4, &quot;<A HREF="ch04a.htm#108">Synchronization</A>,&quot; I cautioned you not to
+block an arbitrary thread. PnP IRPs are sent to you in the context of a system thread that you
+<i>are</i> allowed to block, so that caution is unnecessary. Since forwarding and awaiting an
+IRP is a potentially useful function in other contexts, I suggest writing a helper routine to
+perform the mechanics:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+
+
+1<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+2<img src="images/arorite2.jpg" width=17 height=10 border="0">
+3<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+
+
+4<img src="images/arorite2.jpg" width=17 height=10 border="0">
+5<img src="images/arorite2.jpg" width=17 height=10 border="0">
+6<img src="images/arorite2.jpg" width=17 height=10 border="0">
+</pre></td>
+<td valign="top">
+<pre>NTSTATUS ForwardAndWait(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  KEVENT event;
+  KeInitializeEvent(&amp;event, NotificationEvent, FALSE);
+  IoCopyCurrentIrpStackLocationToNext(Irp);
+  IoSetCompletionRoutine(Irp, (PIO_COMPLETION_ROUTINE)
+    OnRequestComplete, (PVOID) &amp;event, TRUE, TRUE, TRUE);
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION)
+    fdo-&gt;DeviceExtension;
+  IoCallDriver(pdx-&gt;LowerDeviceObject, Irp);
+  KeWaitForSingleObject(&amp;event, Executive, KernelMode, FALSE, NULL);
+  return Irp-&gt;IoStatus.Status;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> We create a kernel event object as an automatic variable. <b>
+KeInitializeEvent</b> must be called at PASSIVE_LEVEL. Luckily, PnP requests are always sent at
+PASSIVE_LEVEL, so this particular requirement is met. The event object itself must occupy
+nonpaged memory, too. For most purposes, including this one, you can treat the execution stack
+as being nonpaged.</li></p>
+
+<p><li> We must make a copy of the stack parameters for the next driver because we're
+going to install a completion routine.</li></p>
+
+<p><li> We specify a completion routine so that we'll know when something underneath
+us completes this IRP. We might wait for the completion to occur, so we must be sure that our
+completion routine is called. That's why we specify TRUE for the three flag arguments to
+indicate that we want <b>OnRequestComplete</b> called when the IRP completes normally,
+completes with an error, or is cancelled. The context argument for the completion routine is
+the address of our <b>event</b> object.</li></p>
+
+<p><li> <b>IoCallDriver</b> calls the next lower driver, which can be a lower filter or
+the physical device object (PDO) driver itself. The PDO driver will perform some processing and
+either complete the request immediately or return STATUS_PENDING.</li></p>
+
+<p><li> No matter what IoCallDriver returns, we call <b>KeWaitForSingleObject</b> to wait
+forever on the kernel event we created earlier. Our completion routine will gain control when
+the IRP completes to signal this event.</li></p>
+
+<p><li> Here, we capture the ending status of the IRP and return it to our caller.</li></p>
+</ol>
+
+<p>Once we call IoCallDriver, we relinquish control of the IRP until something running in some
+arbitrary thread context calls <b>IoCompleteRequest</b> to signal completion of the IRP.
+IoCompleteRequest will then call our completion routine. Refer to Figure 6-3 for an
+illustration of the timing involved. The completion routine is particularly simple:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+
+
+1<img src="images/arorite2.jpg" width=17 height=10 border="0">
+2<img src="images/arorite2.jpg" width=17 height=10 border="0">
+</pre></td>
+<td valign=top>
+<pre>NTSTATUS OnRequestComplete(PDEVICE_OBJECT fdo, PIRP Irp, PKEVENT pev)
+  {
+  KeSetEvent(pev, 0, FALSE);
+  return STATUS_MORE_PROCESSING_REQUIRED;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> We set the event on which <b>ForwardAndWait</b> can currently be blocked.</li></p>
+
+<p><li> By returning STATUS_MORE_PROCESSING_REQUIRED, we halt the unwinding process
+through the I/O stack. None of the completion routines installed by upper filter drivers will
+be called at the present time, and the I/O Manager will cease its work on this IRP. The
+situation is just as if IoCompleteRequest has not been called at all&#8212;except, of course,
+that some lower-level completion routines might have been called. At this instant, the IRP is
+in limbo, but our ForwardAndWait routine will presently retake ownership.</li></p>
+</ol>
+
+<p>
+<A HREF="javascript:fullSize('F06wi03x.htm')"> <img src="images/F06wi03.JPG" width=404 height=316 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 6-3.</b> <i>Timing of ForwardAndWait.</i><!--/caption-->
+</p>
+
+
+<P><div class="sidebar"><blockquote>
+<p><b>Notes on ForwardAndWait</b></p>
+
+<p>I glossed over two subtleties when I described how ForwardAndWait and OnRequestComplete work
+together. It's sometimes possible for a thread's kernel stack to be swapped out of
+physical memory, but only while the thread is blocked in user mode. See David Solomon's <i>
+Inside Windows NT, Second Edition</i> (Microsoft Press, 1998) at page 194 for a state diagram
+illustrating this possibility. All the calls inside ForwardAndWait that deal with the event
+object will certainly fulfill the requirement that the <b>event</b> object be resident in
+memory. Since we specified a <i>kernel mode wait,</i> our stack can't be swapped out, so
+<b>KeSetEvent</b> will also find the event resident.</p>
+
+<p>Secondly, you might have noticed the absence of the boilerplate code <b>if(Irp-&gt;PendingReturned) IoMarkIrpPending(Irp)</b> at the beginning of the completion routine.
+You don't need that statement in a completion routine that will return
+STATUS_MORE_PROCESSING_REQUIRED. The call can't hurt, of course, and is required in most
+standard completion routines. That's why all the DDK samples include the code even when
+it's not strictly necessary.</p>
+</blockquote></div>
+</P>
+
+<A NAME="184"><H2>Extracting Resource Assignments</H2></A>
+
+<p>In the preceding section, I showed you how to use the ForwardAndWait helper routine to send
+an IRP_MN_START_DEVICE request down the device stack and wait for it to complete. You call
+ForwardAndWait from a subdispatch routine&#8212;reached from the DispatchPnp dispatch routine
+shown earlier&#8212;that has the following skeletal form:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+
+
+1<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+2<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+3<img src="images/arorite2.jpg" width=17 height=10 border="0">
+4<img src="images/arorite2.jpg" width=17 height=10 border="0">
+</pre></td>
+<td valign=top>
+<pre>NTSTATUS HandleStartDevice(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  Irp-&gt;IoStatus.Status = STATUS_SUCCESS;
+  NTSTATUS status = ForwardAndWait(fdo, Irp);
+  if (!NT_SUCCESS(status))
+    return CompleteRequest(Irp, status, Irp-&gt;IoStatus.Information);
+  PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
+  status = StartDevice(fdo, <i>&lt;additional args&gt;</i>);
+  return CompleteRequest(Irp, status, Irp-&gt;IoStatus.Information);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> The bus driver uses the incoming setting of <b>IoStatus.Status</b> to determine
+whether upper-level drivers have handled this IRP. The bus driver makes a similar determination
+for several other minor functions of IRP_MJ_PNP. We therefore need to initialize the Status
+field of the IRP to STATUS_SUCCESS before passing it down.</li></p>
+
+<p><li><b>ForwardAndWait</b> returns a status code. If it denotes some sort of failure in the
+lower layers, we propagate it back to our own caller. Because our completion routine returned
+STATUS_MORE_PROCESSING_REQUIRED, we halted the completion process inside IoCompleteRequest.
+Therefore, we have to complete the request all over again, as shown here.</li></p>
+
+<p><li> Our configuration information is buried inside the stack parameters. I'll
+show you where a bit further on.</li></p>
+
+<p><li> <b>StartDevice</b> is a helper routine you write to handle the details of
+extracting and dealing with configuration information. In my sample drivers, I've placed it
+in a separate source module named READWRITE.CPP. I'll explain shortly what arguments you
+would pass to this routine besides the address of the device object.</li></p>
+</ol>
+
+<p>You might guess (correctly!) that the IRP_MN_START_DEVICE handler has work to do that
+concerns the transition from the initial STOPPED state to the WORKING state. I can't
+explain that yet because I need to first explain the ramifications of other Plug and Play
+requests on state transitions, IRP queuing, and IRP cancellation. So, I'm going to
+concentrate for a while on the configuration aspects of the PnP requests.</p>
+
+<p>The I/O stack location's <b>Parameters</b> union has a substructure named <b>
+StartDevice</b> that contains the configuration information you pass to the StartDevice helper
+function. See Table 6-2.</p>
+
+<p><b>Table 6-2.</b> <i>Fields in the Parameters.StartDevice substructure of an IO_STACK_LOCATION.</i></p>
+
+<P>
+<table cellpadding=5 width="95%">
+<tr> 
+<th><i>Field Name</i>  </th>
+<th><i>Description</i>  </th></tr>
+<tr>
+<td valign="top">AllocatedResources</td>
+<td valign="top">Contains raw resource assignments</td></tr>
+<tr>
+<td valign="top">AllocatedResourcesTranslated</td>
+<td valign="top">Contains translated resource assignments</td></tr>
+</table></p>
+
+
+<p>Both <b>AllocatedResources</b> and <b>AllocatedResourcesTranslated</b> are instances of the
+same kind of data structure, called a CM_RESOURCE_LIST. This seems like a very complicated data
+structure if you judge only by its declaration in WDM.H. As used in a start device IRP,
+however, all that remains of the complication is a great deal of typing. The &quot;lists&quot;
+will have just one entry, a CM_PARTIAL_RESOURCE_LIST that describes all of the I/O resources
+assigned to the device. You could use statements like the following to access the two
+lists:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>PCM_PARTIAL_RESOURCE_LIST raw, translated;
+raw = stack-&gt;Parameters.StartDevice
+  .AllocatedResources-&gt;List[0].PartialResourceList;
+translated = stack-&gt;Parameters.StartDevice
+  .AllocatedResourcesTranslated-&gt;List[0].PartialResourceList;</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The only difference between the last two statements is the reference to either the
+AllocatedResources or AllocatedResourcesTranslated member of the parameters structure.</p>
+
+<p>The raw and translated resource lists are the logical arguments to send to the StartDevice
+helper function, by the way:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>status = StartDevice(fdo, raw, translated);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>There are two different lists of resources because I/O buses and the CPU can address the
+same physical hardware in different ways. The raw resources contain numbers that are
+bus-relative, whereas the translated resources contain numbers that are system-relative. Prior
+to the WDM, a kernel-mode driver might expect to retrieve raw resource values from the
+registry, the PCI (Peripheral Component Interconnect) configuration space, or some other
+source, and to translate them by calling routines such as <b>HalTranslateBusAddress</b> or <b>
+HalGetInterruptVector</b>. See, for example, Art Baker's <i>The Windows NT Device Driver
+Book: A Guide for Programmers</i> (Prentice Hall, 1997), at pages 122-62. Both the retrieval
+and translation steps are done by the PnP Manager now, and all a WDM driver needs to do is
+access the parameters of a start device IRP as I'm now describing.</p>
+
+<p>What you actually do with the resource descriptions inside your StartDevice function is a
+subject for the next chapter, &quot;<A HREF="ch07a.htm#226">Reading and Writing Data</A>.&quot;</p>
+
+<A NAME="185"><H2>IRP_MN_STOP_DEVICE</H2></A>
+
+<p>The stop device request tells you to shut your device down so that the PnP Manager can
+reassign I/O resources. At the hardware level, shutting down involves pausing or halting
+current activity and preventing further interrupts. At the software level, it involves
+releasing the I/O resources you configured at start device time. Within the framework of the
+dispatch/subdispatch architecture I've been illustrating, you might have a subdispatch
+function like this one:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+
+
+1<img src="images/arorite2.jpg" width=17 height=10 border="0">
+2<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+3<img src="images/arorite2.jpg" width=17 height=10 border="0">
+</pre></td>
+<td valign=top>
+<pre>NTSTATUS HandleStopDevice(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+<i>  &lt;complicated stuff&gt;
+ </i>  StopDevice(fdo, oktouch);
+<i>  </i> Irp-&gt;IoStatus.Status = STATUS_SUCCESS;
+<i> </i>  return DefaultPnpHandler(fdo, Irp);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> Right about here, you need to insert some more or less complicated code that
+concerns IRP queuing and cancellation. I'll show you the code that belongs in this spot
+further on in this chapter in &quot;<A HREF="ch06d.htm#193">While the Device Is Stopped</A>.&quot;</li></p>
+
+<p><li> In contrast to the start device case, in which we passed the request down and
+then did device-dependent work, here we do our device-dependent stuff <i>first</i> and then
+pass the request down. The idea is that our hardware will be quiescent by the time the lower
+layers see this request. I wrote a helper function named <b>StopDevice</b> to do the shutdown
+work. The second argument indicates whether it will be okay for StopDevice to touch the
+hardware if it needs to. Refer to the sidebar &quot;Touching the Hardware When Stopping the
+Device&quot; for an explanation of how to set this argument.</li></p>
+
+<p><li> We always pass PnP requests down the stack. In this case, we don't care what
+the lower layers do with the request, so we can simply use the DefaultPnpHandler code to
+perform the mechanics.</li></p>
+</ol>
+
+<p>The <b>StopDevice</b> helper function called in the preceding example is code you write that
+essentially reverses the configuration steps you took in <b>StartDevice</b>. I'll show you
+that function in the next chapter. One important fact about the function is that you should
+code it in such a way that it can be called more than once for a single call to StartDevice.
+It's not always easy for a PnP IRP handler to know whether you've already called
+StopDevice, but it <i>is</i> easy to make StopDevice proof against duplicative calls.</p>
+
+<P><div class="sidebar"><blockquote>
+<p><b>Touching the Hardware When Stopping the Device </b></p>
+
+<p>In the skeleton of <b>HandleStopDevice</b>, I used an <b>oktouch</b> variable that I
+didn't show you how to initialize. In the scheme I'm teaching you in this book for
+writing a driver, the StopDevice function gets a BOOLEAN argument that indicates whether or not
+it should be safe to address actual I/O operations to the hardware. The idea behind this
+argument is that you may want to send certain instructions to your device as part of your
+shutdown protocol, but there might be some reason why you can't. You might want to tell
+your PCMCIA modem to hang up the phone, for example, but there's no point in trying if the
+end user has already removed the modem card from the computer.</p>
+
+<p>There's no certain way to know whether your hardware is physically connected to the
+computer except by trying to access it. Microsoft recommends, however, that if you succeeded in
+processing a START_DEVICE request, you should go ahead and try to access your hardware when you
+process STOP_DEVICE and certain other PnP requests. When I discuss how you track PnP state
+changes later in this chapter, I'll honor this recommendation by setting the oktouch
+argument TRUE if we believe that the device is currently working and FALSE otherwise.</p>
+</blockquote></div>
+</P>
+
+<A NAME="186"><H2>IRP_MN_REMOVE_DEVICE</H2></A>
+
+<p>Recall that the PnP Manager calls the AddDevice function in your driver to notify you about
+an instance of the hardware you manage and to give you an opportunity to create a device
+object. Instead of calling a function to do the complementary operation, however, the PnP
+Manager sends you a Plug and Play IRP with the minor function code IRP_MN_REMOVE_DEVICE. In
+response to that, you'll do the same things you did for IRP_MN_STOP_DEVICE to shut down
+your device, and then you'll delete the device object:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>NTSTATUS HandleRemoveDevice(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+<i>  &lt;complicated stuff&gt;</i>
+  DeregisterAllInterfaces(pdx);
+  StopDevice(fdo, oktouch);
+  Irp-&gt;IoStatus.Status = STATUS_SUCCESS;
+  NTSTATUS status = DefaultPnpHandler(fdo, Irp);
+  RemoveDevice(fdo);
+  return status;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>This fragment looks very similar to HandleStopDevice, with a couple of additions. <b>
+DeregisterAllInterfaces</b> will disable any device interfaces you registered (probably in
+AddDevice) and enabled (probably in StartDevice), and it will release the memory occupied by
+their symbolic link names. <b>RemoveDevice</b> will undo all the work you did inside AddDevice.
+For example:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+
+
+
+1<img src="images/arorite2.jpg" width=17 height=10 border="0">
+2<img src="images/arorite2.jpg" width=17 height=10 border="0">
+</pre></td>
+<td valign=top>
+<pre>VOID RemoveDevice(PDEVICE_OBJECT fdo)
+  {
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+  IoDetachDevice(pdx-&gt;LowerDeviceObject);
+  IoDeleteDevice(fdo);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> This call to <b>IoDetachDevice</b> balances the call AddDevice made to <b>IoAttachDeviceToDeviceStack</b>.</li></p>
+
+<p><li> This call to <b>IoDeleteDevice</b> balances the call AddDevice made to <b>IoCreateDevice</b>. Once this function returns, the device object will no longer exist. If your
+driver isn't managing any other devices, your driver will shortly be unloaded from memory,
+too.</li></p>
+</ol>
+
+<p>You might be troubled by the fact that you call <b>IoDeleteDevice</b> at a time when the
+lower levels of the device hierarchy might still be processing the IRP_MN_REMOVE_DEVICE request. No harm can come from that, however, because the Object Manager
+maintains a reference count on your device object to prevent it from disappearing while
+anything has an active pointer to it.</p>
+
+<p>Note, by the way, that you don't get a stop device request followed by a remove device
+request. The remove device request implies a shutdown, so you do both pieces of work in
+reply.</p>
+
+<A NAME="187"><H2>IRP_MN_SURPRISE_REMOVAL</H2></A>
+
+<p>Sometimes the end user has the physical ability to remove a device without going through any
+user interface elements first. If the system detects that such a surprise removal has occurred,
+it sends the driver a PnP request with the minor function code IRP_MN_SURPRISE_REMOVAL. It will
+later send an IRP_MN_REMOVE_DEVICE. Unless you previously set the <b>SurpriseRemovalOK</b> flag
+while processing IRP_MN_QUERY_CAPABILITIES (as I'll discuss in Chapter 8, &quot;<A HREF="ch08a.htm#265">Power Management</A>&quot;), the
+system also posts a dialog box to inform the user that it's potentially dangerous to yank
+hardware out of the computer.</p>
+
+<p>In response to the surprise removal request, a device driver should disable any registered
+interfaces. This will give applications a chance to close handles to your device if they're
+on the lookout for the notifications I discuss later in &quot;<A HREF="ch06e.htm#219">PnP Notifications</A>.&quot; Then the
+driver should release I/O resources and pass the request down:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>NTSTATUS HandleSurpriseRemoval(PDEVICE_OBJECT fdo, PIRP Irp)
+  {
+  PDEVICE_EXTENSION pdx = (PDEVICE_EXTENSION) fdo-&gt;DeviceExtension;
+<i>  &lt;complicated stuff&gt;</i>
+  EnableAllInterfaces(pdx, FALSE);
+  StopDevice(fdo, oktouch);
+  Irp-&gt;IoStatus.Status = STATUS_SUCCESS;
+  return DefaultPnpHandler(fdo, Irp);
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<P><div class="sidebar"><blockquote>
+<p><b>From Whence IRP_MN_SURPRISE_REMOVAL?</b></p>
+
+<p>The surprise removal PnP notification doesn't happen as a simple and direct result of
+the end user yanking the device from the computer. Some bus drivers can know when a device
+disappears. For example, removing a universal serial bus (USB) device generates an electronic
+signal that the bus driver notices. For many other buses, however, there isn't any signal
+to alert the bus driver. The PnP Manager therefore relies on other methods to decide that a
+device has disappeared.</p>
+
+<p>A function driver can signal the disappearance of its device (if it knows) by calling <b>
+IoInvalidateDeviceState</b> and then returning any of the values PNP_DEVICE_FAILED,
+PNP_DEVICE_REMOVED, or PNP_DEVICE_DISABLED from the ensuing IRP_MN_QUERY_PNP_DEVICE_STATE. You
+might want to do this in your own driver if&#8212;to give one example of many&#8212;your
+interrupt service routines (ISRs) read all 1-bits from a status port that normally returns a
+mixture of 1s and 0s. More commonly, a bus driver calls <b>IoInvalidateDeviceRelations</b> to
+trigger a reenumeration and then fails to report the newly missing device. It's worth
+knowing that when the end user removes a device while the system is hibernating or in another
+low-power state, the driver receives a series of power management IRPs <i>before</i> it
+receives the IRP_MN_SURPRISE_REMOVAL request.</p>
+
+<p>What these facts mean, practically speaking, is that your driver should be able to cope with
+errors that might arise from having your device suddenly not present.</p>
+</blockquote></div>
+</P>
+
+</BODY>
+</HTML>
+
+
+
+
+

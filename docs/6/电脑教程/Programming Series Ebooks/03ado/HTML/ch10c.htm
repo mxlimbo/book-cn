@@ -1,0 +1,255 @@
+<html>
+<head>
+<TITLE>Concurrency Control</title>
+<link rel="STYLESHEET" type="text/css" href="progado.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor = "#ffffff" text="#000000">
+<A HREF="ch10b.htm">[Previous]</A> <A HREF="ch10d.htm">[Next]</A><P>
+
+<A NAME="303"><H1>Concurrency Control</H1></A>
+
+<p>Let's quickly recap. Suppose you write this code:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+strSQL = &quot;SELECT CustomerID, CompanyName, BalanceDue FROM Customers&quot;
+With rsCustomers
+    .CursorLocation = adUseClient
+    .Open strSQL, cnDatabase, adOpenStatic, _
+                  adLockOptimistic, adCmdText
+    .Find &quot;CustomerID = 7&quot;
+    .Fields(&quot;BalanceDue&quot;) = .Fields(&quot;BalanceDue&quot;) + 50
+    .Update
+End With
+</pre>
+</td></tr></table>
+</p>
+
+<p>The ADO Cursor Engine will then build the following action query to
+modify the data in your database:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+UPDATE Customers SET BalanceDue = 175 
+                 WHERE CustomerID = 7 AND BalanceDue = 125
+</pre>
+</td></tr></table>
+</p>
+
+<p>You now know where the table name, field names, and primary key data
+came from. There's only one piece of this action query that we
+haven't covered&#8212;the fact that the original value for the
+modified field appears in the WHERE clause along with the value of the
+primary key field. Why is that piece of information in the action
+query? The reason has to do with the difficulties involved in
+concurrent updates.</p>
+
+<A NAME="304"><H2>The Importance of Being Polite</H2></A>
+
+<p>It's relatively simple to develop database applications that
+will be used by only a single user at a time. But once you add a second
+user, things become much more complex.</p>
+
+<p>Take our simple example as, well, an example. Say that the
+application is designed for telephone operators to take orders over the
+phone. When the customer calls and reaches an operator, that operator
+enters the customer's ID into your application and retrieves that
+customer's information. Toward the end of the call, the operator
+enters a $50 order for the customer, and your code increases the
+customer's balance due from $125 to $175 by modifying the
+appropriate Field object in the Recordset.</p>
+
+<p>Now suppose that, unbeknownst to the operator, an employee in the
+billing department accesses the same database and processes a $100
+check from that same customer between the time that your application
+retrieves the customer data for the operator and the time that the
+operator tries to enter the order. When the operator received the call,
+the customer's balance due was $125, but by the time the operator
+tries to submit the order, the customer's balance due has changed
+to $25.</p>
+
+<p>How should your application handle this situation? That's open
+to discussion. Ultimately, I would want the system to accept the
+customer's order and set the balance due to $75. If you're
+building your own action queries and not relying on the features
+available through an updatable Recordset, you could simply issue a
+query such as the following:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+UPDATE Customers SET BalanceDue = BalanceDue + 50
+                 WHERE CustomerID = 7
+</pre>
+</td></tr></table>
+</p>
+
+<p>However, the ADO Cursor Engine is a bit like a doctor: Its first
+imperative is to do no harm. It does not want to unintentionally
+overwrite changes made by another user. Therefore, the ADO Cursor
+Engine uses the original value for the modified fields in the WHERE
+clause of the action query.</p>
+
+<A NAME="305"><H2>Determining Whether an Update Succeeds</H2></A>
+
+<p>As I said earlier, this is the action query that the ADO Cursor
+Engine built to submit a change to the database:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+UPDATE Customers SET BalanceDue = 175 
+                 WHERE CustomerID = 7 AND BalanceDue = 125
+</pre>
+</td></tr></table>
+</p>
+
+<p>Since, in this particular case, the BalanceDue for the record was
+updated to 25 before this call was made, ADO would raise the following
+error:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+&quot;The specified row could not be located for updating: Some values may
+ have been changed since it was last read.&quot;
+</pre>
+</td></tr></table>
+</p>
+
+<p>Perfect! This is exactly what you need. If the update attempt had
+succeeded, the operator would've changed the balance due to $175,
+unknowingly overwriting the changes made by the employee in the billing
+department. But how did ADO know to generate this error?</p>
+
+<p>If you took the previous action query and programmatically submitted
+it to the database, the query would not generate such an error. In
+fact, it would not generate an error at all. Instead, you'll see
+that the query modified no records, if you know where to look. For
+instance, if you submitted this action query by using the <i>
+Execute</i> method on the Connection or Command object, you could check
+the value returned in the <i>RecordsAffected</i> parameter to determine
+the number of records modified by the query.</p>
+
+<p>The ADO Cursor Engine uses similar mechanisms to determine whether
+the attempt to update your database succeeded. If the action query
+modifies no records, the Cursor Engine returns the previous error
+message. If the action query modifies one record, the ADO Cursor Engine
+interprets this as a successful update.</p>
+
+<A NAME="306"><H2>Using the Primary Key</H2></A>
+
+<p>You should treat primary keys with the utmost respect, leaving them
+read-only if at all possible. If you allow users to modify the value of
+the primary key field, it's possible for the action query to modify
+one record, but that record might not be the one you intended to
+modify. Also, if you don't have a primary key or a unique index on
+your table, the action query that the ADO Cursor Engine generates might
+modify more than one record. In such a case, the ADO Cursor Engine will
+interpret this result as a failure and generate the following
+error:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+&quot;Insufficient or incorrect key column information; too many rows
+ affected by update.&quot;
+</pre>
+</td></tr></table>
+</p>
+
+<p>However, even though ADO raised an error, it's too late. The
+damage is done. ADO has already updated the database and can't undo
+it. Pressing Ctrl+Z or Ctrl+U won't save you now. You have only one
+method of recourse when you trap such an error: if you wrapped the
+changes in a transaction, you can roll them back.</p>
+
+<p>But you won't run into such a problem. You'll have a primary
+key on your tables, and you'll include the fields that make up that
+primary key in your Recordset. Right?</p>
+
+<A NAME="307"><H2>Controlling the Criteria in the WHERE Clause</H2></A>
+
+<p>An updatable client-side Recordset has a dynamic property named
+Update Criteria that you can set to specify which fields, along with
+the key fields, are used in the WHERE clause for the action queries.
+You can set this property to any value in the
+ADCPROP_UPDATECRITERIA_ENUM enumerated data type, shown in the
+following table.</p>
+
+
+<p>
+<table valign="top" cellpadding="5" width="95%">
+
+<tr>
+<th colspan="3">ADCPROP_UPDATECRITERIA_ENUM Values</th>
+</tr>
+
+<tr>
+<th><i>Constant</i> </th><th><i>Value</i></th> <th><i>Description</i></th>
+</tr>
+
+
+<tr>
+<td valign="top">adCriteriaKey</td><td valign="top"> 0</td> <td valign="top">Uses only the values of the key fields in the WHERE
+clause of the query-based update</td>
+</tr>
+
+<tr>
+<td valign="top">adCriteriaAllCols </td><td valign="top">1</td> <td valign="top">Uses the original values of the fields in the
+WHERE clause of the query-based update</td>
+</tr>
+
+<tr>
+<td valign="top">adCriteriaUpdCols </td><td valign="top">2 </td><td valign="top">Default; uses the original values of the
+modified fields as well as the values of the key fields in the WHERE
+clause of the query-based update</td>
+</tr>
+
+<tr>
+<td valign="top">adCriteriaTimeStamp</td> <td valign="top">3</td> <td valign="top">Uses the value of the timestamp field as well
+as the values of the key fields in the WHERE clause of the query-based
+update</td>
+</tr>
+</table>
+</p>
+
+<p>By default, this property is set to adCriteriaUpdCols. Since the key
+fields and the original values for modified fields are included in the
+WHERE clause, your update will fail if another user has modified one of
+the fields you were trying to update. If another user modifies a field
+in the Recordset that you did not modify and that is not considered a
+key field, your update will succeed.</p>
+
+<p>You can set this property to adCriteriaAllCols if you want to
+specify the original value for all fields in the WHERE clause of the
+action query. This ensures that if another user modifies any field in
+your Recordset, your update attempt will fail.</p>
+
+<p>If you have a timestamp field in your table and in the results of
+your query, you can set the Update Criteria property to
+adCriteriaTimeStamp. This setting instructs the ADO Cursor Engine to
+use the original values for key fields and the value in your timestamp
+field. When a user modifies a record that contains a timestamp field,
+the database updates that field with a new value. Therefore, if a user
+modifies the record you're trying to update, your update will now
+fail&#8212;even if that user modified a field that isn't included in
+the results of your query.</p>
+
+<p>The last available value is adCriteriaKey. While this setting can
+come in handy, it can cause serious problems if used incorrectly. If
+you set the Update Criteria property to adCriteriaKey, the ADO Cursor
+Engine will use only the values of the key fields in the WHERE clause.
+Although you generally want to avoid overwriting other users'
+changes, in some cases, that's the desired result. If you're
+writing code for such a scenario, this is the setting for you.</p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

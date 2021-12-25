@@ -1,0 +1,707 @@
+<HTML>
+<HEAD>
+	<link rel="STYLESHEET" type="text/css" href="squeal7.css">
+<TITLE>Working with Text and Image Data</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch10g.htm">[Previous]</A> <A HREF="ch10i.htm">[Next]</A><P>
+
+<A NAME="407"><H1>Working with Text and Image Data</H1></A>
+
+<P>SQL Server provides binary large object (BLOB) support via the 
+<I>ntext</I>,<I> text</I>, and <I>image</I> datatypes. If you work 
+with these datatypes, you might want to use 
+the additional statements provided by SQL Server along with the standard 
+SELECT, INSERT, UPDATE, and DELETE statements. Because a single text 
+column can be as large as 2 GB, you frequently need to work with text data in 
+chunks, and these additional statements (which we'll see in a moment) can help. 
+(This topic could have been discussed earlier, when we discussed 
+Transact-SQL programming. However, because you need some knowledge of isolation 
+levels, transactions, and consistency issues to understand this topic, we waited until 
+after we covered those issues.)</P>
+
+<P>For simplicity's sake, most of the discussion will deal with the 
+<I>text</I> datatype. But everything here is also relevant 
+to the <I>image</I> and <I>ntext</I> datatypes. These 
+three datatypes are essentially the same internally. Recall that 
+<I>ntext</I>,<I> text</I>, and <I>image </I>datatypes are special because they are not stored on the same data page as 
+the rest of the row. Instead, the data row holds only a 16-byte pointer to an 
+<I>ntext</I>,<I> text</I>, or <I>image</I> structure.</P>
+
+<P>Although the space required by <I>text</I> data is managed much more 
+efficiently in SQL Server 7 than in earlier versions, functional drawbacks still exist. 
+Although you can indeed use standard INSERT, UPDATE, DELETE, and SELECT 
+statements with a <I>text</I> column, some significant restrictions apply. In a 
+WHERE clause, you can search on the <I>text </I>column only with the LIKE operator or 
+with the functions SUBSTRING() and patindex(). Variables of type 
+<I>text</I> cannot be manipulated. You can declare a parameter in a stored procedure to be of 
+type <I>text</I> (or <I>ntext</I> or <I>image</I>), but you can't do much besides pass a value to 
+the procedure initially. For example, you cannot subsequently assign different 
+values to the parameter or return it as an OUTPUT parameter. Because of 
+these limitations, you'll want to use these special datatypes only when another 
+datatype isn't a reasonable option. If a 
+<I>varchar(8000)</I> column can work for you, (or <I>varchar(4000)</I> for Unicode data) you can use it and avoid 
+<I>text</I> or<I> ntext </I>altogether. But if you absolutely need a memo field, for example, and 
+8000 characters are not enough, you'll need to use 
+<I>text</I> (or denormalize and use multiple 
+<I>varchar</I> columns)<I>.</I></P>
+
+<P>If a <I>text </I>column makes the most sense for you despite its drawbacks, 
+you need to understand how to work effectively with text. When you can, it is 
+easiest to work with <I>text</I> datatypes using standard SELECT, INSERT, UPDATE, 
+and DELETE statements. But if your text data gets large, you're going to run 
+into issues (such as how big a string your application can pass) that might make 
+it necessary for you to deal with chunks of data at a time instead of the 
+entire column.</P>
+
+<P>The special statements for working with text data are 
+WRITETEXT, READTEXT, and UPDATETEXT. Both READTEXT and UPDATETEXT 
+let you work with chunks of a <I>text </I>column at a time. The WRITETEXT 
+statement does not let you deal with chunks but rather with the entire column 
+only. WRITETEXT and UPDATETEXT will not log the text operations by 
+default, although they can be instructed to log them. (The database must have the 
+<I>select into/bulkcopy</I><B> </B>option enabled for nonlogged operations.) An INSERT, 
+UPDATE, or DELETE statement will always be logged, but these special text 
+statements can be run without logging.</P>
+
+<P>In general, nonlogged operations are not recommended for general 
+use because they can compromise your database backup strategy. The situation 
+is similar to nonlogged bulk copy. Nonlogged operations cannot be recovered 
+at startup. A terminated nonlogged operation will leave the database in the 
+state it was in before the operation began because logging (and hence rollback) 
+of extent allocations still occurs. But the biggest downside is that in the face of 
+a failure after a nonlogged operation, your database is only as good as your 
+last full or differential backup and the transaction dumps up to the issuance of 
+the nonlogged operation. You can't do further transaction dumps after a 
+nonlogged operation is performed. So think carefully about the appropriateness 
+of nonlogged text and image operations. Also, if you use SQL Server 
+replication to replicate <I>text</I> or 
+<I>image</I> columns, the operations <I>must </I>be logged because 
+the replication process looks for changes based on the transaction log.</P>
+
+<P>The WRITETEXT, READTEXT, and UPDATETEXT statements all 
+work with a <I>text pointer.</I> A text pointer is a unique 
+<I>varbinary(16)</I> value for each <I>text </I>or 
+<I>image </I>column of each row.</P>
+
+<A NAME="408"><H2>WRITETEXT</H2></A>
+
+<P>WRITETEXT completely overwrites an existing 
+<I>text</I> or <I>image</I> column. You provide the column name (qualified by the table name), the text pointer for 
+the specific column of a specific row, and the actual data to be written. The 
+WITH LOG clause is optional, although it will always be used in the examples 
+presented here. It might seem like a catch-22 when using WRITETEXT 
+immediately, because you need to pass it a text pointer&#8212;but if the column is initially 
+NULL, there <I>is </I>no text pointer. So how do you get one? You SELECT it with 
+the<I> </I>textptr() function. But if the <I>text 
+</I>column has not been initialized, the textptr() function returns NULL. To initialize a text pointer for a column of a row 
+with <I>text</I> or <I>image</I> data, you can perform some variation of the following:</P>
+
+<UL>
+<P><LI>
+Explicitly insert a non-null value in the 
+<I>text </I>column when you use an INSERT statement. Recognize that WRITETEXT will 
+completely overwrite the column anyway, so the value can always be 
+something like <I>A</I> or a blank space.
+</LI></P>
+
+<P><LI>
+Define a default on the column with a non-null value like 
+<I>A</I>. Then when you do the insert, you can specify DEFAULT or omit the 
+column, which will result in the default value being inserted and the text pointer being initialized.
+</LI></P>
+
+<P><LI>
+Update the row after inserting it, explicitly setting it to 
+anything, even NULL.
+</LI></P>
+</UL>
+
+<P>You then select the text pointer into a variable declared as 
+<I>varbinary(16)</I> and pass that to WRITETEXT. You can't use SELECT statements or 
+expressions in the WRITETEXT statement. This means that the statement is 
+limited to being executed one row at a time (although it can be done from within 
+a cursor). The SELECT statement that gets the text pointer should be known 
+to return only one row, preferably by using an exact match on the primary key 
+value in the WHERE clause, because that will ensure that at most one row can 
+meet the criteria. You can, of course, use @@ROWCOUNT to check this if you 
+are not absolutely sure that the SELECT statement can return only one row. 
+Before using the WRITETEXT statement, you should also ensure that you have a 
+valid text pointer. If you find a row with the criteria you specified and the text 
+pointer for that row was initialized, it will be valid. You can check it as a separate 
+statement using the TEXTVALID() function. Or you can check that you do not have 
+a NULL value in your variable that was assigned the text pointer, as we'll see 
+in the following example. Make sure that you don't have an old text pointer 
+value from a previous use, which would make the IS NOT NULL check be 
+TRUE. In this example, we do one variable assignment and the variable starts out 
+NULL, so we are sure that a non-null value means we have selected a valid text pointer:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- WRITETEXT with an unprotected text pointer
+DECLARE @mytextptr varbinary(16)
+SELECT @mytextptr=TEXTPTR(pr_info) 
+    FROM pub_info WHERE pub_id='9999' 
+IF @mytextptr IS NOT NULL
+    WRITETEXT pub_info.pr_info @mytextptr WITH LOG 'Hello Again'
+</pre></p>
+</td></tr></table>
+
+<P>In this example, the text pointer is not protected from changes made 
+by others. Therefore, it is possible that the text pointer will no longer be valid 
+by the time the WRITETEXT operation is performed. Suppose that you get a 
+text pointer for the row with <I>pub_id='9999'</I>. But before you use it with 
+WRITETEXT, another user deletes and reinserts the row for publisher 9999. In that case, 
+the text pointer you are holding will no longer be valid. In the example above, 
+the window for this occurrence is small, since we do the WRITETEXT 
+immediately after getting the text pointer. <I>But there is still a 
+window.</I> In your application, the window might be wider. If the text pointer is not valid when you do 
+the WRITETEXT operation, you will get an error message like this:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+Msg 7123, Level 16, State 1
+Invalid text pointer value 000000000253f380.
+</pre></p>
+</td></tr></table>
+
+<P>You can easily see this for yourself if you add a delay (for example, 
+<I>WAITFOR DELAY &quot;00:00:15&quot;)</I> after getting the text pointer and then delete the row 
+from another connection. You'll get error 7123 when the WRITETEXT 
+operation executes. If you think the chances of getting this error are slim, you can 
+choose to simply deal with the error if it occurs. Frankly, because this seems to be 
+what most applications that use text do, <I>text 
+</I>columns are used in mostly low-concurrency environments. But even so, it's not good practice. (More likely, 
+this is the general usage because the concurrency issue is not well understood.)</P>
+
+<P>You should instead consider using transaction protection to ensure 
+that the text pointer will not change from the time you read it until you use it, 
+and to serialize access for updates so that you do not encounter frequent 
+deadlocks. Many applications use TEXTVALID() to check right before 
+operating&#8212;that's the right idea, but it's hardly foolproof. There is still a window between 
+the TEXTVALID() operation and the use of the text pointer, during which the 
+text pointer can be invalidated. The only way to close the window is to make 
+both operations part of an atomic operation. This means using a transaction 
+and having SQL Server protect the transaction with a lock. (For more about 
+locking, see <A HREF="ch13a.htm">Chapter 13</A>.)</P>
+
+<P>By default, SQL Server will operate with Read Committed isolation 
+and release a share (READ) lock after the page has been read. So simply putting 
+the pointer in a transaction with the Read Committed isolation level, which is 
+SQL Server's default, is not enough. You need to ensure that the lock is held 
+until the text pointer is used. You could change the isolation level to Repeatable 
+Read, which is not a bad solution, but this changes the isolation behavior for all 
+operations on that connection, so it might have a more widespread effect than 
+you intend. (Although you could, of course, then change it right back.) But 
+even this is not ideal. This approach doesn't guarantee that you will subsequently 
+be able to get the exclusive lock required to do the WRITETEXT operation; 
+it ensures only that when you get to the WRITETEXT operation, the text 
+pointer will still be valid. You won't be sure that you're not in the lock queue 
+behind another connection waiting to update the same row and column. In that 
+case, your transaction and the competing one would both hold a share lock on 
+the same row and would both need to acquire an exclusive lock. Since both 
+transactions are holding a share lock, neither can get the exclusive lock, and a 
+<I>deadlock</I> results in one of the connections having its transaction automatically 
+aborted. (In <A HREF="ch13a.htm">Chapter 13</A>, you'll see that this is an example of a 
+<I>conversion deadlock.</I>) If multiple processes are intending to modify the text and all transactions 
+first request an update lock in a transaction when selecting the text pointer, 
+conversion deadlocks will be avoided because only one process will get the update 
+lock and the others will queue for it. But those users' transactions that need only 
+to read the row will not be affected, since an update lock and a share lock 
+are compatible.</P>
+
+<P>Using the update lock on the text pointer is good for serializing access 
+to the actual text data, even though the lock on the text data is distinct from 
+the lock on the row with the text pointer. In this case, you essentially use the 
+update lock on a text pointer as you'd use an intent lock for the text data. This is 
+conceptually similar to the intent locks that SQL Server uses on a table when a 
+page-locking or row-locking operation for that table will take place. That 
+operation recognizes that rows, pages, and tables have an implicit hierarchy. You can 
+think of text pointers and text data as having a similar hierarchy and use the 
+update lock on the text pointer to protect access to the associated text data. 
+Following is the improved version that protects the text pointer from getting 
+invalidated and also reserves the transaction's spot in the queue so that it will get 
+the exclusive lock that's necessary to change the column. This approach will 
+avoid conversion deadlocks on the text pages:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- WRITETEXT with a properly protected text pointer
+BEGIN TRAN
+DECLARE @mytextptr varbinary(16)
+SELECT @mytextptr=TEXTPTR(pr_info) 
+    FROM pub_info (UPDLOCK) WHERE pub_id='9999' 
+IF @mytextptr IS NOT NULL
+    WRITETEXT pub_info.pr_info @mytextptr WITH LOG 'Hello Again'
+COMMIT TRAN
+</pre></p>
+</td></tr></table>
+
+<A NAME="409"><H2>READTEXT</H2></A>
+
+<P>READTEXT is used in a similar way to WRITETEXT, except that 
+READTEXT allows you to specify a starting position and the number of bytes to read. Its 
+basic syntax appears below.</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+READTEXT [[<I>database</I>.]<I>owner</I>.]<I>table_name</I>.<I>column_name</I>
+    <I>text_ptr</I> <I>offset</I> <I>size</I> [HOLDLOCK]
+</pre></p>
+</td></tr></table>
+
+<P>Unlike with WRITETEXT, with READTEXT we do not need to 
+work with the entire contents of the data. We can specify the starting position (<I>offset</I>) and the number of bytes to read 
+(<I>size</I>)<I>. </I>READTEXT is often used with the 
+patindex() function to find the offset at which some string or 
+pattern exists, and it's also used with datalength() to determine the total size 
+of the text column. But these functions cannot be used as the offset 
+parameter directly. Instead, you must execute them beforehand and keep their values in a local variable, which you then pass. As mentioned in the discussion 
+of WRITETEXT, you'll want to protect your text pointer from becoming 
+invalidated. In the next example, you'll read text without updating it. So you can 
+use the HOLDLOCK lock hint on the SELECT statement for the text pointer 
+(or set the isolation level to Repeatable Read).</P>
+
+<P>Sometimes people think that transactions are used only for data 
+modifications, but notice that in this case you use a transaction to ensure read 
+repeatability (of the text pointer) even though you are not updating anything. 
+You can optionally add HOLDLOCK to the READTEXT statement to ensure 
+that the text doesn't change until the transaction has completed. But in the 
+example below, we'll read the entire contents with just one read and we will not be 
+re-reading the contents, so there is no point in using HOLDLOCK here. 
+This example finds the pattern <I>Washington </I>in the 
+<I>pr_info</I> column for <I>pub_id</I> 0877 and returns the contents of that column from that point on:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- READTEXT with a protected text pointer
+BEGIN TRAN
+DECLARE @mytextptr varbinary(16), @sizeneeded int, @pat_offset int
+SELECT @mytextptr=TEXTPTR(pr_info), 
+    @pat_offset=PATINDEX('%Washington%',pr_info) - 1,
+    @sizeneeded=DATALENGTH(pr_info) - 
+        PATINDEX('%Washington%',pr_info) - 1
+    FROM pub_info (HOLDLOCK) WHERE pub_id='0877' 
+
+IF @mytextptr IS NOT NULL AND @pat_offset &gt;= 0 AND
+    @sizeneeded IS NOT NULL
+    READTEXT  pub_info.pr_info @mytextptr @pat_offset @sizeneeded
+
+COMMIT TRAN
+</pre></p>
+</td></tr></table>
+
+<p><div class="note"><blockquote>
+<b>NOTE</b><HR>
+If you run the preceding query using the Query 
+Analyzer tool, you might not see the entire text result. The Query 
+Analyzer has a default limit of 256 characters that can be returned for a 
+text column. You can use the Query/Set Options command and go to 
+the Format tab to change this limit.
+</blockquote></div></p>
+
+<P>The offset returned by patindex() and the offset used by 
+READTEXT unfortunately are not consistent. READINDEX treats the first character as 
+offset 0. (This makes sense because you can think of an offset as how many 
+characters you have to move to get to the desired position&#8212;to get to the first 
+character, you don't need to move at all.) But 
+patindex() returns the value in terms of position, not really as an offset, and so the first character for it would be 
+<I>1.</I> (You could actually call this a minor bug. But people have adapted to it, 
+so changing it would cause more problems than it would solve at this point. 
+You should assume that this acts as intended and adjust for it.) You need to fix 
+this discrepancy by taking the result of PATINDEX() and subtracting 1 from 
+it. PATINDEX() returns -1 if the pattern is not found. Since we subtract 1 
+from the value returned by PATINDEX(), if the pattern was not found, the 
+variable <I>@pat_offset</I> would be -2. We simply check that 
+<I>@pat_offset</I> is not negative.</P>
+
+<P>You also need to specify how many bytes you want to read. If you 
+want to read from that point to the end of the column, for example, you can take 
+the total length as returned from datalength() and subtract the 
+starting position, as shown in the preceding example. You cannot simply specify a 
+buffer that you know is large enough to read the rest of the column into; that will 
+result in error 7124:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+The offset and length specified in the READTEXT command is greater 
+than the actual data length of %d.
+</pre></p>
+</td></tr></table>
+
+<P>If you could always perform a single READTEXT to handle your 
+data, you'd probably not use it; instead, you could use SELECT. You need to 
+use READTEXT when a <I>text</I> column is too long to reasonably bring back with 
+just one statement. For example, the text size of the 
+<I>pr_info</I> field for publisher 1622 is 18,518 bytes. We can't select this value in a program like the Query 
+Analyzer because it's longer than the maximum expected row length for a result set, 
+so it would be truncated. But we can set up a simple loop to show the text in 
+pieces. To understand this process, you need to be aware of the system 
+function @@TEXTSIZE, which returns the maximum amount of text or image data 
+that you can retrieve in a single statement. (Of course, you need to make sure 
+that the buffer in your application will also be large enough to accept the text.) 
+You can read chunks smaller than the @@TEXTSIZE limit, but not larger.</P>
+
+<p><div class="note"><blockquote>
+<b>NOTE</b><HR>
+The value for @@TEXTSIZE is unrelated to the setting 
+in Query Analyzer for the maximum number of characters discussed 
+in the previous note. @@TEXTSIZE is a server option, while the 
+character limit controls the client tool's display.
+</blockquote></div></p>
+
+<P>You can change the value of @@TEXTSIZE for your connection by 
+using SET TEXTSIZE <I>n.</I> The default value for @@TEXTSIZE is 64 KB. You 
+should read chunks whose size is based on the amount of space available in 
+your application buffer and based on the network packet size so that the text will 
+fit in one packet, with an allowance for some additional space for metadata. 
+For example, with the default network packet size of 4192 bytes (4 KB), a good 
+read size would be about 4100 bytes, assuming that your application could deal 
+with that size. You should also be sure that @@TEXTSIZE is at least equal to 
+your read size. You can either check to determine its size or explicitly set it as we 
+do in the example below. Also notice the handy use of the CASE statement for 
+a variable assignment to initialize the 
+<I>@readsize</I> variable to the smaller of the 
+total length of the column and the value of @@TEXTSIZE. (In this example, we 
+make the read size only 100 characters so that it displays easily in Query Analyzer 
+or in a similar query window. But this is too small for most applications and is 
+used here for illustration only.)</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- READTEXT in a loop to read chunks of text.
+-- Instead of using HOLDLOCK, use SET TRANSACTION ISOLATION LEVEL 
+-- REPEATABLE READ (equivalent). Then set it back when done but 
+-- be sure to do so in a separate batch.
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ
+SET TEXTSIZE 100    &#8212;- Just for illustration; too small for 
+                    &#8212;- real world. 4000 would be a better value.
+BEGIN TRAN
+
+DECLARE @mytextptr varbinary(16), @totalsize int,
+    @lastread int, @readsize int
+
+SELECT
+    @mytextptr=TEXTPTR(pr_info), @totalsize=DATALENGTH(pr_info),
+    @lastread=0,
+    -- Set the readsize to the smaller of the @@TEXTSIZE setting 
+    -- and the total length of the column
+    @readsize=CASE WHEN (@@TEXTSIZE &lt; DATALENGTH(pr_info)) THEN 
+        @@TEXTSIZE ELSE DATALENGTH(pr_info) END
+    FROM pub_info WHERE pub_id='1622' 
+
+IF @mytextptr IS NOT NULL AND @readsize &gt; 0
+    WHILE (@lastread &lt; @totalsize)
+    BEGIN
+        READTEXT pub_info.pr_info @mytextptr @lastread @readsize
+        IF (@@error &lt;&gt; 0)
+            BREAK    -- Break out of loop if an error on read
+        -- Change offset to last char read
+        SELECT @lastread=@lastread + @readsize        
+        -- If read size would go beyond end, adjust read size
+        IF ((@readsize + @lastread) &gt; @totalsize) 
+            SELECT @readsize=@totalsize - @lastread 
+    END
+    
+COMMIT TRAN
+GO
+&#8212;- Set it back, but in a separate batch
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED
+</pre></p>
+</td></tr></table>
+
+<P>Notice that in this example we need to ensure not only that the text 
+pointer is still valid when we get to READTEXT but also that the column did not 
+get changed <I>between</I> iterations of READTEXT. (If another connection simply 
+updated the text in place, the text pointer would still be valid, although the read 
+would be messed up since the contents and length were changed.) We could 
+use HOLDLOCK both on the READTEXT statement as well as for protecting 
+the text pointer. But for illustration, we instead changed the isolation level 
+to REPEATABLE READ.</P>
+
+<A NAME="410"><H2>UPDATETEXT</H2></A>
+
+<P>UPDATETEXT is a big improvement to text processing. If you had 
+only WRITETEXT, you would need to completely rewrite the entire column to 
+make even a minor change. UPDATETEXT lets you work with text in pieces to 
+insert, overwrite, or append data. Or you can copy data from another 
+<I>text </I>column and append it or overwrite the column with it. Because of its additional 
+capability and flexibility, the syntax for UPDATETEXT is a bit more complex:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+UPDATETEXT <I>table_name</I>.<I>dest_column_name</I> <I>dest_text_ptr</I>
+    <I>offset</I> <I>delete_length</I> [WITH LOG] [<I>inserted_data</I> |
+    <I>table_name</I>.<I>src_column_name</I> <I>src_text_ptr</I> ]
+</pre></p>
+</td></tr></table>
+
+<P>The destination column name and text pointer parameters point to 
+the column that you will be updating; these parameters are always used. Like 
+you would with WRITETEXT, you should use the 
+UPDLOCK hint to protect the text pointer from becoming invalid and to serialize access to the text pages 
+to prevent a conversion deadlock. The source column name parameters are 
+used only when you are copying data from another 
+<I>text</I> column. Otherwise, you directly include in that spot the data you'll be adding or you omit the 
+parameter if you are deleting data. The 
+<I>offset</I> is the position at which you start your 
+data modification. It should be NULL if you are appending to the current 
+contents and 0 if you are starting from the beginning of the column. The 
+<I>delete_length</I> parameter tells you how many bytes to delete (if any) starting from the 
+offset parameter. Use NULL for this parameter if you will delete all contents from 
+the offset up to the end of the column, and use 0 if you will delete no bytes. As 
+with READTEXT, the first character of the column is considered to have a 0 offset.</P>
+
+<P>UPDATETEXT can do everything, and it can do much more 
+than WRITETEXT can do. So you might choose to use only READTEXT 
+and UPDATETEXT and forget about WRITETEXT. (WRITETEXT existed 
+in versions before UPDATETEXT appeared, so the former is maintained for 
+backward compatibility, but there isn't much need for it now.)</P>
+
+<P>Following are some examples that illustrate the use of 
+UPDATETEXT better than further explanation.</P>
+
+<P><B>EXAMPLE 1</B></P>
+
+<P>Use UPDATETEXT to completely replace the contents of a column:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- Use UPDATETEXT to completely overwrite a text column.
+-- Alternative to WRITETEXT.
+DECLARE @mytextptr varbinary(16)
+BEGIN TRAN
+
+SELECT @mytextptr=TEXTPTR(pr_info) FROM pub_info (UPDLOCK) WHERE
+    pub_id='9999' 
+IF @mytextptr IS NOT NULL
+    UPDATETEXT pub_info.pr_info @mytextptr 0 NULL WITH LOG
+        &quot;New text for 9999&quot; 
+
+COMMIT TRAN
+</pre></p>
+</td></tr></table>
+
+<P><B>EXAMPLE 2</B></P>
+
+<P>Use UPDATETEXT to delete characters off the end; first notice that 
+publisher 0877, Binnet, has the following contents in the text column 
+<I>pr_info</I>:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+This is sample text data for Binnet &amp; Hardley, publisher 0877 in 
+the pubs database. Binnet &amp; Hardley is located in Washington, 
+D.C.
+This is sample text data for Binnet &amp; Hardley, publisher 0877 in 
+the pubs database. Binnet &amp; Hardley is located in Washington, 
+D.C. 
+This is sample text data for Binnet &amp; Hardley, publisher 0877 in 
+the pubs database. Binnet &amp; Hardley is located in Washington, 
+D.C.
+This is sample text data for Binnet &amp; Hardley, publisher 0877 in 
+the pubs database. Binnet &amp; Hardley is located in Washington, 
+D.C.
+This is sample text data for Binnet &amp; Hardley, publisher 0877 in 
+the pubs database. Binnet &amp; Hardley is located in Washington, 
+D.C.
+</pre></p>
+</td></tr></table>
+
+<P>Because the text is repeated several times, we will delete all characters 
+that follow the first occurrence of <I>D.C.</I> Here's how:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+DECLARE @mytextptr varbinary(16), @pat_offset int
+BEGIN TRAN
+SELECT @mytextptr=TEXTPTR(pr_info), 
+    @pat_offset=PATINDEX('%D.C.%', pr_info)-1+4 
+    -- For offset, subtract 1 for offset adjust but add 4 for
+    -- length of &quot;D.C.&quot;
+    FROM pub_info (UPDLOCK) WHERE pub_id='0877' 
+
+IF @mytextptr IS NOT NULL AND @pat_offset &gt;= 0
+    UPDATETEXT pub_info.pr_info @mytextptr @pat_offset NULL WITH LOG
+
+COMMIT TRAN
+</pre></p>
+</td></tr></table>
+
+<P>The column now has these contents (only):</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+This is sample text data for Binnet &amp; Hardley, publisher 0877 in
+the pubs database. Binnet &amp; Hardley is located in Washington, 
+D.C.
+</pre></p>
+</td></tr></table>
+
+<P><B>EXAMPLE 3</B></P>
+
+<P>With the small amount of text here, it wouldn't be bad to simply rewrite 
+the column with new text. But if this were a large 
+<I>text</I> column (you could literally store the contents of 
+<I>War and Peace</I> in a single <I>text</I> column), it would be 
+extremely inefficient to rewrite the entire column just to make a minor change. In 
+this example, we'll add the text &quot;Kimberly Tripp is president of the company.&quot; 
+to the current contents. We'll use UPDATETEXT to append text to the column:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+DECLARE @mytextptr varbinary(16)
+BEGIN TRAN
+SELECT @mytextptr=TEXTPTR(pr_info) FROM pub_info (UPDLOCK)
+    WHERE pub_id='0877' 
+
+IF @mytextptr IS NOT NULL
+    UPDATETEXT pub_info.pr_info @mytextptr NULL NULL WITH LOG
+        &quot;Kimberly Tripp is president of the company.&quot; 
+
+COMMIT TRAN
+</pre></p>
+</td></tr></table>
+
+<P>And the result:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+This is sample text data for Binnet &amp; Hardley, publisher 0877 in
+the pubs database. Binnet &amp; Hardley is located in Washington, 
+D.C.Kimberly Tripp is president of the company.
+</pre></p>
+</td></tr></table>
+
+<P>That worked exactly as specified, but you might wish we had skipped a 
+line and then included a tab before adding the new sentence. We can easily add 
+both a vertical and a horizontal tab, as you can see in Example 4.</P>
+
+<P><B>EXAMPLE 4</B></P>
+
+<P>Use UPDATETEXT to insert some characters:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+DECLARE @mytextptr varbinary(16), @pat_offset int,
+    @mystring char(2)
+BEGIN TRAN
+SELECT 
+@mystring=char(13) + CHAR(9),   -- Vertical tab is code point 13. 
+                                -- Tab is 9.
+@pat_offset=PATINDEX('%Kim%', pr_info)-1,
+@mytextptr=TEXTPTR(pr_info) FROM pub_info (UPDLOCK)
+    WHERE pub_id='0877' 
+
+IF @mytextptr IS NOT NULL AND @pat_offset &gt;= 0
+    UPDATETEXT pub_info.pr_info @mytextptr @pat_offset 0 WITH LOG 
+        @mystring
+
+COMMIT TRAN
+</pre></p>
+</td></tr></table>
+
+<P>And the result:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+This is sample text data for Binnet &amp; Hardley, publisher 0877 in 
+the pubs database. Binnet &amp; Hardley is located in Washington,
+D.C.
+    Kimberly Tripp is president of the company.
+</pre></p>
+</td></tr></table>
+
+<P>Oops! We just learned that the president has gotten married and 
+changed her last name from <I>Tripp </I>to<I> Tripp-Simonnet. 
+</I>We need to fix that.</P>
+
+<P><B>EXAMPLE 5</B></P>
+
+<P>Use UPDATETEXT for search and replace:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- UPDATETEXT for Search and Replace
+DECLARE @mytextptr varbinary(16), @pat_offset int,
+    @oldstring varchar(255), @newstring varchar(255),
+    @sizeold int
+
+BEGIN TRAN
+SELECT @oldstring=&quot;Tripp&quot;, @newstring=&quot;Tripp-Simonnet&quot;
+
+SELECT @sizeold=DATALENGTH(@oldstring),
+@pat_offset=PATINDEX('%' + @oldstring + '%', pr_info)-1,
+@mytextptr=TEXTPTR(pr_info) 
+FROM pub_info (UPDLOCK) WHERE pub_id='0877' 
+
+IF @mytextptr IS NOT NULL AND @pat_offset &gt;= 0
+    UPDATETEXT pub_info.pr_info @mytextptr @pat_offset @sizeold 
+        WITH LOG @newstring
+
+COMMIT TRAN
+</pre></p>
+</td></tr></table>
+
+<P>And the result:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+This is sample text data for Binnet &amp; Hardley, publisher 0877 in
+the pubs database. Binnet &amp; Hardley is located in Washington,
+D.C.
+    Kimberly Tripp-Simonnet is president of the company.
+</pre></p>
+</td></tr></table>
+
+<P>We used variables above and figured lengths and offsets using SQL 
+Server's built-in functions. By doing this, we ensured that the procedure is pretty 
+generic and that it can deal with changing the string to another string that is either 
+longer or shorter than the original.</P>
+
+<P><B>EXAMPLE 6</B></P>
+
+<P>Suppose that we want to append the contents of the text for publisher 
+Scootney<I> </I>(<I>pub_id</I> 9952) to the text for 
+Binnet<I> </I>(<I>pub_id</I> 0877). If we did not have 
+this option in UPDATETEXT, it would be necessary to bring all that text back 
+to the client application, append it, and then send it back to the server. Over a 
+slow network like the Internet, this would not be practical if the 
+<I>text</I> columns were large. But with UPDATETEXT, the whole operation is done on the server. 
+In this example, notice that we protect the text pointer for the target 
+with UPDLOCK, since we'll be updating that row. We can use HOLDLOCK for 
+the source row since we are reading it only and we want to ensure that it 
+hasn't changed.</P>
+
+<P>We'll use UPDATETEXT to copy and append one text column to another:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- UPDATETEXT to copy and append another text column
+DECLARE @target_textptr varbinary(16),
+    @source_textptr varbinary(16)
+BEGIN TRAN
+
+SELECT @target_textptr=TEXTPTR(pr_info) FROM pub_info (UPDLOCK)
+WHERE pub_id='0877' 
+SELECT @source_textptr=TEXTPTR(pr_info) FROM pub_info (HOLDLOCK)
+WHERE pub_id='9952' 
+
+IF @target_textptr IS NOT NULL AND @source_textptr IS NOT NULL
+    UPDATETEXT pub_info.pr_info @target_textptr NULL NULL 
+        WITH LOG pub_info.pr_info @source_textptr
+
+COMMIT TRAN
+</pre></p>
+</td></tr></table>
+
+</BODY>
+</HTML>
+
+
+

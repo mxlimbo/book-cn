@@ -1,0 +1,356 @@
+<HTML>
+<HEAD>
+<TITLE>Defining a Device Class</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch12b.htm">[Previous]</A> <A HREF="ch12d.htm">[Next]</a>
+</p>
+
+<A NAME="418"><H1>Defining a Device Class</H1></A>
+
+<p>Let's suppose you have a device that doesn't fit into one of the device classes
+Microsoft has already defined. When you're initially testing your device and your driver,
+you can get away with using the <b>Unknown</b> class in your INF file. Production devices are
+not supposed to be in the Unknown class, however. You should instead place your custom device
+into a new device class that you define in the INF file. I'll explain how to create a
+custom class in this section.</p>
+
+<p>The INF example I showed you earlier relied on a custom device class:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>[Version]
+Signature=$CHICAGO$
+Class=Sample
+ClassGuid={894A7460-A033-11d2-821E-444553540000}</pre>
+</td></tr>
+</table>
+</p>
+
+<p>In fact, all of the samples in this book use the Sample class.</p>
+
+<p>When you want to define a new class of device, you only need to do one task: run GUIDGEN to
+create a unique GUID for the class. You can add polish to the user interface for your device
+class by doing some additional tasks, such as writing a property page provider for use with the
+Device Manager and putting some special entries into the registry key your class uses. You can
+also provide filter drivers and parameter overrides that will be used for every device of your
+class. You control each of these additional features by statements in your INF file. For
+example:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>[ClassInstall32]
+AddReg=SamclassAddReg
+CopyFiles=SamclassCopyFiles
+
+[SamclassAddReg]
+HKR,,,,&quot;WDM Book Sample&quot;
+...
+
+[SamclassCopyFiles]
+...</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The illustrated registry entry turns into the &quot;friendly name&quot; for the device class
+in the Device Manager and in the list of device types displayed by the add hardware wizard.
+I'll explain some of the additional registry entries you might want to add to the class key
+in the following sections.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+None of my INF files has a <b>ClassInstall32</b> section. None is needed
+because the setup program for the sample disc puts the necessary class information directly
+into the registry. If you define your own device class as part of a production driver package,
+however, you will need this section. Note also that Microsoft discourages installing a new
+class without using an INF.</blockquote></div>
+</p>
+
+<A NAME="419"><H2>A Property Page Provider</H2></A>
+
+<p>Way back in Chapter 1, &quot;<A HREF="ch01a.htm#3">Introduction</A>&quot;&#8212;in Figure 1-6, to be
+precise&#8212;I showed you a screen shot of the property page I invented for use with the Sample
+device class. The SAMCLASS sample on the companion disc is the source code for the property
+page provider that produced that page, and I'm now going to explain how it works.</p>
+
+<p>A property page provider for a device class is a 32-bit DLL with the following contents:</p>
+
+<ul>
+<p><li> An exported entry point for each class for which the DLL supplies property pages</li></p>
+
+<p><li> Dialog resources for each property page</li></p>
+
+<p><li> A dialog procedure for each property page</li></p>
+</ul>
+
+
+<p>In general, a single DLL can provide property pages for several device classes. Microsoft
+supplies some DLLs with the operating system that do this, for example. SAMCLASS, however,
+provides only a single page for a single class of device. Its only exported entry point is the
+following function:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>extern &quot;C&quot; BOOL CALLBACK EnumPropPages
+  (PSP_PROPSHEETPAGE_REQUEST p,
+  LPFNADDPROPSHEETPAGE AddPage, LPARAM lParam)
+  {
+  PROPSHEETPAGE page;
+  HPROPSHEETPAGE hpage;
+  memset(&amp;page, 0, sizeof(page));
+  page.dwSize = sizeof(PROPSHEETPAGE);
+  page.hInstance = hInst;
+  page.pszTemplate = MAKEINTRESOURCE(IDD_SAMPAGE);
+  page.pfnDlgProc = PageDlgProc;
+  <i>&lt;some more stuff&gt;</i>
+  hpage = CreatePropertySheetPage(&amp;page);
+  if (!hpage)
+    return TRUE;
+  if (!(*AddPage)(hpage, lParam))
+    DestroyPropertySheetPage(hpage);
+  return TRUE;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>When the Device Manager is about to construct the property sheet for a device, it consults
+the class registry key to see if there's a property page provider. You can designate a
+provider with a line like the following in your INF file:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>[SamclassAddReg]
+HKR,,EnumPropPages32,,&quot;samclass.dll,EnumPropPages&quot;</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The Device Manager loads the DLL you specify (SAMCLASS.DLL) and calls the designated entry
+point (<b>EnumPropPages</b>). If the function returns TRUE, the Device Manager will display the
+property page; otherwise, it won't. The function can add zero or more pages by calling the
+<b>AddPage</b> function as shown in the preceding example.</p>
+
+<p>Inside the SP_PROPSHEETPAGE_REQUEST structure your enumeration function receives as an
+argument, you'll find two very useful pieces of information: a handle to a device
+information set, and the address of an SP_DEVINFO_DATA structure that pertains to the device
+you're concerned with. These data items (but not, unfortunately, the
+SP_PROPSHEETPAGE_REQUEST structure that contains them) remain valid for as long as the property
+page is visible, and it would be useful for you to be able to access them inside the dialog
+procedure you write for your property page. Windows SDK Programming 101 (well, maybe 102,
+because this is a little obscure) taught you how to do this. First create an auxiliary
+structure whose address you pass to <b>CreatePropertySheetPage</b> as the <b>lParam</b> member
+of the PROPSHEETPAGE structure:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>struct SETUPSTUFF {
+  HDEVINFO info;
+  PSP_DEVINFO_DATA did;
+  };
+
+BOOL EnumPropPages(...)
+  {
+  PROPSHEETPAGE page;
+  ...
+  SETUPSTUFF* stuff = new SETUPSTUFF;
+  stuff-&gt;info = p-&gt;DeviceInfoSet;
+  stuff-&gt;did = p-&gt;DeviceInfoData;
+  page.lParam = (LPARAM) stuff;
+
+  page.pfnCallback = PageCallbackProc;
+  page.dwFlags = PSP_USECALLBACK;
+  ...
+  }
+
+UINT CALLBACK PageCallbackProc(HWND junk, UINT msg, LPPROPSHEETPAGE p)
+  {
+  if (msg == PSPCB_RELEASE &amp;&amp; p-&gt;lParam)
+    delete (SETUPSTUFF*) p-&gt;lParam;
+  return TRUE;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The WM_INITDIALOG message that Windows sends to your dialog procedure gets an lParam value
+that's a pointer to the same PROPSHEETPAGE structure, so you can retrieve the <b>stuff</b> 
+pointer there. You can then use <b>SetWindowLong</b> and <b>GetWindowLong</b> to save any
+desired information in the DWL_USER slot associated with the dialog object. In SAMCLASS, I
+chose to determine the name of a readme file that would describe the sample driver. I'll
+show you the code for doing that in a couple of paragraphs.</p>
+
+<p>You also need to provide a way to delete the SETUPSTUFF structure when it's no longer
+needed. The easiest way, which works whether or not you ever get a WM_INITDIALOG
+message&#8212;you won't if there's an error constructing your property page&#8212;is to
+use a property page callback function as shown in the preceding fragment.</p>
+
+<p>You can do all sorts of things in a custom property page. For the sample class, I wanted to
+provide a button that would bring up an explanation for each sample device. To keep things as
+general as possible, I decided to put a <b>SampleInfo</b> value naming the explanation file in
+the device's hardware registry key. To invoke a viewer for the explanation file, it
+suffices to call <b>ShellExecute</b>, which will interpret the file extension and locate an
+appropriate viewer application. For my book samples, the explanation files are HTML files, so
+the viewer in question will be your Web browser.</p>
+
+<p>Most of the work in SAMCLASS occurs in the WM_INITDIALOG handler. (Error checking is again
+omitted.)</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr>
+<td valign=top>
+<pre>
+
+
+
+
+
+1 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+2 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+
+
+
+3 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+
+
+4 <img src="images/arorite2.jpg" width=17 height=10 border=0>
+</pre>
+</td>
+
+<td>
+<pre>case WM_INITDIALOG:
+  {
+  SETUPSTUFF* stuff = (SETUPSTUFF*) ((LPPROPSHEETPAGE) lParam)-&gt;lParam;
+  BOOL okay = FALSE;
+  TCHAR name[256];
+  SetupDiGetDeviceRegistryProperty(stuff-&gt;info, stuff-&gt;did,
+    SPDRP_FRIENDLYNAME, NULL, (PBYTE) name, sizeof(name), NULL);
+  SetDlgItemText(hdlg, IDC_SAMNAME, name);
+
+HKEY hkey = SetupDiOpenDevRegKey(stuff-&gt;info, stuff-&gt;did,
+    DICS_FLAG_GLOBAL, 0, DIREG_DEV, KEY_READ);
+  DWORD length = sizeof(name);
+  RegQueryValueEx(hkey, &quot;SampleInfo&quot;, NULL, NULL,
+    (LPBYTE) name, &amp;length);
+  LPSTR infofile;
+  DoEnvironmentSubst(name, sizeof(name));
+  infofile = (LPSTR) GlobalAlloc(GMEM_FIXED, strlen(name)+1);
+  strcpy(infofile, name);
+  SetWindowLong(hdlg, DWL_USER, (LONG) infofile);
+  RegCloseKey(hkey);
+  break;
+  }</pre>
+</td></tr>
+</table>
+</p>
+
+<ol>
+<p><li> Here, we determine the <b>FriendlyName</b> for the device and put it into a
+static text control. The actual code sample receives the device description if there's no
+friendly name.</li></p>
+
+<p><li> The next few statements determine the <b>SampleInfo</b> filename from the
+hardware key's parameter subkey.</li></p>
+
+<p><li> The strings I put in the registry are of the form %wdmbook%\chap12\devprop\devprop.htm, in which %wdmbook% indicates substitution by the value of the WDMBOOK
+environment variable. The call to <b>DoEnvironmentSubst</b>, a standard Win32 API, expands the
+environment variable.</li>
+
+<p><li> I need to remember the name of the SampleInfo file somewhere, and <b>
+SetWindowLong</b> provides a convenient way to do that.</li></p>
+</ol>
+
+<p>When the end user&#8212;that would be you in this particular situation, I think&#8212;presses
+the More Information button on the property page, the dialog procedure receives a WM_COMMAND
+message, which it processes as shown below.</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>case WM_COMMAND:
+  switch (LOWORD(wParam))
+    {
+  case IDB_MOREINFO:
+    {
+    LPSTR infofile = (LPSTR) GetWindowLong(hdlg, DWL_USER);
+    ShellExecute(hdlg, NULL, infofile, NULL, NULL, SW_SHOWNORMAL);
+    return TRUE;
+    }
+    }
+  break;</pre>
+</td></tr>
+</table>
+</p>
+
+<p>ShellExecute will launch the application associated with the SampleInfo file&#8212;namely,
+your Web browser&#8212;whereupon you can view the file and find all sorts of interesting
+information.</p>
+
+<A NAME="420"><H2>Other Class-Specific Information</H2></A>
+
+<p>In the preceding section, I showed you how an <b>EnumPropPages32</b> registry entry controls
+the display of property pages for devices belonging to your custom class. Here are some other
+registry entries that you can use to tailor features of the class:</p>
+
+<ul>
+<p><li> <b>Installer32</b> designates a DLL that performs installation functions for devices
+belonging to the class. Writing a class installer is a huge undertaking, not least because the
+DDK documentation hasn't caught up to the software in this area. I didn't attempt to
+write a class installer for the Sample class.</li></p>
+
+<p><li> <b>Class</b> is the class name as it should be spelled in INF file <b>Class=</b> 
+statements.</li></p>
+
+<p><li> <b>Icon</b> designates an icon to use in user interface displays about the class. This
+value is a string containing a decimal integer. A positive value designates an icon in the
+Installer32 DLL; documentation says that the system will find the icon in your EnumPropPages32
+DLL if you don't have a class installer, but I didn't find that to be the case. A
+negative number designates an icon (whose index is the absolute value) in SETUPAPI.DLL. If you
+don't specify an icon, the system uses a nondescript gray diamond. I decided to use the
+value -5 for the Sample class, which designates an icon that looks vaguely like a PCI card. In
+fact, the system uses the same icon for network cards, but I liked this choice better than the
+others.</li></p>
+
+<p><li> <b>NoInstallClass</b>, if present and not equal to 0, indicates that some enumerator will
+automatically detect any device belonging to this class. If the class has this attribute, the
+hardware wizard won't include this class in the list of device classes it presents to the
+end user.</li></p>
+
+<p><li> <b>SilentInstall</b>, if present and not equal to 0, causes the PnP manager to install
+devices of this class without presenting any dialogs to the end user.</li></p>
+
+<p><li> <b>UpperFilters</b> and <b>LowerFilters</b> specify service names for filter drivers. The
+PnP Manager loads these filters for <i>every</i> device belonging to the class. (You specify
+filter drivers that apply to just one device in the device's hardware key.)</li></p>
+
+<p><li> <b>NoDisplayClass</b>, if present and not equal to 0, suppresses devices of this class
+from the Device Manager display.</li></p>
+</ul>
+
+
+<p>A class key may also specify <b>DeviceCharacteristics</b>, <b>DeviceType</b>, and/or <b>
+Security</b> properties that contain overriding values for certain device attributes. I
+discussed these values in Chapter 2, &quot;<A HREF="ch02a.htm#30">Basic Structure of a WDM Driver</A>,&quot; in the
+section &quot;<A HREF="ch02b.htm#34">The Role of the Registry</A>.&quot; The PnP Manager applies these overrides when it
+creates a physical device object (PDO). I'm guessing here, but I suspect that someday a
+system administrator will somehow be able to examine and change these properties.</p>
+
+</BODY>
+</HTML>
+
+
+
+
+

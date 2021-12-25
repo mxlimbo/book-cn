@@ -1,0 +1,338 @@
+<HTML>
+<HEAD>
+<TITLE>Managing Your Own IRPs</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch05f.htm">[Previous]</A> <A HREF="ch05h.htm">[Next]</a>
+</p>
+
+<A NAME="171"><H1>Managing Your Own IRPs</H1></A>
+
+<p>Now that I've explained all of the infrastructure for handling IRPs, I can return to the subject of how to create IRPs in your own driver. I already mentioned that there are four different service functions you can call to create an IRP, but I had to defer until now a discussion of how you'd choose among them. The factors that bear on your choice appear below:</p>
+
+<ul>
+
+<p><li> IoBuildAsynchronousFsdRequest and IoBuildSynchronousFsdRequest can be used to build IRPs
+with only the major function codes listed in Table 5-3.</li></p>
+
+<p><li> IoBuildDeviceIoControlRequest can be used to build IRPs with only one of the major
+function codes IRP_MJ_DEVICE_CONTROL and IRP_MJ_INTERNAL_DEVICE_CONTROL.</li></p>
+
+<p><li> You need to be sure that something will release the memory occupied by the IRP and by its
+various hangers-on when something finally calls IoCompleteRequest.</li></p>
+
+<p><li> You might need to plan ahead so that it will be possible for you to cancel the IRP by
+calling IoCancelIrp.</li></p>
+
+</ul>
+
+<p><b>Table 5-3.</b> <i>IRP types for IoBuild</I>Xxx<I>FsdRequest.</i></p>
+
+<P>
+	<TABLE CELLPADDING=5 WIDTH="95%">
+		
+		<TR>
+			<TH align="left"><i>Major Function Code</i></TH>
+		</TR>
+
+		<TR>
+			<TD VALIGN="TOP">IRP_MJ_READ</TD>
+		</TR>
+
+		<TR>
+			<TD VALIGN="TOP">IRP_MJ_WRITE</TD>
+		</TR>
+
+		<TR>
+			<TD VALIGN="TOP">IRP_MJ_FLUSH_BUFFERS</TD>
+		</TR>
+
+		<TR>
+			<TD VALIGN="TOP">IRP_MJ_SHUTDOWN</TD>
+		</TR>
+
+		<TR>
+			<TD VALIGN="TOP">IRP_MJ_PNP</TD>
+		</TR>
+
+		<TR>
+			<TD VALIGN="TOP">IRP_MJ_POWER</TD>
+		</TR>
+
+	</TABLE>
+</P>
+		
+
+<A NAME="172"><H2>Using IoBuildSynchronousFsdRequest</H2></A>
+
+<p>The easiest scenario to explain is the one involving <b>IoBuildSynchronousFsdRequest</b>.
+You call this function like this:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+PIRP Irp = IoBuildSynchronousFsdRequest(MajorFunction, DeviceObject, 
+  Buffer, Length, StartingOffset, Event, IoStatusBlock);</pre>
+</td></tr>
+</table>
+</p>
+
+<p><b>MajorFunction</b> (ULONG) is the major function code for the new IRP. (See Table 5-3.)
+<b>DeviceObject</b> (PDEVICE_OBJECT) is the address of the device object to which you'll
+initially send the IRP. (See the last section of this chapter, &quot;<A HREF="ch05h.htm#179">Where Do Device Object Pointers Come From?</A>&quot; for more information about this parameter.) For read and write
+requests, you must supply the <b>Buffer</b> (PVOID), <b>Length</b> (ULONG), and <b>
+StartingOffset</b> (PLARGE_INTEGER) parameters. Buffer is the address of a kernel-mode data
+buffer, Length is the number of bytes you want to read or write, and StartingOffset is the byte
+location within the target file where the read or write operation should commence. For the
+other requests that you can build with this function, these three parameters are ignored.
+(That's why the function prototype in WDM.H classifies them as &quot;optional,&quot; but
+they're not optional for reads and writes.) The I/O Manager assumes that the buffer address
+you supply is valid in the current process context. It's up to you to make sure that it is
+valid.</p>
+
+<p><b>Event</b> (PKEVENT) is the address of an event object that IoCompleteRequest should set
+when the operation completes, and <b>IoStatusBlock</b> (PIO_STATUS_BLOCK) is the address of a
+status block in which the ending status and information will be saved. The event object and
+status block need to be in memory that will persist at least until the operation completes.</p>
+
+<p>If you've created a read or write IRP, you don't need to do anything else before
+submitting the IRP. If you've created another type of IRP, you'll need to complete
+the first stack location with additional parameter information; MajorFunction
+has, however, already been set. You should <i>not</i> set the undocumented field
+Tail.Overlay.OriginalFileObject&#8212;doing so will cause a file object to be incorrectly
+dereferenced on completion. There's probably no reason to set RequestorMode, because
+it's already been initialized to KernelMode and you've already validated any parameters
+you're passing in the IRP. (I'm mentioning these two minor points only because I recall
+reading a published discussion of this service function once upon a time that said you <i>
+should</i> do the two things I just told you not to do.) You can now submit the IRP and wait
+for it to finish:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+PIRP Irp = IoBuildSynchronousFsdRequest(...);
+NTSTATUS status = IoCallDriver(DeviceObject, Irp);
+if (status == STATUS_PENDING)
+  KeWaitForSingleObject(Event, Executive, KernelMode, FALSE, NULL);
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>Once the IRP finishes, you can inspect the ending status and information values in your I/O
+status block.</p>
+
+<p>It's obvious, isn't it, that you must be running at PASSIVE_LEVEL in a nonarbitrary
+thread context before you wait for the operation to complete?</p>
+
+
+<A NAME="173"><H3>Cleaning Up</H3></A>
+
+<p>I said earlier that you needed to plan for how the memory occupied by the IRP would get
+released and that you might have to plan for cancelling an IRP. The first of these two problems
+is quite easy to solve when you use IoBuildSynchronousFsdRequest to build the IRP: the I/O
+Manager will release memory for you automatically as part of completing the IRP. In fact, if
+the request is for a read or write and needs a system buffer or a memory descriptor
+list&#8212;see <A HREF="ch07a.htm">Chapter 7</A>&#8212;the I/O Manager will automatically clean those up, too. The
+overall convenience of this function is a major reason why you might want to call it.</p>
+
+<p>Although cleanup from a synchonous IRP is easy (because you needn't do anything about
+it), planning for cancellation is anything but. Read on&#8230;</p>
+
+
+<A NAME="174"><H3>Cancelling a Synchronous IRP</H3></A>
+
+<p>Only two entities in the system are allowed to cancel IRPs. One entity is the I/O Manager
+code that implements so-called <i>thread rundown</i> when a thread terminates while I/O
+requests are still outstanding. The other entity is the driver that originated the IRP in the
+first place. But great care is required to avoid an obscure, low-probability problem. Just for
+the sake of illustration, suppose that you wanted to impose an overall 5-second timeout on an
+I/O operation. If the time period elapses, you want to cancel the operation. Here is some naive
+code that, you might suppose, would execute this plan:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+SomeFunction()
+  {
+  KEVENT event;
+  IoInitializeEvent(&amp;event, ...);
+  PIRP Irp = IoBuildSynchronousFsdRequest(...);
+  NTSTATUS status = IoCallDriver(DeviceObject, Irp);
+  if (status == STATUS_PENDING)
+    {
+    LARGE_INTEGER timeout;
+    timeout.QuadPart = -5 * 10000000;
+    if (KeWaitForSingleObject(&amp;event, Executive, KernelMode,
+      FALSE, &amp;timeout) == STATUS_TIMEOUT)
+      {
+      IoCancelIrp(Irp);  // <img src="images/tlarrow.jpg" width=13 height=12 border="0"> don't do this!
+      KeWaitForSingleObject(&amp;event, Executive, KernelMode, FALSE, NULL);
+      }
+    }
+  }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The second call to <b>KeWaitForSingleObject</b> makes sure that the event object doesn't
+pass out of scope before the I/O Manager is done using it. Whoever owns the IRP is supposed to
+complete it quickly, so any inordinate delay that might happen at this point is somebody
+else's bug. (Easy for you and me to say, huh?)</p>
+
+<p>The problem with the preceding code is truly miniscule. Imagine that someone manages to call
+IoCompleteRequest for this IRP right around the same time we decide to cancel it by calling
+IoCancelIrp. Maybe the operation finishes shortly after the 5second timeout terminates the
+first KeWaitForSingleObject, for example. IoCompleteRequest initiates a process that finishes
+with a call to IoFreeIrp. If the call to IoFreeIrp were to happen before IoCancelIrp is done
+mucking about with the IRP, you can see that IoCancelIrp could inadvertently corrupt memory
+when it touches the CancelIrql, Cancel, and CancelRoutine fields of the IRP. It's also
+possible, depending on the exact sequence of events, for IoCancelIrp to call a cancel routine,
+just before someone clears the CancelRoutine pointer in preparation for completing the IRP, and
+for the cancel routine to be in a race with the completion process.</p>
+
+<p>It's very unlikely that the scenario I just described will happen. But, as James Thurber
+once said in connection with the chances of being eaten by a tiger on Main Street (one in a
+million, as I recall), &quot;Once is enough.&quot; This kind of bug is almost impossible to
+find, so you want to prevent it if you can. In current releases of Windows 98 and Windows 2000,
+a common technique relies on the fact that the call to IoFreeIrp happens in the context of an
+APC in the thread that originates the IRP. You make sure you're in that same thread, raise
+IRQL to APC_LEVEL, check whether the IRP has been completed yet, and (if not) call IoCancelIrp.
+In current systems, you can be sure of blocking the APC and the problematic call to IoFreeIrp.
+See the USBCAMD sample in the DDK, for example. I've also seen this technique discussed
+extensively on line and in a technical note on Compuware Numega's Web site.</p>
+
+<p>You should not rely on future releases of Windows always using an APC to perform the cleanup
+for an IRP. Consequently, you should not rely on boosting IRQL to APC_LEVEL as a way to avoid a
+race between IoCancelIrp and IoFreeIrp. By &quot;should not&quot; here, I really mean to say
+that the operating system might conceivably change in some hypothetical future release in such
+a way that this technique will no longer suffice to guard against the race. Wink, wink, if you
+get my drift. So, I'll show you another approach.</p>
+
+<p>The key thing we need to accomplish in a solution to the race is to prevent the call to
+IoFreeIrp from happening until after any possible call to IoCancelIrp. We do this by means of a
+completion routine that returns STATUS_MORE_PROCESSING_REQUIRED, as follows:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+SomeFunction()
+  {
+  KEVENT event;
+  IoInitializeEvent(&amp;event, ...);
+  PIRP Irp = IoBuildSynchronousFsdRequest(...);
+  <b>IoSetCompletionRoutine(Irp, OnComplete, (PVOID) &amp;event, TRUE, TRUE,
+    TRUE);</b> 
+  NTSTATUS status = IoCallDriver(...);
+  if (status == STATUS_PENDING)
+    {
+    LARGE_INTEGER timeout;
+    timeout.QuadPart = -5 * 10000000;
+    if (KeWaitForSingleObject(&amp;event, Executive, KernelMode,
+      FALSE, &amp;timeout) == STATUS_TIMEOUT)
+      {
+      IoCancelIrp(Irp);  // <img src="images/tlarrow.jpg" width=13 height=12 border="0"> okay in this context
+      KeWaitForSingleObject(&amp;event, Executive, KernelMode, FALSE, NULL);
+      }
+    }
+ <b> KeClearEvent(&amp;event);
+  IoCompleteRequest(Irp, IO_NO_INCREMENT);
+  KeWaitForSingleObject(&amp;event, Executive, KernelMode, FALSE, NULL);</b> 
+  }
+
+<b>NTSTATUS OnComplete(PDEVICE_OBJECT junk, PIRP Irp, PVOID pev)
+  {
+  KeSetEvent((PKEVENT) pev, IO_NO_INCREMENT, FALSE);
+  return STATUS_MORE_PROCESSING_REQUIRED;
+  }</b> 
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The new code in boldface prevents the race. Suppose IoCallDriver returns STATUS_PENDING. 
+In a normal case, the operation will complete normally, and some lower-level driver
+will call IoCompleteRequest. Our completion routine gains control and signals the event on
+which our mainline is waiting. Since the completion routine returns
+STATUS_MORE_PROCESSING_REQUIRED, IoCompleteRequest will then stop working on this IRP. We
+eventually regain control in our <b>SomeFunction</b> and notice that our wait terminated
+normally. The IRP hasn't yet been cleaned up, though, so we need to call IoCompleteRequest
+<i>a second time</i> to trigger the normal cleanup mechanism. We still need to make sure that
+our event object doesn't pass out of scope too soon, though, so we need to perform a second
+wait on our event object.</p>
+
+<p>Now suppose we decide we want to cancel the IRP and that Thurber's tiger is loose so we
+have to worry about the IRP being IoFreeIrp'ed out from under us. Our completion routine
+will prevent the cleanup mechanism from running by returning STATUS_MORE_PROCESSING_REQUIRED.
+IoCancelIrp can stomp away to its heart's content on our hapless IRP without causing any
+harm. The IRP can't be released until the second call to IoCompleteRequest from our
+mainline, and that can't happen until IoCancelIrp has safely returned.</p>
+
+
+<A NAME="175"><H2>Using IoAllocateIrp</H2></A>
+
+<p>If you're willing to work a little harder, you can use <b>IoAllocateIrp</b> to build an
+IRP of any type:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+PIRP Irp = IoAllocateIrp(StackSize, ChargeQuota);
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>where <b>StackSize</b> (CCHAR) is the number of I/O stack locations to allocate with the
+IRP, and <b>ChargeQuota</b> (BOOLEAN) indicates whether the process quota should be charged for
+the memory allocation. Normally, you get the StackSize parameter from the device object to
+which you're going to send the IRP, and you specify FALSE for the ChargeQuota argument. For
+example:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+PDEVICE_OBJECT DeviceObject;
+PIRP Irp = IoAllocateIrp(DeviceObject-&gt;StackSize, FALSE);
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>When you use IoAllocateIrp, you must install a completion routine, and it must return
+STATUS_MORE_PROCESSING_REQUIRED. Furthermore, you're responsible for releasing the IRP and
+any associated objects. If you don't plan to cancel the IRP, your completion routine might
+look like this:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+NTSTATUS OnComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context)
+  {
+  IoFreeIrp(Irp);
+  return STATUS_MORE_PROCESSING_REQUIRED;
+  }
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>An IRP created by IoAllocateIrp won't be cancelled automatically if the originating
+thread terminates.</p>
+
+
+</BODY>
+</HTML>
+
+
+
+
+

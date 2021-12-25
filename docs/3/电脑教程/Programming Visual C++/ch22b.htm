@@ -1,0 +1,197 @@
+<HTML>
+<HEAD>
+<LINK REL=StyleSheet HREF="basicIE4.css" TYPE="text/css">
+<TITLE>Fundamental DLL Theory</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY>
+<A NAME="469"><H1><B>Fundamental DLL Theory</B></H1></A>
+<P>Before you look at the application framework's support for DLLs, you must understand how Win32 integrates DLLs into your process. You might want to review <A HREF="ch10a.htm">Chapter 10</A> to refresh your knowledge of processes and virtual memory. Remember that a process is a running instance of a program and that the program starts out as an EXE file on disk.
+
+<P>Basically, a DLL is a file on disk (usually with a DLL extension) 
+consisting of global data, compiled functions, and resources, that becomes part of your process. It is compiled to load at a preferred base address, and if there's no conflict with other DLLs, the file gets mapped to the same virtual address in your process. The DLL has various <U>exported</U> functions, and the client program (the program that loaded the DLL in the first place) <U>imports</U> those functions. Windows matches up the imports and exports when it loads the DLL.
+
+<DIV CLASS=note>
+<BLOCKQUOTE>
+<IMG SRC="note.jpg" width=123 height=18 BORDER=0><P>
+Win32 DLLs allow exported global variables as well as functions.</BLOCKQUOTE>
+</div>
+
+<P>In Win32, each process gets its own copy of the DLL's read/write global variables. If you want to share memory among processes, you must either use a memory-mapped file or declare a <U>shared</U> <U>data</U> <U>section</U> as described in Jeffrey Richter's <I>Advanced Windows</I> (Microsoft Press, 1997). Whenever your DLL requests heap memory, that memory is allocated from the client process's heap.
+
+<A NAME="470"><H2><B>How Imports Are Matched to Exports</B></H2></A>
+<P>A DLL contains a table of exported functions. These functions are identified to the outside world by their symbolic names and (optionally) by integers called <U>ordinal</U> <U>numbers</U>. The function table also contains the addresses of the functions within the DLL. When the client program first loads the DLL, it doesn't know the addresses of the functions it needs to call, but it does know the symbols or ordinals. The dynamic linking process then builds a table that connects the client's calls to the function addresses in the DLL. If you edit and rebuild the DLL, you don't need to rebuild your client program unless you have changed function names or parameter sequences.
+
+<DIV CLASS=note>
+<BLOCKQUOTE>
+<IMG SRC="note.jpg" width=123 height=18 BORDER=0><P>
+In a simple world, you'd have one EXE file that imports functions from one or more DLLs. In the real world, many DLLs call functions inside other DLLs. Thus, a particular DLL can have both exports and imports. This is not a problem because the dynamic linkage process can handle cross-dependencies.</BLOCKQUOTE>
+</div>
+
+<P>In the DLL code, you must explicitly declare your exported functions like this:
+
+<P><pre>
+__declspec(dllexport) int MyFunction(int n);
+</pre>
+
+<P>(The alternative is to list your exported functions in a module-definition [DEF] file, but that's usually more troublesome.) On the client side, you need to declare the corresponding imports like this:
+
+<P><pre>
+__declspec(dllimport) int MyFunction(int n);
+</pre>
+
+<P>If you're using C++, the compiler generates a <U>decorated</U> name for <I>MyFunction</I> that other languages can't use. These decorated names are the long names the compiler invents based on class name, function name, and parameter types. They are listed in the project's MAP file. If you want to use the plain name <I>MyFunction</I>, you have to write the declarations this way:
+
+<P><pre>
+extern &quot;C&quot; __declspec(dllexport) int MyFunction(int n);
+extern &quot;C&quot; __declspec(dllimport) int MyFunction(int n);
+</pre>
+
+<DIV CLASS=note>
+<BLOCKQUOTE>
+<IMG SRC="note.jpg" width=123 height=18 BORDER=0><P>
+By default, the compiler uses the _<I>_cdecl</I> argument passing convention, which means that the calling program pops the parameters off the stack. Some client languages might require the _<I>_stdcall</I> convention, which replaces the Pascal calling convention, and which means that the called function pops the stack. Therefore, you might have to use the _<I>_stdcall</I> modifier in your DLL export declaration.</BLOCKQUOTE>
+</div>
+
+<P>Just having import declarations isn't enough to make a client link to a DLL. The client's project must specify the import library (LIB) to the linker, <U>and</U> the client program must actually contain a call to at least one of the DLL's imported functions. That call statement must be in an executable path in the program.
+
+<A NAME="471"><H2><B>Implicit Linkage vs. Explicit Linkage</B></H2></A>
+<P>The preceding section primarily describes <U>implicit</U> <U>linking</U>, which is what you as a C++ programmer will probably be using for your DLLs. When you build a DLL, the linker produces a companion import LIB file, which contains every DLL's exported symbols and (optionally) ordinals, but no code. The LIB file is a surrogate for the DLL that is added to the client program's project.  When you build (statically link) the client, the imported symbols are matched to the exported symbols in the LIB file, and those symbols (or ordinals) are bound into the EXE file. The LIB file also contains the DLL filename (but not its full pathname), which gets stored inside the EXE file. When the client is loaded, Windows finds and loads the DLL and then dynamically links it by symbol or by ordinal.
+
+<P><U>Explicit</U> <U>linking</U> is more appropriate for interpreted languages such as Microsoft Visual Basic, but you can use it from C++ if you need to. With explicit linking, you don't use an import file; instead, you call the Win32 <I>LoadLibrary</I> function, specifying the DLL's pathname as a parameter. <I>LoadLibrary</I> returns an <I>HINSTANCE</I> parameter that you can use in a call to <I>GetProcAddress</I>, which converts a symbol (or an ordinal) to an address inside the DLL. Suppose you have a DLL that exports a function such as this:
+
+<P><pre>
+extern &quot;C&quot; __declspec(dllexport) double SquareRoot(double d);
+</pre>
+
+<P>Here's an example of a client's explicit linkage to the function:
+
+<P><pre>
+typedef double (SQRTPROC)(double);
+HINSTANCE hInstance;
+SQRTPROC* pFunction;
+VERIFY(hInstance = ::LoadLibrary(&quot;c:\\winnt\\system32\\mydll.dll&quot;));
+VERIFY(pFunction = (SQRTPROC*)::GetProcAddress(hInstance, &quot;SquareRoot&quot;));
+double d = (*pFunction)(81.0); // Call the DLL function
+</pre>
+
+<P>With implicit linkage, all DLLs are loaded when the client is loaded, 
+but with explicit linkage, you can determine when DLLs are loaded and 
+unloaded. Explicit linkage allows you to determine at runtime which DLLs to load. You could, for example, have one DLL with string resources in English and 
+another with string resources in Spanish. Your application would load the 
+appropriate DLL after the user chose a language.
+
+<A NAME="472"><H2><B>Symbolic Linkage vs. Ordinal Linkage</B></H2></A>
+<P>In Win16, the more efficient ordinal linkage was the preferred linkage 
+option. In Win32, the symbolic linkage efficiency was improved. Microsoft now 
+recommends symbolic over ordinal linkage. The DLL version of the MFC 
+library, however, uses ordinal linkage. A typical MFC program might link to 
+hundreds of functions in the MFC DLL. Ordinal linkage permits that program's EXE file to be smaller because it does not have to contain the long symbolic names of its imports. If you build your own DLL with ordinal linkage, you must 
+specify the ordinals in the project's DEF file, which doesn't have too many other uses in the Win32 environment. If your exports are C++ functions, you must use decorated names in the DEF file (or declare your functions with 
+<I>extern &quot;C&quot;</I>)<I>.</I> Here's a short extract from one of the MFC library DEF files:
+
+<P><pre>
+?ReadList@CRecentFileList@@UAEXXZ @ 5458 NONAME
+?ReadNameDictFromStream@CPropertySection@@QAEHPAUIStream@@@Z @ 5459 NONAME
+?ReadObject@CArchive@@QAEPAVCObject@@PBUCRuntimeClass@@@Z @ 5460 NONAME
+?ReadString@CArchive@@QAEHAAVCString@@@Z @ 5461 NONAME
+?ReadString@CArchive@@QAEPADPADI@Z @ 5462 NONAME
+?ReadString@CInternetFile@@UAEHAAVCString@@@Z @ 5463 NONAME
+?ReadString@CInternetFile@@UAEPADPADI@Z @ 5464 NONAME
+</pre>
+
+<P>The numbers after the <U>at</U> (@) symbols are the ordinals. (Kind of makes 
+you want to use symbolic linkage instead, doesn't it?)
+
+<A NAME="473"><H2><B>The DLL Entry Point&#151;<I>DllMain</I></B></H2></A>
+<P>By default, the linker assigns the main entry point 
+<I>_DllMainCRTStartup</I> to your DLL. When Windows loads the DLL, it calls this function, which first calls 
+the constructors for global objects and then calls the global function 
+<I>DllMain</I>, which you're supposed to write. 
+<I>DllMain</I> is called not only when the DLL is 
+attached to the process but also when it is detached (and at other times as well). Here 
+is a skeleton <I>DllMain</I> function:
+
+<P><pre>
+HINSTANCE g_hInstance;
+extern &quot;C&quot; int APIENTRY
+    DllMain(HINSTANCE hInstance, DWORD dwReason, LPVOID lpReserved)
+{
+    if (dwReason == DLL_PROCESS_ATTACH)
+    {
+        TRACE0(&quot;EX22A.DLL Initializing!\n&quot;);
+        // Do initialization here
+    }
+    else if (dwReason == DLL_PROCESS_DETACH)
+    {
+        TRACE0(&quot;EX22A.DLL Terminating!\n&quot;);
+        // Do cleanup here
+    }
+    return 1;   // ok
+}
+</pre>
+
+<P>If you don't write a <I>DllMain</I> function for your DLL, a do-nothing 
+version is brought in from the runtime library.
+
+<P>The <I>DllMain</I> function is also called when individual threads are started and terminated, as indicated by the <I>dwReason</I> parameter. Richter's book tells you all you need to know about this complex subject.
+
+<A NAME="474"><H2><B>Instance Handles&#151;Loading Resources</B></H2></A>
+<P>Each DLL in a process is identified by a unique 32-bit 
+<I>HINSTANCE</I> value. In addition, the process 
+itself has an <I>HINSTANCE</I> value. All these instance 
+handles are valid only within a particular process, and they represent the starting 
+virtual address of the DLL or EXE. In Win32, the 
+<I>HINSTANCE </I>and <I>HMODULE </I>values are the same and the types can be used interchangeably. The process 
+(EXE) instance handle is almost always 0x400000, and the handle for a DLL 
+loaded at the default base address is 0x10000000. If your program uses several 
+DLLs, each will have a different <I>HINSTANCE</I> value, either because the DLLs 
+had different base addresses specified at build time or because the loader copied 
+and relocated the DLL code.
+
+<P>Instance handles are particularly important for loading resources. 
+The Win32 <I>FindResource</I> function takes an 
+<I>HINSTANCE</I> parameter. EXEs and DLLs can each have their own resources. If you want a resource from the 
+DLL, you specify the DLL's instance handle. If you want a resource from the 
+EXE file, you specify the EXE's instance handle.
+
+<P>How do you get an instance handle? If you want the EXE's handle, 
+you call the Win32 <I>GetModuleHandle</I> function with a <I>NULL</I> parameter. If you want the DLL's handle, you call the Win32 <I>GetModuleHandle</I> function with the DLL name as a parameter. Later you'll see that the MFC library has its own method of loading resources by searching various modules in sequence.
+
+<A NAME="475"><H2><B>How the Client Program Finds a DLL</B></H2></A>
+<P>If you link explicitly with <I>LoadLibrary</I>, you can specify the DLL's full 
+pathname. If you don't specify the pathname, or if you link implicitly, Windows 
+follows this search sequence to locate your DLL:
+
+<OL>
+<P><LI>The directory containing the EXE file
+
+<P><LI>The process's current directory
+
+<P><LI>The Windows system directory
+
+<P><LI>The Windows directory
+
+<P><LI>The directories listed in the Path environment variable
+</ol>
+
+<P>Here's a trap you can easily fall into. You build a DLL as one project, 
+copy the DLL file to the system directory, and then run the DLL from a client 
+program. So far, so good. Next you rebuild the DLL with some changes, but 
+you forget to copy the DLL file to the system directory. The next time you run 
+the client program, it loads the old version of the DLL. Be careful!
+
+<A NAME="476"><H2><B>Debugging a DLL</B></H2></A>
+<P>Visual C++ makes debugging a DLL easy. Just run the debugger from the 
+DLL project. The first time you do this, the debugger asks for the pathname of 
+the client EXE file. Every time you &quot;run&quot; the DLL from the debugger after this, the debugger loads the EXE, but the EXE uses the search sequence to find the DLL. This means that you must either set the Path environment variable to point to the DLL or copy the DLL to a directory in the search sequence.
+
+</BODY>
+</HTML>
+
+
+

@@ -1,0 +1,262 @@
+<HTML>
+<HEAD>
+<TITLE>Dynamic TLS</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch21a.htm">[Previous]</A> <A HREF="ch21c.htm">[Next]</A><P>
+
+<A NAME="282"><H1>Dynamic TLS</H1></A>
+
+<p>An application takes advantage of dynamic TLS by calling a set of
+four functions. These functions are actually most often used by DLLs.
+Figure 21-1 shows the internal data structures that Windows uses for
+managing TLS.</p>
+
+<p>The figure shows a single set of in-use flags for each process
+running in the system. Each flag is set to either FREE or INUSE,
+indicating whether the TLS slot is in use. Microsoft guarantees that at
+least TLS_MINIMUM_AVAILABLE bit flags are available. By the way, 
+TLS_MINIMUM_AVAILABLE is defined as 64 in WinNT.h. Windows 2000 has 
+expanded this flag array to allow more than 1000 TLS slots! This should 
+be more than enough slots for any application.</p>
+
+<p>To use dynamic TLS, you must first call <i>TlsAlloc</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+DWORD TlsAlloc();
+</pre></td></tr></table></p>
+
+<p>
+<A HREF="javascript:fullSize('F21SI01x.htm')"> <img src="images/F21SI01.JPG" width=404 height=262 border=0 ALT="Click to view at full size."> </A>
+</p><p>
+<!-- CAPTION --><b>Figure 21-1.</b> <i>Internal data structures that manage TLS</i><!-- /CAPTION -->
+</p>
+
+<p>This function instructs the system to scan the bit flags in the
+process and locate a FREE flag. The system then changes the flag from
+FREE to INUSE, and <i>TlsAlloc</i> returns the index of the flag in the
+bit array. A DLL (or an application) usually saves the index in a
+global variable. This is one of those times when a global variable is
+actually the better choice because the value is used on a per-process
+basis rather than a per-thread basis.</p>
+
+<p>If <i>TlsAlloc</i> cannot find a FREE flag in the list, it returns
+TLS_OUT_OF_INDEXES (defined as 0xFFFFFFFF in WinBase.h). The first time <i>
+TlsAlloc</i> is called, the system recognizes that the first flag is
+FREE and changes the flag to INUSE and <i>TlsAlloc</i> returns 0.
+That's 99 percent of what <i>TlsAlloc</i> does. I'll get to the
+other 1 percent later.</p>
+
+<p>When a thread is created, an array of TLS_MINIMUM_AVAILABLE PVOID
+values is allocated, initialized to 0, and associated with the thread
+by the system. As Figure 21-1 shows, each thread gets its own array and
+each PVOID in the array can store any value.</p>
+
+<p>Before you can store information in a thread's PVOID array, you
+must know which index in the array is available for use&#8212;this is
+what the earlier call to <i>TlsAlloc</i> is for. Conceptually, <i>
+TlsAlloc</i> reserves an index for you. If <i>TlsAlloc</i> returns
+index 3, it is effectively saying that index 3 is reserved for you in
+every thread currently executing in the process as well as in any
+threads that might be created in the future.</p>
+
+<p>To place a value in a thread's array, you call the <i>
+TlsSetValue</i> function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL TlsSetValue(
+   DWORD dwTlsIndex, 
+   PVOID pvTlsValue);
+</pre></td></tr></table></p>
+
+<p>This function puts a PVOID value, identified by the <i>
+pvTlsValue</i> parameter, into the thread's array at the index
+identified by the <i>dwTlsIndex</i> parameter. The value of <i>
+pvTlsValue</i> is associated with the thread making the call to <i>
+TlsSetValue</i>. If the call is successful, TRUE is returned.</p>
+
+<p>A thread changes its own array when it calls <i>TlsSetValue</i>. But
+it cannot set a TLS value for another thread. I wish that there were
+another <i>Tls</i> function that allowed one thread to store data in
+another thread's array, but no such function exists. Currently, the
+only way to pass data from one thread to another is to pass a single
+value to <i>CreateThread</i> or <i>_beginthreadex</i>, which then
+passes the value to the thread function as its only parameter.</p>
+
+<p>When you call <i>TlsSetValue</i>, you should always pass an index
+returned from an earlier call to <i>TlsAlloc</i>. Microsoft designed
+these functions to be as fast as possible and, in so doing, gave up
+error checking. If you pass an index that was never allocated by a call
+to <i>TlsAlloc</i>, the system stores the value in the thread's
+array anyway&#8212;no error check is performed.</p>
+
+<p>To retrieve a value from a thread's array, you call <i>
+TlsGetValue</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+PVOID TlsGetValue(DWORD dwTlsIndex);
+</pre></td></tr></table></p>
+
+<p>This function returns the value that was associated with the TLS
+slot at index <i>dwTlsIndex</i>. Like <i>TlsSetValue</i>, <i>
+TlsGetValue</i> looks only at the array that belongs to the calling
+thread. And again like <i>TlsSetValue</i>, <i>TlsGetValue</i> does not
+perform any test to check the validity of the passed index.</p>
+
+<p>When you come to a point in your process where you no longer need to
+reserve a TLS slot among all threads, you should call <i>
+TlsFree</i>:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL TlsFree(DWORD dwTlsIndex);
+</pre></td></tr></table></p>
+
+<p>This function simply tells the system that this slot no longer needs
+to be reserved. The INUSE flag managed by the process's bit flags
+array is set to FREE again and might be allocated in the future if a
+thread later calls <i>TlsAlloc</i>. <i>TlsFree</i> returns TRUE if the
+function is successful. Attempting to free a slot that was not
+allocated results in an error.</p>
+
+
+<A NAME="283"><H2>Using Dynamic TLS</H2></A>
+
+<p>Usually, if a DLL uses TLS, it calls <i>TlsAlloc</i> when its <i>
+DllMain</i> function is called with DLL_PROCESS_ATTACH, and it calls
+<i>TlsFree</i> when <i>DllMain</i> is called with DLL_PROCESS_DETACH.
+The calls to <i>TlsSetValue</i> and <i>TlsGetValue</i> are most likely
+made during calls to functions contained within the DLL.</p>
+
+<p>One method for adding TLS to an application is to add it when you
+need it. For example, you might have a function in a DLL that works
+similarly to <i>strtok</i>. The first time your function is called, the
+thread passes a pointer to a 40-byte structure. You must save this
+structure so that future calls can reference it. You might code your
+function like this:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+DWORD g_dwTlsIndex; // Assume that this is initialized
+                    // with the result of a call to TlsAlloc.
+
+<img src="images/grayvellip.JPG" width=3 height=13 border="0">
+
+void MyFunction(PSOMESTRUCT pSomeStruct) {
+   if (pSomeStruct != NULL) {
+      // The caller is priming this function.
+
+      // See if we already allocated space to save the data.
+      if (TlsGetValue(g_dwTlsIndex) == NULL) {
+         // Space was never allocated. This is the first
+         // time this function has ever been called by this thread.
+         TlsSetValue(g_dwTlsIndex,
+            HeapAlloc(GetProcessHeap(), 0, sizeof(*pSomeStruct));
+      }
+
+      // Memory already exists for the data; 
+      // save the newly passed values.
+      memcpy(TlsGetValue(g_dwTlsIndex), pSomeStruct,
+         sizeof(*pSomeStruct));
+
+   } else {
+
+      // The caller already primed the function. Now it
+      // wants to do something with the saved data.
+
+      // Get the address of the saved data.
+      pSomeStruct = (PSOMESTRUCT) TlsGetValue(g_dwTlsIndex);
+
+      // The saved data is pointed to by pSomeStruct; use it.
+
+      <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+
+   }
+</pre></td></tr></table></p>
+
+<p>If the application's thread never calls <i>MyFunction</i>, a
+memory block is never allocated for the thread.</p>
+
+<p>It might seem that 64 TLS locations are more than you'll ever need.
+However, keep in mind that an application can dynamically link to
+several DLLs. One DLL can allocate 10 TLS indexes, a second DLL can
+allocate 5 indexes, and so on. So it is always best to reduce the
+number of TLS indexes you need. The best way to do this is to use the
+same method that <i>MyFunction</i> uses above. Sure, I
+can save all 40 bytes in multiple TLS indexes, but doing so is not only
+wasteful, it makes working with the data difficult. Instead, you should
+allocate a memory block for the data and simply save the pointer in a
+single TLS index just as <i>MyFunction</i> does. As I mentioned
+earlier, Windows 2000 allows for more than 1000 TLS slots. Microsoft
+increased this limit because many developers took a cavalier attitude
+toward using the slots, which denied slots to other DLLs and caused
+them to fail.</p>
+
+<p>When I discussed the <i>TlsAlloc</i> function earlier, I described
+only 99 percent of what it did. To help you understand the remaining 1
+percent, look at this code fragment:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+DWORD dwTlsIndex;
+PVOID pvSomeValue;
+
+      <img src="images/grayvellip.JPG" width=3 height=13 border="0">
+
+dwTlsIndex = TlsAlloc();
+TlsSetValue(dwTlsIndex, (PVOID) 12345);
+TlsFree(dwTlsIndex);
+
+// Assume that the dwTlsIndex value returned from
+// this call to TlsAlloc is identical to the index
+// returned by the earlier call to TlsAlloc.
+dwTlsIndex = TlsAlloc();
+
+pvSomeValue = TlsGetValue(dwTlsIndex);
+</pre></td></tr></table></p>
+
+<p>What do you think <i>pvSomeValue</i> contains after this code
+executes? 12345? The answer is 0. <i>TlsAlloc</i>, before returning,
+cycles through every thread in the process and places 0 in each
+thread's array at the newly allocated index.</p>
+
+<p>This is fortunate because an application might call <i>LoadLibrary</i>
+to load a DLL, and the DLL might call <i>TlsAlloc</i> to allocate an
+index. Then the thread might call <i>FreeLibrary</i> to remove the DLL.
+The DLL should free its index with a call to <i>TlsFree</i>, but who
+knows which values the DLL code placed in any of the thread's
+arrays? Next, a thread calls <i>LoadLibrary</i> to load a different DLL
+into memory. This DLL also calls <i>TlsAlloc</i> when it starts and
+gets the same index used by the previous DLL. If <i>TlsAlloc</i>
+didn't set the returned index for all threads in the process, a
+thread might see an old value and the code might not execute
+correctly.</p>
+
+<p>For example, this new DLL might want to check whether memory for a
+thread has ever been allocated by calling <i>TlsGetValue</i>, as in the
+code fragment above. If <i>TlsAlloc</i> doesn't clear out the
+array entry for every thread, the old data from the first DLL is still
+available. If a thread calls <i>MyFunction</i>, <i>MyFunction</i>
+thinks that a memory block has already been allocated and calls <i>
+memcpy</i> to copy the new data into what it thinks is a memory block.
+This could have disastrous results, but fortunately <i>TlsAlloc</i>
+initializes the array elements so that such a disaster can never
+happen.</p>
+
+
+</BODY>
+</HTML>
+
+
+
+
+
+

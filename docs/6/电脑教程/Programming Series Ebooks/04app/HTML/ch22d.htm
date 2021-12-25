@@ -1,0 +1,874 @@
+<HTML>
+<HEAD>
+<TITLE>Injecting a DLL Using Windows Hooks</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch22c.htm">[Previous]</A> <A HREF="ch22e.htm">[Next]</A><P>
+
+<A NAME="288"><H1>Injecting a DLL Using Windows Hooks</H1></A>
+
+<p>You can inject a DLL into a process's address space using hooks.
+To get hooks to work as they do in 16-bit Windows, Microsoft was forced
+to devise a mechanism that allows a DLL to be injected into the address
+space of another process.</p>
+
+<p>Let's look at an example. Process A (a utility similar to
+Microsoft Spy++) installs a WH_GETMESSAGE hook to see messages
+processed by windows in the system. The hook is installed by calling
+<i>SetWindowsHookEx</i> as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HHOOK hHook = SetWindowsHookEx(WH_GETMESSAGE, GetMsgProc, 
+   hinstDll, 0);
+</pre></td></tr></table></p>
+
+<p>The first parameter, <i>WH_GETMESSAGE</i>, indicates the type of
+hook to install. The second parameter, <i>GetMsgProc</i>, identifies
+the address (in your address space) of the function that the system
+should call when a window is about to process a message. The third
+parameter, <i>hinstDll</i>, identifies the DLL that contains the <i>
+GetMsgProc</i> function. In Windows, a DLL's <i>hinstDll</i> value
+identifies the virtual memory address where the DLL is mapped into the
+process's address space. The last parameter, <i>0</i>, identifies
+the thread to hook. It is possible for one thread to call <i>
+SetWindowsHookEx</i> and to pass the ID of another thread in the
+system. By passing <i>0</i> for this parameter, we tell the system that
+we want to hook all GUI threads in the system.</p>
+
+<p>Now let's take a look at what happens:</p>
+
+<ol>
+<p><li> A thread in Process B prepares to dispatch a message to a
+window.</li></p>
+
+<p><li> The system checks to see whether a WH_GETMESSAGE hook is
+installed on this thread.</li></p>
+
+<p><li> The system checks to see whether the DLL containing the <i>
+GetMsgProc</i> function is mapped into Process B's address
+space.</li></p>
+
+<p><li> If the DLL has not been mapped, the system forces the DLL to be
+mapped into Process B's address space and increments a lock count
+on the DLL's mapping in Process B.</li></p>
+
+<p><li> The system looks at the DLL's <i>hinstDll</i> as it applies
+to Process B and checks to see whether the DLL's <i>hinstDll</i> is
+at the same location as it is when it applies to Process A.</li></p>
+</ol>
+
+<p>If the <i>hinstDll</i>s are the same, the memory address of the <i>
+GetMsgProc</i> function is also the same in the two process address
+spaces. In this case, the system can simply call the <i>GetMsgProc</i>
+function in Process A's address space.</p>
+
+<p>If the <i>hinstDll</i>s are different, the system must determine the
+virtual memory address of the <i>GetMsgProc</i> function in Process
+B's address space. This address is determined using the following
+formula:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+GetMsgProc B = hinstDll B + (GetMsgProc A _ hinstDll A)
+</pre></td></tr></table></p>
+
+<p>By subtracting <i>hinstDll</i> A from <i>GetMsgProc</i> A, you get
+the offset in bytes for the <i>GetMsgProc</i> function. Adding this
+offset to <i>hinstDll</i> B gives the location of the <i>GetMsgProc</i>
+function as it applies to the DLL's mapping in Process B's
+address space.</p>
+
+<ol>
+<p><li value="6"> The system increments a lock count on the DLL's mapping in
+Process B.</li></p>
+
+<p><li> The system calls the <i>GetMsgProc</i> function in Process
+B's address space.</li></p>
+
+<p><li> When <i>GetMsgProc</i> returns, the system decrements a lock
+count on the DLL's mapping in Process B.</li></p>
+</ol>
+
+<p>Note that when the system injects or maps the DLL containing the
+hook filter function, the whole DLL is mapped, not just the hook filter
+function. This means that any and all functions contained in the DLL
+now exist and can be called from threads running in Process B's
+context.</p>
+
+<p>So, to subclass a window created by a thread in another process, you
+can first set a WH_GETMESSAGE hook on the thread that created the
+window, and then, when the <i>GetMsgProc</i> function is called, call
+<i>SetWindowLongPtr</i> to subclass the window. Of course, the subclass
+procedure must be in the same DLL as the <i>GetMsgProc</i>
+function.</p>
+
+<p>Unlike the Registry method of injecting a DLL, this method allows
+you to unmap the DLL when it is no longer needed in the other
+process's address space by simply calling the following:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+BOOL UnhookWindowsHookEx(HHOOK hhook);
+</pre></td></tr></table></p>
+
+<p>When a thread calls the <i>UnhookWindowsHookEx</i> function, the
+system cycles through its internal list of processes into which it had
+to inject the DLL and decrements the DLL's lock count. When the
+lock count reaches 0, the DLL is automatically unmapped from the
+process's address space. You'll recall that just before the
+system calls the <i>GetMsgProc</i> function, it increments the
+DLL's lock count. (See step 6 above.) This prevents a memory access
+violation. If this lock count is not incremented, another thread
+running in the system can call <i>UnhookWindowsHookEx</i> while Process
+B's thread attempts to execute the code in the <i>GetMsgProc</i>
+function.</p>
+
+<p>All of this means that you can't subclass the window and
+immediately unhook the hook. The hook must stay in effect for the
+lifetime of the subclass.</p>
+
+<A NAME="289"><H2>The Desktop Item Position Saver (DIPS) Utility </H2></A>
+
+<p>The DIPS.exe application, listed in Figure 22-2, uses windows hooks to inject a DLL into Explorer.exe's
+address space. The source code and resource files for the application
+and DLL are in the 22-DIPS and 22-DIPSLib directories on the companion
+CD-ROM.</p>
+
+<p>I generally use my computer for business-related tasks, and I find
+that a screen resolution of 1152 x 864 works best for me. However, I
+occasionally play games on my computer, and most games are designed for
+640 x 480 resolution. So when I feel like playing a game, I go to the
+Control Panel's Display applet and change the resolution to 640 x
+480. When I'm done playing the game, I go back to the Display
+applet and change the resolution back to 1152 x 864.</p>
+
+<p>This ability to change the display resolution on the fly is awesome
+and a welcome feature of Windows. However, I do despise one thing about
+changing the display resolution: the desktop icons don't remember
+where they were. I have several icons on my desktop to access
+applications immediately and to get to files that I use frequently. I
+have these icons positioned on my desktop just so. When I change the
+display resolution, the desktop window changes size and my icons are
+rearranged in a way that makes it impossible for me to find anything.
+Then, when I change the display resolution back, all my icons are
+rearranged again, in some new order. To fix this, I have to manually
+reposition all the desktop icons back to the way I like them&#8212;how
+annoying!</p>
+
+<p>I hated manually rearranging these icons so much that I created the
+Desktop Item Position Saver utility, DIPS. DIPS consists of a small
+executable and a small DLL. When you run the executable, the following
+message box appears.</p>
+
+<p>
+<img src="images/G22si02.JPG" width=318 height=179 border="0">
+</p>
+
+<p>This message box shows how to use the utility. When you pass S as
+the command-line argument to DIPS, it creates the following registry
+subkey and adds a value for each item on your desktop window:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+HKEY_CURRENT_USER\Software\Richter\Desktop Item Position Saver
+</pre></td></tr></table></p>
+
+<p>Each item has a position value saved with it. You run DIPS S just
+before you change the screen resolution to play a game. When you're
+done playing the game, you change the screen resolution back to normal
+and run DIPS R<i>.</i> This causes DIPS to open the registry subkey,
+and for each item on your desktop that matches an item saved in the
+registry, the item's position is set back to where it was when you
+ran DIPS S<i>.</i></p>
+
+<p>At first, you might think that DIPS would be fairly easy to
+implement. After all, you simply get the window handle of the
+desktop's ListView control, send it messages to enumerate the
+items, get their positions, and then save this information in the
+registry. However, if you try this, you'll see that it is not quite
+this simple. The problem is that most common control window messages,
+such as LVM_GETITEM and LVM_GETITEMPOSITION, do not work across process
+boundaries.</p>
+
+<p>Here's why: the LVM_GETITEM message requires that you pass the
+address of an LV_ITEM data structure for the message's <i>
+LPARAM</i> parameter. Because this memory address is meaningful only to
+the process that is sending the message, the process receiving the
+message cannot safely use it. So to make DIPS work as advertised, you
+must inject code into Explorer.exe that sends LVM_GETITEM and
+LVM_GETITEMPOSITION messages successfully to the desktop's ListView
+control.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+You can
+send window messages across process boundaries to interact with
+built-in controls (such as button, edit, static, combo box, list box,
+and so on), but you can't do so with the new common controls. For
+example, you can send a list box control created by a thread in another
+process an LB_GETTEXT message where the <i>LPARAM</i> parameter points
+to a string buffer in the sending process. This works because Microsoft
+checks specifically to see whether an LB_GETTEXT message is being sent,
+and if so, the operating system internally creates memory-mapped files
+and copies the string data across process boundaries.
+
+<p>Why did Microsoft decide to do this for the built-in
+controls and not for the new common controls? The answer is
+portability. In 16-bit Windows, in which all applications run in a
+single address space, one application could send an LB_GETTEXT message to a window created by
+another application. To port these 16-bit applications to Win32 easily,
+Microsoft went to the extra effort of making sure that this still
+works. However, the new common controls do not exist in 16-bit Windows
+and therefore there was no porting issue involved, so Microsoft chose
+not to do the additional work for the common controls.</p>
+</blockquote></div>
+</p>
+
+<p>When you run DIPS.exe, it first gets the window handle of the
+desktop's ListView control:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// The Desktop ListView window is the 
+// grandchild of the ProgMan window.
+hwndLV = GetFirstChild(
+   GetFirstChild(FindWindow(_ _TEXT(&quot;ProgMan&quot;), NULL)));
+</pre></td></tr></table></p>
+
+<p>This code first looks for a window whose class is ProgMan. Even
+though no Program Manager application is running, the new shell creates
+a window of this class for backward compatibility with applications
+that were designed for older versions of Windows. This ProgMan window
+has a single child window whose class is SHELLDLL_DefView. This child
+window also has a single child window whose class is SysListView32.
+This SysListView32 window is the desktop's ListView control window.
+(By the way, I obtained all this information using Spy++.)</p>
+
+<p>Once I have the ListView's window handle, I can determine the ID
+of the thread that created the window by calling <i>
+GetWindowThreadProcessId</i>. I pass this ID to the <i>SetDIPSHook</i>
+function (implemented inside DIPSLib.cpp). <i>SetDIPSHook</i> installs
+a WH_GETMESSAGE hook on this thread and calls the following function to
+force Windows Explorer's thread to wake up:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+PostThreadMessage(dwThreadId, WM_NULL, 0, 0);
+</pre></td></tr></table></p>
+
+<p>Because I have installed a WH_GETMESSAGE hook on this thread, the
+operating system automatically injects my DIPSLib.dll file into
+Explorer's address space and calls my <i>GetMsgProc</i> function.
+This function first checks to see whether it is being called for the
+first time; if so, it creates a hidden window with a caption of
+&quot;Richter DIPS.&quot; Keep in mind that Explorer's thread is
+creating this hidden window. While it does this, the DIPS.exe thread
+returns from <i>SetDIPSHook</i> and then calls this function:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+GetMessage(&amp;msg, NULL, 0, 0);
+</pre></td></tr></table></p>
+
+<p>This call puts the thread to sleep until a message shows up in the
+queue. Even though DIPS.exe does not create any windows of its own, it
+still has a message queue, and messages can be placed in this queue
+only by calling <i>PostThreadMessage</i>. If you look at the code in
+DIPSLib.cpp's <i>GetMsgProc</i> function, you'll see that
+immediately after the call to <i>CreateDialog</i> is a call to <i>
+PostThreadMessage</i> that causes the DIPS.exe thread to wake up again.
+The thread ID was saved in a shared variable inside the <i>
+SetDIPSHook</i> function.</p>
+
+<p>Notice that I use the thread's message queue for thread
+synchronization. There is absolutely nothing wrong with doing this, and
+sometimes it's much easier to synchronize threads in this way
+rather than using the various kernel objects (mutexes, semaphores,
+events, and so on). Windows has a rich API; take advantage of it.</p>
+
+<p>When the thread in the DIPS executable wakes up, it knows that the
+server dialog box has been created and calls <i>FindWindow</i> to get
+the window handle. We now can use window messages to communicate
+between the client (the DIPS applications) and the server (the hidden
+dialog box). Because a thread running inside the context of Windows
+Explorer's process created the dialog box, we do face a few
+limitations on what we can do to Windows Explorer.</p>
+
+<p>To tell our dialog box to save or restore the desktop icon
+positions, we simply send a message:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+// Tell the DIPS window which ListView window to manipulate
+// and whether the items should be saved or restored.
+SendMessage(hwndDIPS, WM_APP, (WPARAM) hwndLV, fSave);
+</pre></td></tr></table></p>
+
+<p>I have coded the dialog box's dialog box procedure to look for
+the WM_APP message. When it receives this message, the <i>WPARAM</i>
+parameter indicates the handle of the ListView control that is to be
+manipulated, and the <i>LPARAM</i> parameter is a Boolean value
+indicating whether the current item positions should be saved to the
+registry or whether the items should be repositioned based on the saved
+information read from the registry.</p>
+
+<p>Because I use <i>SendMessage</i> instead of <i>PostMessage</i>, the
+function does not return until the operation is complete. If you want,
+you can add messages to the dialog's dialog box procedure to give
+the program more control over the Explorer process. When I finish
+communicating with the dialog box and want to terminate the server (so
+to speak), I send a WM_CLOSE message that tells the dialog box to
+destroy itself.</p>
+
+<p>Finally, just before the DIPS application terminates, it calls <i>
+SetDIPSHook</i> again but passes 0 as the thread ID. The 0 is a
+sentinel value that tells the function to unhook the WH_GETMESSAGE
+hook. When the hook is uninstalled, the operating system automatically
+unloads the DIPSLib.dll file from Explorer's address space, which
+means that the dialog box's dialog box procedure is no longer
+inside Explorer's address space. It is important that the dialog
+box be destroyed first, before the hook is uninstalled; otherwise, the
+next message received by the dialog box causes Explorer's thread to
+raise an access violation. If this happens, Explorer is terminated by
+the operating system. You must be very careful when using DLL
+injection!</p>
+<p>
+<b>Figure 22-2.</b> <i>The DIPS utility</i>
+</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+
+<p><b>Dips.cpp</b></p>
+
+<PRE>
+/******************************************************************************
+Module:  DIPS.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#include &quot;..\CmnHdr.h&quot;     /* See Appendix A. */
+#include &lt;WindowsX.h&gt;
+#include &lt;tchar.h&gt;
+#include &quot;Resource.h&quot;
+#include &quot;..\22-DIPSLib\DIPSLib.h&quot;
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL Dlg_OnInitDialog(HWND hwnd, HWND hwndFocus, LPARAM lParam) {
+
+   chSETDLGICONS(hwnd, IDI_DIPS);
+   return(TRUE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+void Dlg_OnCommand(HWND hwnd, int id, HWND hwndCtl, UINT codeNotify) {
+   
+   switch (id) {
+      case IDC_SAVE:
+      case IDC_RESTORE:
+      case IDCANCEL:
+         EndDialog(hwnd, id);
+         break;
+   }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL WINAPI Dlg_Proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+
+   switch (uMsg) {
+      chHANDLE_DLGMSG(hwnd, WM_INITDIALOG, Dlg_OnInitDialog);
+      chHANDLE_DLGMSG(hwnd, WM_COMMAND,    Dlg_OnCommand);
+   }
+
+   return(FALSE);
+}
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+int WINAPI _tWinMain(HINSTANCE hinstExe, HINSTANCE, PTSTR pszCmdLine, int) {
+
+   // Convert command-line character to uppercase.
+   CharUpperBuff(pszCmdLine, 1);
+   TCHAR cWhatToDo = pszCmdLine[0];
+
+   if ((cWhatToDo != TEXT('S')) &amp;&amp; (cWhatToDo != TEXT('R'))) {
+
+      // An invalid command-line argument; prompt the user.
+      cWhatToDo = 0;
+   }
+
+   if (cWhatToDo == 0) {
+      // No command-line argument was used to tell us what to
+      // do; show usage dialog box and prompt the user.
+      switch (DialogBox(hinstExe, MAKEINTRESOURCE(IDD_DIPS), NULL, Dlg_Proc)) {
+         case IDC_SAVE:    
+            cWhatToDo = TEXT('S'); 
+            break;
+
+         case IDC_RESTORE: 
+            cWhatToDo = TEXT('R');
+            break;
+      }
+   }
+
+   if (cWhatToDo == 0) {
+      // The user doesn't want to do anything.
+      return(0);
+   }
+   
+   // The Desktop ListView window is the grandchild of the ProgMan window.
+   HWND hwndLV = GetFirstChild(GetFirstChild(
+      FindWindow(TEXT(&quot;ProgMan&quot;), NULL)));
+   chASSERT(IsWindow(hwndLV));
+
+   // Set hook that injects our DLL into the Explorer's address space. After 
+   // setting the hook, the DIPS hidden modeless dialog box is created. We 
+   // send messages to this window to tell it what we want it to do.
+   chVERIFY(SetDIPSHook(GetWindowThreadProcessId(hwndLV, NULL)));
+
+   // Wait for the DIPS server window to be created.
+   MSG msg;
+   GetMessage(&amp;msg, NULL, 0, 0);
+
+   // Find the handle of the hidden dialog box window.
+   HWND hwndDIPS = FindWindow(NULL, TEXT(&quot;Richter DIPS&quot;));
+
+   // Make sure that the window was created.
+   chASSERT(IsWindow(hwndDIPS));
+
+   // Tell the DIPS window which ListView window to manipulate
+   // and whether the items should be saved or restored.
+   SendMessage(hwndDIPS, WM_APP, (WPARAM) hwndLV, (cWhatToDo == TEXT('S')));
+
+   // Tell the DIPS window to destroy itself. Use SendMessage 
+   // instead of PostMessage so that we know the window is 
+   // destroyed before the hook is removed.
+   SendMessage(hwndDIPS, WM_CLOSE, 0, 0);
+
+   // Make sure that the window was destroyed.
+   chASSERT(!IsWindow(hwndDIPS));
+
+   // Unhook the DLL, removing the DIPS dialog box procedure 
+   // from the Explorer's address space.
+   SetDIPSHook(0);  
+
+   return(0);
+}
+
+
+//////////////////////////////// End of File //////////////////////////////////
+</pre>
+</td></tr></table>
+</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+
+<p><b>DIPSLib.cpp</b></p>
+
+<pre>
+/******************************************************************************
+Module:  DIPSLib.cpp
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#include &quot;..\CmnHdr.h&quot;     /* See Appendix A. */
+#include &lt;WindowsX.h&gt;
+#include &lt;CommCtrl.h&gt;
+
+#define DIPSLIBAPI _ _declspec(dllexport)
+#include &quot;DIPSLib.h&quot;
+#include &quot;Resource.h&quot;
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+#ifdef _DEBUG
+// This function forces the debugger to be invoked
+void ForceDebugBreak() {
+   _ _try { DebugBreak(); }
+   _ _except(UnhandledExceptionFilter(GetExceptionInformation())) { }
+}
+#else
+#define ForceDebugBreak()
+#endif
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+// Forward references
+LRESULT WINAPI GetMsgProc(int nCode, WPARAM wParam, LPARAM lParam);
+
+INT_PTR WINAPI Dlg_Proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+// Instruct the compiler to put the g_hhook data variable in 
+// its own data section called Shared. We then instruct the 
+// linker that we want to share the data in this section 
+// with all instances of this application.
+#pragma data_seg(&quot;Shared&quot;)
+HHOOK g_hhook = NULL;
+DWORD g_dwThreadIdDIPS = 0;
+#pragma data_seg()
+
+// Instruct the linker to make the Shared section
+// readable, writable, and shared.
+#pragma comment(linker, &quot;/section:Shared,rws&quot;)
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+// Nonshared variables
+HINSTANCE g_hinstDll = NULL;
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+BOOL WINAPI DllMain(HINSTANCE hinstDll, DWORD fdwReason, PVOID fImpLoad) {
+
+   switch (fdwReason) {
+
+      case DLL_PROCESS_ATTACH:
+         // DLL is attaching to the address space of the current process.
+         g_hinstDll = hinstDll;
+         break;
+
+      case DLL_THREAD_ATTACH:
+         // A new thread is being created in the current process.
+         break;
+
+      case DLL_THREAD_DETACH:
+         // A thread is exiting cleanly.
+         break;
+
+      case DLL_PROCESS_DETACH:
+         // The calling process is detaching the DLL from its address space.
+         break;
+   }
+   return(TRUE);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+BOOL WINAPI SetDIPSHook(DWORD dwThreadId) {
+
+   BOOL fOk = FALSE;
+   
+   if (dwThreadId != 0) {
+      // Make sure that the hook is not already installed.
+      chASSERT(g_hhook == NULL);
+
+      // Save our thread ID in a shared variable so that our GetMsgProc 
+      // function can post a message back to the thread when the server 
+      // window has been created.
+      g_dwThreadIdDIPS = GetCurrentThreadId();
+
+      // Install the hook on the specified thread
+      g_hhook = SetWindowsHookEx(WH_GETMESSAGE, GetMsgProc, g_hinstDll, 
+         dwThreadId);
+
+      fOk = (g_hhook != NULL);
+      if (fOk) {
+         // The hook was installed successfully; force a benign message to 
+         // the thread's queue so that the hook function gets called.
+         fOk = PostThreadMessage(dwThreadId, WM_NULL, 0, 0);
+      }
+   } else {
+
+      // Make sure that a hook has been installed.
+      chASSERT(g_hhook != NULL);
+      fOk = UnhookWindowsHookEx(g_hhook);
+      g_hhook = NULL;
+   }
+
+   return(fOk);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+LRESULT WINAPI GetMsgProc(int nCode, WPARAM wParam, LPARAM lParam) {
+
+   static BOOL fFirstTime = TRUE;
+
+   if (fFirstTime) {
+      // The DLL just got injected.
+      fFirstTime = FALSE;
+
+      // Uncomment the line below to invoke the debugger 
+      // on the process that just got the injected DLL.
+      // ForceDebugBreak();
+
+      // Create the DTIS Server window to handle the client request.
+      CreateDialog(g_hinstDll, MAKEINTRESOURCE(IDD_DIPS), NULL, Dlg_Proc);
+
+      // Tell the DIPS application that the server is up
+      // and ready to handle requests.
+      PostThreadMessage(g_dwThreadIdDIPS, WM_NULL, 0, 0);
+   }
+
+   return(CallNextHookEx(g_hhook, nCode, wParam, lParam));
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+void Dlg_OnClose(HWND hwnd) {
+
+   DestroyWindow(hwnd);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+static const TCHAR g_szRegSubKey[] = 
+   TEXT(&quot;Software\\Richter\\Desktop Item Position Saver&quot;);
+
+///////////////////////////////////////////////////////////////////////////////
+
+void SaveListViewItemPositions(HWND hwndLV) {
+
+   int nMaxItems = ListView_GetItemCount(hwndLV);
+
+   // When saving new positions, delete the old position 
+   // information that is currently in the registry.
+   LONG l = RegDeleteKey(HKEY_CURRENT_USER, g_szRegSubKey);
+
+   // Create the registry key to hold the info
+   HKEY hkey;
+   l = RegCreateKeyEx(HKEY_CURRENT_USER, g_szRegSubKey, 0, NULL, 
+      REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, NULL, &amp;hkey, NULL);
+   chASSERT(l == ERROR_SUCCESS);
+
+   for (int nItem = 0; nItem &lt; nMaxItems; nItem++) {
+
+      // Get the name and position of a ListView item.
+      TCHAR szName[MAX_PATH];
+      ListView_GetItemText(hwndLV, nItem, 0, szName, chDIMOF(szName));
+
+      POINT pt;
+      ListView_GetItemPosition(hwndLV, nItem, &amp;pt);
+
+      // Save the name and position in the registry.
+      l = RegSetValueEx(hkey, szName, 0, REG_BINARY, (PBYTE) &amp;pt, sizeof(pt));
+      chASSERT(l == ERROR_SUCCESS);
+   }
+   RegCloseKey(hkey);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+void RestoreListViewItemPositions(HWND hwndLV) {
+
+   HKEY hkey;
+   LONG l = RegOpenKeyEx(HKEY_CURRENT_USER, g_szRegSubKey,
+      0, KEY_QUERY_VALUE, &amp;hkey);
+   if (l == ERROR_SUCCESS) {
+
+      // If the ListView has AutoArrange on, temporarily turn it off.
+      DWORD dwStyle = GetWindowStyle(hwndLV);
+      if (dwStyle &amp; LVS_AUTOARRANGE) 
+         SetWindowLong(hwndLV, GWL_STYLE, dwStyle &amp; ~LVS_AUTOARRANGE);
+
+      l = NO_ERROR;
+      for (int nIndex = 0; l != ERROR_NO_MORE_ITEMS; nIndex++) {
+         TCHAR szName[MAX_PATH];
+         DWORD cbValueName = chDIMOF(szName);
+
+         POINT pt;
+         DWORD cbData = sizeof(pt), nItem;
+
+         // Read a value name and position from the registry.
+         DWORD dwType;
+         l = RegEnumValue(hkey, nIndex, szName, &amp;cbValueName, 
+            NULL, &amp;dwType, (PBYTE) &amp;pt, &amp;cbData);
+
+         if (l == ERROR_NO_MORE_ITEMS) 
+            continue;
+
+         if ((dwType == REG_BINARY) &amp;&amp; (cbData == sizeof(pt))) {
+            // The value is something that we recognize; try to find
+            // an item in the ListView control that matches the name.
+            LV_FINDINFO lvfi;
+            lvfi.flags = LVFI_STRING; 
+            lvfi.psz = szName; 
+            nItem = ListView_FindItem(hwndLV, -1, &amp;lvfi);
+            if (nItem != -1) {
+               // We found a match; change the item's position.
+               ListView_SetItemPosition(hwndLV, nItem, pt.x, pt.y);   
+            }
+         }
+      }
+      // Turn AutoArrange back on if it was originally on.
+      SetWindowLong(hwndLV, GWL_STYLE, dwStyle);
+      RegCloseKey(hkey);
+   }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+INT_PTR WINAPI Dlg_Proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+
+   switch (uMsg) {
+      chHANDLE_DLGMSG(hwnd, WM_CLOSE, Dlg_OnClose);
+
+      case WM_APP:
+         // Uncomment the line below to invoke the debugger 
+         // on the process that just got the injected DLL.
+         // ForceDebugBreak();
+
+         if (lParam) 
+            SaveListViewItemPositions((HWND) wParam);
+         else 
+            RestoreListViewItemPositions((HWND) wParam);
+         break;
+   }
+
+   return(FALSE);
+}
+
+//////////////////////////////// End of File //////////////////////////////////
+</pre>
+</td></tr></table>
+</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+
+<p><b>DIPSLib.h</b></p>
+
+<pre>
+/******************************************************************************
+Module:  DIPSLib.h
+Notices: Copyright (c) 2000 Jeffrey Richter
+******************************************************************************/
+
+
+#if !defined(DIPSLIBAPI)
+#define DIPSLIBAPI _ _declspec(dllimport)
+#endif
+
+
+///////////////////////////////////////////////////////////////////////////////
+
+
+// External function prototypes
+DIPSLIBAPI BOOL WINAPI SetDIPSHook(DWORD dwThreadId);
+
+
+//////////////////////////////// End of File //////////////////////////////////
+</pre>
+</td></tr></table>
+</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+
+<p><b>DIPSLib.rc</b></p>
+
+<pre>
+//Microsoft Developer Studio generated resource script.
+//
+#include &quot;resource.h&quot;
+
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include &quot;afxres.h&quot;
+
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+/////////////////////////////////////////////////////////////////////////////
+// English (U.S.) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+#ifdef _WIN32
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(1252)
+#endif //_WIN32
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
+
+IDD_DIPS DIALOG DISCARDABLE  0, 0, 132, 13
+STYLE WS_CAPTION
+CAPTION &quot;Richter DIPS&quot;
+FONT 8, &quot;MS Sans Serif&quot;
+BEGIN
+END
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// TEXTINCLUDE
+//
+
+1 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;resource.h\0&quot;
+END
+
+2 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;#include &quot;&quot;afxres.h&quot;&quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+3 TEXTINCLUDE DISCARDABLE 
+BEGIN
+    &quot;\r\n&quot;
+    &quot;\0&quot;
+END
+
+#endif    // APSTUDIO_INVOKED
+
+#endif    // English (U.S.) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 3 resource.
+//
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED
+</pre>
+</td></tr></table></p>
+
+</BODY>
+</HTML>
+
+
+
+
+
+

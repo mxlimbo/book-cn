@@ -1,0 +1,422 @@
+<HTML>
+<HEAD>
+<TITLE>Adding and Removing Projects in the Timesheet</TITLE>
+<link rel="STYLESHEET" type="text/css" href="webcomp.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch08e.htm">[Previous]</A> <A HREF="ch08g.htm">[Next]</A><P>
+
+<A NAME="176"><H1>Adding and Removing Projects in the Timesheet</H1></A>
+
+<p>The first task a user must perform when starting a new timesheet is to add one 
+or more projects. The Timesheet solution allows the user to add any number of 
+projects to the timesheet but allows the user to add a particular project only once 
+because there is no need to have two different entries for the same project on the same 
+day. This solution dynamically generates the list of projects based on the contents of 
+the Projects table in the database, and you can enable additional projects by simply 
+adding rows to that table.</p>
+
+<p><div class="sidebar"><blockquote>
+<b>The Mysterious Missing Percent</b>
+
+<p>When I first wrote this example, I used &quot;50%&quot; as the width value for each 
+of the Chart controls. I expected this to keep both Chart controls on the 
+same horizontal line, sizing their width to half the width of the document. I 
+noticed however that at certain window sizes, Internet Explorer wrapped the 
+second chart to the next line of the document, even though the charts' sizes should 
+have been exactly half the width.</p>
+
+<p>I surmised that this mysterious behavior was the result of rounding 
+errors that occurred when the document size was not an even number. However, 
+I could not confirm this and eventually found that setting the first Chart 
+control's width to &quot;49%&quot; seemed to fix the problem.</p>
+</blockquote></div></p>
+
+
+<p>Let's first look at how I populate that drop-down list of projects. The 
+following HTML and ASP script fragment is taken from the Timesheet.asp file:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+&lt;td&gt;Project:&amp;nbsp;
+    &lt;select id=cbxProject&gt;
+&lt;%
+Set m_rs = m_cn.Execute(&quot;select ProjectID, ProjectName from Projects&quot; &amp; _
+    &quot; where Active = True&quot;)
+
+    While Not m_rs.EOF
+        Response.Write &quot;&lt;option value=&quot; &amp; m_rs(&quot;ProjectID&quot;) &amp; &quot;&gt;&quot; &amp; _
+            m_rs(&quot;ProjectName&quot;) &amp; &quot;&lt;/option&gt;&quot;
+        m_rs.MoveNext
+    Wend
+
+    m_rs.Close
+    Set m_rs = nothing
+%&gt;
+    &lt;/select&gt;
+&lt;/td&gt;
+</pre></td></tr></table></p>
+
+<p>The code starts by emitting some HTML for the table in which the project's 
+drop-down list and the Add Project To Timesheet and Remove Project From 
+Timesheet buttons reside. It also emits the beginning of the &lt;select&gt; tag, giving it an ID 
+of cbxProject, which I will use later in the client-side script.</p>
+
+<p>Next, the code jumps back into ASP script and executes a query to retrieve 
+the list of active projects. (As any ASP programmer knows, the &lt;% and %&gt; 
+symbols demarcate ASP script.) The code then loops through the Recordset and emits 
+an &lt;option&gt; tag for each project. After the last project, the code closes and releases 
+the Recordset and emits the closing &lt;/select&gt; tag.</p>
+
+<p>My use of <I>where Active = True</I> in the SQL statement is worth noting. I 
+designed the timesheet database so that it has referential integrity between the Projects 
+table and the WorkHours table&#8212;meaning you cannot delete a project from the Projects 
+table if any work hours are associated with that project. For reporting reasons, you 
+would want to keep records of hours worked on projects that are no longer active, but 
+you would not want those projects to appear in the list of available projects in the 
+timesheet system. By setting the project's Active column to False (0), you can hide a project 
+from the user while keeping it for reporting and analysis purposes.</p>
+
+<p>Now that the Project drop-down list is loaded with all the active projects, 
+let's turn our attention to what happens when the user clicks the Add Project To 
+Timesheet button. The click is caught in the button's onClick event handler as shown below.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Sub btnAddProj_onClick()
+    Dim rng            ' Temporary Range reference
+    Dim sProj          ' Project name
+    
+    ' Get the name of the selected project
+    sProj = cbxProject.children(cbxProject.selectedIndex).Text
+    
+    ' Check whether the project ID is already in the timesheet
+    ' The project ID is in the hidden B column
+    Set rng = ssTimesheet.Range(&quot;B2&quot;)
+    While Len(Trim(rng.Text)) &gt; 0
+        If rng.Text = cbxProject.value Then
+            MsgBbox &quot;The project '&quot; &amp; sProj &amp; _
+                &quot;' is already in your timesheet!&quot;, _
+                vbCritical, &quot;Timesheet Demo&quot;
+            Exit Sub
+        End If
+        Set rng = rng.Offset(1)
+    Wend
+
+    ' Turn off screen updating to avoid flashing
+    ssTimesheet.ScreenUpdating = False
+
+    ' We either hit a blank row, or we went into the Totals row
+    ' (which is one less than number of visible rows)
+    If rng.Row &gt;= _
+        (ssTimesheet.Range(ssTimesheet.ViewableRange).Rows.Count - 1) then
+            ' Not within viewable range
+            ' Need to add a row and fix up the summary functions
+            Set rng = ssTimesheet.Range(&quot;A&quot; &amp; _
+                ssTimesheet.Range(ssTimesheet.ViewableRange).Rows.Count - 1)
+
+            ' Turn off the Allow Inserting Rows protection option
+            ' while we insert a row programmatically
+            ssTimesheet.ActiveSheet.Protection.Enabled = False
+            rng.InsertRows(1)
+            ssTimesheet.ActiveSheet.Protection.Enabled = True
+        
+            ' Move back to the newly inserted row,
+            ' and move to the Project ID column
+            Set rng = rng.Offset(-1,1)
+        
+            ' Fix up formulas
+            FixupFormulas ssTimesheet
+    End If
+    ' Set the current cell to the project ID and 
+    ' one cell left to the project name
+    rng.Locked = False
+    rng.Value = cbxProject.value 
+    rng.Locked = True
+
+    Set rng = rng.Offset(0,-1)
+    rng.Locked = False
+    rng.Font.Color = &quot;Black&quot;
+    rng.Value = sProj
+    rng.Locked = True
+
+    ' Do autofit on the first column to make sure 
+    ' the project name is fully visible
+    ssTimesheet.Range(&quot;a1:a&quot; &amp; _
+        ssTimesheet.ActiveSheet.UsedRange.Rows.Count).AutofitColumns
+
+    ' Turn the screen updating back on to force a redraw
+    ssTimesheet.ScreenUpdating = True
+End Sub 'btnAddProj_onClick()
+</pre></td></tr></table></p>
+
+
+<p>This event handler begins by getting the name of the project selected in the 
+drop-down list. It then scans through the list of projects in the timesheet to see 
+whether the project has already been added. If it finds the project in the timesheet, it 
+displays an error message and exits the handler. If it does not find the project in the 
+timesheet, it continues executing the code to insert the project.</p>
+
+<p>Before performing any row insertions, I set the ScreenUpdating property 
+to False. The Spreadsheet control will redraw itself by default when you make 
+changes to its content. If you plan on making a few changes at once, it's often beneficial 
+to turn ScreenUpdating off while doing so and then turn it back on when you are 
+done. The spreadsheet will wait to redraw itself until you turn ScreenUpdating back 
+on, preventing the flashing that can occur when you make many changes at once. 
+Just be sure you remember to turn ScreenUpdating back on&#8212;if you do not, the 
+spreadsheet will appear frozen and unresponsive.</p>
+
+<p>The code continues by checking whether it encountered a blank row 
+(which happens when you have no projects in the timesheet) or the Totals row on its 
+journey through the timesheet's current projects. If it encountered the Totals row, I 
+need to insert a new row in the spreadsheet and fix up the summary formulas at the 
+bottom and on the right side of the timesheet so that they include the newly 
+inserted row. Because the spreadsheet is protected, I must disable protection by setting 
+the Protection object's Enabled property to False before I can insert the new row. I 
+then immediately turn protection back on so that the user cannot modify the spreadsheet.</p>
+
+<p>The code continues by calling the FixupFormulas method. This method 
+adjusts the formulas in the bottom two rows and right three columns so that they include 
+the newly inserted row. In the case of the column summary formulas, I need to add 
+them to the newly inserted rows so that the spreadsheet calculates the same totals for 
+the new row as it does for other rows. Let's take a look at the FixupFormulas method:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Sub FixupFormulas(ss)
+    Dim rng         ' Temporary Range reference
+    Dim nRows       ' Number of rows in the timesheet
+    Dim col         ' Temporary column counter
+    Dim sColLetter  ' Column letter
+
+    ' Go to the first column before the first day in the Totals row
+    Set rng = ss.Range(&quot;b&quot; &amp; ss.ActiveSheet.UsedRange.Rows.Count - 1)
+
+    ' Turn protection off temporarily
+    ss.ActiveSheet.Protection.Enabled = False
+
+    ' Fix up the column sum formulas
+    For col = 1 To 6        ' Days of the week + Totals column
+        Set rng = rng.Offset(0,1)
+        sColLetter = left(rng.Address,1)
+        rng.Formula = &quot;=sum(&quot; &amp; sColLetter &amp; &quot;2:&quot; &amp; _
+            sColLetter &amp; rng.Row - 1 &amp; &quot;)&quot;
+    Next
+
+    ' Go up one to do the row total
+    Set rng = rng.Offset(-1)
+    rng.Formula = &quot;=sum(c&quot; &amp; rng.Row &amp; &quot;:g&quot; &amp; rng.Row &amp; &quot;)&quot;
+
+    ' Go over one to do the row percentage of total
+    Set rng = rng.Offset(0,1)
+    rng.Formula = &quot;=if(h&quot; &amp; rng.Row &amp; &quot;=0, 0, h&quot; &amp; rng.Row &amp; _
+        &quot;/h&quot; &amp; rng.Row + 1 &amp; &quot;)&quot;
+
+    ' Go over one to do the row average
+    Set rng = rng.Offset(0,1)
+    rng.Formula = &quot;=if(h&quot; &amp; rng.Row &amp; _
+        &quot;=0, 0, average(c&quot; &amp; rng.Row &amp; &quot;:g&quot; &amp; rng.Row &amp; &quot;)&quot;
+
+    ' Finally, adjust the data references for the first chart
+    nRows = ss.ActiveSheet.UsedRange.Rows.Count - 2
+    csPerProj.Charts.Item(0).SeriesCollection.Item(0).SetData _
+        csPerProj.constants.chDimCategories, 0, &quot;a2:a&quot; &amp; nRows
+    csPerProj.Charts.Item(0).SeriesCollection.Item(0).SetData _
+        csPerProj.constants.chDimValues, 0, &quot;h2:h&quot; &amp; nRows
+
+    ' Turn protection back on
+    ss.ActiveSheet.Protection.Enabled = True
+
+End Sub 'FixupFormulas()
+</pre></td></tr></table></p>
+
+
+<p>This code begins by disabling protection because it will update formulas 
+in locked cells. It loops over the various cells in the Totals row (second from the 
+bottom), updating the sum formulas to include the newly inserted row. This also 
+updates the grand total cell formula to include the per-project total for the new 
+project row. The Percent Of Total row (the bottom row) is derived from the per-day 
+totals and the grand total, so you do not need to update the formulas in that row.</p>
+
+<p>The code then moves the range reference up one cell to add the 
+per-project total formulas in the three rightmost columns of the timesheet. These formulas 
+are the per-project sum, the percent of total, and the average. It has to add these 
+formulas for only the newly inserted row and does not have to modify the formulas for 
+the other existing rows because they are unaffected by the new row.</p>
+
+<p>Finally the code updates the source data references of the per-project 
+chart. Because I just added a new project to the timesheet, I need to extend the 
+existing range reference the chart has for the category names and values. The Chart 
+and Spreadsheet controls normally track the insertions of rows in the middle of a 
+range and automatically extend the range references accordingly. However, when a 
+row is inserted just below an existing range reference, the Spreadsheet control does 
+not consider that newly inserted row to be part of the existing range and therefore 
+does not update it.</p>
+
+<p><div class="sidebar"><blockquote>
+<b>Use a Hidden Row to Avoid Formula and Range Fix Up</b>
+
+<p>Although I wanted to show you how to fix up formulas and range 
+references, I could have avoided some of this code by adding a blank row to the 
+spreadsheet just above the rows of totals and then hiding that row. By doing so, 
+all the formulas and range references would include the blank row, and when 
+I insert a new row just above the hidden blank row, the formulas and 
+range references would automatically adjust. I would have to recode the part of 
+my function that looks for an open spot in the timesheet, but inserting the 
+blank row would eliminate most of this other code.</p>
+</blockquote></div></p>
+
+
+<p>Let's return to the onClick event handler of the Add Project button and 
+examine the rest of the code after the call to FixupFormulas:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+    ' Set the current cell to the project name and 
+    ' the next cell over to the project ID
+    rng.Locked = False
+    rng.Value = cbxProject.value 
+    rng.Locked = True
+
+    Set rng = rng.Offset(0,-1)
+    rng.Locked = False
+    rng.Font.Color = &quot;Black&quot;
+    rng.Value = sProj
+    rng.Locked = True
+
+    ' Do autofit on the first column to make sure 
+    ' the project name is fully visible
+    ssTimesheet.Range(&quot;a1:a&quot; &amp; _
+        ssTimesheet.ActiveSheet.UsedRange.Rows.Count).AutofitColumns
+
+    ' Turn the screen updating back on to force a redraw
+    ssTimesheet.ScreenUpdating = True
+End Sub 'btnAddProj_onClick()
+</pre></td></tr></table></p>
+
+
+<p>The timesheet has a hidden column immediately after the project name. I 
+use this column to store the project ID value, which I will need when I process a 
+submitted timesheet. (I will explain this later.) The rest of this event handler sets 
+the project name and project ID cells for the newly inserted row and then uses 
+the AutofitColumns method to make sure the new project name is fully visible.</p>
+
+<p>The code for removing a project from the timesheet is far easier than the 
+code for adding a project. Removing a project is literally as easy as removing the row 
+in which the project exists. However, you do have to catch the case in which the 
+user deletes the last project from the timesheet. In this case, you should clear only 
+the row's contents and set the project name cell to the help string &quot;(Use 'Add Project 
+to Timesheet' to add a project)&quot;. The code starts in the onClick event handler for 
+the Remove Project From Timesheet button:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Sub btnDelProj_onClick()
+    ' Local variables
+    Dim rng         ' Temporary Range reference
+
+    Set rng = ssTimesheet.Selection
+
+    ' If the user was in column 1 (Project Name column) 
+    ' and not on a header or total row
+    If rng.Column = 1 And (rng.Row &gt; 1 And rng.Row &lt;= _
+        ssTimesheet.Range(ssTimesheet.ViewableRange).Rows.Count - 2) Then
+            RemoveProj ssTimesheet, rng.Row
+    End If 'In Project Name column
+
+End Sub 'btnDelProj_onClick()
+</pre></td></tr></table></p>
+
+<p>This code simply checks that the current selection is in a project row and in 
+the Project Name column. (Perhaps this is too restrictive, but that's how I wrote it.) If 
+so, the code calls the RemoveProj method passing a reference to the Spreadsheet 
+control and the row to remove. Let's take a look at this method:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Sub RemoveProj(ss, row)
+    ' Local variables
+    Dim rng         ' Temporary Range reference
+
+    Set rng = ss.Range(&quot;A&quot; &amp; row &amp; &quot;:G&quot; &amp; row)
+
+    ' Turn off protection while we delete the row
+    ssTimesheet.ActiveSheet.Protection.Enabled = False
+
+    If ss.Range(ss.ViewableRange).Rows.Count = 4 Then
+        ' Last project--clear the row and set help
+        rng.ClearContents
+        AddHelpText ss
+    Else
+        rng.DeleteRows(1)
+    End If
+
+    ' Turn protection back on
+    ssTimesheet.ActiveSheet.Protection.Enabled = True
+
+End Sub 'RemoveProj()
+</pre></td></tr></table></p>
+
+
+<p>The method first disables protection because deleting rows is not allowed 
+while protection is enabled. It then checks for the case in which this is the last project 
+in the timesheet by determining the number of rows remaining in the viewable 
+range. If there are only four rows, the project being removed is the last project, and the 
+code simply clears the row's contents and adds the help text to the project name cell. 
+If the project being removed is not the last project, the code simply deletes the 
+row. Finally the code reenables protection.</p>
+
+<p>After enabling the Remove Project button, I thought it would be nice to let 
+the user remove a project by selecting a project name and pressing the Delete key. 
+This is also fairly easy to trap, though it has a problem that I will discuss after we look 
+at the  following code.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+Sub ssTimesheet_KeyDown(evt)
+    ' If the user was in column 1 (Project Name column) 
+    ' and not on a header or total row
+    If evt.Range.Column = 1 And (evt.Range.Row &gt; 1 And evt.Range.Row &lt;= _
+        ssTimesheet.Range(ssTimesheet.ViewableRange).Rows.Count - 2) Then
+
+        ' And the key was the Delete key
+        If evt.KeyCode = 46 Then
+            RemoveProj ssTimesheet, evt.Range.Row
+
+            ' Cancel standard processing
+            evt.ReturnValue = False
+
+        End If 'Delete key
+    End If 'In Project Name column
+End Sub 'Spreadsheet_KeyDown()
+</pre></td></tr></table></p>
+
+
+<p>The Spreadsheet control raises an event called KeyDown whenever a key 
+is pressed down. This is the event you should use to capture special keys such as 
+Delete, Escape, Return, or Tab. The code in this event handler checks that the 
+selection was on a valid project name and then checks whether the keycode was 46, which 
+is the ASCII value for the Delete key. If both conditions are true, the code calls 
+the RemoveProj method just as the onClick event handler of the Remove Project 
+button did. It also attempts to set the ReturnValue property of the event information 
+object (passed to the handler by the spreadsheet) to False in order to cancel the 
+standard processing of this key. I say &quot;attempts&quot; because this is the unfortunate problem 
+that I alluded to earlier. The Spreadsheet control will always process keystrokes even 
+if you set this ReturnValue property to False. Because the spreadsheet is protected 
+and the project name cell is locked, pressing the Delete key will always generate a 
+warning in the user interface, telling the user that he or she cannot update a locked cell. 
+As far as I know no workaround for this exists, so you might want to avoid using 
+this approach with locked cells.</p>
+
+
+</BODY>
+</HTML>
+
+
+
+
+

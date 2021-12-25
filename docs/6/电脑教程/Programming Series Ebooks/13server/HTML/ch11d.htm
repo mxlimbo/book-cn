@@ -1,0 +1,194 @@
+<HTML>
+<HEAD>
+<TITLE>Modifying Token Information</TITLE>
+<link rel="STYLESHEET" type="text/css" href="prosrvwin.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR = "#ffffff">
+<A HREF="ch11c.htm">[Previous]</A> <A HREF="ch11e.htm">[Next]</A><P>
+
+<A NAME="241"><h1>Modifying Token Information</h1></A>
+<p>Most token information is fixed. For example, you can't set a token's user to a SID that is different from the one it has, and you can't add group SIDs or privileges to a token. However, the modifications that you <i>can</i> make fall into two groups:</p>
+
+<ul>
+<p><li>Information that can be <i>adjusted</i></li></p>
+
+<p><li>Information that can be <i>set</i></li></p>
+</ul>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+Although very little that already exists in a token can be changed, it is possible to make a new token based on an existing token and add restrictions. This technique is referred to as creating a restricted token, and is discussed in detail later in this chapter.</blockquote>
+</div>
+</p>
+
+<p>The process of setting information works the way you might imagine. You build a structure and pass it and a token handle to a system function, and the system sets information in the token.</p>
+
+<p>Adjusting information works somewhat differently than setting information. Both the privileges and the groups in a token can be in two states: enabled and disabled. For example, although you can't &quot;set&quot; the privilege list in a token, you can enable and disable individual privileges that already exist in that list.</p>
+
+<p>The most common modifications you will make to a token are to set the token default DACL (which is used for default security and was described in the <a href="ch10a.htm">previous chapter</a>) and to adjust token privileges. You will find that the process of setting the token's default owner and adjusting token groups is very similar to setting the default DACL and adjusting token privileges, respectively.</p>
+
+<A NAME="242"><h2>Adjusting a Token's Privileges</h2></A>
+<p>Before discussing how to adjust a token's privileges, let's recap what we already learned about privileges in <A HREF="ch09a.htm">Chapter 9</A> and then build on that knowledge:</p>
+
+
+<ul>
+<p><li>Privileges are assigned to trustees (users and groups).</li></p>
+
+<p><li>When a user is logged on by the system, the user's privileges are copied into the user's token.</li></p>
+
+<p><li>Privileges are identified by a display name, a programmatic name, and a LUID.</li></p>
+</ul>
+
+ 
+
+<p>Before you can adjust a token's privileges, you have to know how to get from a privilege's programmatic name to its LUID used by the system. This is done via a call to the <i>LookupPrivilegeValue</i> function:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+BOOL LookupPrivilegeValue(
+   LPCTSTR lpSystemName,
+   LPCTSTR lpName,
+   PLUID   lpLuid);
+</pre></td></tr></table>
+</p>
+
+<p>You should pass as the <i>lpSystemName</i> parameter a string representing the system name for which you wish to receive a LUID. Passing NULL indicates the local machine. The <i>lpName</i> parameter indicates the programmatic name of a system privilege, and you should pass a <i>#define</i> from the Platform SDK (for example, SE_TCB_NAME or SE_DEBUG_NAME). You must pass a pointer to a variable of type LUID as the <i>lpLuid</i> parameter, which the system will fill with the LUID for the privilege requested.</p>
+
+<p>Now we need to explore how our privileges get from the security database to our token. It is important to understand that the privileges found in a token are the composite of the privileges granted to the user account as well as the privileges granted to each group of which the user is a member. The story doesn't end there, however.</p>
+
+<p>Once the token is built by the system, the privileges in the token are fixed&#8212;they cannot be added or removed. If we could add a privilege to a token, security for Windows 2000 would be greatly undermined. Privileges do, however, maintain a state indicating whether they are enabled or disabled.</p>
+
+<p>When the system makes a call to <i>PrivilegeCheck</i>, the function will fail if the requested privilege is disabled. To complicate matters, some system calls automatically enable privileges for your token before attempting to call <i>PrivilegeCheck</i>. In these cases holding the privilege is sufficient to cause the function to succeed. To know which functions require a privilege to be enabled, you need to read the documentation and occasionally engage in some trial and error work.</p> 
+
+<p>Needless to say, you will eventually have to adjust your token's privileges to enable or disable a necessary privilege before calling a secured function. This is done via a call to <i>AdjustTokenPrivileges</i>:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+BOOL AdjustTokenPrivileges(
+   HANDLE            hTokenHandle,
+   BOOL              fDisableAllPrivileges, 
+   PTOKEN_PRIVILEGES pNewState, 
+   DWORD             dwBufferLength,
+   PTOKEN_PRIVILEGES pPreviousState,
+   PDWORD            pdwReturnLength);
+</pre></td></tr></table>
+</p>
+
+<p>The first parameter, <i>hTokenHandle</i>, indicates the token whose privileges' states you want to modify. The <i>fDisableAllPrivileges</i> parameter, when TRUE, causes all privileges in the token to be disabled, disregarding anything passed in the <i>pNewState</i> parameter. In such a case you should pass NULL for <i>pNewState</i>. Typically you use the <i>pNewState</i> parameter when you are only enabling or disabling a subset of the privileges awarded to your token. The <i>pNewState</i> parameter is a pointer to a TOKEN_PRIVILEGES structure, which is defined here:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+typedef struct _TOKEN_PRIVILEGES { 
+   DWORD PrivilegeCount; 
+   LUID_AND_ATTRIBUTES Privileges[ANYSIZE_ARRAY]; 
+} TOKEN_PRIVILEGES;
+</pre></td></tr></table>
+</p>
+
+<p>Notice that <i>Privileges</i> is a variable-sized array of LUID_AND_ATTRIBUTES structures. One structure should be in the array for each privilege you wish to adjust in the token, and the <i>PrivilegeCount</i> member should reflect the number of privileges. Here is the definition of the LUID_AND_ATTRIBUTES structure:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+typedef struct _LUID_AND_ATTRIBUTES { 
+   LUID   Luid; 
+   DWORD  Attributes; 
+} LUID_AND_ATTRIBUTES;
+</pre></td></tr></table>
+</p>
+
+<p>The <i>Luid</i> member of each structure in the array should be set to the LUID for the privilege in question. And finally, the <i>Attributes</i> member should be set to zero to disable the privilege or to SE_PRIVILEGE_ENABLED to enable the privilege.</p>
+
+<p>The <i>dwBufferLength</i> parameter of the <i>AdjustTokenPrivileges</i> function indicates the length, in bytes, of the buffer pointed to by <i>pPreviousState</i>, which points to a buffer that will receive the privileges' previous states. You can pass NULL for <i>pPreviousState</i> if no previous state information is needed. If previous state information is needed, you must supply a buffer of sufficient size. A pointer to required size is returned in the <i>pdwReturnLength</i> parameter. The buffer pointed to by <i>pPreviousState</i> will be structured identically to the TOKEN_PRIVILEGES structure and the embedded array you build for the <i>pNewState</i> parameter.</p>
+
+<p>As you can see, enabling and disabling a single privilege is not a trivial task. However,
+you will find it to be a very common task. I have often thought that the developers of Windows should have provided a shorthand function, defined something like the following <i>EnablePrivilege</i> function, that offered easy access to a token's privileges.</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+BOOL EnablePrivilege(
+   HANDLE hToken,
+   PTSTR szPriv, 
+   BOOL fEnabled);
+</pre></td></tr></table>
+</p>
+
+<p>The <i>szPriv</i> parameter would be a string representing the programmatic name of the privilege to enable or disable, and the <i>fEnabled</i> parameter would indicate simply whether to enable or disable the privilege. I implemented such a function in the TokenMaster sample application. Here is the implementation of the function:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+BOOL EnablePrivilege(HANDLE hToken, LPTSTR szPriv, BOOL bEnabled)
+{
+   TOKEN_PRIVILEGES tp;
+   LUID             luid;
+   BOOL             bRet = FALSE ;
+
+   __try{
+      // First look up the system-unique LUID for the privilege
+      if(!LookupPrivilegeValue(NULL, szPriv /*SE_DEBUG_NAME*/, &amp;luid))
+      {
+         // If the name is bogus...
+         __leave ;
+      }
+
+      // Set up our token privileges &quot;array&quot; (in our case an array of one)
+      tp.PrivilegeCount           = 1;
+      tp.Privileges[0].Luid       = luid;
+      tp.Privileges[0].Attributes = bEnabled?SE_PRIVILEGE_ENABLED:0;
+
+      // Adjust our token privileges by enabling or disabling this one
+      if(!AdjustTokenPrivileges(
+         hToken, 
+         FALSE, 
+         &amp;tp, 
+         sizeof(TOKEN_PRIVILEGES),
+         NULL, 
+         NULL ))
+      {
+         __leave ;
+      }
+      bRet = TRUE ;
+   }__finally{}
+
+   return(bRet);
+
+}
+</pre></td></tr></table>
+</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b><hr>
+The system has implemented another function named <i>AdjustTokenGroups</i> whose calling convention is very similar to <i>AdjustTokenPrivileges</i> except that it allows the enabling and disabling of token groups instead of privileges. However, enabling and disabling of token groups is rarely necessary. The TokenMaster sample application shows an example of <i>AdjustTokenGroups</i>.</blockquote>
+</div>
+</p>
+
+<A NAME="243"><h2>Setting the Default DACL</h2></A>
+<p>The less common task of setting a token's default DACL is simpler than adjusting a token's privilege. A token's default DACL defines what the security access will be for securable objects created with default security. Securable objects include constructs such as files, mutexes, and threads. Securable objects are typically created with default security by passing NULL as the LPSECURITY_ATTRIBUTES parameter of the creating function. (For more information on this topic, see <A HREF="ch10a.htm">Chapter 10</A>.) Modifying the default DACL can greatly simplify server code by removing the necessity to explicitly apply security to each object the code creates.</p>
+
+<p>You can set a token's default DACL as well as its default owner and default primary group (neither of which should be confused with the token's user identity, which cannot be changed) by using the <i>SetTokenInformation</i> function:</p>
+
+<p>
+<table cellpadding="5" width="95%"><tr><td><pre>
+BOOL SetTokenInformation(
+   HANDLE                  hTokenHandle,
+   TOKEN_INFORMATION_CLASS TokenInformationClass,
+   PVOID                   pTokenInformation,
+   DWORD                   dwTokenInformationLength);
+</pre></td></tr></table>
+</p>
+
+<p>The <i>hTokenHandle</i> parameter is the handle to the token you wish to modify. The <i>TokenInformatonClass</i> is used to indicate which piece of the token you want to change. Your options were discussed previously in the bulleted list.</p>
+
+<p>The <i>dwTokenInformationLength</i> parameter of <i>SetTokenInformation</i> indicates the length of the buffer pointed to by <i>pTokenInformation</i>.</p>
+
+<p>For a complete example of <i>SetTokenInformation</i> in action, see the TokenMaster sample application.</p>
+
+</BODY>
+</HTML>
+
+
+
+
