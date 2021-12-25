@@ -1,0 +1,431 @@
+<HTML>
+<HEAD>
+<link rel="STYLESHEET" type="text/css" href="squeal7.css">
+<TITLE>Using Stored Procedures and Caching Mechanisms</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch14g.htm">[Previous]</A> <A HREF="ch14i.htm">[Next]</A><P>
+
+<A NAME="543"><H1>Using Stored Procedures and Caching Mechanisms</H1></A>
+<P>You should try using stored procedures whenever possible, rather than 
+passing ad hoc SQL statements from your applications. Chapters <a href="ch03a.htm">3</a> and <a href="ch10a.htm">10</a> discussed 
+the efficiencies that stored procedures bring in terms of not requiring 
+compilation of an execution plan for each execution. Plans can be reused and stay 
+cached and available for subsequent use. Saving recompile time was something to 
+consider with previous versions of SQL Server, although it was not the most 
+important reason to use stored procedures. In many queries, especially complex joins 
+on large tables, the time spent on compilation was frequently insignificant 
+compared to the time needed for execution. So it was much more crucial that the best 
+plan be chosen, even if that meant a recompilation. The picture has changed 
+somewhat in SQL Server 7. The query optimizer now has many more 
+processing options, and compilation and optimization time can end up being a 
+more significant percentage of total execution time. It is even more crucial now that 
+you know when recompilation will take place and try to avoid it, if at all possible.
+</P>
+
+<P><DIV CLASS="SIDEBAR">
+<BLOCKQUOTE>
+<P><B>Choosing Appropriate Hardware</B></P>
+<P>We don't advise trying to solve performance problems simply by 
+&quot;killing them with hardware.&quot; A powerful system cannot compensate for 
+basic inefficiencies in the application or database design. 
+Nevertheless, appropriate hardware is extremely important. (We discussed 
+some hardware issues in <a href="ch04a.htm">Chapter 4</a>.) Remember that SQL Server 
+performance, from the hardware perspective, is a function of the 
+integer processing (CPU) power, the amount of memory in the system, 
+and the I/O capacity of the system. A system must be well matched. 
+Even a system with tremendous CPU capacity might run SQL Server 
+slower than a system with less CPU power if the first system has too 
+little memory or I/O capacity. And when you put together your system, 
+you should think carefully about not just the I/O capacity but also the 
+fault tolerance capabilities. RAID solutions provide varying capabilities 
+of increased I/O performance and fault tolerance. You should decide 
+up front on the appropriate level of RAID for your system. (<a href="ch04a.htm">Chapter 4</a> 
+also discusses RAID levels.)</P>
+</BLOCKQUOTE></DIV>
+</P>
+
+<P>SQL Server 7 can save on recompilation using four new mechanisms 
+to make plan caching accessible in a wider set of scenarios:
+</P>
+
+<UL>
+<P><LI>Ad hoc caching
+</LI></P>
+
+<P><LI>Autoparameterization
+</LI></P>
+
+<P><LI>The <I>sp_executesql 
+</I>procedure
+</LI></P>
+
+<P><LI>The prepare and execute method
+</LI></P>
+</UL>
+
+<p><div class="note"><blockquote>
+<b>NOTE</b><hr>The information on caching query plans was adapted 
+from a preliminary copy of a whitepaper by Peter Carlin. We are 
+indebted to him for his assistance.
+</blockquote></div></P>
+
+<A NAME="544"><H2>Ad Hoc Caching</H2></A>
+<P>SQL Server caches the plans from ad hoc queries, and if a subsequent 
+batch matches exactly, the cached plan is used. This feature requires no extra work 
+to use, but it is limited to exact textual matches. For example, if the three queries 
+ shown below are submitted, the first and third queries will 
+use the same plan but the second one will need to generate a new plan.
+</P>
+
+<P><DIV CLASS="SIDEBAR">
+<BLOCKQUOTE>
+<P><B>Using Cursors Judiciously</B></P>
+<P>If you intend to use cursors heavily in your application, make 
+sure you've closely read <a href="ch11a.htm">Chapter 11</a>. Used properly, cursors provide 
+valuable features not found in any other mainstream database product. 
+But, as discussed in <a href="ch11a.htm">Chapter 11</a>, cursors are misused in many systems, 
+turning SQL Server into a network ISAM instead of a relational database. 
+This problem is common if a system is being ported from a mainframe 
+using VSAM (or a similar method) or upsized from a data store such 
+as Btrieve or Microsoft FoxPro. In such cases, the cursor model of 
+one-row-at-a-time processing seems familiar to developers with an 
+ISAM background. Converting the ISAM calls to cursor calls looks easy, 
+and it is. But you can easily create a bad application. You should 
+approach your application in terms of set operations and nonprocedural code, 
+and you should avoid the temptation of simply doing a quick port from 
+an ISAM and using cursors extensively.</P>
+</BLOCKQUOTE></DIV>
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+INSERT mytable VALUES (1.0)
+INSERT mytable VALUES (2.0)
+INSERT mytable VALUES (1.0)
+</PRE></TD></TR></TABLE>
+</P>
+
+<A NAME="545"><H2>Autoparameterization</H2></A>
+<P>For simple queries, SQL Server guesses which constants might really be 
+parameters and attempts to treat them as parameters. If this is successful, 
+subsequent queries that follow the same basic template can use the same plan. Four 
+templates can be used for autoparameterization. (Note that 
+<I>key-expression </I>is an expression involving only column names, constants, AND operators, and comparison 
+operators (&lt;, &gt;, =, &lt;=, &gt;=, and &lt;&gt;).)
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+INSERT <I>table</I> VALUES ({<I>constant</I>
+ | NULL | DEFAULT}, ...)
+DELETE <I>table</I> WHERE <I>key-expression</I>
+UPDATE <I>table</I> SET <I>colname</I>
+ = <I>constant</I> WHERE <I>key-expression</I>
+SELECT {* | <I>column-list</I>} FROM <I>
+table</I> WHERE <I>key-expression</I> ORDER BY <I>
+column-list</I>
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>For example, these two queries will use the same plan:
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+SELECT firstname, lastname, salary FROM employees WHERE employee_id = 1000
+SELECT firstname, lastname, salary FROM employees WHERE employee_id = 5
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>Internally, SQL Server parameterizes these queries as
+</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+SELECT firstname, lastname, salary FROM employees WHERE employee_id = @p
+</PRE></TD></TR></TABLE>
+</P>
+
+<P>SQL Server can allow other queries of the same template to use the 
+same plan only if the template is <I>safe</I>. A template is safe if the plan selected will not 
+change even if the actual parameters change. This ensures that 
+autoparameterization won't degrade a query's performance.
+</P>
+
+<P>The SQL Server query processor is much more conservative about 
+deciding whether a template is safe than an application can be. SQL Server guesses 
+which values are really parameters, whereas your application should actually 
+know. Rather than rely on autoparameterization, you should use one of the 
+following two mechanisms to mark parameters when they are known.
+</P>
+
+<A NAME="546"><H2>The <I>sp_executesql</I> Procedure</H2></A><P>The stored procedure <I>sp_executesql</I> is halfway between ad hoc caching and 
+stored procedures. Using <I>sp_executesql</I> requires that you identify the parameters 
+but doesn't require all the persistent object management needed for stored 
+procedures.
+</P>
+
+<P>Here's the general syntax for the procedure:</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+sp_executesql <I>@batch_text</I>,<I>@batch_parameter_definitions</I>,
+<I>    param1</I>,...<I>paramN</I>
+</PRE></TD></TR></TABLE></P>
+
+<P>Repeated calls with the same <I>batch_text </I>use the cached plan, with the 
+new parameter values specified. The same cached plan is used in all the following cases:</P>
+
+<P>
+<TABLE cellpadding=5 width="95%"><TR><TD><PRE>
+sp_executesql 'insert mytable values(@p)','@p float',1.0 
+sp_executesql 'insert mytable values(@p)','@p float',2.0 
+sp_executesql 'insert mytable values(@p)','@p float',1.0
+</PRE></TD></TR></TABLE></P>
+
+<P>ODBC and OLE DB expose this functionality via 
+<I>SQLExecDirect </I>and 
+<I>ICommandWithParameters</I>. (The ODBC and OLE DB documentation 
+provide more details.)
+</P>
+
+<A NAME="547"><H2>The Prepare and Execute Method</H2></A>
+<P>This last mechanism is like <I>sp_executesql 
+</I>in that parameters to the batch are identified by the application, but there are some key differences. The 
+prepare and execute method does not require the full text of the batch to be sent at 
+each execution. Rather, the full text is sent once at prepare time; a handle that 
+can be used to invoke the batch at execute time is returned. ODBC and OLE 
+DB expose this functionality via 
+<I>SQLPrepare/SQLExecute</I> and 
+<I>ICommandPrepare</I>. You can also use this mechanism via ODBC and OLE DB when cursors 
+are involved. When you use these functions, SQL Server is informed that this 
+batch is meant to be used repeatedly.
+</P>
+
+<A NAME="548"><H2>Sharing Cached Plans</H2></A>
+<P>To allow users to share plans and thus maximize the effectiveness of the 
+caching mechanisms, all users should execute in the same environment. Don't 
+change SET options or database settings in the middle of an application or connection.
+</P>
+
+<P>For all of the caching mechanisms, reusing a cached plan avoids 
+recompilation and optimization. This saves compilation time, but it means that the 
+same plan is used regardless of the particular parameter values passed in. If the 
+optimal plan for a given parameter value is not the same as the cached plan, 
+the optimal execution time will not be achieved. For this reason, SQL Server is 
+very conservative about autoparameterization. When an application uses 
+<I>sp_executesql</I>, prepare and execute, or stored procedures, the application developer is 
+responsible for determining what should be parameterized. You should parameterize 
+only constants whose range of values does not drastically affect the optimization choices.
+</P>
+
+<P>The SQL Server Performance Monitor includes a counter called SQL Server:
+SQL Statistics that has several counters dealing with autoparameterization. 
+You can monitor these counters to determine whether there are many unsafe or 
+failed autoparameterization attempts. If these numbers are high, you can inspect 
+your applications for situations in which the application can take responsibility 
+for explicitly marking the parameters.
+</P>
+
+<A NAME="549"><H2>When to Use Stored Procedures and Other Caching Mechanisms</H2></A>
+<P>Keep the following in mind when you are deciding whether to use stored 
+procedures or one of the other mechanisms:
+</P>
+
+<UL>
+<P><LI><B>Stored procedures</B> Use when multiple applications are 
+executing batches in which the parameters are known.
+</LI></P>
+
+<P><LI><B>Ad hoc caching</B> Useful in limited scenarios. Don't design an application to use this.
+</LI></P>
+
+<P><LI>
+<B>Autoparameterization</B> Use for applications that cannot be 
+easily modified. Don't design an application to use this.
+</LI></P>
+
+<P><LI><B>The <I>sp_executesql</I> procedure</B> Use when a single user <I>might</I> use the same batch multiple times and when the parameters are known.
+</LI></P>
+
+<P><LI><B>The prepare and execute 
+method</B> Use when multiple users are executing batches in which the parameters are known, or when a single user will definitely use the same batch multiple times.
+</LI></P>
+</UL>
+
+<A NAME="550"><H2>Recompiling Stored Procedures</H2></A>
+<P>In spite of the benefits of the mechanisms just discussed, you should still use 
+stored procedures whenever possible. Besides giving you the benefits of 
+precompilation, they minimize network traffic by reducing the text that needs to be sent 
+from your application to SQL Server, and they provide a security mechanism to 
+control who can access data and under what conditions. Stored procedures can 
+be recompiled automatically or manually under various circumstances. (<a href="ch10a.htm">Chapter 
+10</a> discussed some of these issues.)
+</P>
+
+<P>You can actually watch automatic recompilation occurring by using 
+SQL Server Profiler: Choose to trace the event in the Stored Procedures 
+category called SP:Recompile. If you also trace the event called SP:StmtStarting, you 
+can see at what point in the procedure it is being recompiled. In particular, you 
+might notice that stored procedures can be recompiled multiple times during 
+their execution. For example, if you build a temporary table and later create an 
+index on that table, and then add data to the table, your stored procedure 
+will be recompiled numerous times. One way to avoid this is to include all 
+data definition statements dealing with your temporary tables, as well as the 
+insertion of rows into the temporary tables, right at the beginning of the 
+procedure. So if the procedure must be recompiled, it won't happen more than 
+once. Another way to prevent recompilations is to include the query hint 
+KEEPPLAN in your statements that access the temporary tables. We'll discuss query 
+hints in detail later in this chapter.
+</P>
+
+<P>Although we've been assuming that recompilation is something you 
+will usually want to avoid, this is not always the case. If you know that updated 
+statistics can improve the query plan, or if you know that you have wildly 
+different possible parameter values, recompilation can be a good thing.</P>
+
+<P><DIV CLASS="TIP"><BLOCKQUOTE><B>TIP</B><HR>
+If you want to run your tests repeatedly under the same 
+conditions so that you can measure performance when you start with 
+no cached plans, you can use the command DBCC 
+FREEPROCCACHE after each test run to remove all cached plans from memory.
+</BLOCKQUOTE></DIV>
+</P>
+
+<A NAME="551"><H2>Limiting the Number of Plans in Cache</H2></A>
+<P>SQL Server will try to limit the number of plans for any particular stored 
+procedure. Since plans are reentrant, this is much easier to do in SQL Server 7 
+than in previous versions. Although the online documentation states that there 
+can be at most two compiled plans for any procedure (at most one for parallel 
+plans&#8212;that is, those that will be executed on multiple processors&#8212;and one for 
+nonparallel plans), this is not completely true. Other situations will cause 
+multiple plans for the same procedure to be stored. The most likely situation is a 
+difference in certain SET options, database options, or configuration options. 
+For example, a stored procedure that concatenates strings might compile the 
+concatenation differently depending on whether the option CONCAT_NULL_
+YIELDS_NULL is on or off, or whether the corresponding database option 
+is true or false. If a user executes the procedure with the option on, that 
+person will use a different plan than if the option is off.
+</P>
+
+<P>The system table <I>syscacheobjects</I> keeps track of the compiled objects in 
+cache at any time. This table is accessible only by system administrators, but you 
+can write your own stored procedures to provide information for your own 
+tuning and testing purposes. You can use a procedure called 
+<I>sp_procs_in_cache</I> (which is on this book's companion CD) to return a list of all procedure plans in 
+cache and the number of times each plan occurs. The list is organized by database. 
+If you execute the procedure without passing a parameter, you see procedures 
+in your current database only. Alternatively, you can provide a specific 
+database name or use the parameter <I>all</I> to indicate that you want to see procedure 
+plans in cache from all databases. If you want to pull different information out 
+of <I>syscacheobjects</I>, you can customize the procedure in any way you like. 
+Remember to create the procedure in the master database so that it can be called 
+from anywhere. Also remember to grant appropriate permissions if anyone other 
+than a system administrator will be running it.
+</P>
+
+<P>Running the <I>sp_procs_in_cache</I> procedure shows the two different 
+types of stored procedure plans: <I>compiled plans 
+</I>and <I>executable plans</I>. A compiled plan is the part of a plan that is reentrant and can be shared by multiple users. 
+You can think of an executable plan as an instance of the compiled plan that 
+contains information describing a particular process that is executing the 
+procedure. In most cases, both compiled and 
+executable plans remain in the memory cache, subject of course to memory pressure from other processes or applications. 
+In other cases, such as when a compiled plan contains a sort operation, 
+execution plans do not remain in cache at all after execution.
+</P>
+
+<A NAME="552"><H2>Other Benefits of Stored Procedures</H2></A>
+<P>Beyond the significant performance and security advantages, stored 
+procedures can provide a valuable level of indirection between your applications and 
+the database design. Suppose your application calls 
+a procedure such as <I>get_
+customer_balance </I>and expects a result set to be returned. If the underlying 
+database is then changed, the application can be totally unaffected and unaware 
+of the change as long as the procedure also changes to return the result set 
+as expected. For example, if you decide to denormalize your database design 
+to provide faster query performance, you can change the stored procedure 
+to respecify the query. If many applications call the procedure, you can 
+simply change the stored procedure once and never touch the application. In fact, 
+a running application doesn't even need to be restarted&#8212;it executes the 
+new version of the stored procedure the next time it is called.
+</P>
+
+<P>Another good reason to use stored procedures is to minimize 
+round-trips on the network (that is, the conversational TDS traffic between the client 
+application and SQL Server for every batch and result set). If you will take 
+different actions based on data values, try to make those decisions directly in the 
+procedure. (Strictly speaking, you don't need to use a stored procedure to do 
+this&#8212;a batch also provides this benefit.) Issue as many commands as possible in a 
+batch. You can try a simple test by inserting 100 rows first as a single batch and 
+then as every insert in its own batch (that is, 100 batches). You'll see a 
+performance improvement of an order of magnitude even on a LAN, and on a slow 
+network the improvement will be stunning. While LAN speeds of 10 megabits per 
+second (Mbps) are fast enough that the network is generally not a significant 
+bottleneck, speeds can be tremendously different on a slow network. A modem 
+operating at 28.8 kilobits per second (Kbps) is roughly 300 times slower than a 
+LAN. Although WAN speeds vary greatly, they typically can be 100 to 200 times 
+slower than a LAN. The fast LAN performance might hide inefficient network use. 
+You can often see a prime example of this phenomenon when you use 
+cursors. Fetching each row individually might be tolerable on a LAN, but it is 
+intolerable when you use dial-up lines.
+</P>
+
+<P>If a stored procedure has multiple statements, by default SQL Server 
+sends a message to the client application at the completion of each statement to 
+indicate the number of rows affected for each statement. This is known as a DONE_
+IN_PROC message in TDS-speak. However, most applications do not 
+need DONE_IN_PROC messages. So if you are confident that your applications 
+do not need these messages, you can disable them, which can greatly improve 
+performance on a slow network when there is otherwise little network traffic. 
+(One particular application deployed on a WAN had an order-of-magnitude 
+performance improvement after suppressing the DONE_IN_PROC messages. 
+This made the difference between a successful deployment and a fiasco.)
+</P>
+
+<P>You can use the connection-specific option <I>SET NOCOUNT 
+ON</I> to disable these messages for the application. While they are disabled, you cannot 
+use the ODBC SQLRowCount()<I> </I>function or its OLE DB equivalent. 
+However, you can toggle NOCOUNT on and off as needed, and you can 
+use <I>select @@rowcount</I> even when NOCOUNT is on. You can also suppress 
+the sending of DONE_IN_PROC messages by starting the server with trace 
+flag 3640, which lets you suppress what might be needless overhead without 
+touching your application. However, some ODBC applications depend on 
+the DONE_IN_PROC message, so you should test your application before 
+using trace flag 3640 in production&#8212;it can break applications that are written 
+implicitly to expect that token.
+</P>
+
+<P>You should keep an eye on the traffic between your client applications 
+and the server. An application designed and tuned for slow networks works 
+great on a fast network, but the reverse is not true. If you use a higher-level 
+development tool that generates the SQL statements and issues commands on 
+your behalf, it is especially important to keep an eye on what's moving across 
+the network. You can use the SQL Server Profiler to watch all traffic into the 
+server. If you want to watch both commands in and responses sent, you can start 
+the server from the command line with trace flags 4032 and 4031, which 
+respectively display the server's receive and send buffers (for example, 
+<I>sqlservr _c _T4031 
+_T4032</I>). Enabling these two flags dumps all conversation to and from the 
+server to standard output for the <I>sqlservr</I> process, which is the monitor if you start 
+it from a console window. (Note that the output can get huge.) Whether you 
+use SQL Server Profiler or these trace flags, you can get all the exact commands 
+and data being sent. Just to monitor network traffic, though, this might be 
+overkill; a network sniffer such as Network Monitor (available with Microsoft 
+Windows NT Server and Microsoft Systems Management Server) can work 
+better if you want only to monitor network traffic. Network Monitor is easy to 
+use, and even a networking neophyte can set it up quickly and with a few mouse 
+clicks watch the traffic between machine pairs.
+</P>
+
+</BODY>
+</HTML>
+
+
+

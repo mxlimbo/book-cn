@@ -1,0 +1,148 @@
+<HTML>
+<HEAD>
+<LINK REL=StyleSheet HREF="basicIE4.css" TYPE="text/css">
+<TITLE>A Sample ISAPI Filter -- ex35b.dll, ex35c.exe</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY>
+<A NAME="958"><H1>A Sample ISAPI Filter&#151;ex35b.dll, ex35c.exe</H1></A><P>It was hard to come up with a cute application for ISAPI filters. The one 
+we thought up, ex35b.dll, is a useful visual logging utility. IIS, of course, logs 
+all transactions to a file (or database), but you must stop the server before you 
+can see the log file entries. With this example, you have a real-time transaction 
+viewer that you can customize.
+<A NAME="959"><H2>Choosing the Notification</H2></A><P>Start by looking at the list of 
+<I>CHttpFilter</I> virtual member functions on 
+page 1050. Observe the calling sequence and the parameters. For the EX35B 
+logging application, we chose <I>OnReadRawData</I> because it allowed full access 
+to the incoming request and header text (from 
+<I>pRawData</I>) and to the source and destination IP addresses (from 
+<I>pCtxt-&gt;GetServerVariable</I>).
+<A NAME="960"><H2>Sending Transaction Data to the Display Program</H2></A><P>The ISAPI filter DLL can't display the transactions directly because it runs 
+(as part of the IIS service process) on an invisible desktop. You need a 
+separate program that displays text in a window, and you need a way to send data 
+from the DLL to the display program. There are various ways to send the data 
+across the process boundary. A conversation with Jeff Richter, the Windows guru 
+who wrote <I>Advanced Windows</I> (Microsoft Press, 1997), led to the data being put 
+in shared memory. Then a user-defined message, WM_SENDTEXT, is posted 
+to the display program. These messages can queue up, so IIS can keep going 
+independently of the display program.
+<P>We declared two handle data members in 
+<I>CEx35bFilter::m_hProcessDest</I> and 
+<I>CEx35bFilter::m_hWndDest</I>. We added code at the end of the 
+<I>GetFilterVersion</I> function to set these data members to the display program's process 
+ID and main window handle. The code finds the display program's main 
+window by its title, ex35b, and then it gets the display program's process ID.
+<P><PRE>m_hProcessDest = NULL;
+if((m_hWndDest = ::FindWindow(NULL, &quot;ex35b&quot;)) != NULL) {
+    DWORD dwProcessId;
+    GetWindowThreadProcessId(m_hWndDest, &amp;dwProcessId);
+    m_hProcessDest = OpenProcess(PROCESS_DUP_HANDLE, FALSE, dwProcessId);
+    SendTextToWindow(&quot;EX35B filter started\r\n&quot;);
+}</PRE>
+<P>Below is a helper function, 
+<I>SendTextToWindow</I>, which sends the WM_SENDTEXT message to the display program.
+<P><PRE>void CEx35bFilter::SendTextToWindow(char* pchData)
+{
+    if(m_hProcessDest != NULL) {
+        int nSize = strlen(pchData) + 1;
+
+        HANDLE hMMFReceiver;
+        HANDLE hMMF = ::CreateFileMapping((HANDLE) 0xFFFFFFFF, NULL,
+            PAGE_READWRITE, 0, nSize, NULL);
+        ASSERT(hMMF != NULL);
+        LPVOID lpvFile = ::MapViewOfFile(hMMF, FILE_MAP_WRITE, 0, 0, nSize);
+        ASSERT(lpvFile != NULL);
+        memcpy((char*) lpvFile, pchData, nSize);
+        ::DuplicateHandle(::GetCurrentProcess(), hMMF, m_hProcessDest, 
+            &amp;hMMFReceiver, 0, FALSE, DUPLICATE_SAME_ACCESS | 
+            DUPLICATE_CLOSE_SOURCE);
+        ::PostMessage(m_hWndDest, WM_SENDTEXT, (WPARAM) 0, 
+            (LPARAM) hMMFReceiver);
+        ::UnmapViewOfFile(lpvFile);
+    }
+}</PRE>
+<P>The <I>DuplicateHandle</I> function makes a copy of EX35B's map 
+handle, which it sends to the EX35C program in a message parameter. The 
+EX35C process ID, determined in 
+<I>GetFilterVersion</I>, is necessary for the 
+<I>DuplicateHandle</I> call. Here is the filter's 
+<I>OnReadRawData</I> function, which calls 
+<I>SendTextToWindow</I>:
+<P><PRE>DWORD CEx35bFilter::OnReadRawData(CHttpFilterContext* pCtxt,
+    PHTTP_FILTER_RAW_DATA pRawData)
+{
+    TRACE (&quot;CEx35bFilter::OnReadRawData\n&quot;);
+    // sends time/date, from IP, to IP, request data to a window
+    char pchVar[50] = &quot;&quot;;
+    char pchOut[2000];
+    DWORD dwSize = 50;
+    BOOL bRet;
+    CString strGmt = CTime::GetCurrentTime().FormatGmt(&quot;%m/%d/%y %H:%M:%SGMT&quot;);
+    strcpy(pchOut, strGmt);
+    bRet = pCtxt-&gt;GetServerVariable(&quot;REMOTE_ADDR&quot;, pchVar, &amp;dwSize);
+    if(bRet &amp;&amp; dwSize &gt; 1) {
+        strcat(pchOut, &quot;, From &quot;);
+        strcat(pchOut, pchVar);
+    }
+    bRet = pCtxt-&gt;GetServerVariable(&quot;SERVER_NAME&quot;, pchVar, &amp;dwSize);
+    if(bRet &amp;&amp; dwSize &gt; 1) {
+        strcat(pchOut, &quot;, To &quot;);
+        strcat(pchOut, pchVar);
+    }
+     strcat(pchOut, &quot;\r\n&quot;);
+    int nLength = strlen(pchOut);
+    // Raw data is not zero-terminated
+    strncat(pchOut, (const char*) pRawData-&gt;pvInData, pRawData-&gt;cbInData);
+    nLength += pRawData-&gt;cbInData;
+    pchOut[nLength] = `\0';
+    SendTextToWindow(pchOut);
+    return SF_STATUS_REQ_NEXT_NOTIFICATION;
+}</PRE>
+<A NAME="961"><H2>The Display Program</H2></A><P>The display program, ex35c.exe, isn't very interesting. It's a standard 
+AppWizard <I>CRichEditView</I> program with a WM_SENDTEXT handler in the main 
+frame class:
+<P><PRE>LONG CMainFrame::OnSendText(UINT wParam, LONG lParam)
+{
+    TRACE(&quot;CMainFrame::OnSendText\n&quot;);
+    LPVOID lpvFile = ::MapViewOfFile((HANDLE) lParam, FILE_MAP_READ, 0, 0,
+        0);
+    GetActiveView()-&gt;SendMessage(EM_SETSEL, (WPARAM) 999999, 1000000);
+    GetActiveView()-&gt;SendMessage(EM_REPLACESEL, (WPARAM) 0, 
+        (LPARAM) lpvFile);
+    ::UnmapViewOfFile(lpvFile);
+    ::CloseHandle((HANDLE) lParam);
+
+    return 0;
+}</PRE>
+<P>This function just relays the text to the view.
+<P>The EX35C <I>CMainFrame</I> class overrides 
+<I>OnUpdateFrameTitle</I> to eliminate the document name from the main window's title. This ensures that 
+the DLL can find the EX35C window by name.
+<P>The view class maps the WM_RBUTTONDOWN message to 
+implement a context menu for erasing the view text. Apparently rich edit view 
+windows don't support the WM_CONTEXTMENU message.
+<A NAME="962"><H2>Building and Testing the EX35B ISAPI Filter</H2></A><P>Build both the EX35B and EX35C projects, and then start the EX35C 
+program. To specify loading of your new filter DLL, you must manually update the 
+Registry. Run the Regedit application, and then double-click 
+on<I> Filter DLLs</I> in 
+\HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\W3SVC\Parameters. Add the full pathname of the DLL separated from 
+other DLL names with a comma.
+<P>There's one more thing to do. You must change the IIS mode to 
+allow the service to interact with the EX35C display program. To do this, click on 
+the Services icon in the Control Panel, double-click on World Wide Web 
+Publishing Service, and then check Allow Service To Interact With Desktop. 
+Finally, use Internet Service Manager to stop and restart the WWW service to load 
+the filter DLL. When you use the browser to retrieve pages from the server, 
+you should see output like this.
+<P><A HREF="javascript:fullSize('g35og04x.htm')"> <img src="g35og04.jpg" width=404 height=416 border=0 ALT = "Click to view at full size."> </A>
+<P>You can use the same steps for debugging an ISAPI filter that you 
+used for an ISAPI server extension.
+</BODY>
+</HTML>
+
+
+

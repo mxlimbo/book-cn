@@ -1,0 +1,250 @@
+<HTML>
+<HEAD>
+	<link rel="STYLESHEET" type="text/css" href="squeal7.css">
+<TITLE>Cursors and ISAMs</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch11b.htm">[Previous]</A> <A HREF="ch11d.htm">[Next]</A><P>
+
+<A NAME="418"><H1>Cursors and ISAMs</H1></A>
+
+<P>Before you proceed, you must understand something crucial about using 
+cursors: You should never let cursors turn SQL Server into a network ISAM.</P>
+
+<P>You might recall from <A HREF="ch01a.htm">Chapter 1</A> that the initial grand plan for SQL 
+Server called for it to be a higher performance back end for Ashton-Tate's dBASE 
+IV. dBASE was really a record-oriented, ISAM-like data management system 
+(that is, it did sequential, row-by-row processing). It was not set based. At the 
+time, SQL Server didn't use cursors, which made a difficult task even more 
+difficult. The original plan to make the two record-oriented and set-based systems 
+totally compatible and seamlessly interchangeable was doomed from the outset 
+because of inherent differences in the models. If the original SQL Server had 
+featured the rich cursor model it has now, cursors would have been heavily used to 
+build the dBASE IV front end from the start. But it was probably better that 
+the impedance mismatch became obvious. It forced the SQL Server 
+development team to reexamine its basic goals and dramatically improve its plans. It 
+also highlighted the importance of orienting oneself to work with sets of data, 
+not individual records as one would do with an ISAM. Had cursors existed 
+then, they probably would have been misused, with the result being a bad SQL 
+Server front end.</P>
+
+<P>Cursors can be an important tool when used prudently. However, 
+because cursors are record oriented, developers who are familiar with ISAM systems 
+(such as IMS, dBASE, VSAM, or the Microsoft Jet database engine used in 
+Microsoft Access) are often tempted to use cursors to port an application from an 
+ISAM system to SQL Server. Such a port can be done quickly, but this is also one 
+of the fastest ways to produce a truly bad SQL Server application. In the basic 
+cursor example shown previously, the operation to fetch each row of the 
+<I>authors </I>table is much like an ISAM operation on the 
+<I>authors</I> file. Using that cursor is an order of 
+magnitude less efficient than simply using a single SELECT statement 
+to get all authors. This type of cursor misuse is more common than you'd 
+think. If you need to port an ISAM application to SQL Server, do a 
+<I>deep port</I>&#8212;that is, go back and look at the basic design of the application and the data 
+structures before you do the port. A <I>shallow 
+port</I>&#8212;making SQL Server mimic an ISAM&#8212;is 
+appropriate only if you're one of those programmers who 
+believes that there's never time to do the port right but there's always time to do it over.</P>
+<P>For example, even a modestly experienced SQL Server programmer 
+who wants to show authors and their corresponding book titles would write a 
+single SELECT statement similar to the one below that joins the appropriate 
+tables. This SELECT statement is likely to yield subsecond response time even if all 
+the tables are large, assuming that appropriate indexes exist on the tables.</P>
+
+<P>
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+SELECT A.au_id, au_lname, title
+FROM authors A 
+JOIN titleauthor TA ON (A.au_id=TA.au_id)
+JOIN titles T ON (T.title_id=TA.title_id)
+ORDER BY A.au_id, title
+</PRE></P>
+</td></tr></table>
+</P>
+
+<P><DIV CLASS="NOTE"><BLOCKQUOTE><b>NOTE</b><HR>
+When we refer to response time, we mean the time it
+takes to begin sending results back to the client application&#8212;in other
+words, how long it takes until the first row is returned.
+</BLOCKQUOTE></DIV></P>
+
+<P>In the example above, all the join processing is done at the back end 
+and a single result set is returned. Minimal conversation occurs between the 
+client application and the server&#8212;only the single request is received and all the 
+qualifying rows are returned as one result set. SQL Server decides on the most 
+efficient order in which to work with the tables and returns a single result set 
+to satisfy the request.</P>
+
+<P>An ISAM programmer who doesn't know about an operation such as a 
+join would approach this problem by opening the 
+<I>authors</I> &quot;file&quot; (as an ISAM programmer would think of it) and then iterating for each author by 
+scanning the <I>titleauthor</I> &quot;connecting file.&quot; This programmer would then traverse into 
+the <I>titles</I> file to retrieve the appropriate records. So rather than write the simple 
+and efficient SQL join described above, the programmer might see cursors as 
+the natural solution and write the code shown below. This solution works in a 
+sense: it produces the correct results. But it is truly horrific in terms of its relative 
+complexity to write and its performance compared to the set-based join 
+operation. The join would be more than 100 times faster than this query.</P>
+
+<P>
+<table valign="top" cellpadding=5 width="95%"><tr><td>
+<P><PRE>
+DECLARE @au_id char(11), @au_lname varchar(40), @title_id char(6),
+    @au_id2 char(11), @title_id2 char(6), @title varchar(80)
+
+DECLARE au_cursor CURSOR FOR
+    SELECT au_id, au_lname FROM authors ORDER BY au_id
+
+DECLARE au_titles CURSOR FOR
+    SELECT au_id, title_id FROM titleauthor ORDER BY au_id
+
+DECLARE titles_cursor CURSOR FOR
+    SELECT title_id, title FROM titles ORDER BY title
+
+OPEN au_cursor 
+FETCH NEXT FROM au_cursor INTO @au_id, @au_lname
+
+WHILE (@@FETCH_STATUS=0)
+    BEGIN
+    OPEN au_titles
+    FETCH NEXT FROM au_titles INTO @au_id2, @title_id
+
+
+    WHILE (@@FETCH_STATUS=0)
+        BEGIN
+        -- If this is for the current author, get
+        -- titles too
+        IF (@au_id=@au_id2)
+            BEGIN
+            OPEN titles_cursor
+            FETCH NEXT FROM titles_cursor INTO
+                @title_id2, @title
+
+            WHILE (@@FETCH_STATUS=0)
+                BEGIN
+                -- If right title_id, display the values
+                IF (@title_id=@title_id2)
+                    SELECT @au_id, @au_lname, @title
+
+                FETCH NEXT FROM titles_cursor INTO
+                    @title_id2, @title
+                END
+                CLOSE titles_cursor
+            END
+        FETCH NEXT FROM au_titles INTO @au_id2, @title_id
+        END
+
+    CLOSE au_titles
+    FETCH NEXT FROM au_cursor INTO @au_id,@au_lname
+    END
+CLOSE au_cursor
+
+DEALLOCATE titles_cursor
+DEALLOCATE au_titles
+DEALLOCATE au_cursor
+</PRE></P>
+</td></tr></table>
+</P>
+
+<P>Although this cursor solution is technically correct and is similar to the 
+way ISAM processing would be written, if your developers are writing SQL 
+Server applications like this<I> stop them immediately 
+</I>and educate them. It might be easy for a developer who is familiar with SQL to see that the join is much better, 
+but a developer who is steeped in ISAM operations might see the cursor 
+solution as more straightforward even though it is more verbose. This is much more 
+than just a style issue. Even for this trivial example from 
+<I>pubs</I> with only 25 rows of output, the join solution is orders of 
+magnitude<I> </I>faster. SQL Server is designed for set operations, so whenever possible you should perform set 
+operations instead of sequential row-by-row operations. In addition to the huge 
+performance gain, join operations are simpler to write and are far less likely to 
+introduce a bug.</P>
+
+<P>Programmers familiar with the ISAM model do positioned updates. 
+That is, they seek (or position) to a specific row, modify it, seek to another row, 
+update it, and so forth. Cursors also offer positioned updates, but performance is 
+far slower than what you can achieve using a single UPDATE statement 
+that simultaneously affects multiple rows. Although the previous example 
+showed a SELECT operation, you can also accomplish updates and deletes using 
+subquery and join operations. (For details, see <A HREF="ch08a.htm">Chapter 8</A>.)</P>
+
+<A NAME="419"><H2>Problems with ISAM-Style Applications</H2></A>
+
+<P>The main problems with the ISAM style of writing applications for SQL 
+Server are as follows:</P>
+
+<UL>
+<P><LI>The ISAM-style operation makes excessive requests to the 
+SQL Server. When cursor operations are done in the client application, 
+a huge increase in network traffic results. In the join solution 
+example we just examined, one request was made to the server: the 
+SQL query doing the join. But in ISAM-style code, if every OPEN 
+and FETCH presents a command to the server, this simple example 
+that produces fewer than 30 rows of output results in more than 
+1000 commands being sent to the SQL Server!</LI></P>
+
+ <P>For the sake of illustration, the procedure is written entirely 
+with Transact-SQL cursors. But cursors are typically written from a 
+client application, and every OPEN and every FETCH would indeed be 
+a separate command and a separate network conversation. The 
+number of commands grows large because of all the nested iteration 
+that happens with the series of inner loops, as you'll see if you 
+trace through the commands. Although this procedure is 
+admittedly convoluted, it's not unlike ones that exist in real applications.</P>
+
+<P><LI>     It is almost always more expensive to use a cursor than it is to 
+use set-oriented SQL to accomplish a given task. ISAM's only form 
+of update is the positioned update, but this requires at least two 
+round-trips to the server&#8212;one to position on the row and another to 
+change it. In set-oriented SQL, the client application tells the server that 
+it wants to update the set of records that meet specified criteria. 
+Then the server figures out how to accomplish the update as a single 
+unit of work. When you use a cursor, the client doesn't allow the 
+server to manage retrieving and updating records.</LI></P>
+
+<P>In addition, using a cursor implies that the server is 
+maintaining client &quot;state&quot; information&#8212;such as the user's current result set at 
+the server, usually in <I>tempdb</I>&#8212;as well as consumption of memory for 
+the cursor itself. Maintaining this state unnecessarily for a large 
+number of clients is a waste of server resources. A better strategy for 
+using SQL Server (or any server resource in fact) is for the client 
+application to get a request in and out as quickly as possible, 
+minimizing the client state at the server between requests. Set-oriented SQL 
+supports this strategy, which makes it ideal for the client/server model.</P>
+
+<P><LI>     The ISAM-style application example uses a conversational style 
+of communicating with the server, which often involves many 
+network round-trips within the scope of a single transaction. The effect is 
+that transactions take longer. Transactions handled in this way can 
+require seconds or minutes between the BEGIN TRANSACTION 
+and COMMIT TRANSACTION statements. These long-running 
+transactions might work fine for a single user, but they scale much 
+too poorly for multiple users if any update activity occurs.</LI></P>
+
+<P>To support transactional consistency, the database must hold 
+locks on shared resources from the time the resources are first 
+acquired within the transaction until the commit time. Other users must 
+wait to access the same resources. If one user holds these locks 
+longer, that user will affect other users more and increase the possibility of 
+a deadlock. (For more on locking, see <A HREF="ch13a.htm">Chapter 13</A>.)</P>
+</UL>
+
+<P><DIV CLASS="SEEALSO"><BLOCKQUOTE><b>SEE ALSO</b><HR>
+See Peter Hussey's whitepaper titled
+&quot;Designing Efficient Applications for Microsoft SQL Server&quot; to learn about
+programming interfaces that can be used for SQL Server
+development. It also covers such issues as appropriate uses for cursors. A copy of
+this document is included on the book's companion CD. You can
+also download it for free from <A HREF="http://www.microsoft.com/sql" TARGET="_window2">http://www.microsoft.com/sql</A>.
+</BLOCKQUOTE></DIV></P>
+
+</BODY>
+</HTML>
+
+
+

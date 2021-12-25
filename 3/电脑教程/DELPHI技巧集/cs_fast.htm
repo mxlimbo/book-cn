@@ -1,0 +1,231 @@
+<html>
+
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=gb2312">
+<title>提高客户机/服务器应用系统性能的一些方法</title>
+</head>
+
+<body bgcolor="#FFFFFF" text="#000000">
+
+<p>题 目: 提高客户机/服务器应用系统性能的一些方法<br>
+陈霞 罗铁坚<br>
+<br>
+摘 要 客户机/服务器的应用逻辑设计是否合理,直接影响到客<br>
+户机/服务器方式应用系统的处理性能。本文以Oracle 7服务器为平<br>
+台提出一些方法,以确定如何划分应用逻辑,使客户机/服务器应用系<br>
+统有较高的处理效率。<br>
+关键词 PL/SQL 触发子 客户机/服务器<br>
+<br>
+一、问题的提出<br>
+80年代末到90年代初,许多应用系统从主机终端方式、文件共享<br>
+方式向客户机/服务器方式过渡。客户机/服务器系统比文件服务器系<br>
+统能提供更高的性能,因为客户机和服务器将应用的处理要求分开,同<br>
+时又共同实现其处理要求(即&quot;分布式应用处理&quot;)。服务器为多个客户<br>
+机管理数据库,而客户机发送请求和分析从服务器接收的数据。在一<br>
+个客户机/服务器应用中,数据库服务器是智能化的,它只封锁和返回<br>
+一个客户机请求的那些行,保证了并发性,使网络上的信息传输减到最<br>
+少,因而可以改善系统的性能。<br>
+在客户机/服务器系统中,应用的处理是分布在网络上的,所以在<br>
+设计客户机方数据库应用程序时,若把过多的负担加在网络上,没有充<br>
+分利用数据库的存储过程,没有把网络访问最小化,结果是应用程序要<br>
+执行过多的网络I/O,使网络饱和,从而降低了整个系统的性能。要开<br>
+发好的客户机/服务器应用系统,必须搞清楚如何在组成系统的各部分<br>
+之间分布应用功能。<br>
+本文提出一些方法来确定客户机/服务器数据库系统中哪些功能<br>
+应放在哪里实现。客户机应用程序主要侧重于用某种方便用户的方式<br>
+表示和(或)分析数据。开发客户机应用程序时,网络传输量是应重点<br>
+考虑的问题之一。应注意应用程序如何向数据库服务器发送信息或从<br>
+数据库服务器接收信息以及发送和接收多少数据。通常客户机/服务<br>
+器系统上网络I/O是应用程序性能的瓶颈,一个应用程序引起的网络上<br>
+I/O越少,应用及整个系统的运行情况越好。要从一个客户机应用中消<br>
+除不必要的网络传输量,需要理解和利用SQL命令及数据库上的其它一<br>
+些特征。<br>
+<br>
+二、一个例子<br>
+下面,我们来考虑这样一个例子:一个数据库应用程序完成显示每<br>
+个销售订单的所有行的金额合计。<br>
+一般算法分两步:<br>
+(1)每行项目中数量乘以单价=金额;<br>
+(2)把每行金额累加。<br>
+第一种方法:<br>
+每次一行,然后,用应用程序累加,即<br>
+SELECT orderid, quantity ,unitprice<br>
+FROM item ,stock<br>
+WHERE stock.id=item.id<br>
+ORDER BY orderid<br>
+结果为:<br>
+orderid quantity unitprice<br>
+1 1 6.03<br>
+1 1 21.4<br>
+1 4 87.12<br>
+2 2 8.97<br>
+2 3 21.4<br>
+采用这种方法,若业务量增大,则其网络的传输量相应增大。<br>
+第二种方法:<br>
+让数据库服务器进行计算,然后只把结果从网上取过来,即:<br>
+SELECT orderid ,SUM(quantity *unitprice)<br>
+FROM item , stock<br>
+WHERE item.id=stock.id<br>
+GROUP BY orderid<br>
+ORDER BY orderid<br>
+结果为:<br>
+orderid SUM(quantity*unitprice)<br>
+1 265.87<br>
+2 82.14<br>
+如上所示,由于第二种查询使用了一个SQL的组合,即一个SQL函数<br>
+(SUM)以及一个GROUP BY子句,让服务器来执行计算。因此,只需从网<br>
+上传输较少的数据。<br>
+这个简单例子说明:<br>
+<br>
+1.在客户机/服务器环境中如何用SQL函数减少网络上的传输量; <br>
+2.开发人员必须完全熟悉SQL才能做出好的客户机数据库应用程<br>
+序。<br>
+三、提高性能的方法<br>
+下面我们介绍几种提高性能的方法。<br>
+<br>
+1.使用完整性约束<br>
+所有客户机应用程序必须遵循一系列预先定义的数据完整性规划<br>
+及业务规则,以保证所有数据库数据是合法的。可以使用两种方法来<br>
+实施一个简单的完整的规则:让应用程序执行完整性检查;使用Oracle<br>
+7的完整性约束。<br>
+(1)让应用程序执行完整性检查<br>
+例如,任何一个订单( orders)的顾客号必须是客户机表( custom<br>
+er)中的顾客户机号。这是一个最简单的引用完整性,可以用应用程序<br>
+本身执行完整性检查。<br>
+DECLARE<br>
+flag INTEGER;<br>
+BEGIN<br>
+SELECT id INTO flag<br>
+FROM customer<br>
+WHERE id=3<br>
+FOR UPDATE OF id;<br>
+IF SQL%FOUND THEN<br>
+INSERT INTO orders<br>
+VALUES(5,3,SYSDATE,null,null,'F');<br>
+-- 其他应用逻辑<br>
+COMMIT;<br>
+END IF;<br>
+END;<br>
+这个过程只是在应用程序内部用于实施引用完整性规则的一种方<br>
+法,但可以看出,为实施一个简单的完整性规则,应用程序要花大量的<br>
+时间通过网络来请求和发送数据。<br>
+(2)使用Oracle 7的完整性约束<br>
+CREATE TABLE orders<br>
+(<br>
+id INTEGER PRIMARY KEY,<br>
+customer id INTEGER NOT NULL REFERENCES customer,<br>
+orderdate DATE NOT NULL,<br>
+shipdate DATE DEFAULT SYSDATE,<br>
+paidate DATE DEFAULT SYSDATE,<br>
+status CHAR(1) DEFAULT ‘F' CHECK(status IN(‘F'<br>
+,‘B'))<br>
+);<br>
+实施简单完整性规则(如引用完整性)的更好方法是使用Oracle 7<br>
+的完整性约束。该方法的好处是明显的:<br>
+①定义一个表的同时,方便地建立完整性约束,开发人员不需为实<br>
+施一个简单的完整性规则而创建测试、排错复杂的数据完整性逻辑,<br>
+提高了工作效率;<br>
+②用集中化的方法实现完整性规则;<br>
+③无需任何网络I/O,客户机/服务器系统也就不会因为网络访问<br>
+而降低性能。<br>
+2.使用数据库触发器<br>
+应用程序经常需要实施复杂的业务规则,这些规则无法用完整性<br>
+规则表示,所以最好不要按照常规思路在应用程序中实施完整性规则;<br>
+而是用数据触发子(triggers)来实施业务规则。其优点是容易创建,<br>
+可集中进行规则实施,避免不必要的网络I/O。<br>
+利用数据库触发子可以使其他一些应用程序集中化和自动化。 <br>
+比如,计算item 表中的total 列的值是所订零件的数量乘以零件的单<br>
+价,而零件单价存放在stock表中,当插入一个新的行项目时,应用程序<br>
+计算total列的值有两种方法。<br>
+方法一:让应用程序通过SQL命令执行这个操作<br>
+DECLARE total REAL;<br>
+BEGIN<br>
+SELECT unitprice*quantity INTO total<br>
+FROM stock, item<br>
+WHERE id=4;<br>
+INSERT INTO item VALUES(...);<br>
+END<br>
+应用程序通过网络发出请求,取得某一些零件单价,然后插入这个<br>
+含有该行计算值(tota l)的行。修改item表中某行数量值,应用程序<br>
+需要包含相似的逻辑来计算。此外,多个用户还可能同一时刻插入和<br>
+修改订单。总之,用这种方法来计算total 列时会在客户机/服务器系<br>
+统中产生大量的网络传输。<br>
+方法二:用数据库触发子, 从一个行项目自动导出total 的值, <br>
+当用户在item表中插入新行或修改quantity时,无需任何网络访问。<br>
+CREATE TRIGGER Linetotal<br>
+BEFORE INSERT OR UPDATE OF quantity,stockid<br>
+ON item<br>
+FOR EACH ROW<br>
+DELARE<br>
+itemprice REAL;<br>
+BEGIN<br>
+SELECT unitprice<br>
+INTO itemprice<br>
+FROM stock<br>
+WHERE id=:new.stockid;<br>
+:new.tolal:=new.quantity*itemprice;<br>
+END linetotal;<br>
+当创建触发器linetotal后, 应用开发人员在编写应用程序时就<br>
+不需考虑保持total列为最新值的问题,而且网络数据库上所有应用都<br>
+会因此受益。<br>
+3.利用过程和包优化性能<br>
+这里主要讨论如何利用完整性约束和数据库触发器把应用逻辑移<br>
+到数据库服务器中执行以便减少网络I/O,提高性能。<br>
+其它类型应用处理逻辑分布到数据库服务器亦可以减少客户机/<br>
+服务器应用中的网络I/ O,应用程序不必再用包含多个网络操作的SQL<br>
+语句去执行数据库服务器操作,而是简单且有效地调用存储过程。包<br>
+是一种用来把多个有关的过程在数据库中封装起来的方法。<br>
+下面是用SQL和用存储过程例子的差异:<br>
+例如要插入某些行项目的订单,用SQL实现过程:<br>
+INSERT INTO orders VALUES(...)<br>
+INSERT INTO item VALUES(1,..)<br>
+UPDATE stock SET onhand=...<br>
+INSERT INTO orders VALUES(...)<br>
+INSERT INTO item VALUES(2,..)<br>
+UPDATE stock SET onhand=...<br>
+INSERT INTO orders VALUES(...)<br>
+INSERT INTO item VALUES(3,..)<br>
+UPDATE stock SET onhand=...<br>
+COMMIT;<br>
+要创建一个新销售订单并插入它的三个行项目,应用程序必须用7<br>
+个不同的的SQL语句来实现,每个语句都要通过网络传输数据,要减少<br>
+这些SQL语句在客户机/服务器系统中产生的网络传输量,可以创建两<br>
+个简单的过程来插入订单及行项目。<br>
+CREATE PROCEDURE placeorder(custid IN INTEGER) AS<br>
+BEGIN<br>
+INSERT INTO orders<br>
+VALUES(orderseq.NEXTVAL,custid,SYSDATE,null,null,‘F<br>
+');<br>
+END placeorder;<br>
+CREATE PROCEDURE placeitem<br>
+(itemid IN INTEGER,partid IN INTEGER, quan IN INTEGER)<br>
+AS<br>
+BEGIN<br>
+INSERT INTO item(id,orderid,stockid,quantity)<br>
+VALUES(itemid,orderseq.CURRVAL,partid,quan);<br>
+UPDATE stock<br>
+SET onhand=onhand-quan<br>
+WHERE id=partid;<br>
+END placeitem;<br>
+应用程序只需简单调用这几个过程。<br>
+Placeorder(3);<br>
+Placeitem(1,3,2);<br>
+Placeitem(2,8,1);<br>
+Placeitem(3,9,3);<br>
+当一个应用程序调用存储过程时,通过网络发送的数据只有过程<br>
+调用及参数。<br>
+本文提出的提高客户机/服务器应用系统性能的方法,主要是采用<br>
+合理分布处理逻辑于客户机端与服务器端,并充分利用数据库服务器<br>
+来提高执行速度。该方法的有效性,已在我们开发的多项客户机/服务<br>
+器应用系统中得到证实。此外,在提高性能的措施和方法中,SQL语句<br>
+的查询优化问题也不可忽视。综合上述两种方法,才能从根本上提高<br>
+客户机/服务器应用系统的性能。<br>
+<br>
+参考文献<br>
+1 Steven M.Bobrowski. Mastering Oracle7 &amp; Client/Server<br>
+Computing, SYBEX I nc. 1995.<br>
+2 Michael J. Corey etc. Oracle数据库性能优化技术,学苑<br>
+出版社,1994.<br>
+</p>
+</body>
+</html>

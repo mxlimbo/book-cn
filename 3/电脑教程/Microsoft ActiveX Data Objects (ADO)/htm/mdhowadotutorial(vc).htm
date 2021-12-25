@@ -1,0 +1,161 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">
+<HTML dir=ltr>
+<HEAD>
+<META HTTP-EQUIV="Content-Type" Content="text/html; charset=GB_2312-80">
+<title>ADO 教程 (VJ++)</title>
+<style>@import url(/stylesheets/msdn_ie4.css);</style>
+<link disabled rel="stylesheet" href="/stylesheets/msdn_ie3.css"></HEAD>
+<BODY>
+
+<h3><a name="mdhowadotutorial(vc)"></a>ADO 教程 (VC++) </h3>
+<p>
+<object id=alink_1 type="application/x-oleobject"
+	classid="clsid:adb880a6-d8ff-11cf-9377-00aa003b7a11">
+<PARAM name="Command" value="ALink,MENU">
+<PARAM name="Text" value="Text:请参阅">
+<PARAM name="Flags" value=",,1">
+<PARAM name="Item1" value="">
+<PARAM name="Item2" value="mdhowADOTutorial(VC)_C">
+</object></p>
+<p>
+本教程以新版 Microsoft Visual C++ Extensions 为特征。VC++ Extensions 删除了对繁琐的 VARIANT 数据类型的使用。 </p>
+<p>
+本教程还使用了 <b>#import </b>伪指令，它将 ADO Typelib 转换到头文件中，这个头文件使一些 ADO 的功能在使用和外观上类似 Microsoft Visual Basic 中相应的用法。</p>
+<p class=indent>
+<B><b>注意</b></B>&nbsp;&nbsp;&nbsp;在该范例中发布和使用的绑定宏已经过更改，不再与原始文档相同。有关当前宏定义的详细信息，请参阅头文件 icrsint.h。</p>
+<pre>#define INITGUID
+#import "c:\Program Files\Common Files\System\ADO\msado15.dll" \
+   no_namespace rename("EOF", "EndOfFile")
+#include &lt;stdio.h&gt;
+#include &lt;icrsint.h&gt;
+
+void dump_com_error(_com_error &amp;e)
+   {
+   printf("Error\n");
+   printf("\a\tCode = %08lx\n", e.Error());
+   printf("\a\tCode meaning = %s", e.ErrorMessage());
+   _bstr_t bstrSource(e.Source());
+   _bstr_t bstrDescription(e.Description());
+   printf("\a\tSource = %s\n", (LPCSTR) bstrSource);
+   printf("\a\tDescription = %s\n", (LPCSTR) bstrDescription);
+   }
+
+class CCustomRs : 
+   public CADORecordBinding
+{
+BEGIN_ADO_BINDING(CCustomRs)
+   ADO_VARIABLE_LENGTH_ENTRY2(1, adVarChar, m_szau_lname, 
+         sizeof(m_szau_lname), lau_lnameStatus, false)
+   ADO_VARIABLE_LENGTH_ENTRY2(2, adVarChar, m_szau_fname, 
+         sizeof(m_szau_fname), lau_fnameStatus, false)
+   ADO_VARIABLE_LENGTH_ENTRY2(3, adVarChar, m_szphone,&nbsp;&nbsp;&nbsp;&nbsp;
+         sizeof(m_szphone),&nbsp;&nbsp;&nbsp;&nbsp;lphoneStatus,&nbsp;&nbsp;&nbsp;&nbsp;true)
+END_ADO_BINDING()
+
+public:
+   CHAR   m_szau_lname[41];
+   ULONG   lau_lnameStatus;
+   CHAR   m_szau_fname[41];
+   ULONG   lau_fnameStatus;
+   CHAR   m_szphone[12];
+   ULONG   lphoneStatus;
+};
+
+VOID   main()
+   {
+   HRESULT            hr;
+   IADORecordBinding   *picRs = NULL;
+   
+   ::CoInitialize(NULL);
+
+   try 
+      {
+      _ConnectionPtr pConn("ADODB.Connection.1.5");
+      _RecordsetPtr pRs("ADODB.Recordset.1.5");
+      CCustomRs rs;
+
+// 步骤 1 — 打开连接
+
+      pConn-&gt;Open("dsn=pubs;", "sa", "", adConnectUnspecified);
+
+// 步骤 2 — 创建命令
+// 步骤 3 — 执行命令
+
+      pRs-&gt;Open("select * from authors", 
+         _variant_t(pConn),
+         adOpenDynamic, adLockOptimistic, adCmdText);
+      
+      if (FAILED(hr = pRs-&gt;QueryInterface(__uuidof(IADORecordBinding), 
+            (LPVOID*)&amp;picRs)))
+         _com_issue_error(hr);
+      
+      if (FAILED(hr = picRs-&gt;BindToRecordset(&amp;rs)))
+         _com_issue_error(hr);
+
+// 步骤 4 — 操作数据
+
+      pRs-&gt;Fields-&gt;GetItem("au_lname")-&gt;Properties-&gt;GetItem("Optimize")-&gt;Value = true; 
+      pRs-&gt;Sort = "au_lname ASC";
+      pRs-&gt;Filter = "phone LIKE '415 5*'";
+
+      pRs-&gt;MoveFirst();
+      while (VARIANT_FALSE == pRs-&gt;EndOfFile)
+         {
+         printf("\a\tName: %s\t %s\tPhone: %s\n",&nbsp; 
+            (rs.lau_fnameStatus == adFldOK ? rs.m_szau_fname : ""), 
+            (rs.lau_lnameStatus == adFldOK ? rs.m_szau_lname : ""),
+            (rs.lphoneStatus == adFldOK ? rs.m_szphone&nbsp;&nbsp; : ""));
+
+         if (rs.lphoneStatus == adFldOK)
+            memcpy(rs.m_szphone, "777", 3);
+            
+         if (FAILED(hr = picRs-&gt;Update(&amp;rs)))
+            _com_issue_error(hr);
+
+      // Change the current row of the Recordset. 
+      // Recordset data for the new current row will automatically be 
+      // extracted and placed in the CCustomRs C++ instance variables.
+   
+         pRs-&gt;MoveNext();
+         }
+      pRs-&gt;Filter = (long) adFilterNone;
+
+// 步骤 5 — 更新数据
+
+      pConn-&gt;BeginTrans();
+      try 
+         {
+         pRs-&gt;UpdateBatch(adAffectAll);
+
+         // 步骤 6-A — 结束更新 
+         pConn-&gt;CommitTrans();
+         }
+
+      catch (_com_error)
+         {
+         // 步骤 6-B&nbsp; — 结束更新
+         pRs-&gt;Filter = (long) adFilterConflictingRecords;
+         pRs-&gt;MoveFirst();
+         while (VARIANT_FALSE == pRs-&gt;EndOfFile)
+            {
+            printf("\a\tConflict: Name = %s\t %s\n", 
+               (rs.lau_fnameStatus == adFldOK ? rs.m_szau_fname : ""), 
+               (rs.lau_lnameStatus == adFldOK ? rs.m_szau_lname : ""));
+            pRs-&gt;MoveNext();
+            }
+         pConn-&gt;RollbackTrans();
+         }
+      }
+
+   catch (_com_error &amp;e)
+      {
+      dump_com_error(e);
+      }
+
+   CoUninitialize();
+   }
+</pre>
+<p>
+<b>VC++ 教程到此结束。 </b></p>
+</BODY>
+</HTML>

@@ -1,0 +1,2776 @@
+<HTML>
+<HEAD>
+<link rel="STYLESHEET" type="text/css" href="squeal7.css">
+<TITLE>Brainteasers</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch12b.htm">[Previous]</A> <A HREF="ch12d.htm">[Next]</A><P>
+
+<A NAME="463"><H1>Brainteasers</H1></A>
+
+<P>Sometimes a reasonable and straightforward question posed in English can 
+be difficult to write in SQL. In <a href="ch07a.htm#266">Chapter 7</a>, we saw a great example of 
+this&#8212;the query &quot;Show me the stores that have sold every book title.&quot; Although 
+the question is simple in English, it's tricky to get right in SQL. But 
+enhancements to the SQL standard, many of which have not yet been implemented, as 
+well as existing and future extensions unique to SQL Server will make many 
+queries much easier to write. The addition of CASE, allowing the use of 
+DISTINCT and UNION in views and subqueries, and full outer-join support in the 
+two releases prior to SQL Server 7 have dramatically shortened the usual list 
+of &quot;tricky&quot; queries. We'll now look at some examples based on real-world 
+queries. When applicable, we'll look at a formulation that uses pure ANSI-standard 
+SQL as well as one that uses a SQL Server extension.</P>
+
+
+<A NAME="464"><H2>Generating Test Data</H2></A>
+
+<P>Nothing tricky here, but because generating test data is a common need 
+and some of the later solutions depend on test data, we'll look at a few simple 
+techniques. (Of course, it's preferable to use an actual dataset of representative 
+values for testing rather than generated test data before you deploy a 
+production application. But sometimes it's more practical to generate test data when 
+you need something &quot;quick and dirty.&quot;)</P>
+
+<P>If you need a bunch of rows and you don't care about the distribution 
+of values, you can easily create a table using default values for every column 
+and the Identity property on a column that will act as the primary key. You can 
+then set a counter to loop as many times as necessary to achieve the number of 
+rows you want and execute the special INSERT&#8230;DEFAULT VALUES 
+statement. This example creates 1000 rows in table 
+<I>xyz</I>:</P>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- Method 1.  Simple DEFAULT values on table.
+CREATE TABLE xyz
+(
+col1    int            PRIMARY KEY IDENTITY(1, 1) NOT NULL,
+col2    int            NOT NULL DEFAULT 999,
+col3    char(10)       NOT NULL DEFAULT 'ABCEFGHIJK'
+)
+GO
+
+DECLARE @counter int
+SET @counter=1
+WHILE (@counter &lt;= 1000)
+    BEGIN
+    INSERT xyz DEFAULT VALUES
+    SET @counter=@counter+1
+    END
+
+
+ SELECT * FROM xyz
+ 
+col1    col2    col3
+----    ----    -----------
+1       999     ABCEFGHIJK
+2       999     ABCEFGHIJK
+3       999     ABCEFGHIJK
+4       999     ABCEFGHIJK
+5       999     ABCEFGHIJK
+.
+.
+.
+999     999     ABCEFGHIJK
+1000    999     ABCEFGHIJK
+</pre></p>
+</td></tr></table></p>
+
+<P>Usually, you want some distribution in the data values; the 
+RAND() function, the modulo operator, and the functions CONVERT(), CHAR(), 
+and REPLICATE() come in handy for this purpose. RAND() is a standard 
+random number generator that's just like the function used in C, which 
+RAND() calls. Because RAND() returns a 
+<I>float</I> with a value between 0 and 1, you 
+typically multiply it and convert the result to an integer so 
+that you can use the modulo operator to indicate the range of values. For example, if you want a 
+random integer from 0 through 9999, the following expression works nicely:</P>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+(CONVERT(int, RAND() * 100000) % 10000)
+</pre></p>
+</td></tr></table></p>
+
+<P>If you want to include negative numbers (for example, a range from 
+-9999 through 9999), you can use RAND() to flip a coin and generate 0 or 1 (by 
+doing modulo 2) and then use CASE to multiply half of the numbers by -1.</P>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+CASE
+WHEN CONVERT(int, RAND() * 1000) % 2 = 1 THEN 
+    (CONVERT(int, RAND() * 100000) % 10000 * -1)
+ELSE CONVERT(int, RAND() * 100000) % 10000
+END
+</pre></p>
+</td></tr></table></p>
+
+<P>To use character data, you should generate a random number from 
+0 through 25 (since the English alphabet has 26 letters) and add that 
+number to 64, which is the ASCII value for 
+<I>A</I>. The result is the ASCII value for a 
+character from 
+<I>A</I> through 
+<I>Z</I>. You can perform this operation a specified number 
+of times or in a loop to generate as many characters as you want. Usually, after 
+you indicate a few lead characters, you can use filler characters for the rest of a 
+field. The REPLICATE() function is a nice tool to use for the filler. (If you want 
+to be sure that different executions of the routine return different random 
+numbers, you should seed the RAND() function by including an integer value 
+between the parentheses. You can use 
+<I>@@spid</I>, the 
+<I>object_id</I> of the newly created table, or any other &quot;almost random&quot; integer value.)</P>
+
+<P>The most common way to generate character data is to use local 
+variables for the generated data inside a WHILE loop that does INSERT statements 
+using the variables. Here's an example:</P>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- Method 2.   Generate random data in a loop.
+IF (ISNULL(OBJECT_ID('random_data'), 0)) &gt; 0
+    DROP TABLE random_data
+GO
+
+CREATE TABLE random_data
+(
+col1        int PRIMARY KEY,
+col2        int,
+col3        char(15)
+)
+GO
+
+DECLARE @counter int, @col2 int, @col3 char(15)
+/* Insert 1000 rows of data  */
+-- Seed random generator
+SELECT @counter=0, @col2=RAND(@@spid + cpu + physical_io)
+FROM master..sysprocesses where spid=@@spid
+
+WHILE (@counter &lt; 1000)  
+    BEGIN
+    SELECT @counter=@counter + 10,   -- Sequence numbers by 10
+    @col2=
+        CASE        -- Random integer between -9999 and 9999
+            WHEN CONVERT(int, RAND() * 1000) % 2 = 1 
+            THEN (CONVERT(int, RAND() * 100000) % 10000 * -1)
+            ELSE CONVERT(int, RAND() * 100000) % 10000
+        END,
+    @col3=       -- Four random letters followed by random fill letter
+        CHAR((CONVERT(int, RAND() * 1000) % 26 ) + 65) -- 65 is 'A'
+            + CHAR((CONVERT(int, RAND() * 1000) % 26 ) + 65)
+            + CHAR((CONVERT(int, RAND() * 1000) % 26 ) + 65) 
+            + CHAR((CONVERT(int, RAND() * 1000) % 26 ) + 65) 
+            + REPLICATE(CHAR((CONVERT(int, RAND() * 1000) % 26 )
+            + 65), 11)
+
+    INSERT random_data VALUES (@counter, @col2, @col3)
+    END
+GO
+
+ -- Limit number of rows for illustration only
+SELECT * FROM random_data WHERE COL1 &lt; 200
+
+col1    col2     col3
+----    -----    ---------------
+10      -5240    LXDSGGGGGGGGGGG
+20      9814     TTPDOOOOOOOOOOO
+30      3004     IEYXEEEEEEEEEEE
+40      -9377    MITDAAAAAAAAAAA
+50      -3823    ISGMUUUUUUUUUUU
+60      -4249    DHZQQQQQQQQQQQQ
+70      2335     XBJKEEEEEEEEEEE
+80      -4570    ILYWNNNNNNNNNNN
+90      4223     DHISDDDDDDDDDDD
+100     -3332    THXLWWWWWWWWWWW
+110     -9959    ALHFLLLLLLLLLLL
+120     4580     BCZNGGGGGGGGGGG
+130     6072     HRTJOOOOOOOOOOO
+140     -8274    QPTKWWWWWWWWWWW
+150     8212     FBQABBBBBBBBBBB
+160     8223     YXAPLLLLLLLLLLL
+170     -9469    LIHCAAAAAAAAAAA
+180     -2959    GYKRZZZZZZZZZZZ
+190     7677     KWWBJJJJJJJJJJJ
+</pre></p>
+</td></tr></table></p>
+
+<P>You can also set up the table with a DEFAULT that includes the 
+random data expression and then use the DEFAULT VALUES statement. This 
+method is a combination of the previous two methods. All the complexity of the 
+random values is segregated to the CREATE TABLE command and the 
+INSERT is again a simple loop that uses DEFAULT VALUES. In the example below, 
+we use a CASE statement in a DEFAULT clause of a CREATE TABLE command:</P>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- Method 3.   Generate random values for DEFAULT.
+CREATE TABLE random_data
+(
+col1    int      PRIMARY KEY IDENTITY(10,10) NOT NULL,
+col2    int      NOT NULL DEFAULT CASE
+                 -- Random integer between -9999 and 9999
+                 WHEN CONVERT(int, RAND() * 1000) % 2 = 1 
+                 THEN (CONVERT(int, RAND() * 100000) % 10000 * -1 )
+                 ELSE CONVERT(int, RAND() * 100000) % 10000
+                 END,
+col3    char(15) NOT NULL DEFAULT
+                 CHAR((CONVERT(int, RAND() * 1000) % 26 ) + 65)
+                 -- 65 is 'A'
+                 + CHAR((CONVERT(int, RAND() * 1000) % 26 ) + 65)
+                 + CHAR((CONVERT(int, RAND() * 1000) % 26 ) + 65) 
+                 + CHAR((CONVERT(int, RAND() * 1000) % 26 ) + 65) 
+                 + REPLICATE(CHAR((CONVERT(int, RAND() * 1000)
+                     % 26) + 65), 11)
+)
+GO
+
+DECLARE @counter int
+SET @counter=1
+WHILE (@counter &lt;= 1000)
+    BEGIN
+    INSERT random_data DEFAULT VALUES
+    SET @counter=@counter + 1
+    END
+
+-- Limit number of rows for illustration only
+SELECT * FROM random_data WHERE col1 &lt;= 200
+
+col1    col2     col3
+----    -----    ---------------
+10      -6358    LCNLMMMMMMMMMMM
+20      -2284    SSAITTTTTTTTTTT
+30      -1498    NARJAAAAAAAAAAA
+40      -1908    EINLZZZZZZZZZZZ
+50      -716     KNIOFFFFFFFFFFF
+60      -8331    WZPRYYYYYYYYYYY
+70      -2571    TMUBEEEEEEEEEEE
+80      -7965    LILNCCCCCCCCCCC
+90      9728     IXLOBBBBBBBBBBB
+100     878      IPMPPPPPPPPPPPP
+110     -2649    QXPAPPPPPPPPPPP
+120     -4443    EBVHKKKKKKKKKKK
+130     6133     VRJWXXXXXXXXXXX
+140     -5154    HMHXLLLLLLLLLLL
+150     -480     RNLVQQQQQQQQQQQ
+160     -2655    SEHXTTTTTTTTTTT
+170     -8204    JVLHZZZZZZZZZZZ
+180     -3201    PTWGBBBBBBBBBBB
+190     -7529    TDCJXXXXXXXXXXX
+200     2622     ANLDHHHHHHHHHHH
+</pre></p>
+</td></tr></table></p>
+
+
+<A NAME="465"><H2>Getting Rankings</H2></A>
+
+<P>To get the five highest values or five lowest values in a dataset, you can use 
+the TOP clause in a SQL Server 7 SELECT statement. (TOP was discussed 
+in <a href="ch07a.htm#266">Chapter 7</a>). The TOP clause also lets you specify WITH TIES. It's not 
+always clear what that means, so an example might help. The following SELECT 
+statement returns the rows with the five highest values for the 
+<I>ytd_sales</I> column, including any ties:</P>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+SELECT TOP 5 WITH TIES title_id, ytd_sales, title
+FROM titles
+ORDER BY ytd_sales DESC
+</pre></p>
+</td></tr></table></p>
+
+<P>Here are the results:</P>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+title_id ytd_sales   title 
+-------- ---------   ----- 
+MC3021   22246       The Gourmet Microwave
+BU2075   18722       You Can Combat Computer Stress!
+TC4203   15096       Fifty Years in Buckingham Palace Kitchens
+PC1035   8780        But Is It User Friendly?
+BU1032   4095        The Busy Executive's Database Guide
+BU7832   4095        Straight Talk About Computers
+PC8888   4095        Secrets of Silicon Valley
+TC7777   4095        Sushi, Anyone?
+(8 row(s) affected)
+</pre></p>
+</td></tr></table></p>
+
+<P>You end up with more than the five rows you requested. SQL 
+Server returned the first five rows after sorting the data, and because additional 
+rows had the same value as the fifth row returned (4095), it kept returning rows 
+as long as there were equivalent 
+<I>ytd_sales</I> values. The WITH TIES clause 
+requires that the data be sorted using ORDER BY. A more &quot;formal&quot; definition of TOP 
+<I>n</I> WITH TIES and ORDER BY 
+<I>c </I>DESC is &quot;return all rows that have a value of 
+<I>c</I> for which there are at most 
+<I>n</I>-1 greater values of 
+<I>c</I>.&quot; So, in the dataset above, 
+<I>n</I> is 5 and 
+<I>c</I> is 
+<I>ytd_sales</I>. The value 22246 has 0 rows with a greater value of 
+<I>ytd_sales</I>, and 18722 has only one value greater. The last value returned, 
+4095, has only four values that are greater.</P>
+
+<P>Another way to think of this concept of &quot;the number of distinct 
+values greater than a given value&quot; is as the rank of the value. A value for which 
+there are no greater values has a rank of 1, and a value for which there are two 
+greater values has a rank of 3. The query above returns all the rows with a rank of 5 
+or less, using the TOP clause. However, it's not so simple to get a list of the 
+rows with a rank of 5 or less along with an integer indicating the actual rank 
+value. Let's look at several possible solutions to this problem.</P>
+
+<A NAME="466"><H3>Approach 1: The Standard SQL Approach Using a View</H3></A>
+
+<P>First let's look again at the 
+<I>titles</I> table. Suppose you want to assign a rank 
+value to all rows in the table based on their 
+<I>ytd_sales</I> values (with the highest value 
+getting the top rank). You can do this by performing a ranking of the values by 
+nesting a SELECT inside the select list. For each row in the outer SELECT, the 
+inner SELECT returns the number of rows in the table with values equal to or 
+greater than the column being ranked. This &quot;rows rank&quot; value is then correlated 
+back to the main query. The view can be queried to obtain any rank.</p>
+
+<p>Performance suffers on large tables because a table must be scanned 
+for every row. Ties are assigned equal rank; unique numbers are not 
+guaranteed unless the columns are known to be unique. In the next example, the next 
+nontie value's rank is one higher, not lower. Notice that we completely disregard 
+rows with NULL values for 
+<I>ytd_sales</I>.</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+CREATE VIEW ranked_sales (rank, title_id, ytd_sales, title) 
+AS
+SELECT 
+(SELECT COUNT(DISTINCT T2.ytd_sales) FROM titles AS T2
+    WHERE T2.ytd_sales &gt;= T1.ytd_sales ) AS rank,
+title_id,
+ytd_sales,
+title
+FROM titles AS T1 WHERE ytd_sales IS NOT NULL
+GO
+
+SELECT * FROM ranked_sales WHERE rank &lt;= 10 ORDER BY rank 
+GO
+
+rank  title_id  ytd_sales  title
+----  --------  ---------  ----------------------------------------
+1     MC3021    22246      The Gourmet Microwave
+2     BU2075    18722      You Can Combat Computer Stress!
+3     TC4203    15096      Fifty Years in Buckingham Palace
+                           Kitchens
+4     PC1035    8780       But Is It User Friendly?
+5     BU1032    4095       The Busy Executive's Database Guide
+5     BU7832    4095       Straight Talk About Computers
+5     PC8888    4095       Secrets of Silicon Valley
+5     TC7777    4095       Sushi, Anyone?
+6     PS3333    4072       Prolonged Data Deprivation: Four Case
+                           Studies
+7     BU1111    3876       Cooking with Computers: Surreptitious
+                           Balance Sheets
+8     PS7777    3336       Emotional Security: A New Algorithm
+9     PS2091    2045       Is Anger the Enemy?
+10    MC2222    2032       Silicon Valley Gastronomic Treats
+
+</pre></p>
+</td></tr></table>
+
+
+<A NAME="467"><H3>Approach 2: The Standard SQL Approach Without Using a View</H3></A>
+
+<P>This approach is basically the same as the first approach, but it saves you the 
+step of creating the view, at the possible cost of being a bit harder to 
+understand. Instead of using a view, you use a derived table (by adding a SELECT in 
+the FROM clause). Performance is identical to that of the view approach, 
+however. (That is, it's not too good.) The results are also 
+identical, so we won't show them here.</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+SELECT rank, title_id, ytd_sales, title
+FROM (SELECT  
+    T1.title_id, 
+    ytd_sales, 
+    T1.title, 
+        (SELECT COUNT(DISTINCT T2.ytd_sales) FROM titles AS T2
+        WHERE T1.ytd_sales &lt;= T2.ytd_sales) AS rank
+        FROM titles AS T1) AS X
+    WHERE ytd_sales IS NOT NULL
+    ORDER BY rank
+</pre></p>
+</td></tr></table>
+
+
+<H3>Approach 3: Using a Temporary Table with an 
+<I>identity </I>Column and No Ties</H3>
+
+<P>If you want to assign a unique number even in the case of ties, or if you 
+know that ties will not occur, you can create a temporary table with an 
+<I>identity </I>column and then SELECT into the temporary table in an ordered fashion. This 
+gives you a materialized table with rankings. This approach is conceptually easy 
+to understand, and it's fast. Its only downside is that it does not recognize 
+tied values. It's not ANSI-standard SQL, but the approach takes advantage of 
+SQL Server_specific features. This approach can be useful with other 
+sequential operations, as we'll see later.</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+CREATE TABLE #ranked_order
+(
+rank         int         IDENTITY NOT NULL PRIMARY KEY,
+title_id     char(6)     NOT NULL,
+ytd_sales    int         NOT NULL,
+title        varchar(80) NOT NULL
+)
+GO
+
+INSERT #ranked_order 
+    SELECT title_id, ytd_sales, title FROM titles WHERE ytd_sales
+    IS NOT NULL ORDER BY ytd_sales DESC
+
+SELECT * FROM #ranked_order
+
+DROP TABLE #ranked_order
+
+rank  title_id  ytd_sales  title
+----  --------  ---------  ---------------------------------
+1     MC3021    22246      The Gourmet Microwave
+2     BU2075    18722      You Can Combat Computer Stress!
+3     TC4203    15096      Fifty Years in Buckingham Palace
+                           Kitchens
+4     PC1035    8780       But Is It User Friendly?
+5     BU1032    4095       The Busy Executive's Database Guide
+6     BU7832    4095       Straight Talk About Computers
+7     PC8888    4095       Secrets of Silicon Valley
+8     TC7777    4095       Sushi, Anyone?
+9     PS3333    4072       Prolonged Data Deprivation: Four Case
+                           Studies
+10    BU1111    3876       Cooking with Computers: Surreptitious
+                           Balance Sheets
+11    PS7777    3336       Emotional Security: A New Algorithm
+12    PS2091    2045       Is Anger the Enemy?
+13    MC2222    2032       Silicon Valley Gastronomic Treats
+14    PS1372    375        Computer Phobic AND Non-Phobic
+                           Individuals: Behavior Variations
+15    TC3218    375        Onions, Leeks, and Garlic: Cooking
+                           Secrets of the Mediterranean
+16    PS2106    111        Life Without Fear
+</pre></p>
+</td></tr></table>
+
+
+<A NAME="468"><H3>Approach 4: Using a Temporary Table with an <I>identity </I>Column and Ties</H3></A>
+<P>With standard SQL solutions, if the query focuses on four rows with two 
+rows tied for second rank, then one row has the rank of first, two rows are 
+second, and one row is third. No row is ranked fourth. An alternative way to rank 
+them is to make one row first, two rows second, no row third, and one row 
+fourth. (This is how standings in a golf tournament are posted if two players tie 
+for second place.) After populating the temporary table, you can query the 
+table for the lowest rank for a given value and correlate that value back to the 
+main query with a nested SELECT.</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- Approach 4A. Create a temp table with an identity, and then do 
+-- an ordered select to populate it.
+-- Do a nested select correlated back to itself to find the lowest
+-- rank for a given value.
+CREATE TABLE #ranked_order
+(
+rank        int         IDENTITY NOT NULL,
+title_id    char(6)     NOT NULL,
+ytd_sales   int         NOT NULL,
+title       varchar(80) NOT NULL
+)
+GO
+
+INSERT #ranked_order
+    SELECT title_id, ytd_sales, title FROM titles WHERE ytd_sales
+        IS NOT NULL ORDER BY ytd_sales DESC
+
+SELECT B.rank, A.title_id, B.ytd_sales , A.title
+FROM 
+(SELECT MIN(T2.rank) AS rank, T2.ytd_sales FROM #ranked_order AS T2
+    GROUP BY T2.ytd_sales) AS B,
+#ranked_order AS A
+WHERE A.ytd_sales=B.ytd_sales
+ORDER BY B.rank 
+
+DROP TABLE #ranked_order
+
+rank  title_id  ytd_sales  title
+----  --------  ---------  ----------------------------------------
+1     MC3021    22246      The Gourmet Microwave
+2     BU2075    18722      You Can Combat Computer Stress!
+3     TC4203    15096      Fifty Years in Buckingham Palace Kitchens
+4     PC1035    8780       But Is It User Friendly?
+5     BU1032    4095       The Busy Executive's Database Guide
+5     BU7832    4095       Straight Talk About Computers
+5     PC8888    4095       Secrets of Silicon Valley
+5     TC7777    4095       Sushi, Anyone?
+9     PS3333    4072       Prolonged Data Deprivation: Four Case
+                           Studies
+10    BU1111    3876       Cooking with Computers: Surreptitious
+                           Balance Sheets
+11    PS7777    3336       Emotional Security: A New Algorithm
+12    PS2091    2045       Is Anger the Enemy?
+13    MC2222    2032       Silicon Valley Gastronomic Treats
+14    PS1372    375        Computer Phobic AND Non-Phobic
+                           Individuals: Behavior Variations
+14    TC3218    375        Onions, Leeks, and Garlic: Cooking
+                           Secrets of the Mediterranean
+16    PS2106    111        Life Without Fear
+</pre></p>
+</td></tr></table></p>
+
+<P>You can slightly modify the SELECT on the temporary table and 
+explicitly indicate where ties exist and how many values were tied. (The creation 
+and population of the temporary table are identical, so we'll show just the 
+SELECT statement.)</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- Approach 4B. Same as above, explicitly noting the ties.
+SELECT B.rank,
+CASE B.number_tied
+    WHEN 1 THEN ' '
+    ELSE '('+ CONVERT(varchar, number_tied) + ' Way Tie)'
+    END AS tie,
+A.title_id,
+B.ytd_sales, 
+A.title
+FROM 
+(SELECT MIN(T2.rank) AS rank, COUNT(*) AS number_tied, T2.ytd_sales
+FROM #ranked_order AS T2 GROUP BY T2.ytd_sales) AS B,
+#ranked_order AS A
+WHERE A.ytd_sales=B.ytd_sales
+ORDER BY B.rank
+
+rank  tie          title_id  ytd_sales  title
+----  -----------  --------  ---------  ---------------------------
+1                  MC3021    22246      The Gourmet Microwave
+2                  BU2075    18722      You Can Combat Computer
+                                        Stress!
+3                  TC4203    15096      Fifty Years in Buckingham
+                                        Palace Kitchens
+4                  PC1035    8780       But Is It User Friendly?
+5     (4 Way Tie)  BU1032    4095       The Busy Executive's
+                                        Database Guide
+5     (4 Way Tie)  BU7832    4095       Straight Talk About Computers
+5     (4 Way Tie)  PC8888    4095       Secrets of Silicon Valley
+5     (4 Way Tie)  TC7777    4095       Sushi, Anyone?
+9                  PS3333    4072       Prolonged Data Deprivation:
+                                        Four Case Studies
+10                 BU1111    3876       Cooking with Computers: 
+                                        Surreptitious Balance
+                                        Sheets
+11                 PS7777    3336       Emotional Security: A New 
+                                        Algorithm
+12                 PS2091    2045       Is Anger the Enemy?
+13                 MC2222    2032       Silicon Valley Gastronomic 
+                                        Treats
+14    (2 Way Tie)  PS1372    375        Computer Phobic AND Non-
+                                        Phobic Individuals:
+                                        Behavior Variations
+14    (2 Way Tie)  TC3218    375        Onions, Leeks, and Garlic: 
+                                        Cooking Secrets of the 
+                                        Mediterranean
+16                 PS2106    111        Life Without Fear
+</pre></p>
+</td></tr></table></p>
+
+
+<A NAME="469"><H3>Approach 5: Using a Cursor</H3></A>
+
+<P>As a rule, you should try to perform a set operation (preferably using a 
+single SELECT statement) wherever possible. A nonprocedural set operation is 
+usually simpler to write (which means that there's less chance of introducing a 
+bug), and it lets the SQL Server optimizer find an efficient way to carry out the 
+request. In some cases, however, the problem is a naturally sequential operation. 
+The SELECT statement (set operation) might require a correlated subquery or 
+self-join to solve the problem, so that data is visited multiple times to provide 
+the result. A cursor approach can work well in this case because it can solve the 
+problem with one pass through the data. It can be more efficient than using the 
+single SELECT statement for sequential operations such as a ranking 
+operation. (However, it is not faster than the temporary table approaches.) It takes 
+more work to correctly program this approach, but you gain considerable control 
+and flexibility. You can also use any of the three rules for dealing with ties:</P>
+
+<P>
+<OL>
+<P><LI>Give ties a duplicate rank value, and rank the next nonduplicate value one higher.</LI></P> 
+<P><LI>Always assign a unique rank value, even in the case of ties.</LI></P> 
+<P><LI>Assign a duplicate rank value but rank the next nonduplicate value according to its overall standing, not simply one higher.</LI></P> 
+</OL>
+</P> 
+
+<P><B>Approach 5A: Using a cursor with rule 1 for ties</B>
+</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- Approach 5A. Use cursors and deal with ties like the standard
+-- SQL approaches did.
+-- Assign a duplicate rank value, and simply increment the next
+-- nonduplicate.
+DECLARE @rank int, @title_id char(6), @ytd_sales int, 
+    @title varchar(80), @last_rank int, @last_ytd_sales money,
+    @counter int
+SELECT @rank=1, @last_rank=1, @last_ytd_sales=0, @counter=1    
+DECLARE rank_cursor CURSOR FOR SELECT title_id, ytd_sales,
+    title FROM titles WHERE ytd_sales IS NOT NULL
+    ORDER BY ytd_sales DESC
+OPEN rank_cursor
+FETCH NEXT FROM rank_cursor INTO @title_id, @ytd_sales, @title
+WHILE (@@FETCH_STATUS &lt;&gt; -1)
+BEGIN 
+    
+    IF (@counter=1)    -- For first row, just display values
+                       -- and set last values
+        BEGIN
+        SELECT rank=@rank, title_id=@title_id,
+            ytd_sales=@ytd_sales, title=@title
+        END
+    ELSE
+        BEGIN
+        -- If current sales is same as last, assign the same rank
+        IF (@ytd_sales=@last_ytd_sales)
+            SELECT rank=@last_rank, title_id=@title_id,
+                ytd_sales=@ytd_sales, title=@title
+        ELSE    -- Otherwise, increment the rank
+            BEGIN
+            SELECT rank=@last_rank+1, title_id=@title_id,
+                ytd_sales=@ytd_sales, title=@title
+            SELECT @rank=@last_rank + 1
+            END
+        END    
+ -- Set values to current row
+SELECT @counter=@counter + 1, @last_rank=@rank,
+    @last_ytd_sales=@ytd_sales
+FETCH NEXT FROM rank_cursor INTO @title_id, @ytd_sales, @title
+END    
+
+CLOSE rank_cursor
+DEALLOCATE rank_cursor
+
+rank  title_id  ytd_sales  title
+----  --------  ---------  ----------------------------------------
+1     MC3021    22246      The Gourmet Microwave
+2     BU2075    18722      You Can Combat Computer Stress!
+3     TC4203    15096      Fifty Years in Buckingham Palace
+                           Kitchens
+4     PC1035    8780       But Is It User Friendly?
+5     BU1032    4095       The Busy Executive's Database Guide
+5     BU7832    4095       Straight Talk About Computers
+5     PC8888    4095       Secrets of Silicon Valley
+5     TC7777    4095       Sushi, Anyone?
+6     PS3333    4072       Prolonged Data Deprivation: Four Case
+                           Studies
+7     BU1111    3876       Cooking with Computers: Surreptitious
+                           Balance Sheets
+8     PS7777    3336       Emotional Security: A New Algorithm
+9     PS2091    2045       Is Anger the Enemy?
+10    MC2222    2032       Silicon Valley Gastronomic Treats
+11    PS1372    375        Computer Phobic AND Non-Phobic
+                           Individuals: Behavior Variations
+11    TC3218    375        Onions, Leeks, and Garlic: Cooking
+                           Secrets of the Mediterranean
+12    PS2106    111        Life Without Fear
+</pre></p>
+</td></tr></table></p>
+
+<P><B>Approach 5B: Using a cursor with rule 2 for ties</B></P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- Approach 5B. Use cursors and always assign next row an
+-- incremented rank value, even if it's a tie.
+DECLARE @rank int, @title_id char(6), @ytd_sales int,
+    @title varchar(80)
+SELECT @rank=1    
+DECLARE rank_cursor CURSOR FOR SELECT title_id, ytd_sales, title
+FROM titles WHERE ytd_sales IS NOT NULL ORDER BY ytd_sales DESC
+OPEN rank_cursor
+FETCH NEXT FROM rank_cursor INTO @title_id, @ytd_sales, @title
+WHILE (@@FETCH_STATUS &lt;&gt; -1 )
+    BEGIN
+    SELECT rank=@rank, title_id=@title_id, ytd_sales=@ytd_sales, 
+        title=@title
+    SELECT @rank=@rank + 1
+FETCH NEXT FROM rank_cursor INTO @title_id, @ytd_sales, @title
+END
+
+CLOSE rank_cursor
+DEALLOCATE rank_cursor
+
+
+rank  title_id  ytd_sales  title
+----  --------  ---------  ----------------------------------------
+1     MC3021    22246      The Gourmet Microwave
+2     BU2075    18722      You Can Combat Computer Stress!
+3     TC4203    15096      Fifty Years in Buckingham Palace
+                           Kitchens
+4     PC1035    8780       But Is It User Friendly?
+5     BU1032    4095       The Busy Executive's Database Guide
+6     BU7832    4095       Straight Talk About Computers
+7     PC8888    4095       Secrets of Silicon Valley
+8     TC7777    4095       Sushi, Anyone?
+9     PS3333    4072       Prolonged Data Deprivation: Four Case
+                           Studies
+10    BU1111    3876       Cooking with Computers: Surreptitious
+                           Balance Sheets
+11    PS7777    3336       Emotional Security: A New Algorithm
+12    PS2091    2045       Is Anger the Enemy?
+13    MC2222    2032       Silicon Valley Gastronomic Treats
+14    PS1372    375        Computer Phobic AND Non-Phobic
+                           Individuals: Behavior Variations
+15    TC3218    375        Onions, Leeks, and Garlic: Cooking
+                           Secrets of the Mediterranean
+16    PS2106    111        Life Without Fear
+</pre></p>
+</td></tr></table></p>
+
+<P><B>Approach 5C: Using a cursor with rule 3 for ties</B></P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- Approach 5C. Use cursors and deal with ties by assigning a
+-- duplicate rank value, but then make the next nonduplicate 
+-- value its overall standing, not simply a rank of one higher.
+-- For example, if 2 rows qualify for rank #1, then the 3rd row 
+-- will be #3 and no row will have rank #2.
+DECLARE @rank int, @title_id char(6), @ytd_sales int, 
+    @title varchar(80), @last_rank int, @last_ytd_sales money,
+    @counter int
+SELECT @rank=1, @last_rank=1, @last_ytd_sales=0, @counter=1
+DECLARE rank_cursor CURSOR FOR SELECT title_id, ytd_sales, title
+FROM titles WHERE ytd_sales IS NOT NULL ORDER BY ytd_sales DESC
+OPEN rank_cursor
+FETCH NEXT FROM rank_cursor INTO @title_id, @ytd_sales, @title
+WHILE (@@FETCH_STATUS &lt;&gt; -1)
+    BEGIN 
+    
+    IF (@counter=1)    -- For first row, just display values and
+                       -- set last values
+        BEGIN
+        SELECT rank=@rank, title_id=@title_id,
+            ytd_sales=@ytd_sales, title=@title
+        END
+    ELSE
+        BEGIN
+        -- If current sales are same as last, assign the same rank
+        IF (@ytd_sales=@last_ytd_sales)
+            SELECT rank=@last_rank, title_id=@title_id,
+                ytd_sales=@ytd_sales, title=@title
+        ELSE    -- Otherwise, set the rank to the overall 
+                -- counter of how many rows have been visited
+            BEGIN
+            SELECT @rank=@counter
+            SELECT rank=@rank, title_id=@title_id,
+                ytd_sales=@ytd_sales, title=@title
+            END
+        END    
+    -- Set values to current row
+    SELECT @counter=@counter+1, @last_rank=@rank, 
+        @last_ytd_sales=@ytd_sales
+    FETCH NEXT FROM rank_cursor INTO @title_id, @ytd_sales, @title
+    END
+
+CLOSE rank_cursor
+DEALLOCATE rank_cursor
+GO
+
+
+rank  title_id  ytd_sales  title
+----  --------  ---------  ----------------------------------------
+1     MC3021    22246      The Gourmet Microwave
+2     BU2075    18722      You Can Combat Computer Stress!
+3     TC4203    15096      Fifty Years in Buckingham Palace Kitchens
+4     PC1035    8780       But Is It User Friendly?
+5     BU1032    4095       The Busy Executive's Database Guide
+5     BU7832    4095       Straight Talk About Computers
+5     PC8888    4095       Secrets of Silicon Valley
+5     TC7777    4095       Sushi, Anyone?
+9     PS3333    4072       Prolonged Data Deprivation: Four Case
+                           Studies
+10    BU1111    3876       Cooking with Computers: Surreptitious
+                           Balance Sheets
+11    PS7777    3336       Emotional Security: A New Algorithm
+12    PS2091    2045       Is Anger the Enemy?
+13    MC2222    2032       Silicon Valley Gastronomic Treats
+14    PS1372    375        Computer Phobic AND Non-Phobic
+                           Individuals: Behavior Variations
+14    TC3218    375        Onions, Leeks, and Garlic: Cooking
+                           Secrets of the Mediterranean
+16    PS2106    111        Life Without Fear
+</pre></p>
+</td></tr></table></p>
+
+<P><DIV CLASS="WARNING"><BLOCKQUOTE><b>WARNING</b><HR>
+Unlike the other approaches, the cursor solution 
+produces multiple result sets because of the multiple FETCH 
+operations. Therefore, you get as many result sets as rows (16 in the 
+example here). Every result set requires that metadata be passed between 
+the server and client. With a slow network connection, this can be a 
+huge drag on performance. The cursor solution might be a good 
+choice on the machine running SQL Server or on a LAN, but it will 
+perform poorly over dial-up lines if the result set contains many rows. Of 
+the approaches we've presented, the temporary table approaches are 
+best if they meet your needs for dealing with ties. They are intuitive 
+and efficient, and they return a single result set.
+</BLOCKQUOTE></DIV></P>
+
+
+<A NAME="470"><H2>Finding Differences Between Intervals</H2></A>
+
+<P>Suppose we have a table with two columns that records data for 
+measured temperatures. The first column is the datetime at which the measurement 
+was taken, and the second column is the temperature. We want to find the 
+change in temperature between one interval and the next, and we want it expressed 
+as the absolute value of the number of degrees that changed per minute. There 
+is no preexisting primary key, such as 
+<I>measurement_id</I>. It's unlikely that 
+duplicate measurements exist for any single time (that is, the datetime field is 
+probably unique), but we don't know this for sure. And the intervals between 
+data measurements are not consistent. In fact, the data was not inserted in 
+order (although a clustered index exists, so if data were selected without an 
+ORDER BY, it would seem to be in order). Like the rankings problem presented 
+earlier, this problem can be solved using standard (but tricky) SQL&#8212;you can use 
+a temporary table or use cursors. In fact, you can think of this as another type 
+of ranking problem&#8212;but here, you want to see the differences between 
+adjacent ranks.</P>
+
+<P>First we'll set up the table with some fairly random data. We really 
+don't care whether the temperature values are realistic or how much they might 
+fluctuate in even a few minutes. (So if you run this example and see 
+temperatures of -100&#186; F or a 40-degree change in temperature in five minutes, don't 
+worry. These readings might not be from Earth!)</P>
+
+<P><DIV CLASS="NOTE"><BLOCKQUOTE><b>NOTE</b><HR>
+It's worthwhile to set up the routine to generate test 
+data, even though in this case it would be quicker to manually insert 
+20 rows of data. Once the routine is working and you've checked 
+your solution on the small table, you can easily change the constant in 
+the WHILE loop to add much more data. This is important because 
+many solutions perform well with small amounts of data but can 
+degrade badly with large amounts of data. (This can be especially true if 
+a solution uses correlated subqueries or self-joins, or if it does table scans.)
+</BLOCKQUOTE></DIV></P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- diff_intervals.sql
+IF NULLIF(OBJECT_ID('measurements'), 0) &gt; 0
+    DROP TABLE measurements
+GO
+
+CREATE TABLE measurements
+(
+when_taken     datetime      NOT NULL,
+temperature    numeric(4, 1)  -- (Fahrenheit)
+)
+CREATE CLUSTERED INDEX measurements_idx01
+    ON measurements (when_taken)
+GO
+
+DECLARE @counter int, @whendate datetime, @val numeric(4, 1),
+    @randdiff smallint, @randmins smallint
+SELECT @counter=1, @whendate=GETDATE(), @val=50.0
+/* Insert 20 rows of data.  Change constant if you want more.   */
+WHILE (@counter &lt;= 20)
+    BEGIN
+    INSERT measurements VALUES (@whendate, @val)
+    -- Get a random number between -20 and 20 for change in
+    -- temperature. This will be added to the previous value,
+    -- plus RAND() again to give a fractional component.
+        SELECT 
+        @randdiff=CASE
+        WHEN CONVERT(int, RAND() * 100) % 2 = 1 THEN
+            CONVERT(int, RAND() * 1000) % 21 * -1
+        ELSE CONVERT(int, RAND() * 1000) % 21
+        END,
+    -- Get a random number between 0 and 10080 (the number of mins
+    -- in a week). This will be added to the current GETDATE()
+    -- value. Since GETDATE() returns a value to the millisecond,
+    -- it's unlikely there will ever be a duplicate, though it
+    -- is possible if the result of the addition and the current 
+    -- GETDATE() value happen to collide with the addition in
+    -- another row. (That's intentional; we are not assuming 
+    -- that dups are automatically prevented.)
+        @randmins=CONVERT(int, RAND() * 100000) % 10080
+    SELECT @counter=@counter + 1,
+    @whendate=DATEADD(mi, @randmins, GETDATE()),
+    @val=@val + @randdiff + RAND()
+    END
+
+SELECT * FROM measurements
+
+when_taken                    temperature
+---------------------------   -----------
+1999-02-17 12:31:41.203       50.0
+1999-02-17 16:07:41.243       48.0
+1999-02-17 23:56:41.233       55.7
+1999-02-18 00:13:41.243       32.8
+1999-02-18 13:40:41.273       -18.2
+1999-02-18 20:35:41.283       27.2
+1999-02-18 21:53:41.243       34.6
+1999-02-19 01:21:41.283       -34.6
+1999-02-19 22:52:41.253       16.8
+1999-02-20 03:56:41.283       -27.8
+1999-02-20 06:56:41.283       38.1
+1999-02-21 08:28:41.243       67.6
+1999-02-21 20:43:41.283       -7.0
+1999-02-22 19:12:41.293       20.9
+1999-02-23 05:59:41.273       .4
+1999-02-23 07:33:41.243       58.1
+1999-02-23 09:25:41.243       65.6
+1999-02-23 16:04:41.283       7.0
+1999-02-23 16:05:41.253       2.2
+1999-02-23 20:59:41.253       30.9
+</pre></p>
+</td></tr></table></p>
+
+
+<A NAME="471"><H3>Approach 1: Using Standard SQL</H3></A>
+
+<P>This approach is similar to the rankings solution. We assign a ranking to 
+each row and then join the table back to itself on the ranking value less 1. If 
+duplicate datetime values exist, this approach still computes the differential to 
+the previous (nonduplicate) measurement, which might or might not be how 
+you'd want to deal with it. As with the rankings solution, we can use this 
+approach either as a view or as a derived table. Since a view is easier for most people 
+to understand, we'll write it that way.</P>
+
+<P>As in the top <I>n</I> and rankings problems, this approach is a good 
+brainteaser, but it's not a good performer if the table is anything but very small. (This 
+approach would also be problematic if duplicate datetime values could exist.)</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+CREATE VIEW rankdates (when_taken, temperature, daterank)
+AS
+SELECT when_taken, temperature,
+    (SELECT COUNT(DISTINCT when_taken) FROM measurements AS T1
+    WHERE T1.when_taken &lt;= T0.when_taken) AS rank
+FROM measurements AS T0
+GO
+
+SELECT * FROM rankdates ORDER BY daterank
+GO
+
+when_taken                     temperature    daterank
+---------------------------    -----------    --------
+1999-02-17 12:31:41.203        50.0           1
+1999-02-17 16:07:41.243        48.0           2
+1999-02-17 23:56:41.233        55.7           3
+1999-02-18 00:13:41.243        32.8           4
+1999-02-18 13:40:41.273        -18.2          5
+1999-02-18 20:35:41.283        27.2           6
+1999-02-18 21:53:41.243        34.6           7
+1999-02-19 01:21:41.283        -34.6          8
+1999-02-19 22:52:41.253        16.8           9
+1999-02-20 03:56:41.283        -27.8          10
+1999-02-20 06:56:41.283        38.1           11
+1999-02-21 08:28:41.243        67.6           12
+1999-02-21 20:43:41.283        -7.0           13
+1999-02-22 19:12:41.293        20.9           14
+1999-02-23 05:59:41.273        .4             15
+1999-02-23 07:33:41.243        58.1           16
+1999-02-23 09:25:41.243        65.6           17
+1999-02-23 16:04:41.283        7.0            18
+1999-02-23 16:05:41.253        2.2            19
+1999-02-23 20:59:41.253        30.9           20
+
+-- Correlate each value with the one right before it
+SELECT
+P1_WHEN=V1.when_taken, P2_WHEN=V2.when_taken,
+P1=V1.temperature, P2=V2.temperature,
+DIFF=(V2.temperature - V1.temperature)
+FROM rankdates AS V1 LEFT OUTER JOIN rankdates AS V2
+ON (V2.daterank=V1.daterank + 1)
+GO
+
+P1_WHEN                    P2_WHEN                    P1     P2     DIFF
+-----------------------    -----------------------    -----  -----  -----
+1999-02-17 12:31:41.203    1999-02-17 16:07:41.243    50.0   48.0   -2.0
+1999-02-17 16:07:41.243    1999-02-17 23:56:41.233    48.0   55.7   7.7
+1999-02-17 23:56:41.233    1999-02-18 00:13:41.243    55.7   32.8   -22.9
+1999-02-18 00:13:41.243    1999-02-18 13:40:41.273    32.8   -18.2  -51.0
+1999-02-18 13:40:41.273    1999-02-18 20:35:41.283    -18.2  27.2   45.4
+1999-02-18 20:35:41.283    1999-02-18 21:53:41.243    27.2   34.6   7.4
+1999-02-18 21:53:41.243    1999-02-19 01:21:41.283    34.6   -34.6  -69.2
+1999-02-19 01:21:41.283    1999-02-19 22:52:41.253    -34.6  16.8   51.4
+1999-02-19 22:52:41.253    1999-02-20 03:56:41.283    16.8   -27.8  -44.6
+1999-02-20 03:56:41.283    1999-02-20 06:56:41.283    -27.8  38.1   65.9
+1999-02-20 06:56:41.283    1999-02-21 08:28:41.243    38.1   67.6   29.5
+1999-02-21 08:28:41.243    1999-02-21 20:43:41.283    67.6   -7.0   -74.6
+1999-02-21 20:43:41.283    1999-02-22 19:12:41.293    -7.0   20.9   27.9
+1999-02-22 19:12:41.293    1999-02-23 05:59:41.273    20.9   .4     -20.5
+1999-02-23 05:59:41.273    1999-02-23 07:33:41.243    .4     58.1   57.7
+1999-02-23 07:33:41.243    1999-02-23 09:25:41.243    58.1   65.6   7.5
+1999-02-23 09:25:41.243    1999-02-23 16:04:41.283    65.6   7.0    -58.6
+1999-02-23 16:04:41.283    1999-02-23 16:05:41.253    7.0    2.2    -4.8
+1999-02-23 16:05:41.253    1999-02-23 20:59:41.253    2.2    30.9   28.7
+1999-02-23 20:59:41.253    NULL                       30.9   NULL   NULL
+</pre></p>
+</td></tr></table></p>
+
+<P><DIV CLASS="NOTE"><BLOCKQUOTE><b>NOTE</b><HR>
+If you're interested in the derived table solution, go 
+back to the rankings problem and note the difference between a view 
+and a derived table; it should be easy to see how the derived table 
+solution can be done here as well.
+</BLOCKQUOTE></DIV></P>
+
+
+<A NAME="472"><H3>Approach 2: Materializing Rankings and Using a Self-Join</H3></A>
+
+<P>Conceptually, this solution is similar to the standard SQL approach. But 
+rather than using a true view, we'll materialize the rankings as a temporary table, 
+similar to the approach in one of the rankings solutions. Then we'll do the self-join 
+with the temporary table. The advantage, of course, is that we create the 
+rankings only once instead of many times. This is faster because the identity value 
+simply assigns the rank in the order that the rows are presented.</P>
+
+<P>In SQL Server 7, this solution performs about as quickly as the 
+standard SQL solution. The results are the same, so we won't bother repeating the 
+output. The standard SQL approach takes 84 logical reads with this dataset; 
+the temporary table approach here takes 40 logical reads to create the 
+<I>temp </I>table and 52 logical reads to access it. Because 
+so little data is involved, no more than two physical 
+reads occur in either of these solutions.</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+CREATE TABLE #rankdates (
+when_taken datetime,
+temperature numeric(4, 1),
+daterank int IDENTITY PRIMARY KEY)
+GO
+
+INSERT #rankdates (when_taken, temperature)
+    SELECT when_taken, temperature
+    FROM measurements
+    ORDER BY when_taken ASC
+GO
+
+SELECT
+P1_WHEN=V1.when_taken, P2_WHEN=V2.when_taken,
+P1=V1.temperature, P2=V2.temperature,
+DIFF=(V2.temperature - V1.temperature)
+FROM #rankdates AS V1 LEFT OUTER JOIN #rankdates AS V2
+ON (V2.daterank=V1.daterank + 1)
+GO
+</pre></p>
+</td></tr></table></p>
+
+
+<A NAME="473"><H3>Approach 3: Using a Cursor</H3></A>
+
+<P>This is a sequential operation, so a cursor works well:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+DECLARE @lastval int, @currdate datetime, @currval numeric(4, 1),
+    @counter int
+SELECT @counter=1
+DECLARE diffprev CURSOR
+FOR SELECT when_taken, temperature FROM measurements
+    ORDER BY when_taken ASC
+OPEN diffprev
+FETCH NEXT FROM diffprev INTO @currdate, @currval
+WHILE (@@fetch_status &lt;&gt; -1)
+BEGIN
+    IF (@counter=1)    -- For first row, just get value and return
+            SELECT WHEN_TAKEN=@currdate, &quot;CURR_VALUE&quot;=@currval,
+                RANK=@counter, &quot;PREV_VALUE&quot;=NULL, &quot;DIFF&quot;=NULL
+    ELSE
+            SELECT WHEN_TAKEN=@currdate, &quot;CURR_VALUE&quot;=@currval,
+                RANK=@counter, &quot;PREV_VALUE&quot;=@lastval,
+                &quot;DIFF&quot;=@currval - @lastval
+    SELECT @lastval=@currval, @counter=@counter + 1
+    FETCH NEXT FROM diffprev INTO @currdate, @currval
+END
+
+CLOSE diffprev
+DEALLOCATE diffprev
+GO
+</pre></p>
+</td></tr></table></p>
+
+<P>From the perspective of logical I/Os, the cursor approach is nearly 
+as efficient as Approach 2, which materializes the rankings using a temporary 
+table and an identity value and then does a self-join. However, over a slow 
+network, the performance of Approach 2 appears to be an order of magnitude faster 
+than this cursor approach. In this solution, each FETCH is treated as a separate 
+result set, so you get 20 result sets, each with one row, instead of just one result 
+set with 20 rows, as in Approach 2. The cursor approach does, however, give 
+you ultimate flexibility. For example, suppose that the time differential between 
+two points is less than five seconds and you want to throw out that point and 
+use the differential to the next point instead. This would be difficult to write in 
+pure SQL, but it is easy with a cursor.</P>
+
+
+<A NAME="474"><H2>Keeping Running Totals</H2></A>
+
+<P>You can keep running totals by making some small changes to the 
+techniques used for the time series problems&#8212;it's the same sort of problem. Consider 
+the following table:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+col1    value    running_tot
+----    -----    -----------
+1       10       0
+2       15       0
+3       63       0
+4       72       0
+5       75       0
+6       20       0
+7       21       0
+8       34       0
+9       76       0
+10      2        0
+</pre></p>
+</td></tr></table></p>
+
+<P>Suppose you want to store the running total of the 
+<I>value</I> column in the <I>running_tot</I> column:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+col1    value    running_tot
+----    -----    -----------
+1       10       10
+2       15       25
+3       63       88
+4       72       160
+5       75       235
+6       20       255
+7       21       276
+8       34       310
+9       76       386
+10      2        388
+</pre></p>
+</td></tr></table></p>
+
+<P>You can adapt any of the solutions for the time series problem to fit 
+this situation. But you can also opt for another, highly efficient solution that 
+uses an underutilized feature of the UPDATE statement. This solution uses only 
+one logical read to compute all the values. (No solution can do less than one 
+logical read.) It uses a variation of the SET clause, which sets a column to an 
+expression, and then it sets a variable to the new value of the column. You can 
+think of the processing as happening right to left: first you assign to the column, 
+and then you assign to the variable.</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- running_tot.sql
+DECLARE @run_total int
+SELECT @run_total=0
+UPDATE running_tot
+    SET @run_total = running_tot = @run_total + value
+FROM running_tot 
+</pre></p>
+</td></tr></table></p>
+
+
+<A NAME="475"><H2>Sampling Every <I>n </I>Rows</H2></A>
+<P>You can easily adapt the time series and differences between intervals 
+solutions to check the value of every 
+<I>n</I>th row. For example, suppose you want to find every fifth row. By using a solution that materializes the rankings in a temporary table, you can select from the temporary table with modulus 5. Or, using a cursor solution, you can use 
+<I>FETCH RELATIVE 5</I>. Note that the idea of sampling is not too &quot;relational,&quot; since there is no logically implied order of rows stored in the table (although physically this exists if a clustered index is present).</P>
+
+
+<A NAME="476"><H2>Finding Rows with Matching Columns</H2></A>
+
+<P>Suppose you want to look in a table for all rows that have duplicate values 
+in multiple nonkey columns. For example, in the following table, 
+<I>match_cols</I>, you want to find duplicate rows (except for 
+<I>row_num</I>). It isn't enough to simply identify the 
+<I>col2</I> and 
+<I>col3</I> values that are duplicates (COUNT and GROUP 
+BY would make that a piece of cake); you must identify the specific rows that 
+contain the duplicates. This is a pretty common need in data-scrubbing_type situations.</p>
+
+<p>In the example that follows, rows 3 and 10 are duplicates. (Note that 
+<I>row_num </I>is a primary key, so the entire row is never a duplicate. You want to 
+find duplicates across only the other columns.) With only 10 rows in the 
+following example, you can easily spot the other duplicates (rows 4 and 6). But the 
+example on the CD creates 5000 rows of data, again with letters 
+<I>A </I>through 
+<I>D </I>for 
+<I>col2 </I>and 
+<I>col3</I>. (Since there are four letters and two columns, there are 4
+<SUP>2</SUP>&#8212;or 16&#8212;possible combinations.) Depending on which solution you choose, 
+this operation can prove expensive for even 5000 rows&#8212;not to mention real-world datasets 
+of perhaps 5 million rows!</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+row_num    col2    col3
+-------    ----    ----
+1          A       A
+2          C       C
+3          B       D
+4          D       B
+5          D       C
+6          D       B
+7          A       C
+8          A       D
+9          B       A
+10         B       D
+</pre></p>
+</td></tr></table></p>
+
+
+<A NAME="477"><H3>Approach 1: Using a Self-Join</H3></A>
+
+<P>The self-join solution seems the most intuitive&#8212;much more so than using 
+a subquery. But with larger amounts of data, it is not very efficient. It 
+performs nested iteration, and the second virtual table must be scanned for each row 
+in the first. With no useful index available for the duplicate columns, this is a 
+full table scan and is unacceptable. Even with a useful index, such as the one for 
+the example on the CD, the second virtual table must be scanned for each row 
+in the first (and &quot;scanned&quot; here does not refer to a full table scan&#8212;the index 
+is used). This is expensive. Response time isn't too bad with this number 
+of rows&#8212;the results return within a few seconds. Approaches 2, 
+3, and 4 are more expensive in terms of logical reads, but not enough to definitely 
+recommend one over another.</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- The self-join solution
+SELECT DISTINCT A.row_num, A.col2, A.col3
+FROM match_cols AS A, match_cols AS B
+WHERE A.col2=B.col2 AND A.col3=B.col3 AND A.row_num &lt;&gt; B.row_num
+ORDER BY A.col2, A.col3
+</pre></p>
+</td></tr></table></p>
+
+
+<A NAME="478"><H3>Approach 2: Using a Correlated Subquery</H3></A>
+
+<P>We can use GROUP BY&#8230;COUNT as an inner query to identify known 
+duplicate values. We can then correlate the query to an outer query of the same 
+table to find the specific rows with those values known to have a count greater 
+than 1 (and that are therefore duplicates). Because the inner query uses the 
+EXISTS operator, the optimizer knows that as soon as one value is found, it can
+return TRUE.</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- The subquery solution
+SELECT A.row_num, A.col2, A.col3 FROM match_cols AS A
+WHERE EXISTS
+(SELECT B.col2, B.col3 FROM match_cols AS B
+    WHERE B.col2=A.col2
+    AND   B.col3=A.col3
+    GROUP BY B.col2, B.col3 HAVING COUNT(*) &gt; 1)
+ORDER BY A.col2, A.col3
+</pre></p>
+</td></tr></table></p>
+
+
+<A NAME="479"><H3>Approach 3: Materializing the Nonunique Values and Joining to the Result</H3></A>
+
+<P>Intuitively, join solutions seem preferable to subquery solutions and 
+correlated subquery solutions. For this problem, it would be nice to have a table with 
+just the known nonunique columns and then do a simple equijoin to it. This 
+approach is kind of a hybrid between the self-join and the correlated subquery 
+solutions. We can easily do this using a temporary table. (This feels like cheating, so 
+stay tuned for another approach.)</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- The temp table solution - materialize rows that are known to
+-- have dups
+SELECT col2, col3 INTO #mytemp 
+FROM match_cols 
+GROUP BY col2, col3 HAVING COUNT(*) &gt; 1
+
+-- Now simply do an equijoin to the temp table
+SELECT #mytemp.col2, #mytemp.col3, match_cols.row_num
+FROM #mytemp
+JOIN match_cols
+ON (#mytemp.col2=match_cols.col2 AND #mytemp.col3=match_cols.col3)
+ORDER BY 1, 2, 3
+</pre></p>
+</td></tr></table></p>
+
+<P>This solution is fast. Since there are just 16 possible combinations and 
+thus 16 ways to make duplicates, the temporary table contains only 16 rows. 
+This becomes the outer table for the join. The main table, 
+<I>match_cols</I>, is scanned (using an index) once for each of those 16 rows. So rather than the scan 
+counts of 5000 we saw in the previous solutions, the scan count is only 16. This 
+solution is by far the fastest yet, but it's a procedural solution. It would be much 
+more satisfying to do this with a pure SQL query that is also efficient.</P>
+
+
+<A NAME="480"><H3>Approach 4: Using Derived Tables</H3></A>
+
+<P>This fast, pure SQL solution is conceptually like the solution that used a 
+temporary table. But rather than explicitly creating and populating the temporary 
+table, we use a derived table. The derived table performs the query for the 
+duplicate values (again finding 16). Then 
+<I>match_cols</I> is joined to the derived table. 
+After the optimizer chooses the best join order, the table is processed internally, 
+almost identically to the temporary table situation. Using derived tables is a great 
+solution. If you thought of this solution yourself, you get a gold star.</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- The derived table solution
+SELECT A.row_num, A.col2, A.col3 FROM match_cols AS A
+-- Join the table to a virtual table that has one row for any row
+-- combinations known not to be unique (count greater than 1)
+JOIN
+(SELECT col2, col3 FROM match_cols AS B
+              GROUP BY col2, col3 HAVING COUNT(*) &gt; 1) AS B
+ON (A.col2=B.col2 AND A.col3=B.col3)
+ORDER BY A.col2, A.col3, A.row_num
+</pre></p>
+</td></tr></table></p>
+
+<A NAME="481"><H3>A Related Approach for Data Scrubbing</H3></A>
+
+<P>Often, a technique for finding rows with duplicate columns and deleting 
+duplicates is used for data scrubbing&#8212;simply to eliminate duplicate rows. If you want 
+to delete duplicate rows, you can create a new table that has a unique index, 
+with the IGNORE_DUP_KEY option on the columns to be checked for 
+duplicates. Then you use the INSERT&#8230;SELECT command to populate the new table 
+and discard all the duplicate rows. This is a fast and easy solution. (It won't 
+work if you want to identify the rows and not delete them, however. To identify 
+and not delete, you can use the previous solutions and convert them to 
+DELETE operations.) This solution gets rid of duplicates but doesn't identify them:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- Data scrubbing
+-- Use a unique index with IGNORE_DUP_KEY to throw out the duplicate
+-- rows. This isn't quite a solution to the problem at hand, as it
+-- doesn't identify the duplicate rows, but it does eliminate them.
+CREATE TABLE #match_cols
+(
+row_num     int,
+col2        char(1),
+col3        char(1)
+)
+GO
+
+CREATE UNIQUE INDEX #match_col2_idx ON #match_cols (col2, col3) WITH
+IGNORE_DUP_KEY
+GO
+
+-- Note many dups in original table
+SELECT &quot;COUNT(*)&quot;=COUNT(*), col2, col3
+FROM match_cols 
+GROUP BY col2, col3
+
+COUNT(*)    col2    col3
+--------    ----    ----
+264         A       A
+339         A       B
+304         A       C
+334         A       D
+329         B       A
+309         B       B
+319         B       C
+341         B       D
+312         C       A
+320         C       B
+300         C       C
+341         C       D
+297         D       A
+297         D       B
+304         D       C
+290         D       D
+
+-- Supposedly selects ALL from the original table,
+-- but duplicates will get silently thrown away
+INSERT #match_cols
+    SELECT * FROM match_cols
+
+-- No dups in new table
+SELECT &quot;COUNT(*)&quot;=COUNT(*), col2, col3
+FROM #match_cols 
+GROUP BY col2, col3
+
+COUNT(*)    col2    col3
+--------    ----    ----
+1           A       A
+1           A       B
+1           A       C
+1           A       D
+1           B       A
+1           B       B
+1           B       C
+1           B       D
+1           C       A
+1           C       B
+1           C       C
+1           C       D
+1           D       A
+1           D       B
+1           D       C
+1           D       D
+</pre></p>
+</td></tr></table></p>
+
+
+<A NAME="482"><H2>Putting Data on a Web Page</H2></A>
+
+<P>If you need a fast way to copy data to a simple but functional Web page, 
+you can choose from several third-party tools. But you can do this easily (and 
+for free) using the special stored procedure 
+<I>sp_makewebtask </I>(which wraps the extended stored procedure 
+<I>xp_makewebtask</I>). This procedure has a GUI front 
+end&#8212;the Web Assistant Wizard&#8212;but you can also call it directly. We'll use this 
+solution next to present a table of authors on a Web page. (You 
+can get as fancy as you want&#8212;the online documentation discusses several 
+optional parameters.) We'll specify the name of the HTML file to be created and write a query to get 
+the data. You can also specify several formatting options, links to other URLs, 
+and links to pages of related text or image data contained for each row. In this 
+example, the entries in the 
+<I>pr_info</I> and 
+<I>logo</I> columns are hyperlinks to the actual text and image data:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+sp_makewebtask @outputfile=&quot;c:\tmp\pub_info.htm&quot;,
+@query=&quot;SELECT pub_id, pr_info, pub_id, logo, pub_id FROM pub_info&quot;,
+@blobfmt=&quot;%2%FILE=c:\tmp\pubtxt_.html%4%FILE=c:\tmp\pubimg_.gif&quot;
+</pre></p>
+</td></tr></table></p>
+
+<P>Figure 12-1 shows how the resulting Web page looks in Microsoft Internet Explorer.</P>
+
+
+<A NAME="483"><H2>Expanding a Hierarchy</H2></A>
+
+<P>Let's say you want to expand a hierarchy (such as an organization chart), 
+prepare a bill of materials, or navigate a tree structure. This problem doesn't lend 
+itself naturally to the use of standard SQL. Suppose we have a simple table of 
+employees. It uses a self-reference in which each employee is associated with his or 
+her manager's row in the same table.</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+CREATE TABLE emp_mgr
+(
+emp_no        int            NOT NULL PRIMARY KEY,
+emp_name      varchar(25)    NOT NULL,
+emp_title     varchar(25)    NOT NULL,
+mgr_no        int            REFERENCES emp_mgr (emp_no)
+)
+</pre></p>
+</td></tr></table></p>
+
+<P>
+<A HREF="javascript:fullSize('F12wh01x.htm')"> <img src="F12wh01.JPG" width=404 height=332 border=0 ALT="Click to view at full size."> </A>
+</P>
+<P>
+<!-- caption --><B>Figure 12-1.</B> <I>Viewing a table of authors via Internet Explorer.</I><!-- /caption -->
+</P>
+
+
+<P>If we want to provide a list of employees, with each employee's 
+manager name and title on the same line, it's easy. A self-join works like this:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+SELECT
+E.emp_no, E.emp_name AS Employee, E.emp_title,
+M.mgr_no, M.emp_name AS Manager, M.emp_title AS Mgr_title
+FROM
+    emp_mgr AS E
+JOIN
+    emp_mgr AS M
+ON (E.mgr_no=M.emp_no)
+ORDER BY E.emp_no
+
+emp_no Employee       emp_title        mgr_no  Manager         Mgr_title
+------ -----------    ---------------  ------  --------------  -------------
+16     Dave Edgerton  VP-Operations    99      Mark Burke      President
+73     Rick Eckhart   Albany Plant     16      Dave Edgerton   VP_Operations
+                      Manager
+99     Mark Burke     President        10050   John Smith      CEO
+643    Greg Chapman   VP-Sales &amp;       99      Mark Burke      President
+                      Marketing
+692    Ethel Knoll    Staff            7437    Rachel Hunt     Senior Cost
+                      Accountant                               Accountant
+865    Ron Simms      Terre Haute      16      Dave Edgerton   VP-Operations
+                      Plant Manager
+935    Deb Kerns      Mechanical       86145   Adam Smale      Chief
+                      Engineer                                 Engineer
+1803   John Jacobs    Cash Flow        9543    Jill Hansen     Treasurer
+                      Management
+2037   Keith Teeter   Civil Engineer   28762   Jeff Cullerton  Electrical
+                                                               Engineer
+2345   Mike Jackson   Charlotte        16      Dave Edgerton   VP-Operations
+                      Plant Manager
+3260   Lee Chao       VP-R&amp;D           99      Mark Burke      President
+4096   Hillary Loews  Staff            7437    Rachel Hunt     Senior Cost
+                      Accountant                               Accountant
+4318   Phyllis Brown  VP-Human         99      Mark Burke      President
+                      Resources
+4378   Kurt Phillips  Electrical       86145   Adam Smale      Chief
+                      Engineer                                 Engineer
+4673   Kurt Johansen  Fremont Plant    16      Dave Edgerton   VP-Operations
+                      Manager
+6298   Wes Thomas     Mechanical       8548    Lee Roberts     Chief
+                      Engineer                 Johnson         Engineer
+6578   Karl Johnson   Chief Engineer   4673    Kurt Johansen   Fremont
+                                                              Plant
+                                                               Manager
+7210   Ajay Kumar     Electrical       9763    Takeshi Sato    Chief
+                      Engineer                                 Engineer
+7437   Rachel Hunt    Senior Cost      8576    Phil Kertzman   Corporate
+                      Accountant                               Controller
+8548   Lee Roberts    Chief Engineer   865     Ron Simms       Terre Haute
+       Johnson                                                 Plant
+                                                               Manager
+8576   Phil Kertzman  Corporate        20240   Sue Ferrel      VP_Finance
+                      Controller
+9543   Jill Hansen    Treasurer        20240   Sue Ferrel      VP-Finance
+9763   Takeshi Sato   Chief Engineer   2345    Mike Jackson    Charlotte
+                                                               Plant
+                                                               Manager
+9871   Mike Baker     Staff            1803    John Jacobs     Cash Flow 
+                      Accountant                               Management
+10050  John Smith     CEO              10050   John Smith      CEO
+11456  Paul Good      Civil Engineer   935     Deb Kerns       Mechanical
+                                                               Engineer
+20240  Sue Ferrel     VP-Finance       99      Mark Burke      President
+23756  Pete Fuller    Civil Engineer   56432   Walt White      Mechanical 
+                                                               Engineer
+28762  Jeff Cullerton Electrical       8548    Lee Roberts     Chief
+                      Engineer                 Johnson         Engineer
+56432  Walt White     Mechanical       6578    Karl Johnson    Chief
+                      Engineer                                 Engineer
+84521  Leland Teng    Civil Engineer   9763    Takeshi Sato    Chief
+                                                               Engineer
+86145  Adam Smale     Chief Engineer   73      Rick Eckhart    Albany Plant
+                                                               Manager
+92314  Billy Bob      Mechanical       7210    Ajay Kumar      Electrical 
+       Jones          Engineer                                 Engineer
+</pre></p>
+</td></tr></table></p>
+
+<P>If we want to show the hierarchy and the reporting relationships, it's 
+not so easy. As we've seen, returning a bunch of result sets back to the client 
+application is inefficient and should be avoided. In the old days, you couldn't 
+really avoid doing it this way. Now, however, you can use a temporary table and 
+sequence it with IDENTITY to hold the order of the reporting relationship. When 
+we finish traversing the hierarchy, we need to join to that temporary table with 
+a single, simple select. (We use the SPACE() function and string 
+concatenation to produce a simple report of the following form, showing each 
+employee's reporting relationship. This is not central to the main solution, of course.)</P>
+
+<P><DIV CLASS="SIDEBAR"><BLOCKQUOTE><b>A Borrowed Solution</b>
+<p>This solution is credited to Rick Vicik. It uses a temporary table as 
+a stack to keep track of all the items for which processing has begun 
+but is not complete. When an item has been fully traversed, it is 
+removed from the stack. This is a nice approach because it can work to an 
+arbitrary and unknown number of levels. And by slightly modifying it (or 
+making it a procedure and passing parameters), you can start at a given 
+level and end at a given level.</p>
+<P>Rick's original solution to this problem is in the SQL Server 
+documentation under the topic &quot;Expanding Hierarchies.&quot; The 
+following approach is a slight refinement. Rick's solution dates from several 
+years back, before the existence of IDENTITY. It relies on multiple 
+PRINT statements to present the output.</P>
+</BLOCKQUOTE></DIV></P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+Manager -&gt; Employees
+John Smith,   CEO
+    Mark Burke,   President
+          Dave Edgerton,   VP-Operations
+               Rick Eckhart,   Albany Plant Manager
+                    Adam Smale,   Chief Engineer
+                         Deb Kerns,   Mechanical Engineer
+                              Paul Good,   Civil Engineer
+                         Kurt Phillips,   Electrical Engineer
+               Ron Simms,   Terre Haute Plant Manager
+                    Lee Roberts Johnson,   Chief Engineer
+                         Wes Thomas,   Mechanical Engineer
+                         Jeff Cullerton,   Electrical Engineer
+                              Keith Teeter,   Civil Engineer
+               Mike Jackson,   Charlotte Plant Manager
+                    Takeshi Sato,   Chief Engineer
+                         Ajay Kumar,   Electrical Engineer
+                              Billy Bob Jones,   Mechanical Engineer
+                         Leland Teng,   Civil Engineer
+               Kurt Johansen,   Fremont Plant Manager
+                    Karl Johnson,   Chief Engineer
+                         Walt White,   Mechanical Engineer
+                              Pete Fuller,   Civil Engineer
+          Greg Chapman,   VP-Sales &amp; Marketing
+          Lee Chao,   VP-R&amp;D
+          Phyllis Brown,   VP-Human Resources
+          Sue Ferrel,   VP-Finance
+               Phil Kertzman,   Corporate Controller
+                    Rachel Hunt,   Senior Cost Accountant
+                         Ethel Knoll,   Staff Accountant
+                         Hillary Loews,   Staff Accountant
+               Jill Hansen,   Treasurer
+                    John Jacobs,   Cash Flow Management
+                         Mike Baker,   Staff Accountant
+</pre></p>
+</td></tr></table></p>
+
+<P>Here is the batch, with comments, that produced this hierarchy:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- Variables to keep track of reporting level and the current emp
+DECLARE @level int, @current int
+
+-- This table will act as a stack. We push employees onto the stack
+-- until we process all their reports.
+CREATE TABLE #stack 
+(depth_level int, emp_no int)
+
+-- This temp table will be used to hold the reporting chain.
+-- The identity automatically sequences it and allows us to
+-- ultimately return the hierarchy as just a single result set.
+CREATE TABLE #orgchart
+(seq_no        int    IDENTITY
+org_level      int    NOT NULL
+emp_id         int    NOT NULL
+)
+
+-- Assume we know with certainty that only one employee
+-- (the CEO) can have himself as manager.
+-- Can change this however makes sense, but need some way to
+-- know where to start.
+-- We'll set ROWCOUNT to 1 to be sure, but it is not necessary
+-- since we know this.
+-- In this batch, we'll assume we start with level 1 as the
+-- depth_level.
+SET ROWCOUNT 1
+SELECT @level=1, @current=emp_no FROM emp_mgr WHERE emp_no=mgr_no
+SET ROWCOUNT 0
+
+INSERT INTO #stack (depth_level, emp_no) VALUES (@level, @current)
+    
+WHILE (@level &gt; 0)   -- Do if any levels remain
+    BEGIN
+    
+    -- See whether there are any rows for the level we're on
+    IF EXISTS (SELECT * FROM #stack WHERE depth_level=@level)
+        BEGIN
+
+        -- Get FIRST emp_no at current level
+        SET ROWCOUNT 1
+        SELECT @current=emp_no FROM #stack
+        WHERE depth_level=@level
+        SET ROWCOUNT 0
+
+        -- Put the employee in a temp table so 
+        -- we can later do a single select and join.
+        -- We could SELECT here for every employee, but
+        -- all those result sets are inefficient.
+        -- The orgchart temp table is automatically sequenced
+        -- via an identity. That's the key to the temp table
+        -- providing a solution here.
+        INSERT INTO #orgchart (ORG_LEVEL, EMP_ID)
+            SELECT @level, @current 
+        
+        -- Delete row just processed from the stack
+        DELETE FROM #stack
+        WHERE depth_level=@level AND emp_no=@current
+
+        -- Get new rows for stack by finding anyone reporting to
+        -- current: except for the top employee who reports to self
+        INSERT INTO #stack
+            SELECT @level + 1, emp_no
+            FROM emp_mgr
+            WHERE mgr_no=@current
+            AND mgr_no &lt;&gt; emp_no
+
+        -- If any rows were found and inserted, there is a level
+        -- below this employee, so increment level
+        IF @@ROWCOUNT &gt; 0
+            SELECT @level=@level + 1
+
+        END
+    ELSE
+        -- There are no levels below this employee, so pop up one
+        SELECT @level=@level - 1
+    END
+
+-- Now just join to the #org_chart to get emp_names and titles.
+-- Concatenate employees and managers into one string, indented by
+-- level. Use SPACE()*level*5 to indent 5 spaces per level, except
+-- for level 1.
+SELECT &quot;Manager -&gt; Employees&quot;=
+SPACE((O.org_level - 1) * 5) + E.emp_name + ',    '+ E.emp_title
+FROM #orgchart AS O
+JOIN emp_mgr AS E ON (E.emp_no=O.emp_id)
+ORDER BY O.SEQ_NO
+
+DROP TABLE #stack, #orgchart
+</pre></p>
+</td></tr></table></p>
+
+<P>You can also solve this problem in a straightforward but tedious way 
+using cursors. You simply FETCH through the chain for each employee to find 
+all employees who report to him or her. This solution requires many fetches, 
+which of course means many result sets.</P>
+
+<P><DIV CLASS="SEEALSO"><BLOCKQUOTE><b>SEE ALSO</b><HR>
+David Rozenshtein has written extensively on the topic of tree processing in SQL. (His book 
+<I>Optimizing Transact-SQL,</I> coauthored by Anatoly Abramovich and Eugene Birger, is on the 
+Suggested Reading list at the end of this book.) One of his solutions 
+might be more efficient than this, but the solution above is plenty efficient.
+</BLOCKQUOTE></DIV></P>
+
+
+<A NAME="484"><H2>Selecting Instead of Iterating</H2></A>
+
+<P>One common need is to perform some operation for every value, from 1 to 
+<I>n</I>. In <a href="ch09a.htm#341">Chapter 9</a>, we used the trigonometry functions to produce a listing of 
+sine/cosine/tangent for every 10 degrees between 0 and 180. We took the 
+obvious route and wrote a simple loop. However, that approach results in every row 
+being its own result set. As we've discussed many times, sending many result sets 
+when one will do is inefficient, and it is also more cumbersome to process in the 
+client application. To refresh your memory, here's the solution from <a href="ch09a.htm#341">Chapter 9</a>:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+DECLARE @angle smallint
+SELECT @angle=0
+WHILE (@angle &lt;= 180)
+BEGIN
+    SELECT
+    ANGLE=@angle,
+    SINE=STR(SIN(@angle), 7, 4),
+    COSINE=STR(COS(@angle), 7, 4),
+    TANGENT=STR(TAN(@angle), 7, 4)
+
+    SELECT @angle=@angle + 10
+END
+</pre></p>
+</td></tr></table></p>
+
+
+<P>Since it's common to iterate in this way, a simple table of ordered 
+numbers can come in handy:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- Create the seq_num table
+CREATE TABLE seq_num
+(seq_num INT PRIMARY KEY NOT NULL)
+
+-- Populate the seq_num table with values from -500 through 500
+DECLARE @counter int
+SELECT @counter= -500
+WHILE (@counter &lt;= 500)
+    BEGIN
+    INSERT seq_num VALUES (@counter)
+    SELECT @counter=@counter + 1
+    END
+
+-- If doing this for real, you might as well set FILLFACTOR to 100
+</pre></p>
+</td></tr></table></p>
+
+<P>We can select or join to this handy 
+<I>seq_num</I> table rather than iterating. The following solution runs much faster than the solution from <a href="ch09a.htm#341">Chapter 9</a>. It returns a single result set, and it's easier to write:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+SELECT
+    ANGLE=seq_num * 10,
+    SINE=STR(SIN(seq_num * 10), 7, 4),
+    COSINE=STR(COS(seq_num * 10), 7, 4),
+    TANGENT=STR(TAN(seq_num * 10), 7, 4)
+FROM seq_num
+WHERE seq_num BETWEEN 0 AND 18
+
+ANGLE    SINE       COSINE    TANGENT
+-----    -------    -------   -------
+0         0.0000     1.0000    0.0000
+10       -0.5440    -0.8391    0.6484
+20        0.9129     0.4081    2.2372
+30       -0.9880     0.1543   -6.4053
+40        0.7451    -0.6669   -1.1172
+50       -0.2624     0.9650   -0.2719
+60       -0.3048    -0.9524    0.3200
+70        0.7739     0.6333    1.2220
+80       -0.9939    -0.1104    9.0037
+90        0.8940    -0.4481   -1.9952
+100      -0.5064     0.8623   -0.5872
+110      -0.0442    -0.9990    0.0443
+120       0.5806     0.8142    0.7131
+130      -0.9301    -0.3673    2.5323
+140       0.9802    -0.1978   -4.9554
+150      -0.7149     0.6993   -1.0223
+160       0.2194    -0.9756   -0.2249
+170       0.3466     0.9380    0.3696
+180      -0.8012    -0.5985    1.3387
+</pre></p>
+</td></tr></table></p>
+
+
+<A NAME="485"><H2>Getting a Row Count of a Table</H2></A>
+
+<P>Let's say you want to get the number of rows in a table, without qualification. Using the 
+<I>seq_num </I>table of the last example, the obvious way to check the number of rows is to do this:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+SELECT COUNT(*) FROM seq_num
+</pre></p>
+</td></tr></table></p>
+
+<P>While this is the most obvious solution, it's not the fastest one. The 
+table still requires a scan (via some index or a full table scan). The number of 
+rows in the table is maintained, and can be relied on to be accurate, in the 
+<I>sysindexes</I> table. Recall that every table has at least one entry, and the entry has a value of 0 for 
+<I>indid </I>if no clustered index is present. If a clustered index exists, the table has a value of 1 for 
+<I>indid</I>. It does not have both values, although it of 
+course includes other rows for all nonclustered indexes. You can put together a 
+fast, simple query to find the number of rows by searching on the table and the 
+<I>indid </I>of 0 or 1 (knowing that both cannot be present). This approach executes 
+with only two or three logical reads&#8212;even for very large tables:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- Faster way to get count of all rows in table
+SELECT rows
+FROM sysindexes
+WHERE id=OBJECT_ID(&quot;seq_num&quot;)
+AND indid &lt; 2   -- If the table has no clustered index, the entry
+                -- will be 0 for the table. If the table has a
+                -- clustered index, the entry will instead be 1 for
+                -- the clustered index. So it will be either 0 or 1,
+                -- not both. Hence, specifying it as &lt; 2 finds it
+                -- either way.
+</pre></p>
+</td></tr></table></p>
+
+<P>Of course, if you need to qualify the count (for example, if you need 
+to get the count for all rows with positive values), you can do this only 
+with count(*). The <I>sysindexes.rows </I>trick works only to get a count of all rows 
+in the table, without qualification.</P>
+
+
+<A NAME="486"><H2>Storing Computed Columns</H2></A>
+
+<P>If you need to select a column that is the result of a computation on data in other columns (for example, 
+<I>SELECT QTY, PRICE, REV = QTY </I>*<I> PRICE</I>), you can do so easily with SQL Server 7: you define a column in a table to be a computed column. However, since the computed column is not physically stored, it cannot be indexed. If you find that you frequently search on a computed column, you might want to have an index on that computed value to speed retrieval. For example, you might want to maintain a customer's current balance in the specific customer row rather than recompute it each time you need it. Or you might need to maintain a SOUNDEX() value for each name in a table if your telephone operators use it for information retrieval. Here is a table definition that automatically generates the soundex value for each 
+<I>cust_name </I>every time it is accessed:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+CREATE TABLE customer_sx
+(
+cust_name       char(20),
+soundex_value   as SOUNDEX(cust_name) 
+)
+</pre></p>
+</td></tr></table></p>
+
+<P>One problem with this approach is that the computed column (
+<I>soundex_value</I>) is not actually stored with the table; it is a virtual column that is computed 
+only when it is accessed. For this reason, you cannot put an index on the column 
+to aid telephone operators in their searches. Instead, you can use a trigger 
+that maintains a SOUNDEX() value, as shown below. The table is clustered to 
+enable names that sound similar to be stored together. Whenever the 
+<I>cust_name </I>column is changed or a new customer is added, the SOUNDEX() value is updated.</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- soundex_trig.sql
+CREATE TABLE customer_sx
+(
+cust_name       char(20),
+soundex_value   char(4)    NULL
+)
+CREATE CLUSTERED INDEX sounds_like ON customer_sx (soundex_value)
+GO
+
+CREATE TRIGGER maintain_soundex ON customer_sx
+FOR INSERT, UPDATE
+AS
+    UPDATE soundex_name SET soundex_value=SOUNDEX(inserted.cust_name)
+        FROM customer_sx, inserted
+        WHERE customer_sx.cust_name=inserted.cust_name
+GO
+</pre></p>
+</td></tr></table></p>
+
+
+<A NAME="487"><H2>Using Pivot Tables (Cross-Tabs)</H2></A>
+
+<P>Suppose you have a simple table called 
+<I>cross_tab</I> with sales values for different years and quarters:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+year    qtr    value     year    qtr    value
+----    ---    -----     ----    ---    -----
+1990    1      15     	 1993    1      20
+1990    2      26     	 1993    2      35
+1990    3      37     	 1993    3      47
+1990    4      48     	 1993    4      58
+1991    1      19     	 1994    1      25
+1991    2      25     	 1994    2      36
+1991    3      37     	 1994    3      49
+1991    4      48     	 1994    4      50
+1992    1      15     	 1995    1      31
+1992    2      29     	 1995    2      45
+1992    3      32     	 1995    3      57
+1992    4      44     	 1995    4      68
+</pre></p>
+</td></tr></table></p>
+
+<P>You need to provide summary data&#8212;one line for each year, values for 
+all four quarters in the year, and the year's total. The following query does the trick.</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+SELECT year,
+q1=(SELECT value FROM cross_tab WHERE year=c.year AND qtr=1),
+q2=(SELECT value FROM cross_tab WHERE year=c.year AND qtr=2),
+q3=(SELECT value FROM cross_tab WHERE year=c.year AND qtr=3),
+q4=(SELECT value FROM cross_tab WHERE year=c.year AND qtr=4),
+total=(SELECT SUM(value) FROM cross_tab WHERE year=c.year)
+FROM cross_tab c
+GROUP BY year
+
+year    q1    q2    q3    q4    total
+----    --    --    --    --    -----
+1990    15    26    37    48    126
+1991    19    25    37    48    129
+1992    15    29    32    44    120
+1993    20    35    47    58    160
+1994    25    36    49    50    160
+1995    31    45    57    68    201
+</pre></p>
+</td></tr></table></p>
+
+<P>If multiple data points exist for a given year and quarter (which in this 
+case isn't possible since those two columns make up the primary key in the 
+<I>cross_tab</I> table), you can modify the query slightly to use SUM for each quarter, not 
+just for the total. Here is the modified query, which works when multiple entries 
+can exist for any year/quarter combination. It works fine on the 
+<I>cross_tab</I> table, too, but it contains extra SUMs.</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+SELECT year,
+q1=(SELECT SUM(value) FROM cross_tab WHERE year=c.year AND qtr=1),
+q2=(SELECT SUM(value) FROM cross_tab WHERE year=c.year AND qtr=2),
+q3=(SELECT SUM(value) FROM cross_tab WHERE year=c.year AND qtr=3),
+q4=(SELECT SUM(value) FROM cross_tab WHERE year=c.year AND qtr=4),
+total=(SELECT SUM(value) FROM cross_tab WHERE year=c.year)
+FROM cross_tab c
+GROUP BY year
+</pre></p>
+</td></tr></table></p>
+
+<P>This is the type of solution that most people used prior to CASE 
+being added to SQL Server 6. But all those SELECT statements do not make for 
+a highly efficient solution. In fact, running this query with just the 24 data 
+rows in this example requires more than 30 scans (not full table scans).</P>
+
+<P>Using CASE, you make only a single pass through the 
+<I>cross_tab </I>table. The scan count is 1, and the logical reads value is only 1! Obviously, this solution 
+is much more efficient.</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+SELECT
+year=c.year,
+SUM(CASE qtr WHEN 1 THEN value ELSE 0 END) AS q1,
+SUM(CASE qtr WHEN 2 THEN value ELSE 0 END) AS q2,
+SUM(CASE qtr WHEN 3 THEN value ELSE 0 END) AS q3,
+SUM(CASE qtr WHEN 4 THEN value ELSE 0 END) AS q4
+FROM cross_tab c
+GROUP BY year
+</pre></p>
+</td></tr></table></p>
+
+<P>Unfortunately, this solution doesn't quite meet the original 
+specifications of the query: it doesn't calculate the total for the year. If you're going to 
+throw the results in a spreadsheet, it's ok as it is&#8212;you can let the spreadsheet 
+calculate that total value for the year based on the previous four columns.</P>
+<P>It would be nice to do something like the following, but it's not 
+supported&#8212;you can't treat a column heading as a column name as this example does:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+SELECT
+year=c.year,
+SUM(CASE qtr WHEN 1 THEN value ELSE 0 END) AS q1,
+SUM(CASE qtr WHEN 2 THEN value ELSE 0 END) AS q2,
+SUM(CASE qtr WHEN 3 THEN value ELSE 0 END) AS q3,
+SUM(CASE qtr WHEN 4 THEN value ELSE 0 END) AS q4
+SUM (q1 + q2 + q3 + q4) AS total
+FROM cross_tab c
+GROUP BY year
+</pre></p>
+</td></tr></table></p>
+
+<P>We need to find a hybrid of the two methods. Here is the obvious 
+solution: use the more efficient CASE solution, and for the 
+<I>total </I>column that can't be solved with the single CASE pass, do a SELECT inside the SELECT:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+SELECT
+year=c.year,
+SUM(CASE qtr WHEN 1 THEN value ELSE 0 END) AS q1,
+SUM(CASE qtr WHEN 2 THEN value ELSE 0 END) AS q2,
+SUM(CASE qtr WHEN 3 THEN value ELSE 0 END) AS q3,
+SUM(CASE qtr WHEN 4 THEN value ELSE 0 END) AS q4,
+(SELECT SUM(value) FROM cross_tab WHERE year=c.year) AS total
+FROM cross_tab c
+GROUP BY year
+</pre></p>
+</td></tr></table></p>
+
+<P>This adds 6 to the scan count and another 6 logical reads. But it's more efficient than the first solution, and it meets the query specification.</P>
+
+<P>Still, we know that there's an easy way to compute the total for one year. It's a simple query to write:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+SELECT year, SUM(value)
+FROM cross_tab
+GROUP BY year
+</pre></p>
+</td></tr></table></p>
+
+<P>It would be nice to use the result of this query and join it to the fast 
+query. Then we'd have the best of both worlds. Below we do just that&#8212;we make 
+the query for the year totals a derived table and then join to it:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+SELECT
+c.year AS year,
+SUM(CASE qtr WHEN 1 THEN value ELSE 0 END) AS q1,
+SUM(CASE qtr WHEN 2 THEN value ELSE 0 END) AS q2,
+SUM(CASE qtr WHEN 3 THEN value ELSE 0 END) AS q3,
+SUM(CASE qtr WHEN 4 THEN value ELSE 0 END) AS q4,
+MIN(y.VAL) AS total
+FROM cross_tab AS c
+JOIN 
+    (SELECT year, SUM(value) AS VAL
+    FROM cross_tab c
+    GROUP BY year) AS y
+    ON (y.year=c.year)
+
+GROUP BY c.year
+</pre></p>
+</td></tr></table></p>
+
+<P>This is the most efficient solution we could devise. (You might be 
+more clever and find a better one.) Note one tricky thing here: we used 
+<I>MIN(y.VAL) </I>instead of 
+<I>SUM(y.VAL)</I>. If we used SUM, we'd get four times the value for 
+each year, because the row from the derived table would be projected to every 
+row for each year&#8212;and there are four quarters in each year. We don't want the 
+sum of all yearly totals; we want just one total for the entire year. But we can't 
+mix nonaggregates in the SELECT list because we need to use GROUP BY. So 
+the solution is to use one value for each year, which we do by using MIN. 
+MAX would work just as well. The MIN, MAX, and AVG for each year's total 
+would of course be the same, since only one total can exist for the year.</P>
+
+<P>Here is one more solution to the problem. The idea comes from an 
+article by Steve Roti that appeared several years ago in 
+<I>DBMS </I>magazine. He constructed a &quot;unit matrix&quot; table that looks like this:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+Qtr    Q1    Q2    Q3    Q4
+---    --    --    --    --
+1      1     0     0     0
+2      0     1     0     0
+3      0     0     1     0
+4      0     0     0     1
+</pre></p>
+</td></tr></table></p>
+
+<P>After constructing and carefully populating the table (named 
+<I>pivot </I>in the example that follows), you can use it to join to the 
+<I>cross_tab </I>table via the 
+<I>Qtr </I>column. The value for each column can be multiplied by its respective 
+quarter. For example, since only one quarter in any given row has a value of 1 and 
+each of the others has a value of 0, multiplying yields the desired result. The 
+column retains the value (by multiplying it by 1) for the respective quarter but sets 
+it to 0 for a different quarter (by multiplying by 0). This is a clever and 
+efficient solution, but not as efficient as the CASE and derived table solution. And it 
+does require that you fabricate the unit matrix table, although this is not difficult 
+to do. Without CASE, this would be the best solution:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+SELECT year,
+q1=SUM(value * Q1),
+q2=SUM(value * Q2),
+q3=SUM(value * Q3),
+q4=SUM(value * Q4),
+total=SUM(value)
+FROM cross_tab JOIN pivot 
+ON (cross_tab.qtr=pivot.Qtr)
+GROUP BY year
+</pre></p>
+</td></tr></table></p>
+
+
+<A NAME="488"><H2>Integrating SQL Server with E-Mail</H2></A>
+
+<P>SQL Server has the unique ability to directly send and receive e-mail. At 
+first blush, many people don't grasp the significance of this. But this feature 
+can perform such functions as alerting you about an important data value or 
+automatically sending a new order to your supplier when inventory reaches a 
+certain level. SQL Server can also receive mail&#8212;you can e-mail a query to 
+SQL Server and it will return the results to you, or you can have the body of 
+the e-mail message stored in a database for later use.</P>
+
+
+<A NAME="489"><H3>Automatically Sending Mail Based on an Event</H3></A>
+
+<P>The following is a trigger for the bug database at Microsoft called RAID 
+that the SQL Server development team uses. If a serious, &quot;severity 1&quot; bug is 
+entered or when an existing bug is elevated to &quot;sev 1,&quot; the database sends e-mail to 
+the development team's e-mail alias:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- raidtrigger.sql
+CREATE trigger OnCheckBugs ON Bugs
+ FOR INSERT, UPDATE, DELETE
+ AS
+  DECLARE @test int
+  DECLARE @recipients varchar(255), @message varchar(255),
+      @subject varchar(50)
+  -- Send mail for any newly activated sev 1 bugs on a version
+  -- that has been released
+  IF EXISTS (SELECT * FROM inserted WHERE 
+    inserted.Severity='1' AND inserted.Status='ACTIVE')
+
+    BEGIN
+    -- If row was already sev 1 and ACTIVE (and is just being
+    -- edited), don't resend mail
+    IF EXISTS (SELECT * FROM deleted WHERE 
+        deleted.Severity='1' AND deleted.Status='ACTIVE')
+        RETURN
+
+    -- UPDATE NEXT LINE FOR ALL WHO SHOULD GET THE MAIL
+    -- Separate with semicolons
+    SELECT @recipients='SQLDevTeam;johnsmith;janedoe'
+
+    -- Make subject line of mail the severity, bug number,
+    -- &amp; bug database
+    SELECT @subject='Sev' + inserted.Severity + '  Bug ' +
+        CONVERT(varchar(6), inserted.BugID) 
+        + ' activated in ' + DB_NAME() FROM inserted
+
+    -- Make message the component area, who opened bug, &amp; its title
+    SELECT @message='Component: ' + RTRIM(Component) + 
+        ' Opened By: ' + RTRIM(inserted.OpenedBy) + 
+        'Version: ' + OpenedRev + char(13) + 
+        'Title: ' + RTRIM(inserted.Title) FROM inserted
+
+    EXECUTE master..xp_sendmail     @recipients= @recipients,
+                                    @message=    @message,
+                                    @subject=    @subject,
+                                    @no_output=  TRUE
+    END
+
+   RETURN
+</pre></p>
+</td></tr></table></p>
+
+
+<A NAME="490"><H3>Processing Incoming Mail</H3></A>
+
+<P>In the SQL Server group, each developer sends a brief weekly e-mail 
+message to the group reporting on his or her work. Suppose developers want to 
+keep this e-mail train but don't want it cluttering up their e-mail Inbox folders. 
+Suppose they also want to be able to query on it in a structured way by putting 
+the mail automatically into a SQL Server database. They could create a form 
+that populates a database, but the e-mail tradition is well established, informal, 
+and well liked (as much as any demand for status reports is ever well liked).</P>
+
+<P>The following procedure uses the 
+<I>xp_readmail</I> capabilities of SQL Server 6.5. It processes mail and reads only mail with the string 
+<I>stat </I>(written as uppercase, lowercase, or mixed case) in the subject line. It then inserts 
+attributes such as the sender, datetime sent, and exact subject line into a table. The 
+body of the message is inserted into a text column.</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+USE pubs  -- For example case, make table in pubs database
+GO
+CREATE TABLE mailstore
+(
+Msg_ID   varchar(64)  NOT NULL PRIMARY KEY,
+Sent_By  varchar(20)  NOT NULL,  -- REFERENCES employees(emp_email)
+Subject  varchar(40)  NOT NULL DEFAULT 'No Subject',
+Recvd    datetime     NOT NULL DEFAULT GETDATE(),
+Msg_Text text         NULL
+)
+GO
+
+USE MASTER
+GO
+
+DROP PROCEDURE sp_status_mail
+GO
+
+CREATE PROCEDURE sp_status_mail
+    -- Process only unread mail
+    @unread_msgs_only varchar(5)='false',
+    -- Delete processed mail
+    @delete_after_reading varchar(5)='false',
+    -- Do not change mail read status
+    @do_not_change_read_status varchar(5)='true',
+    -- Process only &quot;Stat&quot; mail
+    @only_read_stat_mail varchar(5)='true'
+                                
+AS
+DECLARE @status int,              -- MAPI Status
+        @msg_id varchar(64),      -- MSG ID for each mail
+        @originator varchar(255), -- MAIL FROM
+        @msgsubject varchar(255), -- MAIL SUBJECT
+        @msgtext varchar(255),    -- BUFFER FOR MAIL TEXT
+        @messages int,            -- Counter for messages processed
+        @mapifailure int,         -- Indicator if MAPI error
+        @maildate varchar(255),   -- MAIL SENT Date
+        @skip_bytes int,          -- Pointer for where to read next
+                                  -- text chunk
+        @msg_length int,          -- Total size of message text
+        @textptr varbinary(16)    -- TextPointer
+
+SELECT @messages=0
+SELECT @mapifailure=0
+
+WHILE (1=1)
+    BEGIN  -- BEGIN NEXT MSG LOOP
+        EXEC @status=master.dbo.xp_findnextmsg
+             @msg_id=@msg_id OUTPUT,
+             @unread_only=@unread_msgs_only
+
+        IF @status &lt;&gt; 0
+        BEGIN
+            SELECT @mapifailure=1
+            BREAK   -- If any MAPI error, bail out
+        END
+
+        IF (@msg_id IS NULL)  -- If msg_id is NULL, it's not a
+                              -- valid received message so continue
+                              -- with the next message
+        BREAK
+
+        SELECT @skip_bytes=0, @msg_length=0
+
+        EXEC @status=master.dbo.xp_readmail
+             @msg_id=@msg_id,
+             @originator=@originator OUTPUT,
+             @subject=@msgsubject OUTPUT,
+             @date_received=@maildate OUTPUT,
+             @message=@msgtext OUTPUT,
+             @skip_bytes=@skip_bytes OUTPUT,
+             @msg_length=@msg_length OUTPUT,
+             @peek=@do_not_change_read_status
+
+        IF @status &lt;&gt; 0
+            BEGIN
+                SELECT @mapifailure=1
+                BREAK    -- If any MAPI error, bail out
+            END
+
+    -- If flag is set, care only about mail that has &quot;stat&quot; in the
+    -- subject line. So forget rest and continue.
+    -- Do not count an &quot;uninteresting&quot; message as one processed.
+
+        IF (LOWER(@only_read_stat_mail)='true' AND
+            LOWER(@msgsubject) NOT LIKE '%stat%')
+            CONTINUE
+
+        -- Count how many messages processed
+        SELECT @messages=@messages + 1 
+
+        -- The sender field might be an address or a name.
+        -- If it's a name, get the address. Must turn off expand
+        -- to friendly names. Then, if there is a &lt; in originator,
+        -- parse for the address using only charindex.
+
+        SELECT @originator=CASE
+            WHEN (@originator NOT LIKE '%&lt;%' OR @originator
+                NOT LIKE '% %')
+                THEN @originator
+            ELSE SUBSTRING(@originator,
+                (charindex('&lt;', @originator) + 1),
+                (charindex('@', @originator) -
+                (charindex('&lt;', @originator) + 1)))
+            END
+
+        -- Insert message into a table
+
+        INSERT pubs.dbo.mailstore 
+            (Sent_By, Msg_ID, Subject, Recvd, Msg_Text)
+        VALUES (@originator, @msg_id, @msgsubject, @maildate,
+                @msgtext)
+
+        -- If MSG_ID already there, continue and try the next
+        -- message: error 2627 is a violation of a unique or PK 
+        -- constraint due to duplicates, and error 2601 is same but
+        -- just due to a unique index
+
+        IF (@@ERROR IN (2627, 2601))
+            BEGIN
+                RAISERROR ('MSG ID: %s already exists. Skipping to
+                    next message.', 16, 1, @msg_id)
+                CONTINUE
+            END
+
+        -- Get the textptr from last row inserted
+        SELECT @textptr=TEXTPTR(Msg_Text)
+        FROM pubs.dbo.mailstore WHERE Msg_ID=@msg_id
+
+        -- If non-null textptr and skip_bytes show there is more
+        -- to read, keep reading message text until done, and 
+        -- append with UPDATETEXT
+
+        WHILE ((@textptr IS NOT NULL) AND
+            (@skip_bytes &lt; @msg_length))
+            BEGIN   -- BEGIN READ-ALL-TEXT-LOOP
+                EXEC @status=master.dbo.xp_readmail
+                     @msg_id=@msg_id,
+                     @message=@msgtext OUTPUT,
+                     @skip_bytes=@skip_bytes OUTPUT,
+                     @msg_length=@msg_length OUTPUT
+
+                IF @status &lt;&gt; 0
+                    BEGIN
+                        SELECT @mapifailure=1
+                        BREAK    -- If any MAPI error, bail out
+                    END
+
+                UPDATETEXT pubs.dbo.mailstore.Msg_Text
+                    @textptr  NULL  0  WITH LOG  @msgtext
+            END    --  END READ-ALL-TEXT-LOOP
+
+        -- If broke out of text loop because of MAPI failure,
+        -- break out of next message processing too
+
+        IF @mapifailure=1
+            BREAK
+
+        -- If delete flag is ON, delete this message
+
+        IF (LOWER(@delete_after_reading)='true')
+            BEGIN
+                EXEC @status=master.dbo.xp_deletemail @msg_id
+                IF @status &lt;&gt; 0
+                    BEGIN
+                        SELECT @mapifailure=1
+                        BREAK    -- If any MAPI error, bail out
+                    END
+            END
+
+    END -- END NEXT MSG LOOP
+
+/* Finished examining the contents of Inbox */
+
+IF @mapifailure=0    -- No MAPI errors. Success!
+    BEGIN
+        RAISERROR(15079, -1, -1, @messages)
+        RETURN(0)
+    END
+ELSE                 -- MAPI errors. Bailed out.
+    BEGIN
+        RAISERROR ('MAPI Error. Terminated Procedure', 16, 1)
+        RETURN(-100)
+    END
+</pre></p>
+</td></tr></table></p>
+
+
+<A NAME="491"><H2>Copying Text to Sequenced <I>varchar </I>Columns</H2></A>
+<P>The text datatype is sometimes awkward to work with. Many functions 
+don't operate on text, stored procedures are limited in what they can do with 
+text, and some tools don't deal with it well. Instead of having a single, huge 
+text column, sometimes it's easier to work with a sequenced set of rows with a 
+<I>varchar </I>column. In SQL Server 7, 
+<I>varchar</I> columns can be up to 8000 bytes. 
+Although the code that follows can produce columns of that size, that might still be 
+too big to work with effectively. Although all SQL Server's string functions will 
+work on these columns, if you want to print out each column, you might want to 
+find something smaller that fits your needs better. The code produces columns 
+of length 200. You can take this code and substitute 
+<I>varchar(8000)</I> or any other length up to 8000 for the 
+<I>varchar(200)</I> used.</P>
+
+<P>So how can you copy a text column, which can hold up to 2^31 _1 characters, to multiple 
+<I>varchar(200) </I>columns and make sure they are 
+sequenced correctly within a single SQL batch? You can, of course, read the data out to 
+a program and then reinsert it. But then you would need to do a lot of 
+copying of large amounts of data between processes. This is far from ideal.</P>
+
+<P>The following procedure operates on the 
+<I>pub_info</I> table from the 
+<I>pubs</I> database. For a given 
+<I>pub_id</I>, the procedure takes the text column of the 
+row and does successive READTEXT operations in chunks of 200 until the 
+entire text column has been read. After creating the procedure, we use a cursor to iterate for each row of 
+<I>pub_info </I>and copy the text column into multiple rows of a temporary table. When we're done for a given 
+<I>pub_id</I>, we take the temporary table's contents and add it to the permanent table. We truncate the 
+temporary table and move on to the next 
+<I>pub_id</I> value.</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- copy_text_to_varchar.sql
+-- Be sure the pub_info table has the text columns added.
+-- If necessary, run \MSSQL\INSTALL\PUBTEXT.BAT to add the text
+-- columns. (Run from that directory.)
+--
+-- Proc get_text does READTEXT in a loop to read chunks of text
+-- no larger than 200, or the column size or @@TEXTSIZE, and
+-- produces as many rows as necessary to store the text column
+-- as a series of sequenced varchar(200) rows
+CREATE PROC get_text @pub_id char(4)
+AS
+
+DECLARE @mytextptr varbinary(16), @totalsize int, @lastread int,
+    @readsize int
+-- Use a TRAN and HOLDLOCK to ensure that textptr and text are 
+-- constant during the iterative reads
+BEGIN TRAN
+SELECT @mytextptr=TEXTPTR(pr_info), @totalsize=DATALENGTH(pr_info),
+    @lastread=0,
+    -- Set the readsize to the smaller of the @@TEXTSIZE settings,
+    -- 200, and the total length of the column
+    @readsize=CASE WHEN (200 &lt; DATALENGTH(pr_info)) THEN 200 
+    ELSE DATALENGTH(pr_info) END
+    FROM pub_info (HOLDLOCK) WHERE pub_id=@pub_id 
+
+-- If debugging, uncomment this to check values 
+-- SELECT @mytextptr, @totalsize, @lastread, @readsize
+
+-- Do READTEXT in a loop to get next 200 characters until done
+IF @mytextptr IS NOT NULL AND @readsize &gt; 0
+    WHILE (@lastread &lt; @totalsize)
+    BEGIN
+        -- If readsize would go beyond end, adjust readsize
+        IF ((@readsize + @lastread) &gt; @totalsize) 
+            SELECT @readsize = @totalsize - @lastread 
+        
+        -- If debugging, uncomment this to check values 
+        -- SELECT 'valid ptr?'=textvalid('pub_info.pr_info',
+        --    @mytextptr), 'totalsize'=@totalsize, 
+        --    'lastread'=@lastread, 'readsize'=@readsize
+
+        READTEXT pub_info.pr_info @mytextptr @lastread @readsize
+        IF (@@error &lt;&gt; 0)
+            BREAK    -- Break out of loop if an error on read
+        -- Change offset to last char read
+        SELECT @lastread=@lastread + @readsize 
+        
+    END
+    
+COMMIT TRAN
+GO
+
+IF EXISTS (SELECT * FROM tempdb.dbo.sysobjects
+    WHERE name='##mytmptext' AND type='U')
+    DROP TABLE ##mytmptext
+GO
+
+-- Intermediate temp table that READTEXT will use.
+-- This table is truncated after each pub_id value, so the Identity
+-- property sequences the rows for each publisher separately.
+CREATE TABLE ##mytmptext
+(
+seq_no        int    IDENTITY,
+text_chunk    text
+)
+GO
+
+IF EXISTS (SELECT * FROM sysobjects
+    WHERE name='newprinfo' AND type='U')
+    DROP TABLE newprinfo
+GO
+
+-- This is the new table that pub_info is copied to.
+-- It keeps chunks of text and is sequenced for each pub_id.
+CREATE TABLE newprinfo
+(
+pub_id        char(4)    NOT NULL,
+seq_no        int        NOT NULL,
+text_chunk    varchar(200),
+CONSTRAINT PK PRIMARY KEY (pub_id, seq_no)
+)
+GO
+
+-- Having created the procedure get_text, iterate for each pub_id
+-- value, temporarily sequencing them in the temp table. Once done
+-- for a given pub_id, copy them to the new permanent table. Then 
+-- truncate the temp table for use with reseeded Identity for next 
+-- pub_id row.
+DECLARE @pub_id char(4)
+DECLARE iterate_prinfo CURSOR FOR
+    SELECT pub_id FROM pub_info ORDER BY pub_id
+
+OPEN iterate_prinfo 
+    FETCH NEXT FROM iterate_prinfo INTO @pub_id
+    WHILE (@@fetch_status &lt;&gt; -1)
+        BEGIN 
+        TRUNCATE TABLE ##mytmptext
+
+        INSERT ##mytmptext
+            EXEC get_text @pub_id
+
+        INSERT newprinfo (pub_id, seq_no, text_chunk)
+            SELECT @pub_id, SEQ_NO,
+            CONVERT(varchar(200), TEXT_CHUNK) 
+            FROM ##mytmptext ORDER BY SEQ_NO
+
+        FETCH NEXT FROM iterate_prinfo INTO @pub_id
+        END    
+
+CLOSE iterate_prinfo
+DEALLOCATE iterate_prinfo
+GO
+
+-- Simply verify contents of the new table
+SELECT * FROM newprinfo ORDER BY pub_id,seq_no
+GO
+</pre></p>
+</td></tr></table></p>
+
+<P>A subset of the output looks like the following:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+pub_id    seq_no    text_chunk
+------    ------    -----------------------------------------------
+0736      1         This is sample text data for New Moon Books,
+                    publisher 0736 in the pubs database. New Moon
+                    Books is located in Boston, Massachusetts.
+                    This is sample text data for New Moon Books, 
+                    publisher 0736 in
+0736      2         the pubs database. New Moon Books is located in
+                    Boston, Massachusetts.
+                    This is sample text data for New Moon Books,
+                    publisher 0736 in the pubs database. New Moon 
+                    Books is located in Boston, Massach
+0736      3         usetts.
+                    This is sample text data for New Moon Books, 
+                    publisher 0736 in the pubs database. New Moon 
+                    Books is located in Boston, Massachusetts. 
+                    This is sample text data for New Moon Books,
+                    publish
+</pre></p>
+</td></tr></table></p>
+
+
+<A NAME="492"><H2>Instantiating and Executing an Automation Object</H2></A>
+
+<P>SQL Server doesn't (yet) support user-defined functions (UDFs). It does 
+let you write call-outs to extended procedures, which are your own DLLs 
+written using the ODS API. Writing extended procedures isn't too difficult, but it's 
+still too daunting a task for many programmers.</P>
+
+<P>Many development tools, such as Microsoft Visual Basic 6 and 
+Microsoft Visual C++ 6, make it easy to create Automation objects. Using Visual Basic, 
+it can be as easy as calling one of the built-in functions and saving it as an 
+Automation procedure. If you can do that, you can run that Automation procedure 
+from SQL Server.</P>
+
+<P>At the SQL Server Professional Developer Conference in September 
+1996, Ron Soukup demonstrated how to use Visual Basic to create an internal rate 
+of return (IRR) function. For you non-MBAs, IRR is a financial term for the 
+percentage return, based on a set of cash flows, that would be required for the 
+cash flows to have a net present value (NPV) of 0. In other words, the IRR is 
+the interest rate implicitly earned on an investment consisting of payments 
+(negative values) and income (positive values) that occur at regular periods, 
+such that total income equals total payments. Calculating IRR is not easy, and 
+it requires an iterative solution&#8212;you start with a guess and move toward the 
+solution. Visual Basic provides many nice financial functions; SQL Server does 
+not. So it is natural to want to use one of these Visual Basic functions, and this is 
+what the following example does. This solution assumes that you have previously 
+used Visual Basic to create the object GET_IIR used here (which takes about 
+three mouse clicks to do&#8212;you simply load the IRR function provided by the software).</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- VB_IRR.SQL
+-- Use an OLE object named GET_IIR previously created from VB
+-- as an internal rate of return (IRR) function
+DECLARE 
+@pObj int,     -- Will be used as an OUTPUT parameter to hold
+               -- the object token when the object is created
+@hr int        -- Return code
+
+DECLARE @source varchar(30)    -- Output variable for source of an
+                               -- error
+DECLARE @desc varchar(200)     -- Output variable for error string
+DECLARE @IRR float             -- Output variable for IRR value
+                               -- (VB doesn't have a decimal)
+
+-- Instantiate the object
+EXEC @hr=sp_OACreate &quot;GetIRR.CGetIRR&quot;, @pObj OUT
+    IF @hr &lt;&gt; 0 GOTO Err
+
+-- Call the IRR method
+-- Takes variable number of parameters as cash flows
+EXEC @hr=sp_OAMethod @pObj, &quot;GetIRR&quot;, @IRR OUT, 
+            -900, 100, 300, 300, 200, 200
+    IF @hr &lt;&gt; 0 GOTO Err
+
+-- Convert the float column to a decimal
+SELECT &quot;IRR&quot;=CONVERT(DECIMAL(5, 3), @IRR)
+GOTO Done
+
+Err:
+    RAISERROR ('Error in calculating Net Present Value. ', 16, 1)
+    -- Get error info from OLE object
+    EXEC sp_OAGetErrorInfo NULL, @source OUT, @desc OUT
+    SELECT hr=CONVERT(BINARY(4), @hr), source=@source,
+        description=@desc
+
+Done:    
+    -- Destroy the object instance
+    EXEC sp_OADestroy @pObj
+</pre></p>
+</td></tr></table></p>
+
+<P>Because most of the preceding code is template code, you can cut and 
+paste it for use with another object (except for the call to 
+<I>sp_OAMethod</I>, of course). Using Automation gives you a lot of flexibility. However, these procedures 
+are not particularly fast when they are run from within the SQL Server 
+context. Because of reentrance issues within SQL Server's threaded environment, 
+they must be protected with mutexes, so only one such procedure runs at a 
+given time and other executions of that same object are serialized. For many 
+uses, though, this will suffice, and it fills a nice niche until true UDFs are available.</P>
+
+<P>Here's another example using 
+<I>sp_OAcreate</I> that doesn't require you to create any functions of your own. It uses a function that is already available in Microsoft Excel applications to check the spelling of individual words. A stored procedure is created to do spell checking within your SQL Server application, which uses the CheckSpelling method with 
+<I>sp_OAMethod</I>.</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+USE master
+GO
+CREATE PROCEDURE SP_OA_SPELLER @TEST_VALUE VARCHAR(255) = &quot;default&quot;
+AS
+
+DECLARE @object int                  -- Object variable
+DECLARE @hr int                      -- Error variable
+DECLARE @property varchar(255)       -- Error property variable
+DECLARE @return int                  -- Return error value
+DECLARE @output varchar(255)         -- Error output variable
+DECLARE @source varchar(255)         -- Error source variable
+DECLARE @description varchar(255)    -- Error description variable
+
+SET nocount on                       -- Turn row counting off
+-- Create an object
+EXEC @hr = sp_OACreate 'Excel.Application', @object OUT
+IF @hr &lt;&gt; 0
+BEGIN
+    PRINT 'OLE Automation Error Information'
+    EXEC @hr = sp_OAGetErrorInfo @object, @source OUT, @description OUT
+    IF @hr = 0
+    BEGIN
+        SELECT @output = '  Source: ' + @source
+        PRINT @output
+        SELECT @output = '  Description: ' + @description
+        PRINT @output
+    END
+    ELSE BEGIN
+        PRINT '  sp_OAGetErrorInfo failed.'
+        RETURN
+    END
+END
+-- Get a property by calling the spelling method
+EXEC @hr = sp_OAMethod @object, 'CheckSpelling', @return OUTPUT, @TEST_VALUE 
+IF @hr &lt;&gt; 0
+BEGIN
+    PRINT 'OLE Automation Error Information'
+    EXEC @hr = sp_OAGetErrorInfo @object, @source OUT, @description OUT
+    IF @hr = 0
+    BEGIN
+        SELECT @output = '  Source: ' + @source
+        PRINT @output
+        SELECT @output = '  Description: ' + @description
+        PRINT @output
+    END
+    ELSE BEGIN
+        PRINT '  sp_OAGetErrorInfo failed.'
+        RETURN
+    END
+END
+ELSE BEGIN
+    IF @return &lt;&gt; 0
+        SELECT 'The word &gt;&gt;&gt; ' + @TEST_VALUE + ' &lt;&lt;&lt; was spelled correctly'
+    ELSE
+        SELECT 'The word &gt;&gt;&gt; ' + @TEST_VALUE + ' &lt;&lt;&lt; was misspelled'
+END
+-- Destroy the object
+EXEC @hr = sp_OADestroy @object 
+IF @hr &lt;&gt; 0
+BEGIN
+    PRINT 'OLE Automation Error Information'
+    EXEC @hr = sp_OAGetErrorInfo @object, @source OUT, @description OUT
+    IF @hr = 0
+    BEGIN
+        SELECT @output = '  Source: ' + @source
+        PRINT @output
+        SELECT @output = '  Description: ' + @description
+        PRINT @output
+    END
+    ELSE BEGIN
+        PRINT '  sp_OAGetErrorInfo failed.'
+        RETURN
+    END
+END
+</pre></p>
+</td></tr></table></p>
+
+<P>Note that most of this stored procedure code is error checking. The real work happens in just one place&#8212;the call to 
+<I>sp_OAMethod</I>. The SQL stored procedure can be called by simply passing it a string to be spell checked.</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+EXEC sp_oa_speller 'mispell'
+
+OUTPUT:
+The word &gt;&gt;&gt; mispell &lt;&lt;&lt; was misspelled
+</pre></p>
+</td></tr></table></p>
+
+
+</BODY>
+</HTML>
+
+
+

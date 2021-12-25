@@ -1,0 +1,131 @@
+<HTML>
+<HEAD>
+<link rel="STYLESHEET" type="text/css" href="squeal7.css">
+<TITLE>Transaction Logging and Recovery</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch03c.htm">[Previous]</A> <A HREF="ch03e.htm">[Next]</A><P>
+
+<A NAME="107"><H1>Transaction Logging and Recovery</H1></A>
+
+<P>The transaction log records all changes made to the database and stores 
+enough information to allow any change to be undone (rolled back) or redone 
+(rolled forward) in the event of a system failure or if it is directed to do so by 
+the application (in the case of a rollback command). Physically, the transaction 
+log is a set of files associated with a database at the time the database is created 
+or altered. Modules that perform database updates write log entries that 
+exactly describe the changes made. Each log entry is labeled with a Log 
+Sequence Number (LSN) that is guaranteed to be unique. All log entries that are part 
+of the same transaction are linked together so that all parts of a transaction can 
+be easily located for both undo activities (as with a rollback) and redo 
+activities (during system recovery).
+</P>
+
+<P>The Buffer Manager guarantees that the log is written before the 
+changes to the database are written (write-ahead logging). This is possible because SQL Server keeps track of its current position in the log by means of the LSN. Every time a page is changed, the LSN corresponding to the log entry for that change is written into the header of the data page. Dirty pages can be written only when the LSN on the page is less than the LSN for the last page that has been written to the log. The Buffer Manager also guarantees that log pages are written in a specific order, making it clear which log pages must be processed after a system failure, regardless of when the failure occurred. The log records for a transaction are written to disk before the commit acknowledgement is sent to the client process, but the actual changed data might not have been physically written out to the data pages. So although the writes to the log must be synchronous (SQL Server must wait for them to complete so it knows that they are safely on disk), writes to data pages can be asynchronous. That is, writes to the data pages need only be posted to the operating system, and SQL Server can check 
+later to see that they were completed. They don't have to complete 
+immediately because the log contains all the information needed to redo the work, even in the event of a power failure or system crash before the write has completed. The system would be much slower if it had to wait for every I/O request to complete before proceeding.
+</P>
+
+<P>Logging involves demarcation of the beginning and end of each 
+transaction (and savepoints, if a transaction uses them). Between the beginning and ending demarcations, information exists about the changes made to the data. This information can take the form of the actual &quot;before and after&quot; data values, or it can refer to the operation that was performed so that those values can be derived. The end of a typical transaction is marked with a Commit record, which indicates that the transaction must be reflected in the database or redone if necessary. A transaction aborted during normal runtime (not system restart) due to an explicit rollback or something like a resource error (for example, out of memory) actually undoes the operation by applying changes that undo the original data modifications. The records of these changes are written to the log and marked as &quot;compensation log records.&quot; If the system crashes after a transaction commits but before the data is written out to the data pages, the transaction must be recovered. The recovery process runs automatically at system 
+startup. We'll continue to refer to recovery as a system startup function, which is its most common role by far. However, recovery is also run during the final step of restoring a database from backup and can be forced manually.
+</P>
+
+<P>Recovery performs both redo (rollforward) and undo (rollback) 
+operations. In a redo operation, the log is examined and each change is verified as being already reflected in the database. (After a redo, every change made by the transaction is guaranteed to have been applied.) If the change does not appear in the database, it is again performed from the information in the log. Undo requires the removal of partial changes of a transaction when the transaction had not entirely completed.
+</P>
+
+<P>During recovery, only changes that occurred or were still open (in 
+progress) since the last checkpoint are redone or undone. There are three phases to the recovery algorithm, and they are centered around the last checkpoint record in the transaction log. The three phases are illustrated in Figure 3-5. The descriptions refer to a crash of SQL Server, but these same recovery plans take place if SQL Server is intentionally stopped.
+</P>
+
+<UL>
+<P><LI><B>Phase 1: Analysis</B> The first phase is a forward pass starting at 
+the last checkpoint record in the transaction log. This pass 
+determines and constructs a dirty page table (DPT) consisting of pages 
+that might have been dirty at the time of the crash (or when SQL 
+Server stopped). An active transaction table is built that consists of 
+uncommitted transactions at the time of the crash.</LI></P>
+
+<P><LI><B>Phase 2: Redo</B> This phase repeats history by returning the 
+database to the state it was in at the time of the crash. The starting point for this forward pass is the minimum of all the LSNs in the DPT. 
+The DPT is used to avoid reading pages not needing recovery and 
+to avoid overwriting nonlogged changes.</LI></P>
+
+<P><LI><B>Phase 3: Undo</B> This phase moves backward from the end of 
+the log, following the links between entries in the transaction log 
+for each transaction. Any transaction that was not committed at the 
+time of the crash is undone so that none of its changes are actually 
+reflected in the database.</LI></P>
+</UL>
+
+<P>
+<A HREF="javascript:fullSize('F03wh05x.htm')"> <img src="F03wh05.JPG" width=404 height=310 border=0 ALT="Click to view at full size."> </A>
+</P>
+<P>
+<!-- caption --><B>Figure 3-5.</B> <I>The three phases of the SQL Server recovery process.</I><!-- /caption -->
+</P>
+
+
+<A NAME="108"><H2>Locking and Recovery</H2></A>
+
+<P>Locking, transaction management (rollback and rollforward), and recovery 
+are all closely related. A transaction can be rolled back only if all affected data 
+was locked exclusively so that no other process could have either seen changes 
+in progress (which might still be rolled back) or made changes to resources 
+used by the transaction that would prevent its being rolled back. Only one 
+active transaction can modify a row at a time. This is why exclusive locks must be 
+held until a transaction is either committed or aborted. Until the moment it 
+is committed, the transaction logically does not exist. A transaction operating 
+with Read Uncommitted isolation (dirty read) can sometimes read data that 
+logically never existed because it does not honor the existence of exclusive locks. But 
+any other transaction operating with a higher level of isolation (which occurs by  
+default&#8212; operating with Read Uncommitted isolation must be requested) 
+would never allow such a phenomenon.
+</P>
+
+<A NAME="109"><H2>Page LSNs and Recovery</H2></A>
+
+<P>Every database page has an LSN in the page header that uniquely identifies 
+it, by version, as rows on the page are changed over time. This page LSN 
+reflects the location in the transaction log of the last log entry that modified a row 
+on this page. During a redo operation of transactions, the LSN of each log 
+record is compared to the page LSN of the data page that the log entry modified; 
+if the page LSN is less than the log LSN, the operation indicated in the log 
+entry is redone, as shown in Figure 3-6.
+</P>
+
+<P>Because recovery finds the last checkpoint record in the log (plus 
+transactions that were still active at the time of the checkpoint) and proceeds from there, recovery time is short and the transaction log can be purged or archived for all changes committed before the checkpoint. Otherwise, recovery could 
+take a long time and transaction logs would become unreasonably large. A 
+transaction log cannot be purged beyond the point of the earliest transaction that 
+is still open, no matter how many checkpoints might have occurred 
+subsequently. If a transaction remains open, the log must be preserved because it is still 
+not clear whether the transaction is done or ever will be done. The transaction 
+might ultimately need to be rolled back or rolled forward.
+</P>
+
+<P>Some SQL Server administrators have noted that the transaction log 
+seems unable to be purged to free up space, even after the log has been archived. This problem often results from some process having opened a transaction, which it then forgot about. For this reason, from an application development standpoint, you should ensure that transactions are kept short. Another possible reason for this problem relates to a table being replicated using transactional replication when the replication log reader hasn't processed it yet. This situation is less common, though, because typically only a latency of a few seconds occurs 
+while the log reader does its work. You can use DBCC OPENTRAN to look for the earliest open transaction, or oldest replicated transaction not yet processed, and then take corrective measures (such as killing the offending process or running the <I>sp_repldone</I> stored procedure to allow the replicated transactions to be purged).
+</P>
+
+<P>
+<A HREF="javascript:fullSize('F03wh06x.htm')"> <img src="F03wh06.JPG" width=404 height=475 border=0 ALT="Click to view at full size."> </A>
+</P>
+<P>
+<!-- caption --><B>Figure 3-6.</B> <I>Comparing LSNs to decide whether to process the log entry.</I><!-- /caption -->
+</P>
+
+
+</BODY>
+</HTML>
+
+
+

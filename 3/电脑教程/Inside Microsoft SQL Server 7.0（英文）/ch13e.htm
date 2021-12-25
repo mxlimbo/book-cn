@@ -1,0 +1,147 @@
+<HTML>
+<HEAD>
+<link rel="STYLESHEET" type="text/css" href="squeal7.css">
+<TITLE>Bound Connections</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch13d.htm">[Previous]</A> <A HREF="ch13f.htm">[Next]</A><P>
+
+<A NAME="521"><H1>Bound Connections</H1></A>
+
+
+<p>
+Remember that the issue of lock contention applies only between 
+different processes (also called 
+<I>connections</I>). A process holding locks on a resource 
+does not lock itself from the resource&#8212;only other processes are prevented access. 
+But any other process (or connection to SQL Server) can actually execute as the 
+same application and user. It is common for applications to have more than 
+one connection to SQL Server. Every such connection is treated as an entirely 
+different SQL Server process, and by default no sharing of the &quot;lock space&quot; 
+occurs between connections, even if they belong to the same user and the 
+same application. (Again, in this context, &quot;process&quot; means a SQL Server subtask, 
+not a Windows NT process.)
+</P>
+
+<p>
+However, two different connections can share a lock space and hence 
+not lock each other out. This capability is known as a 
+<I>bound connection</I>. With a bound connection, the first connection asks SQL Server to give out its bind token. 
+The bind token is passed by the application (using a client-side global variable, 
+a shared memory, or another method) for use in subsequent connections. The 
+bind token acts as a &quot;magic cookie&quot; so that those other connections can share 
+the lock space of the original connection. Locks held by bound connections do 
+not lock each other. (The <I>sp_getbindtoken </I>and 
+<I>sp_bindsession </I>system stored procedures get and use the bind token.)
+</P>
+
+<p>
+Bound connections are especially useful if you are writing an 
+extended stored procedure, which is a function written in your own DLL, and 
+that extended stored procedure needs to call back into the database to do some 
+work. Without a bound connection, the extended stored procedure collides with 
+its own calling process's locks. When multiple processes share a lock space and 
+a transaction space by using bound connections, a COMMIT or 
+ROLLBACK affects all the participating connections.
+</P>
+
+<p>
+Here's an example of using bound connections between two 
+different windows in SQL Server's Query Analyzer. Since we don't have a 
+controlling application to declare and store the bind token in a client-side variable, we 
+have to actually copy it from the first session and paste it into the second. So, in 
+your first query window, you execute this batch:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>	
+<pre>
+DECLARE @token varchar(30)
+EXEC sp_getbindtoken @token
+SELECT @token
+GO
+</pre>
+</td></tr></table>
+</P>
+
+
+<p>
+This should return something like the following:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>	
+<pre>
+---------------------------------------- 
+dPe---5---.?j0U&lt;_WP?1HMK-3/D8;@1
+</pre>
+</td></tr></table>
+</P>
+
+<p>
+Normally, you wouldn't have to look at this messy string; your 
+application would just store it and pass it on without your ever having to see it. But for 
+a quick example using the Query Analyzer, it's necessary to actually see the 
+value. You use your keyboard or mouse to select the token string that you received 
+and use it in the following batch in a second Query Analyzer window:
+</P>
+<p>
+<table cellpadding=5 width="95%"><tr><td>	
+<pre>
+EXEC sp_bindsession 'dPe---5---.?j0U&lt;_WP?1HMK-3/D8;@1'
+GO
+</pre>
+</td></tr></table>
+</P>
+<p>
+Now go back to the first query window and begin a transaction that 
+locks some data. You can use something like this:
+</P>
+<p>
+<table cellpadding=5 width="95%"><tr><td>	
+<pre>
+USE pubs
+BEGIN TRAN
+UPDATE titles
+SET price = $100
+GO
+</pre>
+</td></tr></table>
+</P>
+<p>
+This should exclusively lock every row in the 
+<I>titles </I>table. Now go to the second query window and select from the locked table:
+</P>
+<p>
+<table cellpadding=5 width="95%"><tr><td>	
+<pre>
+SELECT title_id, price FROM titles
+GO
+</pre>
+</td></tr></table>
+</P>
+<p>
+You should be able to see all the $100 prices in the 
+<I>titles </I>table, just as if you were part of the same connection as the first query. Besides sharing 
+lock space, the bound connection also shares transaction space. You can execute 
+a ROLLBACK TRAN in the second window even though the first one began 
+the transaction. If the first connection tries to then issue a ROLLBACK TRAN, 
+it gets this message:
+</P>
+<p>
+<table cellpadding=5 width="95%"><tr><td>	
+<pre>
+Server: Msg 3903, Level 16, State 1, Line 1
+The ROLLBACK TRANSACTION request has no corresponding BEGIN 
+TRANSACTION.
+</pre>
+</td></tr></table>
+</P>
+</BODY>
+</HTML>
+
+
+

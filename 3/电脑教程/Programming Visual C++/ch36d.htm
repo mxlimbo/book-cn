@@ -1,0 +1,373 @@
+<HTML>
+<HEAD>
+<LINK REL=StyleSheet HREF="basicIE4.css" TYPE="text/css">
+<TITLE>ActiveX Document Server Example EX36B</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY>
+<A NAME="978"><H1>ActiveX Document Server Example EX36B</H1></A><P>Look at the pizza form example from <A HREF="ch35a.htm">Chapter 35</A> (EX35A). Note that the 
+server (the ISAPI DLL) processes the order only when the customer clicks the 
+Submit Order Now button. This is okay for ordering pizzas because you're probably 
+happy to accept money from anyone, no matter what kind of browser is used.
+<P>For a form-based intranet application, however, you can be more 
+selective. You can dictate what browser your clients have, and you can distribute 
+your own client software on the net. In that environment, you can make data 
+entry more sophisticated, allowing, for example, the client computer to validate 
+each entry as the user types it. That's exactly what's happening in EX36B, which 
+is another ActiveX document server, of course. EX36B is a form-based 
+employee time-sheet entry program that works inside Internet Explorer (as shown 
+in Figure 36-4) or works as a stand-alone application. Looks like a regular 
+HTML form, doesn't it? It's actually an MFC form view, but the average user 
+probably won't know the difference. The Name field is a drop-down combo box, 
+however&#151;which is different from the select field you would see in an HTML 
+form&#151;because the user can type in a value if necessary. The Job Number field has 
+a spin button control that helps the user select the value. These aren't 
+necessarily the ideal controls for time-sheet entry, but the point here is that you can 
+use any Windows controls you want, including tree controls, list controls, 
+trackbars, and ActiveX controls, and you can make them interact any way you want.
+<P><IMG SRC="f36og04.gif" width=353 height=344 BORDER="0"><P>
+<!-- caption -->
+<B>Figure 36-4.</B> <I>Employee time-sheet entry form.</I>
+<!-- /caption -->
+<P>
+<DIV CLASS=note>
+<BLOCKQUOTE>
+<B><A NAME="1050">Field Validation in an MFC Form View</A></B>
+<P><U>Problem</U>: MFC's standard validation scheme validates data 
+only when <I>CWnd::UpdateData(TRUE)</I> is called, usually when the user 
+exits the dialog. Applications often need to validate data the moment the 
+user leaves a field (edit control, list box, and so on). The problem is 
+complex because Windows permits the user to freely jump between 
+fields in any sequence by using the mouse. Ideally, standard MFC DDX-
+/DDV (data exchange/validation) code should be used for field 
+validation, and the standard <I>DoDataExchange</I> function should be 
+called when the user finishes the transaction.
+<P><U>Solution</U>: Derive your field validation form view classes from 
+the class <I>CValidForm</I>, derived from 
+<I>CFormView</I>, with this header:
+<P><PRE>// valform.h
+#ifndef _VALIDFORM
+#define _VALIDFORM
+
+#define WM_VALIDATE WM_USER + 5
+
+class CValidForm : public CFormView
+{
+DECLARE_DYNAMIC(CValidForm)
+private:
+    BOOL m_bValidationOn;
+public:
+    CValidForm(UINT ID);
+    // override in derived dlg to perform validation
+    virtual void ValidateDlgItem(CDataExchange* pDX, UINT ID);
+    //{{AFX_VIRTUAL(CValidForm)
+    protected:
+    virtual BOOL OnCommand(WPARAM wParam, LPARAM lParam);
+    //}}AFX_VIRTUAL
+
+    //{{AFX_MSG(CValidForm)
+    afx_msg LONG OnValidate(UINT wParam, LONG lParam);
+    //}}AFX_MSG
+    DECLARE_MESSAGE_MAP()
+};
+#endif // _VALIDFORM</PRE>
+<P>This class has one virtual function, 
+<I>ValidateDlgItem</I>, which accepts the control ID as the second parameter. The derived form view 
+class implements this function to call the DDX/DDV functions for the appropriate field. Here is a sample 
+<I>ValidateDlgItem</I> implementation for a form view that has two numeric edit controls:
+<P><PRE>void CMyForm::ValidateDlgItem(CDataExchange* pDX, UINT uID)
+{
+    switch (uID) {
+    case IDC_EDIT1:
+        DDX_Text(pDX, IDC_EDIT1, m_nEdit1);
+        DDV_MinMaxInt(pDX, m_nEdit1, 0, 10);
+        break;
+    case IDC_EDIT2:
+        DDX_Text(pDX, IDC_EDIT2, m_nEdit2);
+        DDV_MinMaxInt(pDX, m_nEdit2, 20, 30);
+        break;
+    default:
+        break;
+    }
+}</PRE>
+<P>Notice the similarity to the wizard-generated 
+<I>DoDataExchange</I> function:
+<P><PRE>void CAboutDlg::DoDataExchange(CDataExchange* pDX)
+{
+    //{{AFX_DATA_MAP(CMyForm)
+    DDX_Text(pDX, IDC_EDIT1, m_nEdit1);
+    DDV_MinMaxInt(pDX, m_nEdit1, 0, 10);
+    DDX_Text(pDX, IDC_EDIT2, m_nEdit2);
+    DDV_MinMaxInt(pDX, m_nEdit2, 20, 30);
+    //}}AFX_DATA_MAP
+}</PRE>
+<P>How does it work? The <I>CValidForm</I> class traps the user's 
+attempt to move away from a control. When the user presses the Tab key 
+or clicks on another control, the original control sends a killfocus 
+command message (a control notification message) to the parent 
+window, the exact format depending on the kind of control. An edit control, 
+for example, sends an EN_KILLFOCUS command. When the form 
+window receives this killfocus message, it invokes the DDX/DDV code 
+that is necessary for that field, and if there's an error, the focus is set 
+back to that field.
+<P>There are some complications, however. First, we want to allow 
+the user to freely switch the focus to another application&#151;we're not 
+interested in trapping the killfocus message in that case. Next, we must 
+be careful how we set the focus back to the control that produced the error.
+We can't just call <I>SetFocus</I> in direct response to the killfocus 
+message; instead we must allow the killfocus process to complete. We can 
+achieve this by posting a user-defined WM_VALIDATE message back to 
+the form window. The WM_VALIDATE handler calls our 
+<I>ValidateDlgItem</I> virtual function after the focus has been moved to the next field. 
+Also, we must ignore the killfocus message that results when we switch 
+back from the control that the user tried to select, and we must allow 
+the IDCANCEL button to abort the transaction without validation.
+<P>Most of the work here is done in the view's virtual 
+<I>OnCommand</I> handler, which is called for all control notification messages. We 
+could, of course, individually map each control's killfocus message in 
+our derived form view class, but that would be too much work. Here is 
+the <I>OnCommand</I> handler:
+<P><PRE>BOOL CValidForm::OnCommand(WPARAM wParam, LPARAM lParam) 
+{
+    // specific for WIN32 &#151; wParam/lParam processing different for 
+    //  WIN16
+    TRACE(&quot;CValidForm::OnCommand, wParam = %x, lParam = %x\n&quot;, 
+        wParam, lParam);
+    TRACE(&quot;m_bValidationOn = %d\n&quot;, m_bValidationOn);
+    if(m_bValidationOn) {   // might be a killfocus
+        UINT notificationCode = (UINT) HIWORD( wParam );
+        if((notificationCode == EN_KILLFOCUS)  ||
+           (notificationCode == LBN_KILLFOCUS) ||
+           (notificationCode == CBN_KILLFOCUS) ) {
+            CWnd* pFocus = CWnd::GetFocus(); // static function call
+            // if we're changing focus to another control in the 
+            //  same form
+            if( pFocus &amp;&amp; (pFocus-&gt;GetParent() == this) ) {
+                if(pFocus-&gt;GetDlgCtrlID() != IDCANCEL) {
+                    // and focus not in Cancel button
+                    // validate AFTER drawing finished
+                    BOOL rtn = PostMessage( WM_VALIDATE, wParam );
+                    TRACE(&quot;posted message, rtn = %d\n&quot;, rtn);
+                }
+            }
+        }
+    }
+    return CFormView::OnCommand(wParam, lParam); // pass it on
+}</PRE>
+<P>Note that <I>m_bValidationOn</I> is a Boolean data member in 
+<I>CValidForm</I>.
+<P>
+<P>Finally, here is the <I>OnValidate</I> message handler, mapped to 
+the user-defined WM_VALIDATE message:
+<P><PRE>LONG CValidForm::OnValidate(UINT wParam, LONG lParam)
+{
+    TRACE(&quot;Entering CValidForm::OnValidate\n&quot;);
+    CDataExchange dx(this, TRUE);
+    m_bValidationOn = FALSE;   // temporarily off
+    UINT controlID = (UINT) LOWORD( wParam );
+    try {
+        ValidateDlgItem(&amp;dx, controlID);
+    }
+    catch(CUserException* pUE) {
+        pUE-&gt;Delete();
+        TRACE(&quot;CValidForm caught the exception\n&quot;);
+        // fall through &#151; user already alerted via message box
+    }
+    m_bValidationOn = TRUE;
+    return 0;     // goes no further
+}</PRE>
+<P>Instructions for use:
+<OL>
+<LI>Add valform.h and valform.cpp to your project.<P>
+<LI>Insert the following statement in your view class header file:<P>
+<P><PRE><B>#include &quot;valform.h&quot;</B></PRE><P>
+<LI>Change your view class base class from 
+<I>CFormView</I> to <I>CValidForm</I>.<P>
+<LI>Override <I>ValidateDlgItem</I> for your form's controls as shown above. <P>
+</OL>
+<P>That's all.
+<P>For dialogs, follow the same steps, but use valid.h and 
+valid.cpp. Derive your dialog class from 
+<I>CValidDialog</I> instead of from <I>CDialog</I>.
+</BLOCKQUOTE></DIV>
+<A NAME="979"><H2>Generating POST Requests Under Program Control</H2></A><P>The heart of the EX36B program is a worker thread that generates a 
+POST request and sends it to a remote server. The server doesn't care whether 
+the POST request came from an HTML form or from your program. It could 
+process the POST request with an ISAPI DLL, with a PERL script, or with 
+a Common Gateway Interface (CGI) executable program.
+<P>Here's what the server receives when the user clicks the EX36B 
+Submit button:
+<P><PRE>POST scripts/ex35a.dll?ProcessTimesheet HTTP/1.0
+<I>(request headers)
+(blank line)</I>
+Period=12&amp;Name=Dunkel&amp;Hours=6.5&amp;Job=5
+<P>And here's the thread code from PostThread.cpp:
+<P>// PostThread.cpp (uses MFC WinInet calls)
+
+#include &lt;stdafx.h&gt;
+#include &quot;PostThread.h&quot;
+
+#define MAXBUF 50000
+
+CString g_strFile = &quot;/scripts/ex35a.dll&quot;;
+CString g_strServerName = &quot;localhost&quot;;
+CString g_strParameters;
+
+UINT PostThreadProc(LPVOID pParam)
+{
+    CInternetSession session;
+    CHttpConnection* pConnection = NULL;
+    CHttpFile* pFile1 = NULL;
+    char* buffer = new char[MAXBUF];
+    UINT nBytesRead = 0;
+    DWORD dwStatusCode;
+    BOOL bOkStatus = FALSE;
+    try {
+        pConnection = session.GetHttpConnection(g_strServerName, 
+            (INTERNET_PORT) 80);
+        pFile1 = pConnection-&gt;OpenRequest(0, g_strFile + 
+            &quot;?ProcessTimesheet&quot;, // POST request
+            NULL, 1, NULL, NULL, INTERNET_FLAG_KEEP_CONNECTION | 
+            INTERNET_FLAG_RELOAD); // no cache
+        pFile1-&gt;SendRequest(NULL, 0,
+            (LPVOID) (const char*) g_strParameters,
+            g_strParameters.GetLength());
+        pFile1-&gt;QueryInfoStatusCode(dwStatusCode);
+        if(dwStatusCode == 200) { // OK status
+            // doesn't matter what came back from server &#151; we're looking 
+            //  for OK status
+            bOkStatus = TRUE;
+            nBytesRead = pFile1-&gt;Read(buffer, MAXBUF - 1);
+            buffer[nBytesRead] = `\0'; // necessary for TRACE
+            TRACE(buffer);
+            TRACE(&quot;\n&quot;);
+        }
+    }
+    catch(CInternetException* pe) {
+        char text[100];
+        pe-&gt;GetErrorMessage(text, 99);
+        TRACE(&quot;WinInet exception %s\n&quot;, text);
+        pe-&gt;Delete();
+    }
+    if(pFile1) delete pFile1; // does the close &#151; prints a warning
+    if(pConnection) delete pConnection; // Why does it print a warning?
+    delete [] buffer;
+    ::PostMessage((HWND) pParam, WM_POSTCOMPLETE, (WPARAM) bOkStatus, 0);
+    return 0;
+}</PRE>
+<P>The main thread assembles the 
+<I>g_strParameters</I> string based on what the user typed, and the worker thread sends the POST request using the 
+<I>CHttpFile::SendRequest</I> call. The t<I>QueryInfoStatusCode</I> to find out if the server sent back an OK response. Before exiting, the thread posts a 
+message to the main thread, using the 
+<I>bOkStatus</I> value in <I>wParam</I> to indicate 
+success or failure.
+<A NAME="980"><H2>The EX36B View Class</H2></A><P>The <I>CEx36bView</I> class is derived from 
+<I>CValidForm</I>, as described in &quot;<A HREF="ch36d.htm#1050">Field Validation in an MFC Form View</A>&quot;. 
+<I>CEx36bView </I>collects user data and starts the post 
+thread when the user clicks the Submit button after all fields have been 
+successfully validated. Field validation is independent of the internet application. You 
+could use <I>CValidForm</I> in any MFC form view application.
+<P>Here is the code for the overridden 
+or the overridden 
+<I>ValidateDlgItem</I> member function, which is called whenever the user moves from one control to another:
+<P><PRE>void CEx36bView::ValidateDlgItem(CDataExchange* pDX, UINT uID)
+{
+    ASSERT(this);
+    TRACE(&quot;CEx36bView::ValidateDlgItem\n&quot;);
+     switch (uID) {
+    case IDC_EMPLOYEE:
+        DDX_CBString(pDX, IDC_EMPLOYEE, m_strEmployee);
+        // need custom DDV for empty string
+        DDV_MaxChars(pDX, m_strEmployee, 10);
+        if(m_strEmployee.IsEmpty()) {
+            AfxMessageBox(&quot;Must supply an employee name&quot;);
+            pDX-&gt;Fail();
+        }
+        break;
+    case IDC_HOURS:
+        DDX_Text(pDX, IDC_HOURS, m_dHours);
+        DDV_MinMaxDouble(pDX, m_dHours, 0.1, 100.);
+        break;
+    case IDC_JOB:
+        DDX_Text(pDX, IDC_JOB, m_nJob);
+        DDV_MinMaxInt(pDX, m_nJob, 1, 20);
+        break;
+    default:
+        break;
+    }
+    return;
+}</PRE>
+<P>The <I>OnSubmit</I> member function is called when the user clicks the 
+Submit button. <I>CWnd::UpdateData</I> returns 
+<I>TRUE</I> only when all the fields 
+have been successfully validated. At that point, the function disables the 
+Submit button, formats <I>g_strParameters</I>, and starts the post thread.
+<P><PRE>void CEx36bView::OnSubmit() 
+{
+    if(UpdateData(TRUE) == TRUE) {
+        GetDlgItem(IDC_SUBMIT)-&gt;EnableWindow(FALSE);
+        CString strHours, strJob, strPeriod;
+        strPeriod.Format(&quot;%d&quot;, m_nPeriod);
+        strHours.Format(&quot;%3.2f&quot;, m_dHours);
+        strJob.Format(&quot;%d&quot;, m_nJob);
+        g_strParameters = &quot;Period=&quot; + strPeriod + &quot;&amp;Employee=&quot; + 
+            m_strEmployee + &quot;&amp;Hours=&quot; +strHours + &quot;&amp;Job=&quot; + 
+            strJob + &quot;\r\n&quot;;
+        TRACE(&quot;parameter string = %s&quot;, g_strParameters);
+        AfxBeginThread(PostThreadProc, GetSafeHwnd(), 
+            THREAD_PRIORITY_NORMAL);
+    }
+}</PRE>
+<P>The <I>OnCancel</I> member function is called when the user clicks the 
+Reset button. The <I>CValidForm</I> logic requires that the button's control ID 
+be <I>IDCANCEL</I>.
+<P><PRE>void CEx36bView::OnCancel() 
+{
+    CEx36bDoc* pDoc = GetDocument();
+    m_dHours = 0;
+    m_strEmployee = &quot;&quot; ;
+    m_nJob = 0;
+    m_nPeriod = pDoc-&gt;m_nPeriod;
+    UpdateData(FALSE);
+}</PRE>
+<P>The <I>OnPostComplete</I> handler is called in response to the 
+user-defined WM_POSTCOMPLETE message sent by the post thread:
+<P><PRE>LONG CEx36bView::OnPostComplete(UINT wParam, LONG lParam)
+{
+    TRACE(&quot;CEx36bView::OnPostComplete - %d\n&quot;, wParam);
+    if(wParam == 0) {
+        AfxMessageBox(&quot;Server did not accept the transaction&quot;);
+    }
+    else 
+        OnCancel();
+    GetDlgItem(IDC_SUBMIT)-&gt;EnableWindow(TRUE);
+    return 0;
+}</PRE>
+<P>This function displays a message box if the server didn't send an OK 
+response. It then enables the Submit button, allowing the user to post 
+another time-sheet entry.
+<A NAME="981"><H2>Building and Testing EX36B</H2></A><P>Build the /vcpp36/ex36b project, and then run it once in stand-alone 
+mode to register it and to write a document file called test.36b in your WWW 
+root directory. Make sure the EX35A DLL is available in the scripts directory 
+(with execute permission) because that DLL contains an ISAPI function, 
+<I>ProcessTimesheet</I>, which handles the server end of the POST request. Be sure that 
+you have IIS or some other ISAPI-capable server running.
+<P>Now run Internet Explorer and load test.36b from your server. The 
+EX36B program should be running in the Browse window, and you should be able 
+to enter time-sheet transactions.
+<A NAME="982"><H2>ActiveX Document Servers vs. VB Script</H2></A><P>It's possible to insert VB Script (or JavaScript) code into an HTML file. 
+We're not experts on VB Script, but we've seen some sample code. You could 
+probably duplicate the EX36B time-sheet application with VB Script, but you 
+would be limited to the standard HTML input elements. It would be interesting 
+to see how a VB Script programmer would solve the problem. (In any case, 
+you're a C++ programmer, not a Visual Basic programmer, so you might as well 
+stick to what you know.)
+</BODY>
+</HTML>
+
+
+

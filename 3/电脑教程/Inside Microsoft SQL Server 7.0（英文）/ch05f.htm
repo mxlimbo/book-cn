@@ -1,0 +1,184 @@
+<HTML>
+<HEAD>
+<link rel="STYLESHEET" type="text/css" href="squeal7.css">
+<TITLE>Changes in Log Size</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch05e.htm">[Previous]</A> <A HREF="ch05g.htm">[Next]</A><P>
+
+<A NAME="186"><H1>Changes in Log Size</H1></A>
+
+<P>No matter how many physical files have been defined for the transaction 
+log, SQL Server always treats the log as one contiguous file. For example, when 
+the DBCC SHRINKDATABASE command determines how much the log can 
+be shrunk, it does not consider the log files separately but determines the 
+shrinkable size based on the entire file.</P> 
+<P>The transaction log for any database is managed as a set of Virtual Log 
+Files (VLFs) whose size is determined internally by SQL Server, based on the 
+total size of all the log files and the growth increment used when enlarging the 
+log. A log always grows in units of entire VLFs and can only be shrunk to a 
+VLF boundary. (Figure 5-2 on the following page illustrates a physical log file 
+along with several VLFs.) A VLF can exist in one of the following three states:</P> 
+<P>
+<UL>
+<P><LI><B>     
+Active</B> The active portion of the log begins at the minimum 
+log sequence number (LSN) representing an active 
+(uncommitted) transaction. The active portion of the log ends at the last LSN 
+written. Any VLFs that contain any part of the active log are 
+considered active VLFs. (Unused space in the physical log is not part 
+of any VLF.)</LI></P> 
+<P><LI><B>     
+Recoverable</B> The portion of the log preceding the oldest 
+active transaction is only needed to maintain a sequence of log backups  
+for recovery purposes.</LI></P> 
+<P><LI><B>     
+Reusable</B> If transaction log backups are not being maintained,  
+or if you have already backed up the log, VLFs prior to the 
+oldest active transaction are not needed and can be reused.</LI></P> 
+</UL>
+</P> 
+
+<P>
+<A HREF="javascript:fullSize('f05wh02x.htm')"> <img src="f05wh02.JPG" width=404 height=185 border=0 ALT="Click to view at full size."> </A>
+</P>
+<P>
+<!-- caption --><B>Figure 5-2.</B> <I>The multiple virtual log files that make up a physical log file.</I><!-- /caption -->
+</P>
+
+<P>SQL Server will assume you're not maintaining a sequence of log 
+backups if any of the following are true:</P>
+<UL>
+<P><LI>You have truncated the log using BACKUP LOG WITH 
+NO_LOG or BACKUP LOG WITH TRUNCATE_ONLY.</LI></P>
+<P><LI>You have set the database to truncate the log automatically on 
+a regular basis with the database option <I>trunc. log on 
+chkpt</I>.</LI></P>
+<P><LI>You have performed an unlogged operation (like fast BCP) since  
+the last full database backup.</LI></P>
+<P><LI>You have never taken a full database backup.</LI></P>
+</UL>
+
+<P>In any of the situations just described, when SQL Server reaches the 
+end of the physical log file, it will start reusing that space in the physical file by 
+circling back to the file's beginning. In effect, SQL Server will recycle the 
+space in the log file that is no longer needed for recovery or backup purposes. If a 
+log backup sequence <I>is</I> being maintained, the part of the log before the 
+minimum LSN cannot be overwritten until those log records have actually been 
+backed up. Once you have performed the log backup, SQL Server can circle back 
+to the beginning of the file. Once SQL Server has circled back to start writing 
+log records earlier in the log file, the reusable portion of the log is then 
+between the end of the logical log and active portion of the log. Figure 
+5-3 on the following page depicts this cycle.</P>
+
+<P>
+<A HREF="javascript:fullSize('f05wh03x.htm')"> <img src="f05wh03.JPG" width=404 height=153 border=0 ALT="Click to view at full size."> </A>
+</P>
+<P>
+<!-- caption --><B>Figure 5-3.</B> <I>The active portion of the log circling back to the beginning of the physical log file.</I><!-- /caption -->
+</P>
+
+<P>You can actually observe this behavior in one of the sample databases, 
+such as <I>pubs</I>, assuming you have never made a full backup of the database. If you have never made any modifications to <I>pubs</I>, the size of its transaction log file will 
+be just about 0.75 MB. This next script creates a new table in the 
+<I>pubs</I> database,  inserts three records, and then updates those records 1000 times. Each 
+update is an individual transaction, and each one is written to the transaction 
+log. However, you should note that the log has not grown at all, even after 
+3000 update records are written. (If you have already taken a backup of 
+<I>pubs</I>, you might want to re-create the database before trying this example. You can do 
+that by running the script <I>instpubs.sql</I> in the folder 
+\mssql7\install.)</P>
+
+<p><table cellpadding=5 width="95%"><tr><td><pre>
+CREATE TABLE newtable ( a int) 
+GO 
+INSERT INTO newtable VALUES (10) 
+INSERT INTO newtable VALUES (20) 
+INSERT INTO newtable VALUES (30) 
+GO 
+DECLARE @counter int 
+SET @counter = 1 
+WHILE @counter &lt; 1000 BEGIN 
+    UPDATE newtable SET a = a + 1 
+    SET @counter = @counter + 1 
+END
+</pre></td></tr></table></p>
+
+<P>Now make a backup of the <I>pubs</I> database after making sure that the 
+option <I>trunc. log on chkpt. </I>is not set. (We'll look at database options later in 
+this chapter.) You can use this statement to make the backup, substituting for 
+c: whatever drive your SQL Server is installed on:</P>
+<p><table cellpadding=5 width="95%"><tr><td><pre>
+BACKUP DATABASE pubs to disk = 'c:\mssql7\backup\pubs.bak'
+</pre></td></tr></table></p>
+<P>Run the update script again, starting with the DECLARE statement. 
+You should see that the physical log file has now grown to accommodate the 
+log records added. The initial space in the log could not be reused because 
+SQL Server assumed that you were saving that information for backups.</P>
+<P>Now you can try to shrink the log back down again. If you issue the 
+following command:</P>
+<p><table cellpadding=5 width="95%"><tr><td><pre>
+DBCC SHRINKDATABASE (pubs)
+</pre></td></tr></table></p>
+<P>Or if you issue the DBCC SHRINKFILE command for the log file, SQL 
+Server will mark a shrinkpoint in the log, but no actual shrinking will take place 
+until log records are freed by either backing up or truncating the log. You can 
+truncate the log with this statement:</P>
+<p><table cellpadding=5 width="95%"><tr><td><pre>
+BACKUP LOG pubs WITH TRUNCATE_ONLY
+</pre></td></tr></table></p>
+<P>At this point, you should notice the physical size of the log file has 
+been reduced. If a log is truncated without any prior shrink command issued, 
+SQL Server will mark the space used by the truncated records as available for 
+reuse, but it does not change the size of the physical file.</P>
+<P>In certain circumstances, you might notice that running the above 
+commands exactly as specified still does not shrink the physical log file. This 
+can happen when the active part of the log is located at the end of the physical 
+file. Physical shrinking can only take place from the end of the log, and the 
+active portion is never shrinkable. To remedy this situation, you can carry out 
+the following four steps:</P>
+<P> 
+<OL>
+<P><LI>Make sure earlier VLFs are reusable by backing up or truncating  
+the log.</LI></P>
+<P><LI>Execute a few dozen update statements so that the active VLF  
+moves to an earlier physical location.</LI></P>
+<P><LI>Execute DBCC SHRINKDATABASE to mark a shrinkpoint.</LI></P>
+<P><LI>Truncate or backup the log a second time to force the 
+physical shrinkage.</LI></P>
+</OL>
+</P>
+<P><DIV CLASS="NOTE"><BLOCKQUOTE><b>NOTE</b><HR>
+If a database log backup sequence is not being 
+maintained for a database, the database can be set into log truncate mode 
+by setting the <I>trunc. log on chkpt</I>. database option to TRUE. In 
+conjunction with the <I>autoshrink</I> option, this means that the log will be  
+physically shrunk at regular intervals. Contrary to the SQL Server 
+7 documentation, a database does not come out of log truncate 
+mode by backing up the full database.
+</BLOCKQUOTE></DIV></P>
+<P>If a database has the <I>autoshrink</I> option on, an 
+<I>autoshrink</I> process kicks  
+in once every 30 minutes and determines the size to which the log should 
+be shrunk. The log manager accumulates statistics on the maximum amount of 
+log space used in the 30-minute interval between shrinks. The 
+<I>autoshrink</I> process marks the 
+<I>shrinkpoint</I> of the log as 125 percent of the maximum log space 
+used or as the minimum size of the log, whichever is larger. (Minimum size is 
+the creation size of the log or the size to which it has been manually increased 
+or decreased.) The log will then shrink to that size whenever it gets the 
+chance, which will be when either the log gets truncated or backed up. It's possible 
+to have <I>autoshrink </I>without having <I>trunc. log on 
+chkpt.</I>, although there's no way  
+to guarantee that the log will actually shrink. (If, for example, the log is 
+never backed up, it will never be cleared.)</P>
+</BODY>
+</HTML>
+
+
+

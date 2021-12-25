@@ -1,0 +1,1851 @@
+<HTML>
+<HEAD>
+	<link rel="STYLESHEET" type="text/css" href="squeal7.css">
+<TITLE>Executing Batches or What's Stored About a Stored Procedure?</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch10d.htm">[Previous]</A> <A HREF="ch10f.htm">[Next]</A><P>
+
+<A NAME="382"><H1>Executing Batches or What's Stored About a Stored Procedure?</H1></A>
+
+<P>Typically, when a batch of Transact-SQL commands is received from a 
+client connection, the following high-level actions are performed:</P>
+
+<A NAME="383"><H2>Step One: Parse Commands and Create the Sequence Tree</H2></A>
+
+<P>The command parser checks for proper syntax and translates the Transact-SQL 
+commands into an internal format that can be operated on. The internal 
+format is known as a <I>sequence tree</I> or <I>query 
+tree</I>. The command parser handles these language events.</P>
+
+<A NAME="384"><H2>Step Two: Compile the Batch</H2></A>
+
+<P>An execution plan is generated from the sequence tree. The entire batch 
+is compiled, queries are optimized, and security is checked. The execution 
+plan contains the necessary steps to check any constraints that exist. If a trigger 
+exists, the call to that procedure is appended to the execution plan. (Recall that a trigger is really a specialized type of stored procedure. Its plan is cached, and the trigger doesn't need to be recompiled every time data is modified.)</P>
+
+<P>The execution plan includes the following:</P>
+
+<UL>
+<P><LI>The complete set of necessary steps to carry out the commands 
+in the batch or stored procedure.</LI></P>
+<P><LI>The steps needed to enforce constraints. (For example, for a 
+foreign key, this would involve checking values in another table.)</LI></P>
+<P><LI>A branch to the stored procedure plan for a trigger, if one exists.</LI></P>
+</UL>
+ 
+<A NAME="385"><H2>Step Three: Execute</H2></A>
+
+<P>During execution, each step of the execution plan is dispatched serially to 
+a manager that's responsible for carrying out that type of command. For 
+example, a data definition command (in DDL), such as CREATE TABLE, is 
+dispatched to the DDL manager. DML statements, such as SELECT, UPDATE, 
+INSERT, and DELETE, go to the DML manager. Miscellaneous commands, such 
+as DBCC and WAITFOR, go to the utility manager. Calls to stored 
+procedures (for example, EXEC <I>sp_who</I>) are dispatched to the stored 
+procedure manager. A statement with an explicit BEGIN TRAN 
+interacts directly with the transaction manager.</P>
+
+<P>Contrary to what you might think, stored procedures don't 
+permanently store the execution plan of the procedure. (This is a 
+feature&#8212;the execution plan is relatively dynamic.) Think for a 
+moment about why it's important for the execution plan to be dynamic. As new indexes are added, preexisting 
+indexes are dropped, constraints are added or changed, and triggers are added or 
+changed; or as the amount of data changes, the plan can easily become obsolete.</P>
+
+<P>So, what's stored about a stored procedure?</P>
+
+<P>The SQL statements that were used to create the procedure are stored 
+in the system table <I>syscomments</I>. The first time a stored procedure is executed 
+after SQL Server was last restarted, the SQL text is retrieved and an 
+execution plan is compiled. The execution plan is then cached in SQL Server's 
+memory, and it remains there for possible reuse until it's forced out in a least recently 
+used (LRU) manner.</P>
+
+<P>Hence, a subsequent execution of the stored procedure can skip not 
+only Step 1, <I>parsing,</I> but also Step 2, 
+<I>compiling,</I> and go directly to Step 3, 
+<I>execution</I>. Steps 1 and 2 always add some overhead and can sometimes be as costly as 
+actually executing the commands. Obviously, if you can eliminate the first 
+two steps in a three-step process, you've done well. That's what stored 
+procedures let you do.</P>
+
+<P>When you execute a stored procedure, if a valid execution plan exists 
+in the procedure cache; it will be used (eliminating the parsing 
+and compiling steps). When the server is restarted, no execution 
+plans will be in the cache; so the first time the server is restarted, a stored procedure will be compiled.</P>
+
+<p><div class="tip"><blockquote>
+<b>TIP</b><HR>
+You can preload your procedure cache with execution plans 
+for stored procedures by defining a startup stored procedure that 
+executes the procedures you want to have compiled and cached.
+</blockquote></div></p>
+
+<P>After a procedure executes, its plan remains in the cache and is reused 
+the next time any connection executes the same procedure. In addition, 
+because multiple connections might try to execute the same plan concurrently, a 
+part of the plan (called the shareable portion) is reentrant. Each concurrent user 
+of that plan also requires an execution context. If you think of this in 
+traditional programming terms, this execution context is needed to contain the dirty data.</P>
+
+<P>The execution context tends to be fairly small compared to the plans. 
+The execution contexts are themselves serially reusable for certain plans that 
+don't contain special operators. Figures 10-1 and 10-2 below 
+show execution with and without a stored procedure.</P>
+
+<P>
+<img src="f10wh01.GIF" width=376 height=61 border="0">
+</P>
+<P>
+<!-- caption --><B>Figure 10-1.</B> <I>Efficient execution with a stored procedure.</I><!-- /caption -->
+</P>
+
+
+<P>
+<A HREF="javascript:fullSize('f10wh02x.htm')"> <img src="f10wh02.JPG" width=404 height=118 border=0 ALT="Click to view at full size."> </A>
+</P>
+<P>
+<!-- caption --><B>Figure 10-2.</B> <I>Less efficient execution without a stored procedure.</I><!-- /caption -->
+</P>
+
+
+<A NAME="386"><H2>Step Four: Recompile Execution Plans</H2></A>
+
+<P>By now it should be clear that the SQL code for stored procedures persists 
+in the database, but execution plans don't. Execution plans are cached in 
+memory. But sometimes they can be invalidated and a new plan generated.</P>
+
+<P>So, when is a new execution plan compiled?</P>
+
+<P>The short answer to this question is, whenever SQL Server 
+needs to! This can include the following cases:</P>
+
+<UL>
+<P><LI>
+When a copy of the execution plan isn't available in memory.
+</LI></P>
+
+<P><LI>
+When an index on a referenced table is dropped.
+</LI></P>
+
+<P><LI>
+When updated statistics are available for any table used by the 
+procedure. (<A HREF="ch14a.htm">Chapter 14</A> covers statistics in detail.)
+</LI></P>
+
+<P><LI>
+When a table referenced in the procedure is altered using ALTER TABLE.
+</LI></P>
+
+<P><LI>
+When the table has been specifically identified, using 
+<I>sp_recompile</I>, to force recompilation of any stored procedures referencing it. The system procedure <I>sp_recompile</I> increments the schema column 
+of <I>sysobjects</I> for a given table. This invalidates any plans that 
+reference the table, as described in the previous examples. 
+You don't specify a procedure to be recompiled; instead, you simply supply the name 
+of a table to <I>sp_recompile</I>, and all execution plans or procedures 
+referencing the table will be invalidated.
+</LI></P>
+
+<P><LI>
+When the stored procedure was created using the 
+WITH RECOMPILE option. A stored procedure can be created 
+using WITH RECOMPILE to ensure that its execution plan will 
+be recompiled for every call and will never be reused. Using 
+WITH RECOMPILE can be useful if procedures take parameters and 
+the values of the parameters differ widely, resulting in a need for 
+different execution plans to be formulated. For example, if a procedure 
+is passed a value to be matched in the WHERE clause of a query, 
+the best way to carry out that query can depend on the value 
+passed. SQL Server maintains statistics for each index as a histogram to 
+help it decide whether the index is selective enough to be useful.
+
+<P>For one given value, an index might be highly selective, and the 
+ distribution statistics might indicate that only 5 percent of 
+the rows have that value. SQL Server might decide to use that index 
+because it would exclude many pages of data from having to be 
+visited. Using the index would be a good strategy, and the cached plan for 
+the procedure might include the instructions to use the 
+index. However, using another value, the index might not be so selective. Rather 
+than use only the index to visit most of the data pages (ultimately 
+doing more I/O because you're reading both the index and the data), 
+you'd be better off simply scanning the data and not reading the index.</P>
+
+<P>For example, suppose we have a nonclustered index on the 
+<I>color </I>column of our <I>automobile</I> table. Forty percent of the cars are 
+blue, 40 percent are red, and 5 percent each are yellow, orange, green, 
+and purple. It's likely that a query based on color should scan the table 
+if the color being searched on is blue or red; but 
+it should use the index for the other colors. Without using the WITH 
+RECOMPILE option, the execution plan created and saved would be based on 
+the color value the first time the procedure was executed.</P>
+
+<P>So if we passed <I>yellow </I>to the procedure the first time it 
+executed, we'd get a plan that used an index. Subsequently, if we 
+passed <I>blue</I>, we might be able to use the previous plan that was 
+created for <I>yellow</I>. In this case, however, we'd be traversing a nonclustered 
+index to access a large percentage of rows in the table. This could end 
+up being far more expensive than simply scanning the entire table. 
+In such a case, when there's a lot of variance in the distribution of 
+data and execution plans are based on the parameters passed, it 
+makes sense to use the WITH RECOMPILE option.</P>
+
+<P>This example also shows that two execution plans for the 
+same procedure can be different. Suppose we're not using 
+WITH RECOMPILE, and we execute the procedure for both 
+<I>blue</I> and <I>green</I> simultaneously from two different connections. Assume for 
+a moment that no plan is cached. (Each will generate a new plan, 
+but one plan will use the index and the other won't.) When a 
+subse-quent request for <I>red</I> arrives, the plan it would use is a matter 
+of chance. And if two simultaneous calls come in for 
+<I>red</I> and each plan is available, the two equivalent requests will execute 
+differently because they'll use different plans. If, as you're processing 
+queries, you see significant deviations in the execution times of 
+apparently identical procedures, think back to this example.</P>
+</LI></P>
+
+<P><LI>
+When the stored procedure is executed using the 
+WITH RECOMPILE option. This case is similar to the preceding one, 
+except that here the procedure isn't created with the option, but 
+rather the option is specified when the procedure is called. The 
+WITH RECOMPILE option can always be added upon execution, forcing 
+a new execution plan to be generated. The new plan 
+is then available for subsequent executions (not using WITH 
+RECOMPILE).
+</LI></P>
+</UL>
+ 
+<A NAME="387"><H2>Storage of Stored Procedures</H2></A>
+
+<P>With each new stored procedure, a row is created in the 
+<I>sysobjects</I> table, as occurs for all database objects. The text of a stored procedure (including 
+comments) is stored in <I>syscomments</I> which is typically useful. This 
+allows procedures like <I>sp_helptext</I> to display the source code of a stored procedure 
+so that you can understand what's going on, and it allows stored procedure 
+editors and debuggers to exist.</P>
+
+<P>For most users and developers, the fact that the full text of a procedure 
+is stored in clear text is definitely a feature of SQL Server. Prior to SQL Server 
+7, a real limit existed on the size of the text for a stored procedure because of 
+the amount of text that <I>syscomments</I> could store for a given stored procedure.</P>
+
+<P>In the <I>syscomments</I> table prior to SQL Server 7, the 
+<I>text</I> column was defined as 
+<I>varchar(255)</I>. Any given procedure could have many rows in 
+<I>syscomments</I>, with comment chunks in lengths of up to 255 characters, and those chunks 
+were sequenced by the <I>colid </I>field. But <I>colid 
+</I>was rather shortsightedly defined as a 
+<I>tinyint</I>, to ostensibly save a byte. Because the maximum value a 
+<I>tinyint</I> could 
+take is 255, up to 255 chunks of text could be included, each of which could 
+be up to 255 bytes in size. Hence, the maximum size of the text used to create 
+a stored procedure was 255 &#215; 255, or 65,025 bytes (roughly 64 KB).</P>
+
+<P>SQL Server 7 still has a limit, but it's not likely to be one you'll run 
+up against soon. The <I>syscomments.text</I> field can now hold up to 8000 bytes, 
+and <I>colid</I> is a <I>smallint</I>. Any one procedure should then be able hold 8000 
+&#215; 32,768 bytes, or 250 MB. There's one more limiting factor, however, and that's 
+the maximum size of a batch. To create the procedure, the client must send 
+the complete definition to SQL Server in the CREATE PROCEDURE 
+statement, and this must be sent as a single batch. SQL Server has a limit on batch 
+size, which is 65,536 times the network packet size. Because the default value 
+for network packet size is 4096, that gives us a batch size of 256 MB. So really, 
+the limit of the size of your procedure text isn't worth worrying about right away.</P>
+
+<A NAME="388"><H2>Encrypting Stored Procedures</H2></A>
+
+<P>With the rollout of version 6.0, SQL Server developers learned somewhat 
+painfully that some users didn't appreciate that the text of stored procedures 
+was available in the <I>syscomments</I> system table. Several ISVs had already built 
+integrated solutions or tools that created stored procedures to use with earlier versions 
+of SQL Server. In most cases, these solutions were sophisticated applications, 
+and the ISVs viewed the source code as their proprietary intellectual property. 
+They had correctly noticed that the text of the procedure in 
+<I>syscomments</I> didn't seem to do anything. If they set the text field to NULL, the procedure still ran 
+fine&#8212;so that's what these ISVs did. This way, they wouldn't be publishing their 
+procedure source code with their applications.</P>
+
+<P>Unfortunately, when it came time to upgrade a database to version 
+6.0, this approach exposed a significant problem for their applications. The 
+internal data structures for the sequence plans had changed between versions 4.2 
+and 6.0. ISVs had to re-create procedures, triggers, and views to generate the 
+new structure. Although SQL Server's Setup program was designed to do this 
+automatically, it accomplished the tasks by simply extracting the text of the 
+procedure from <I>syscomments</I> and then dropping and re-creating the procedure using 
+the extracted text. It's no surprise that this automatic approach failed for 
+procedures in which the creator had deleted the text.</P>
+
+<P>When the developers learned of this problem after the release of the 
+beta version of SQL Server 6.0, they immediately understood why developers 
+had felt compelled to delete the text. Nonetheless, they couldn't undo the work 
+that had already been done. Developers with these ISVs had to dig out their 
+original stored procedure creation scripts and manually drop and re-create all 
+their procedures. While perhaps possible, it wasn't practical to create a 
+converter program that would operate purely on the internal data structures used to 
+represent procedures and views. Attempting this would have been like 
+developing a utility to run against an executable program and have it 
+backward-engineer the precise source code (more than a disassembly) that was used to create 
+the binary. The SQL source code compilation process is designed to be a 
+descriptive process that produces the executable, not an equation that can be 
+solved for either side.</P>
+
+<P>Following the version 6.0 beta release, but before the final release of 
+version 6.0, the developers added the ability to 
+<I>encrypt</I> the text stored in 
+<I>syscomments</I> for stored procedures, triggers, and views. This allowed programmers to 
+protect their source code without making it impossible for the upgrade process 
+to re-create stored procedures, triggers, and views in the future. You can 
+now protect your source code by simply adding the modifier WITH 
+ENCRYPTION to CREATE PROCEDURE. No decrypt function is exposed (which 
+would defeat the purpose of hiding the textlike source code). Internally, SQL 
+Server can read this encrypted text and upgrade the sequence trees when 
+necessary. Because the text isn't used at runtime, no performance penalty is associated 
+with executing procedures created using WITH ENCRYPTION.</P>
+
+<p><div class="note"><blockquote>
+<b>NOTE</b><HR>
+You give up some capabilities when you use WITH 
+ENCRYPTION. For example, you can no longer use the 
+<I>sp_helptext</I> stored procedure or object editors that display and edit the text of 
+the stored procedure, and you can't use a source-level debugger for 
+Transact-SQL, like the one available in the Enterprise 
+edition of Microsoft Visual Basic or Microsoft Visual 
+C++. Unless you are concerned about someone seeing your procedures, you shouldn't use 
+the WITH ENCRYPTION option.
+</blockquote></div></p>
+
+<P>If you create a procedure, trigger, or view using WITH 
+ENCRYPTION, the <I>texttype</I> column of 
+<I>syscomments</I> will have its third bit set. (The 
+<I>texttype</I> value will be OR'ed with decimal number 4.) For now, this simply means that the 
+decimal value of <I>texttype</I> would be 6&#8212;the only other bit to be set would be 
+the second one (decimal 2), indicating that the text in that procedure resulted 
+from a CREATE statement and not a user-supplied comment. If you want to 
+programmatically determine whether a procedure is encrypted, it's safer to 
+check the value of the third bit by AND'ing it with 4 than it is to look for the 
+value of 6. New bits could get added in the future, and the value of 6 might no 
+longer be accurate.</P>
+
+<P>To illustrate their effects on <I>syscomments</I>, we created two 
+procedures&#8212;one encrypted and one not&#8212;in the following example:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+CREATE PROCEDURE cleartext 
+AS 
+SELECT * FROM authors
+GO
+
+CREATE PROCEDURE hidetext WITH ENCRYPTION
+AS 
+SELECT * FROM authors
+GO
+
+SELECT sysobjects.name, sysobjects.id,
+       number, colid, texttype, language, text
+FROM syscomments, sysobjects
+WHERE sysobjects.id=syscomments.id AND
+(
+sysobjects.id=OBJECT_ID('hidetext') OR 
+sysobjects.id=OBJECT_ID('cleartext')
+)
+</pre></p>
+</td></tr></table>
+
+<P>Here's the output:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+name       id          number colid  texttype language text      
+---------- ----------- ------ ------ -------- -------- ----------------------- 
+cleartext  110623437   1      1      2        0        CREATE PROCEDURE 
+cleartext 
+AS 
+SELECT * FROM authors
+hidetext   126623494   1      1      6        0        ???????????????????????
+?????????????????????
+?????????????????????
+???????????????
+</pre></p>
+</td></tr></table>
+
+<P>To find created objects that have encrypted text, you can use a 
+simple query:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+-- Find the names and types of objects that have encrypted text
+SELECT name, texttype FROM syscomments, sysobjects
+WHERE sysobjects.id=syscomments.id
+AND texttype &amp; 4 &gt; 0
+</pre></p>
+</td></tr></table>
+
+<P>Here's the output:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>name      texttype
+--------  --------
+hidetext  6
+</pre></p>
+</td></tr></table>
+
+<P>If you try to run <I>sp_helptext</I> against an encrypted procedure, it will 
+return a message stating that the text is encrypted and can't be displayed:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+EXEC sp_helptext 'hidetext'
+The object's comments have been encrypted.
+</pre></p>
+</td></tr></table>
+
+<A NAME="389"><H2>Altering a Stored Procedure</H2></A>
+
+<P>SQL Server 7 allows you to alter the definition of a stored procedure. The 
+syntax is almost identical to the syntax for creating the procedure initially, except 
+that the keyword CREATE is replaced by the keyword ALTER.</P>
+
+<P>The big difference is that the <I>procedure_name 
+</I>used with ALTER PROCEDURE must already exist, and the definition specified replaces whatever definition the procedure had before. Just like when using the ALTER 
+VIEW command, the benefit of ALTER PROCEDURE comes from the fact that 
+the procedure's <I>object_id </I>won't change, so all the internal references to this 
+procedure will stay intact. If other procedures reference this one, they'll be 
+unaffected. If you've assigned permissions on this procedure to various users and 
+roles, dropping the procedure removes all permission information. Altering the 
+procedure keeps the permissions intact.</P>
+
+<A NAME="390"><H2>Temporary Stored Procedures</H2></A>
+
+<P>Temporary stored procedures allow an execution plan to be cached, but 
+the object's existence and the text of the procedure are stored in the 
+temporary database (<I>tempdb</I>) system tables&#8212;in 
+<I>sysobjects </I>and <I>syscomments</I>. Recall that 
+<I>tempdb</I> is re-created every time SQL Server is restarted, so these objects don't exist 
+after SQL Server is shut down. During a given SQL Server session, you can reuse 
+the procedure without permanently storing it. If you are familiar with the 
+PREPARE/EXECUTE model used by several other products, especially with the Embedded SQL programming paradigm, you know that temporary 
+procedures use a similar model. </P>
+
+<P>Typically, you use a temporary stored procedure when you want to 
+regularly execute the same task several times in a session, although you might 
+use different parameter values, and you don't want to permanently store the 
+task. You could conceivably use a permanent stored procedure and drop it 
+when you're finished, but you'd inevitably run into cleanup issues if a stored 
+procedure were still hanging around and the client application terminated 
+without dropping the procedure. Because temporary stored procedures are 
+deleted automatically when SQL Server is shut down (and 
+<I>tempdb</I> is created anew at startup), cleanup isn't an issue.</P>
+
+<P>Just as SQL Server has three types of temporary tables, it also has 
+three types of temporary stored procedures: 
+<I>private</I>, <I>global</I>, and those created 
+from direct use of <I>tempdb.</I></P>
+
+<A NAME="391"><H3>Private Temporary Stored Procedures</H3></A>
+
+<P>By adding a single pound sign (#) to the beginning of the stored procedure 
+name (for example, <I>CREATE PROC #get_author 
+AS</I>...), you can create the procedure from within any database as a private temporary stored procedure. 
+Only the connection that created the procedure can execute it, and you can't 
+grant privileges on it to another connection. The procedure exists for the life of 
+the creating connection only; that connection can explicitly use DROP 
+PROCEDURE on it to clean up sooner. Because the scoping of a private temporary 
+table is specific only to the connection that created it, you won't encounter a 
+name collision should you choose a procedure name that's used by another 
+connection. As with temporary tables, you use your private version, and what 
+occurs in other connections is irrelevant.</P>
+
+<A NAME="392"><H3>Global Temporary Stored Procedures</H3></A>
+
+<P>By prefixing two pound signs (##) to the stored procedure name (for 
+example, <I>CREATE PROC ##get_author AS</I>...), you can create the procedure from 
+within any database as a global temporary stored procedure. Any connection 
+can subsequently execute that procedure without EXECUTE permission 
+being specifically granted. Unlike private temporary stored procedures, only one 
+copy of a global temporary stored procedure exists for all connections. If another 
+connection created a procedure with the same name, the two names will collide 
+and the create procedure statement will fail. Permission to execute 
+global temporary procedures defaults to public and can't be changed. You can issue 
+a command to <I>deny</I> other users permission, but it will have no effect. Any 
+user, on any connection, can execute a global temporary stored procedure.</P>
+
+<P>A global temporary stored procedure exists until the creating 
+connection terminates and all current execution of the procedure completes. Once 
+the creating connection terminates, however, no further execution is allowed. 
+Only those connections that have already started executing are allowed to finish.</P>
+
+<A NAME="393"><H3>Procedures Created from Direct Use of <I>tempdb</I></H3></A>
+<P>Realizing that <I>tempdb</I> is re-created every time SQL Server is started, you 
+can create a procedure in <I>tempdb</I> that fully qualifies objects in other databases. 
+Procedures created in <I>tempdb</I> in this way can exist even after the creating 
+connection is terminated, and the creator can specifically grant and deny 
+execute permissions to specific users. To do this, the creator of the procedure must 
+have create procedure privileges in <I>tempdb</I>. Privileges in 
+<I>tempdb</I> can be set up in one of two ways: you can set your privileges in 
+<I>model </I>(the template database) so that they will be copied to 
+<I>tempdb</I> when it is created at system 
+restart, or you can set up an autostart procedure to set the 
+<I>tempdb</I> privileges every time SQL Server is started. Here's an example of creating a procedure in 
+<I>tempdb</I> and then executing it from the <I>pubs 
+</I>database:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+USE tempdb
+GO
+
+CREATE PROC testit AS
+SELECT * FROM pubs.dbo.authors
+GO
+
+&#8212; Executing the procedure created above from the pubs database
+USE pubs
+EXEC tempdb..testit
+</pre></p>
+</td></tr></table>
+
+<P>While we're on the subject of temporary objects, keep in mind that a 
+private temporary table created within a stored procedure isn't visible to the 
+connection after the creating procedure completes. It's possible, however, to 
+create a local temporary table before executing a stored procedure and make the 
+table visible to the stored procedure. The scoping of the temporary table extends 
+to the current statement block and all subordinate levels.</P>
+
+<p><div class="note"><blockquote>
+<b>NOTE</b><HR>
+You can use the @@nestlevel system function to 
+check for the visibility of temporary tables. A temporary table created at 
+nest level 0 will be visible to all further levels on that connection. A 
+table created within a procedure at nest level 1, for example, won't be 
+visible when execution returns to the calling block at nest level 0. A 
+global temporary table, or a table directly created in 
+<I>tempdb</I> without using either # or ##, will be visible no matter what the nesting level.
+</blockquote></div></p>
+
+<A NAME="394"><H2>System Stored Procedures and the Special<I> sp_</I> Prefix</H2></A>
+<P>SQL Server installs a large number of system stored procedures that are 
+used mostly for administrative and informational purposes. In many cases, these 
+are called behind the scenes by the SQL-DMO objects used by SQL Server 
+Enterprise Manager and other applications. But the system stored procedures can 
+also be called directly; only a few years ago, doing so was the primary 
+mechanism by which SQL Server was administered. Old-time SQL Server users were 
+indoctrinated into using system stored procedures.</P>
+
+<P>With the great tools and interfaces that are a core part of SQL Server 
+today, there's not much reason to work with these system stored procedures 
+directly anymore. But it's good to be familiar with them&#8212;understanding them can 
+help you understand the operations that occur on the system tables and can take 
+much of the mystery out of what's going on behind the scenes with the graphical tools.</P>
+
+<P>All the system stored procedure names begin with 
+<I>sp_</I>, and most exist in the <I>master </I>database. This is more than just a convention. A procedure 
+created in the <I>master</I> database that begins with 
+<I>sp_</I> is uniquely able to be called from any other database without the necessity of fully referencing the procedure 
+with the database name. This can be useful for procedures you create as well. 
+The <I>sp_</I> magic works even for <I>extended stored 
+procedures,</I> which are user-written calls to DLLs. By convention, extended stored procedure names begin with 
+<I>xp_</I>, but the <I>sp_</I> prefix and its special property can be applied to them as well (but 
+only when added to the <I>master </I>database). In fact, some extended procedures 
+that are supplied as part of the product, such as those used to create 
+Automation objects (for example, 
+<I>sp_OACreate</I>), use the <I>sp_</I> prefix so that they can be 
+called from anywhere, although they're actually functions in a DLL, not a 
+Transact-SQL stored procedure.</P>
+
+<P>The <I>sp_</I> prefix actually makes a procedure special in two ways. First, 
+as already mentioned, a procedure whose name starts with 
+<I>sp_ </I>can be directly called from any database, without fully qualifying the name. Second, system tables 
+referenced in your special procedures will always refer to the tables in the 
+database from which the procedure was called. For example, the 
+<I>sp_help</I> stored procedure lists all the objects from the 
+<I>sysobjects</I> system table. But every database has its 
+own sysobjects table, so which one is used? If you execute 
+<I>sp_help </I>from the <I>pubs</I> database, you get a list of the objects in 
+<I>pubs</I>; if you call <I>sp_help</I> from 
+<I>msdb</I>, you get a list of objects in 
+<I>msdb</I>, and so on.</P>
+
+<P>Of course, if the <I>sp_</I> procedure references a table that exists only in 
+the <I>master</I> database, such as 
+<I>sysconfigures</I>, the table in <I>master</I> will be referenced 
+no matter where you are when you call the procedure. This trick works only 
+for system tables, however. If you create a user table called 
+<I>MasterLookup</I> and reference it in an 
+<I>sp_</I> stored procedure, SQL Server will look in only the 
+<I>master</I> database to try to find the 
+<I>MasterLookup</I> table. If it doesn't exist in 
+<I>master</I>, you'll get an error message when executing your procedure.</P>
+
+<p><div class="warning"><blockquote>
+<b>WARNING</b><HR>
+Microsoft strongly discourages any direct 
+references to the system tables and suggests instead that you use only the 
+presupplied stored procedures and the object property functions to 
+get any system information you need. It's not guaranteed that the 
+structures of the system tables will remain the same from one release 
+to the next, or even between service packs. In fact, the Upgrade 
+Wizard for converting SQL Server 6 to SQL Server 7 doesn't even 
+attempt to upgrade any procedures that modify system tables.
+</blockquote></div></p>
+
+<P>If you look carefully through the SQL Server system tables, you'll 
+find procedures beginning with <I>sp<B>_</B></I> that are not among the documented 
+system stored procedures. Typically, these procedures exist to be called by some 
+other system stored procedure that is exposed; to support some SQL Server 
+utility, such as SQL Server Enterprise Manager; or to provide statistics to the 
+Microsoft Windows NT Performance Monitor. These procedures aren't documented 
+for direct use because they exist only to support functionality exposed 
+elsewhere&#8212;they don't provide that functionality independently.</P>
+
+<P>There's nothing secret about these procedures, and their text is 
+exposed clearly in <I>syscomments</I>. You're welcome to explore them to see what they do 
+and use them if you want. But unlike the documented stored procedures, 
+maintaining system stored procedures or striving to make them exhibit exactly 
+consistent behavior isn't a commitment in future releases. Of course, if your 
+applications were to become dependent on one of these procedures, you could 
+certainly maintain your own version of it to perform exactly as you specify, or you 
+could use one of them as a starting point and customize it to suit your needs 
+(under a different name).</P>
+
+<P>The SQL Server online documentation<I> </I>explains the specifics of each 
+system stored procedure, so we don't need to cover that here. We'll just 
+categorize and enumerate most of them to give you a general understanding of 
+the types and number of procedures that exist. The name of the procedure 
+usually reveals its purpose. But first, we'll look at how to autostart stored procedures.</P>
+
+<A NAME="395"><H2>Autostart Stored Procedures</H2></A>
+
+<P>Version 6 introduced the handy ability to mark a stored procedure as 
+<I>autostart</I>. Autostart stored procedures are useful if you regularly want to perform 
+housekeeping functions or if you have a background daemon procedure that's 
+always expected to be running. Another handy use for an autostart procedure is to 
+have it assign some privileges in <I>tempdb</I>. Or the procedure can create a global 
+temporary table and then sleep indefinitely using WAITFOR. This will ensure 
+that such a temporary table will always exist, because the calling process is the 
+first thing executed, and it never terminates.</P>
+
+<P>You can easily make a stored procedure start automatically&#8212;you use 
+the system stored procedure <I>sp_procoption</I>. This procedure allows you to turn 
+options for stored procedures on or off. In version 7 of SQL Server, the only 
+available option is called <I>startup</I>. The syntax of the command to enable a procedure 
+to automatically execute on SQL Server startup is as follows:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+sp_procoption <I>procedure_name</I>, startup, true
+</pre></p>
+</td></tr></table>
+
+<P>You can remove the <I>startup</I> option by executing the same procedure 
+and changing the value to FALSE. A procedure that's autostarted runs in the 
+con-text of a system administrator account. (The procedure can use SETUSER 
+to impersonate another account.) A procedure with the 
+<I>startup</I> option set to TRUE must be in the 
+<I>master</I> database and be owned by the database owner (dbo) 
+in <I>master</I>. You can, of course, reference objects in other databases from within 
+the startup procedure, or even call procedures that exist in other databases. A 
+startup procedure is launched asynchronously, and it can execute in a loop for the 
+entire duration of the SQL Server process. This allows several such procedures to 
+be launched simultaneously at startup. When a startup procedure is running, 
+it's seen as an active user connection.</P>
+
+<P>A single startup procedure can nest calls to other stored procedures, 
+consuming only a single user connection. Such execution of the nested 
+procedures is synchronous, as would normally be the case. (That is, execution in the 
+calling procedure doesn't continue until the procedure being called 
+completes.) Typically, a stored procedure that's autostarted won't generate a lot of 
+output. Errors, including those raised with RAISERROR, will be written to the 
+SQL Server error log, and any result sets generated will seemingly vanish. If you 
+need the stored procedure to return result sets, you should use a stored 
+procedure that calls the main stored procedure with INSERT/EXEC to insert the 
+results into a table.</P>
+
+<P>If you want to prevent a procedure with the 
+<I>startup</I> option from executing, you can start the server using trace flag 4022 or as a minimally 
+configured server using the <I>-f</I> switch to 
+sqlservr.exe. (Add<I> </I><B>-</B><I>T4022</I> or 
+<I>-f</I> as a parameter to SQL Server using the Services dialog box in the Windows NT Control 
+Panel. You can also set the <I>-T4022</I> flag by using the SQL Server Properties dialog 
+box in Enterprise Manager. You'll need to right-click the name of your server 
+and choose Properties to get to this dialog box.) These safeguards allow you 
+to recover from problems. (Consider the illustrative but perhaps absurd 
+example of someone including a procedure that executes the SHUTDOWN 
+command. If you had given such a procedure the 
+<I>autostart</I> option, SQL Server would have immediately shut itself down before you could do anything about it!)</P>
+
+<P>The following sections discuss the broad categories for grouping 
+stored procedures: System, Catalog, SQL Server Agent, Replication, and Extended.</P>
+
+<A NAME="396"><H2>System Stored Procedures</H2></A>
+
+<P>System stored procedures aid in the administration of your system, and 
+they sometimes modify the system tables. You shouldn't configure the system to 
+allow direct modification of the system tables because a mistake can render your 
+database useless. That's why direct modification of system tables is prohibited 
+by default. If modification is necessary, a system stored procedure that is 
+known to do the job correctly is provided.</P>
+
+<P>Listed here are the SQL Server system stored procedures, which can 
+be further divided into four categories: general, security, cursor, and 
+distributed query procedures. Each procedure's name gives you a clue about its 
+function. The general system procedures follow:</P>
+
+<p><table cellpadding=5 width="95%">
+<tr>
+<td valign="top"><I>sp_addextendedproc</I></td>     
+<td valign="top"><I>sp_droptype</I></td>     
+<td valign="top"><I>sp_helpserver</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addmessage</I></td>     
+<td valign="top"><I>sp_executesql</I></td>     
+<td valign="top"><I>sp_helpsort</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addtype</I></td>     
+<td valign="top"><I>sp_fulltext_catalog</I></td>     
+<td valign="top"><I>sp_helptext</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addumpdevice</I></td>     
+<td valign="top"><I>sp_fulltext_column</I></td>     
+<td valign="top"><I>sp_helptrigger</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_altermessage</I></td>     
+<td valign="top"><I>sp_fulltext_database</I></td>     
+<td valign="top"><I>sp_indexoption</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_attach_db</I></td>     
+<td valign="top"><I>sp_fulltext_service</I></td>     
+<td valign="top"><I>sp_lock</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_attach_single_file_db</I></td>     
+<td valign="top"><I>sp_fulltext_table</I></td>     
+<td valign="top"><I>sp_monitor</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_autostats</I></td>     
+<td valign="top"><I>sp_getbindtoken</I></td>     
+<td valign="top"><I>sp_processmail</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_bindefault</I></td>     
+<td valign="top"><I>sp_help</I></td>     
+<td valign="top"><I>sp_procoption</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_bindrule</I></td>     
+<td valign="top"><I>sp_helpconstraint</I></td>     
+<td valign="top"><I>sp_recompile</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_bindsession</I></td>     
+<td valign="top"><I>sp_helpdb</I></td>     
+<td valign="top"><I>sp_refreshview</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_certify_removable</I></td>    
+<td valign="top"><I>sp_helpdevice</I></td>     
+<td valign="top"><I>sp_rename</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_configure</I></td>     
+<td valign="top"><I>sp_helpextendedproc</I></td>     
+<td valign="top"><I>sp_renamedb</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_create_removable</I></td>    
+<td valign="top"><I>sp_helpfile</I></td>     
+<td valign="top"><I>sp_serveroption</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_createstats</I></td>     
+<td valign="top"><I>sp_helpfilegroup</I></td>     
+<td valign="top"><I>sp_setnetname</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_datatype_info</I></td>     
+<td valign="top"><I>sp_help_fulltext_catalogs</I></td>     
+<td valign="top"><I>sp_spaceused</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_dbcmptlevel</I></td>     
+<td valign="top"><I>sp_help_fulltext_catalogs_cursor</I></td>     
+<td valign="top"><I>sp_tableoption</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_dboption</I></td>     
+<td valign="top"><I>sp_help_fulltext_columns</I></td>     
+<td valign="top"><I>sp_unbindefault</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_depends</I></td>     
+<td valign="top"><I>sp_help_fulltext_columns_cursor</I></td>     
+<td valign="top"><I>sp_unbindrule</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_detach_db</I></td>     
+<td valign="top"><I>sp_help_fulltext_tables</I></td>     
+<td valign="top"><I>sp_updatestats</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_dropdevice</I></td>     
+<td valign="top"><I>sp_help_fulltext_tables_cursor</I></td>     
+<td valign="top"><I>sp_validname</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_dropextendedproc</I></td>     
+<td valign="top"><I>sp_helpindex</I></td>     
+<td valign="top"><I>sp_who</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_dropmessage</I></td>     
+<td valign="top"><I>sp_helplanguage</I></td>
+<td valign="top"></td>
+</tr></table></p>
+
+<P>And here are the security stored procedures:</P>
+
+<p><table cellpadding=5 width="95%">
+<tr>
+<td valign="top"><I>sp_addalias</I></td>             
+<td valign="top"><I>sp_defaultdb</I></td>           
+<td valign="top"><I>sp_helpgroup</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addapprole</I></td>           
+<td valign="top"><I>sp_defaultlanguage</I></td>     
+<td valign="top"><I>sp_helplogins</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addgroup</I></td>             
+<td valign="top"><I>sp_denylogin</I></td>          
+<td valign="top"><I>sp_helpntgroup</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addlinkedsrvlogin</I></td>    
+<td valign="top"><I>sp_dropalias</I></td>           
+<td valign="top"><I>sp_helpremotelogin</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addlogin</I></td>             
+<td valign="top"><I>sp_dropapprole</I></td>         
+<td valign="top"><I>sp_helprole</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addremotelogin</I></td>     
+<td valign="top"><I>sp_dropgroup</I></td>     
+<td valign="top"><I>sp_helprolemember</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addrole</I></td>     
+<td valign="top"><I>sp_droplinkedsrvlogin</I></td>     
+<td valign="top"><I>sp_helprotect</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addrolemember</I></td>     
+<td valign="top"><I>sp_droplogin</I></td>     
+<td valign="top"><I>sp_helpsrvrole</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addserver</I></td>     
+<td valign="top"><I>sp_dropremotelogin</I></td>     
+<td valign="top"><I>sp_helpsrvrolemember</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addsrvrolemember</I></td>     
+<td valign="top"><I>sp_droprole</I></td>     
+<td valign="top"><I>sp_helpuser</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_adduser</I></td>     
+<td valign="top"><I>sp_droprolemember</I></td>     
+<td valign="top"><I>sp_password</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_approlepassword</I></td>     
+<td valign="top"><I>sp_dropserver</I></td>     
+<td valign="top"><I>sp_remoteoption</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_change_users_login</I></td>     
+<td valign="top"><I>sp_dropsrvrolemember</I></td>     
+<td valign="top"><I>sp_revokedbaccess</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_changedbowner</I></td>     
+<td valign="top"><I>sp_dropuser</I></td>     
+<td valign="top"><I>sp_revokelogin</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_changegroup</I></td>     
+<td valign="top"><I>sp_grantdbaccess</I></td>     
+<td valign="top"><I>sp_setapprole</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_changeobjectowner</I></td>     
+<td valign="top"><I>sp_grantlogin</I></td>     
+<td valign="top"><I>sp_srvrolepermission</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_dbfixedrolepermission</I></td>     
+<td valign="top"><I>sp_helpdbfixedrole</I></td>     
+<td valign="top"><I>sp_validatelogins</I></td>
+</tr></table></p>
+
+<P>SQL Server 7 has a set of procedures available for finding information 
+about existing cursors (called <I>cursor 
+procedures</I>). Here's the list:</P>
+
+<p><table cellpadding=5 width="95%">
+<tr>
+<td valign="top"><I>sp_cursor_list</I></td>
+</tr>
+<tr>     
+<td valign="top"><I>sp_describe_cursor_columns</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_describe_cursor_tables</I></td>
+</tr></table></p>
+
+<P>SQL Server supports <I>distributed queries,</I> which access data from 
+multiple heterogeneous data sources. You can store this data in either the same or different computers, and you can access it by using 
+OLE DB. Here are the stored procedures available for managing distributed queries:</P>
+
+<p><table cellpadding=5 width="95%">
+<tr>
+<td valign="top"><I>sp_addlinkedserver</I></td>     
+<td valign="top"><I>sp_columns_ex</I></td>     
+<td valign="top"><I>sp_primarykeys</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addlinkedsrvlogin</I></td>     
+<td valign="top"><I>sp_droplinkedsrvlogin</I></td>     
+<td valign="top"><I>sp_serveroption</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_catalogs</I></td>     
+<td valign="top"><I>sp_indexes</I></td>    
+<td valign="top"><I>sp_table_privileges_ex</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_column_privileges_ex</I></td>     
+<td valign="top"><I>sp_linkedservers</I></td>     
+<td valign="top"><I>sp_tables_ex sp_foreignkeys</I></td>
+</tr></table></p>
+
+<A NAME="397"><H2>Catalog Stored Procedures</H2></A>
+
+<P>Applications and development tools commonly need access to information 
+about table names, column types, datatypes, constraints, privileges, and 
+configuration options. All this information is stored in the system tables (system catalogs). 
+But system tables might require changes between releases to support new 
+features, so directly accessing the system tables could result in your application 
+breaking from a new SQL Server release.</P>
+
+<P>For this reason, SQL Server provides <I>catalog stored 
+procedures,</I> a series of stored procedures that extract the information from the system tables, 
+providing an abstraction layer that insulates your application. If the system tables 
+are changed, the stored procedures that extract and provide the information 
+will also be changed to ensure that they operate consistently (from an external 
+perspective) from one release to another. Many of these procedures also map 
+nearly identically to ODBC calls. The SQL Server ODBC driver calls these 
+procedures in response to those function calls. While it's fine to directly query the 
+system catalogs for ad hoc use, if you're deploying an application that needs to get information from the system tables, use these catalog stored procedures:</P>
+
+<p><table cellpadding=5 width="95%">
+<tr>
+<td valign="top"><I>sp_column_privileges</I></td>     
+<td valign="top"><I>sp_pkeys</I></td>     
+<td valign="top"><I>sp_statistics</I></td>
+</tr>
+<tr>     
+<td valign="top"><I>sp_columns</I></td>     
+<td valign="top"><I>sp_server_info</I></td>     
+<td valign="top"><I>sp_stored_procedures</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_databases</I></td>     
+<td valign="top"><I>sp_special_columns</I></td>     
+<td valign="top"><I>sp_table_privileges</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_fkeys</I></td>     
+<td valign="top"><I>sp_sproc_columns</I></td>     
+<td valign="top"><I>sp_tables</I></td>
+</tr></table></p>
+
+<A NAME="398"><H2>SQL Server Agent Stored Procedures</H2></A>
+
+<P>SQL Enterprise Manager uses SQL Server Agent stored procedures to set 
+up alerts and schedule tasks for execution. If your application needs to carry 
+out tasks like these, you can call the following procedures directly. They must 
+be called from or qualified by the <I>msdb</I> database. SQL Server Agent stored procedures appear below:</P>
+
+<p><table cellpadding=5 width="95%">
+<tr>
+<td valign="top"><I>sp_add_alert</I></td>               
+<td valign="top"><I>sp_help_jobhistory</I></td>     
+</tr>
+<tr>
+<td valign="top"><I>sp_add_category</I></td>               
+<td valign="top"><I>sp_help_jobschedule</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_add_job</I></td>                    
+<td valign="top"><I>sp_help_jobserver</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_add_jobschedule</I></td>               
+<td valign="top"><I>sp_help_jobstep</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_add_jobserver</I></td>               
+<td valign="top"><I>sp_help_notification</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_add_jobstep</I></td>               
+<td valign="top"><I>sp_help_operator</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_add_notification</I></td>               
+<td valign="top"><I>sp_help_targetserver</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_add_operator</I></td>               
+<td valign="top"><I>sp_help_targetservergroup</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_add_targetservergroup</I></td>          
+<td valign="top"><I>sp_helptask</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_add_targetsvrgrp_member</I></td>          
+<td valign="top"><I>sp_manage_jobs_by_login</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addtask</I></td>                    
+<td valign="top"><I>sp_msx_defect</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_apply_job_to_targets</I></td>          
+<td valign="top"><I>sp_msx_enlist</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_delete_alert</I></td>               
+<td valign="top"><I>sp_post_msx_operation</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_delete_category</I></td>               
+<td valign="top"><I>sp_purge_jobhistory</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_delete_job</I></td>               
+<td valign="top"><I>sp_purgehistory</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_delete_jobschedule</I></td>               
+<td valign="top"><I>sp_reassigntask</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_delete_jobserver</I></td>               
+<td valign="top"><I>sp_remove_job_from_targets</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_delete_jobstep</I></td>               
+<td valign="top"><I>sp_resync_targetserver</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_delete_notification</I></td>          
+<td valign="top"><I>sp_start_job</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_delete_operator</I></td>               
+<td valign="top"><I>sp_stop_job</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_delete_targetserver</I></td>          
+<td valign="top"><I>sp_update_alert</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_delete_targetservergroup</I></td>          
+<td valign="top"><I>sp_update_category</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_delete_targetsvrgrp_member</I></td>     
+<td valign="top"><I>sp_update_job</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_droptask</I></td>                    
+<td valign="top"><I>sp_update_jobschedule</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_help_alert</I></td>               
+<td valign="top"><I>sp_update_jobstep</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_help_category</I></td>               
+<td valign="top"><I>sp_update_notification</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_help_downloadlist</I></td>               
+<td valign="top"><I>sp_update_operator</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_helphistory</I></td>               
+<td valign="top"><I>sp_update_targetservergroup</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_help_job</I></td>                    
+<td valign="top"><I>sp_updatetask</I></td>
+</tr></table></p>
+
+<A NAME="399"><H3>Web Assistant Procedures</H3></A>
+
+<P>SQL Server provides a number of procedures for creating and managing 
+Web pages. These procedures are typically called from within the Web Assistant 
+Wizard, but they're documented and you can call them directly. You can consider 
+them a subcategory of the SQL Server Agent procedures because SQL Server 
+Agent handles much of the automatic updating of Web pages. Here is the list of 
+the Web assistant procedures:</P>
+
+<p><table cellpadding=5 width="95%">
+<tr>
+<td valign="top"><I>sp_dropwebtask</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_enumcodepages</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_makewebtask</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_runwebtask</I></td>
+</tr></table></p>
+
+<A NAME="400"><H2>Replication Stored Procedures</H2></A>
+
+<P>You use replication stored procedures to set up and manage publication 
+and subscription tasks. SQL Server Enterprise Manager typically provides a front 
+end to these procedures, but you can also call them directly. SQL Server has 
+many replication stored procedures; frankly, it's hard to manually use replication 
+with these procedures. (You <I>can</I> do it, though, if you're determined.) Everything SQL Server Enterprise Manager does ultimately uses these system stored 
+procedures. We urge you to use SQL Server Enterprise Manager or SQL-DMO 
+if you need to customize replication administration into your application. The 
+following list contains the replication stored procedures:</P>
+
+<p><table cellpadding=5 width="95%">
+<tr>
+<td valign="top"><I>sp_add_agent_parameter</I></td>     
+<td valign="top"><I>sp_changemergearticle</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_add_agent_profile</I></td>     
+<td valign="top"><I>sp_changemergefilter</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addarticle</I></td>     
+<td valign="top"><I>sp_changemergepublication</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_adddistpublisher</I></td>     
+<td valign="top"><I>sp_changemergepullsubscription</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_adddistributiondb</I></td>    
+<td valign="top"><I>sp_changemergesubscription</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_adddistributor</I></td>     
+<td valign="top"><I>sp_changepublication</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addmergearticle</I></td>     
+<td valign="top"><I>sp_changesubscriber</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addmergefilter</I></td>     
+<td valign="top"><I>sp_changesubscriber_schedule</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addmergepublication</I></td>     
+<td valign="top"><I>sp_changesubstatus</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addmergepullsubscription</I></td>
+<td valign="top"><I>sp_change_subscription_properties</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addmergepullsubscription_agent</I></td>     
+<td valign="top"><I>sp_deletemergeconflictrow</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addmergesubscription</I></td>     
+<td valign="top"><I>sp_distcounters</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addpublication</I></td>     
+<td valign="top"><I>sp_drop_agent_parameter</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addpublication_snapshot</I></td>     
+<td valign="top"><I>sp_drop_agent_profile</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addpublisher70</I></td>     
+<td valign="top"><I>sp_droparticle</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addpullsubscription</I></td>     
+<td valign="top"><I>sp_dropdistpublisher</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addpullsubscription_agent</I></td>     
+<td valign="top"><I>sp_dropdistributiondb</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addsubscriber</I></td>     
+<td valign="top"><I>sp_dropdistributor</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addsubscriber_schedule</I></td>     
+<td valign="top"><I>sp_dropmergearticle</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addsubscription</I></td>     
+<td valign="top"><I>sp_dropmergefilter</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_addsynctriggers</I></td>     
+<td valign="top"><I>sp_dropmergepublication</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_article_validation</I></td>     
+<td valign="top"><I>sp_dropmergepullsubscription</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_articlecolumn</I></td>     
+<td valign="top"><I>sp_dropmergesubscription</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_articlefilter</I></td>     
+<td valign="top"><I>sp_droppublication</I></td>     
+</tr>
+<tr>
+<td valign="top"><I>sp_articlesynctranprocs</I></td>     
+<td valign="top"><I>sp_droppullsubscription</I></td>     
+</tr>
+<tr>
+<td valign="top"><I>sp_articleview</I></td>     
+<td valign="top"><I>sp_dropsubscriber</I></td>          
+</tr>
+<tr>
+<td valign="top"><I>sp_browsereplcmds</I></td>     
+<td valign="top"><I>sp_dropsubscription</I></td>          
+</tr>
+<tr>
+<td valign="top"><I>sp_changearticle</I></td>     
+<td valign="top"><I>sp_dsninfo</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_changedistpublisher</I></td>     
+<td valign="top"><I>sp_dumpparamcmd</I></td>     
+</tr>
+<tr>
+<td valign="top"><I>sp_changedistributiondb</I></td>     
+<td valign="top"><I>sp_enumcustomresolvers</I></td>          
+</tr>
+<tr>
+<td valign="top"><I>sp_changedistributor_password</I></td>    
+<td valign="top"><I>sp_enumdsn</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_changedistributor_property</I></td>     
+<td valign="top"><I>sp_enumfullsubscribers</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_generatefilters</I></td>     
+<td valign="top"><I>sp_helpsubscription</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_getmergedeletetype</I></td>     
+<td valign="top"><I>sp_helpsubscription_properties</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_get_distributor</I></td>     
+<td valign="top"><I>sp_link_publication</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_grant_publication_access</I></td>     
+<td valign="top"><I>sp_mergedummyupdate</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_help_agent_default</I></td>     
+<td valign="top"><I>sp_mergesubscription_cleanup</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_help_agent_parameter</I></td>     
+<td valign="top"><I>sp_publication_validation</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_help_agent_profile</I></td>     
+<td valign="top"><I>sp_refreshsubscriptions</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_help_publication_access</I></td>   
+<td valign="top"><I>sp_reinitmergepullsubscription</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_helparticle</I></td>     
+<td valign="top"><I>sp_reinitmergesubscription</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_helparticlecolumns</I></td>     
+<td valign="top"><I>sp_reinitpullsubscription</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_helpdistpublisher</I></td>     
+<td valign="top"><I>sp_reinitsubscription</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_helpdistributiondb</I></td>     
+<td valign="top"><I>sp_removedbreplication</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_helpdistributor</I></td>     
+<td valign="top"><I>sp_replcmds</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_helpmergearticle</I></td>     
+<td valign="top"><I>sp_replcounters</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_helpmergearticleconflicts</I></td>    
+<td valign="top"><I>sp_repldone</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_helpmergeconflictrows</I></td>     
+<td valign="top"><I>sp_replflush</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_helpmergedeleteconflictrows</I></td>     
+<td valign="top"><I>sp_replicationdboption</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_helpmergefilter</I></td>     
+<td valign="top"><I>sp_replication_agent_checkup</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_helpmergepublication</I></td>    
+<td valign="top"><I>sp_replshowcmds</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_helpmergepullsubscription</I></td>     
+<td valign="top"><I>sp_repltrans</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_helpmergesubscription</I></td>     
+<td valign="top"><I>sp_revoke_publication_access</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_helppublication</I></td>     
+<td valign="top"><I>sp_script_synctran_commands</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_helppullsubscription</I></td>     
+<td valign="top"><I>sp_scriptdelproc</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_helpreplicationdb</I></td>     
+<td valign="top"><I>sp_scriptinsproc</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_helpreplicationdboption</I></td>     
+<td valign="top"><I>sp_scriptupdproc</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_helpsubscriber</I></td>     
+<td valign="top"><I>sp_subscription_cleanup</I></td>
+</tr>
+<tr>
+<td valign="top"><I>sp_helpsubscriberinfo</I></td>     
+<td valign="top"><I>sp_table_validation</I></td>
+</tr></table></p>
+
+<A NAME="401"><H2>Extended Stored Procedures</H2></A>
+
+<P>Extended stored procedures allow you to create your own external routines 
+in a language such as C and have SQL Server automatically load and execute 
+those routines just like a regular stored procedure. 
+As with stored procedures, you can pass parameters to extended stored procedures, and they can return 
+results, return status, or both. This allows you to extend SQL Server capabilities 
+in powerful ways. Many SQL Server features introduced in the last few years 
+have been implemented using extended stored procedures. These features 
+include additions to SQL Server Enterprise Manager, login integration with 
+Windows NT domain security, the ability to send or receive e-mail messages, and the 
+ability to create a Web page based on a query.</P>
+
+<P>Extended stored procedures are DLLs that SQL Server can 
+dynamically load and execute. Extended stored procedures aren't separate processes 
+spawned by SQL Server&#8212;they run directly in the address space of SQL Server. The 
+DLLs are created using the Open Data Services (ODS) API, which SQL Server also uses.</P>
+
+<P>Writing an extended stored procedure sounds harder than it really is, 
+which is probably why these procedures are somewhat underused. But writing one 
+can be as simple as writing a wrapper around a C function. For example, 
+consider the formatting capabilities in SQL Server's PRINT statement, which are 
+limited and don't allow parameter substitution. The C language provides the 
+<I>sprintf </I>function, which is powerful for formatting a string buffer and includes 
+parameter substitution. It's easy to wrap the C 
+<I>sprintf</I> function and create an extended stored procedure that calls it, resulting in the procedure 
+<I>xp_sprintf</I>. To show you how easy this is, below is the entire source code for the procedure 
+<I>xp_sprintf</I>. Note that most of this code is setup code, and at the heart is the call to the 
+C run-time function <I>sprintf()</I>:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+// XP_SPRINTF
+//
+// Format and store a series of characters and values into an
+// output string using sprintf
+//
+// Parameters:
+//    srvproc - the handle to the client connection
+//
+// Returns:
+//    XP_NOERROR or XP_ERROR
+//
+// Side Effects:
+//
+//
+ SRVRETCODE xp_sprintf( SRV_PROC * srvproc )
+{
+    int numparams;
+    int paramtype;
+    int i;
+    char string [MAXSTRLEN];
+    char format[MAXSTRLEN];
+    char values[MAXARGUMENTS][MAXSTRLEN];
+    char szBuffer[MAXSTRLEN];
+
+    // Get number of parameters
+    //
+    numparams=srv_rpcparams(srvproc);
+
+    // Check number of parameters
+    //
+    if (numparams &lt; 3)
+    {
+        // Send error message and return
+
+        //
+        LoadString(hModule, IDS_ERROR_PARAM, szBuffer, 
+            sizeof(szBuffer));
+        goto ErrorExit;
+    }
+
+    paramtype=srv_paramtype(srvproc, 1);
+    if (paramtype != SRVVARCHAR)
+    {
+        // Send error message and return
+        //
+        LoadString(hModule, IDS_ERROR_PARAM_TYPE, szBuffer, 
+            sizeof(szBuffer));
+        goto ErrorExit;
+    }
+
+    if (!srv_paramstatus(srvproc, 1))
+    {
+        // Send error message and return
+        //
+        LoadString(hModule, IDS_ERROR_PARAM_STATUS, szBuffer, 
+            sizeof(szBuffer));
+        goto ErrorExit;
+    }
+
+    for (i = 2; i &lt;= numparams; i++)
+    {
+        paramtype=srv_paramtype(srvproc, i);
+
+        if (paramtype != SRVVARCHAR)
+        {
+            // Send error message and return
+            //
+            LoadString(hModule, IDS_ERROR_PARAM_TYPE, szBuffer,
+                sizeof(szBuffer));
+            goto ErrorExit;
+        }
+    }
+
+    for (i=0; i &lt; MAXARGUMENTS; i++)
+    {
+        memset(values[i], 0, MAXSTRLEN);
+
+        srv_bmove(srv_paramdata(srvproc, i + 3),
+                  values[i],
+                  srv_paramlen(srvproc, i + 3));
+    }
+
+    memset(string, 0, MAXSTRLEN);
+    srv_bmove(srv_paramdata(srvproc, 2), format,
+        srv_paramlen(srvproc, 2));
+    format[srv_paramlen(srvproc, 2)]='\0';
+
+    // This is the heart of the function &#8212; it simply wraps sprintf
+    // and passes back the string
+    sprintf(string, format,
+        values[0],  values[1],  values[2],  values[3],  values[4],
+        values[5],  values[6],  values[7],  values[8],  values[9],
+        values[10], values[11], values[12], values[13], values[14],
+        values[15], values[16], values[17], values[18], values[19],
+        values[20], values[21], values[22], values[23], values[24],
+        values[25], values[26], values[27], values[28], values[29],
+        values[30], values[31], values[32], values[33], values[34],
+        values[35], values[36], values[37], values[38], values[39],
+        values[40], values[41], values[42], values[43], values[44],
+        values[45], values[46], values[47], values[48], values[49]);
+
+    srv_paramset(srvproc, 1, string, strlen(string));
+
+    return XP_NOERROR;
+
+ErrorExit:
+    srv_sendmsg(srvproc,
+                SRV_MSG_ERROR,
+                SPRINTF_ERROR,
+                SRV_INFO,
+                (DBTINYINT) 0,
+                NULL,
+                0,
+                0,
+                szBuffer,
+                SRV_NULLTERM);
+
+    return XP_ERROR;
+}
+</pre></p>
+</td></tr></table>
+
+<P>Because extended stored procedures run in the same address space as 
+SQL Server, they can be efficient; however, a badly behaved 
+extended stored procedure could crash SQL Server, although this unlikely. A server crash 
+would probably result from someone's maliciousness rather than 
+carelessness. But this is a definite area for concern, and you should understand the issues that are 
+covered in the rest of this section.</P>
+
+<P>An extended stored procedure runs on the thread that called it. Each 
+calling thread executes using the Windows NT structured exception handling 
+constructs (most notably,<I> try-except</I>). When a thread is poorly written and performs a 
+bad operation, such as trying to reference memory outside its address space, it 
+is terminated. But only that single connection is terminated, and SQL 
+Server remains unaffected. Any resources held by the thread, such as locks, 
+are automatically released.</P>
+
+<P>In actual use, extended stored procedures don't introduce significant 
+stability issues into the environment. Nonetheless, it's certainly possible for an 
+extended stored procedure to twiddle some data structure within SQL Server (to 
+which it would have access because the procedure is part of SQL Server's address 
+space) that could disrupt SQL Server's operation or conceivably even corrupt data. 
+If you're unlucky, this could happen as the result of a bug in the extended 
+stored procedure; however, it's more likely that the procedure would cause an 
+access violation and have its thread terminated with no ill effects.</P>
+
+<P>A procedure could conceivably cause data corruption, but such data 
+structures aren't exposed publicly, so it would be hard to write a malicious 
+procedure. It is possible, however, and given the propensity of some malicious 
+people to create viruses, we can't rule this problem out (although no documented 
+cases describe this happening). The ultimate responsibility for protecting your 
+data has to rest with your system administrator, who has control over which, if 
+any, extended stored procedures can be added to the system.</P>
+
+<p><div class="sidebar"><blockquote>
+<B>A Word of Warning</B>
+<P>Although extended stored procedures can be terrific additions to 
+your applications and in most cases do not negatively impact your 
+system's behavior, exceptions do exist. You can save yourself hours of grief if 
+you keep the following in mind:</P>
+
+<UL>
+<P><LI>
+Be sure to include full error checking and exception 
+handling. An unhandled exception will usually bring down SQL 
+Server along with generating a Dr. Watson dump.
+</LI></P>
+
+<P><LI>
+Be sure to stress test your extended procedures 
+thoroughly. Don't assume that, because they are not running on 
+SQL Server itself, you don't have to be concerned about 
+how SQL Server will behave with hundreds or thousands of 
+users accessing it.
+</LI></P>
+
+<P><LI>Read and follow the guidelines in Microsoft Knowledge 
+Base article Q190987, entitled &quot;Extended Stored Procedures: 
+What Everyone Should Know,&quot; which is included on the CD.
+</LI></P>
+</UL>
+<P>&nbsp;</P>
+</blockquote></div></p>
+
+<P>Only someone with the <I>sysadmin</I> role can register an extended stored 
+procedure with the system (using 
+<I>sp_addextendedproc</I>), and only a system 
+administrator can grant others permission to execute the procedure. Extended stored 
+procedures can be added only to the <I>master</I> database (eliminating their ability to 
+be easily transferred to other systems via a dump and load of databases, for 
+example). Administrators should allow use of only the procedures that have been 
+thoroughly tested and proven to be safe and nondestructive.</P>
+
+<P>Ideally, administrators could also have access to the source code and 
+build environment of the extended stored procedure to verify that it bears no 
+malicious intent. (Some people say they don't even want their SQL Server 
+administrator to be able to do this&#8212;because that person might not be trustworthy. If 
+that's the case, you have bigger problems. If you can't trust your system 
+administrator, you'd better get a new one!)</P>
+
+<P>Even without extended stored procedures, an administrator can 
+disrupt a SQL Server environment in many ways. (Munging the system tables 
+would be a good start.) Of course, you can decide that no one will ever add 
+extended stored procedures to your system. That's certainly a safe approach, but you 
+give up a powerful capability by taking this route. (It's kind of like deciding 
+never to ride in a car to avoid having an accident.)</P>
+
+<P>Even if you prohibit foreign extended stored procedures from your 
+system, don't go overboard with a sweeping rule that would prevent use of even 
+the procedures provided by Microsoft to implement new features. Could one 
+of these procedures have a bug that could disrupt SQL Server? Sure, but a bug 
+is no more likely to occur than if the code for these procedures had simply 
+been statically linked into the sqlservr.exe file rather than implemented as a 
+DLL and loaded on demand. (Of course, Microsoft procedures are thoroughly 
+tested before their release. The chance of a catastrophic bug occurring is pretty 
+low.) The fact that these are <I>extended</I> stored procedures in no way increases the 
+risk of bugs. It's an engineering decision&#8212;and a smart one&#8212;that allows 
+Microsoft to add more features to the product in a way that doesn't require extra 
+change to the core product or additional resource use by environments that don't 
+call these features.</P>
+
+<P>By convention, most of the extended stored procedures provided as 
+part of the product begin with <I>xp_</I>. Unlike 
+the<I> sp_</I> prefix, no special properties are associated with 
+<I>xp_</I>. In fact, several extended stored procedures begin with 
+<I>sp_</I> (for example, <I>sp_getbindtoken</I>), which allows them to be called from 
+any database without being fully qualified (so we could just call it with 
+<I>EXEC sp_getbindtoken</I> instead of <I>EXEC</I> 
+<I>master.dbo.xp_getbindtoken</I>). To ascertain whether a procedure is a regular stored procedure or an extended 
+stored procedure, you shouldn't rely on the prefix of the 
+name. Use the function OBJECTPROPERTY(). For example, the following should return 1, 
+indicating that <I>sp_getbindtoken</I> is an extended procedure:</P>
+
+<table cellpadding=5 width="95%"><tr><td>
+<p><pre>
+USE MASTER
+SELECT OBJECTPROPERTY(object_id('sp_getbindtoken'), 'IsExtendedProc')
+</pre></p>
+</td></tr></table>
+
+<P>If you substitute a &quot;real&quot; stored procedure name for 
+<I>sp_getbindtoken</I>, like<I> sp_help</I>, the function will return a 0.</P>
+
+<P>As was the case with stored procedures, some extended stored 
+procedures that are installed are not documented for direct use. These procedures exist 
+to support functionality elsewhere&#8212;especially for SQL Server Enterprise Manager, 
+SQL-DMO, and replication&#8212;rather than to provide features directly themselves.</P>
+
+<P>Following are the extended stored procedures that are provided 
+and documented for direct use. First, here are the general extended stored 
+procedures:</P>
+
+<p><table cellpadding=5 width="95%">
+<tr>
+<td valign="top"><I>xp_cmdshell</I></td> 
+</tr>
+<tr>    
+<td valign="top"><I>xp_sprintf</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_sscanf</I></td>
+</tr></table></p>
+
+<P>Here are the administration and monitoring extended stored procedures:</P>
+
+<p><table cellpadding=5 width="95%">
+<tr>
+<td valign="top"><I>xp_logevent</I></td>     
+<td valign="top"><I>xp_msver</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_snmp_getstate</I></td>     
+<td valign="top"><I>xp_snmp_raisetrap</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_sqlinventory</I></td>     
+<td valign="top"><I>xp_sqlmaint</I></td>
+</tr></table></p>
+
+<P>These are the integrated security-related extended stored procedures:</P>
+
+<p><table cellpadding=5 width="95%">
+<tr>
+<td valign="top"><I>xp_enumgroups</I></td>     
+<td valign="top"><I>xp_grantlogin</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_loginconfig</I></td>     
+<td valign="top"><I>xp_logininfo</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_revokelogin</I></td>
+<td valign="top"></td>
+</tr></table></p>
+
+<P>And finally, the SQL mail-related extended stored procedures:</P>
+
+<p><table cellpadding=5 width="95%">
+<tr>
+<td valign="top"><I>xp_deletemail</I></td>     
+<td valign="top"><I>xp_findnextmsg</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_readmail</I></td>     
+<td valign="top"><I>xp_sendmail</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_startmail</I></td>     
+<td valign="top"><I>xp_stopmail</I></td>
+</tr></table></p>
+
+<A NAME="402"><H3>SQL Server Profiler Extended Procedures</H3></A>
+
+<P>SQL Server Profiler provides a graphical user interface to a set of extended 
+stored procedures for monitoring dozens of aspects of SQL Server's internal 
+behavior. You can also use these extended stored procedures to create your own 
+applications that monitor SQL Server. We'll be discussing SQL Server Profiler 
+in <A HREF="ch15a.htm">Chapter 15</A>, but to complete our list of extended procedures, here are the 
+ones for working with SQL Server Profiler:</P>
+
+<p><table cellpadding=5 width="95%">
+<tr>
+<td valign="top"><I>xp_sqltrace</I></td>     
+<td valign="top"><I>xp_trace_getuserfilter</I></td>     
+<td valign="top"><I>xp_trace_addnewqueue</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_trace_getwritefilter</I></td>     
+<td valign="top"><I>xp_trace_deletequeuedefinition</I></td>     
+<td valign="top"><I>xp_trace_loadqueuedefinition</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_trace_destroyqueue</I></td>
+<td valign="top"><I>xp_trace_pausequeue</I></td>
+<td valign="top"><I>xp_trace_enumqueuedefname</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_trace_restartqueue</I></td>
+<td valign="top"><I>xp_trace_enumqueuehandles</I></td> 
+<td valign="top"><I>xp_trace_savequeuedefinition</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_trace_eventclassrequired</I></td>     
+<td valign="top"><I>xp_trace_setappfilter</I></td>     
+<td valign="top"><I>xp_trace_flushqueryhistory</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_trace_setconnectionidfilter</I></td>
+<td valign="top"><I>xp_trace_generate_event</I></td> 
+<td valign="top"><I>xp_trace_setcpufilter</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_trace_getappfilter</I></td>
+<td valign="top"><I>xp_trace_setdbidfilter</I></td>
+<td valign="top"><I>xp_trace_getconnectionidfilter</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_trace_setdurationfilter</I></td>
+<td valign="top"><I>xp_trace_getcpufilter</I></td>
+<td valign="top"><I>xp_trace_seteventclassrequired</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_trace_getdbidfilter</I></td>
+<td valign="top"><I>xp_trace_seteventfilter</I></td>
+<td valign="top"><I>xp_trace_getdurationfilter</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_trace_sethostfilter</I></td>
+<td valign="top"><I>xp_trace_geteventfilter</I></td>
+<td valign="top"><I>xp_trace_sethpidfilter</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_trace_geteventnames</I></td>
+<td valign="top"><I>xp_trace_setindidfilter</I></td>
+<td valign="top"><I>xp_trace_getevents</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_trace_setntdmfilter</I></td>
+<td valign="top"><I>xp_trace_gethostfilter</I></td>
+<td valign="top"><I>xp_trace_setntnmfilter</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_trace_gethpidfilter</I></td>
+<td valign="top"><I>xp_trace_setobjidfilter</I></td>
+<td valign="top"><I>xp_trace_getindidfilter</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_trace_setqueryhistory</I></td> 
+<td valign="top"><I>xp_trace_getntdmfilter</I></td>
+<td valign="top"><I>xp_trace_setqueueautostart</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_trace_getntnmfilter</I></td>
+<td valign="top"><I>xp_trace_setqueuecreateinfo</I></td>
+<td valign="top"><I>xp_trace_getobjidfilter</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_trace_setqueuedestination</I></td>
+<td valign="top"><I>xp_trace_getqueueautostart</I></td>
+<td valign="top"><I>xp_trace_setreadfilter</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_trace_getqueuedestination</I></td>
+<td valign="top"><I>xp_trace_setserverfilter</I></td>
+<td valign="top"><I>xp_trace_getqueueproperties</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_trace_setseverityfilter</I></td>
+<td valign="top"><I>xp_trace_getreadfilter</I></td>
+<td valign="top"><I>xp_trace_setspidfilter</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_trace_getserverfilter</I></td>
+<td valign="top"><I>xp_trace_setsysobjectsfilter</I></td>
+<td valign="top"><I>xp_trace_getseverityfilter</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_trace_settextfilter</I></td>
+<td valign="top"><I>xp_trace_getspidfilter</I></td>
+<td valign="top"><I>xp_trace_setuserfilter</I></td>
+</tr>
+<tr>
+<td valign="top"><I>xp_trace_getsysobjectsfilter</I></td>
+<td valign="top"><I>xp_trace_setwritefilter</I></td>
+<td valign="top"><I>xp_trace_gettextfilter</I></td>
+</tr></table></p>
+
+</BODY>
+</HTML>
+
+
+

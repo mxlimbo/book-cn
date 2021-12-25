@@ -1,0 +1,188 @@
+<HTML>
+<HEAD>
+<LINK REL=StyleSheet HREF="basicIE4.css" TYPE="text/css">
+<TITLE>VBA Early Binding</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY>
+<A NAME="546"><H1><B>VBA Early Binding</B></H1></A>
+<P>When you ran the EX25A, EX25B, and EX25C components from Excel VBA, you used something called <U>late</U> <U>binding</U>. Normally, each time VBA accesses a property or a method, it calls<I> IDispatch::GetIDsOfNames</I> to look up the dispatch ID from the symbolic name. Not only is this inefficient, VBA can't do type-checking until it actually accesses a property or a method. Suppose, for example, that a VBA program tried to get a property value that it assumed was a number, but the component provided a string instead. VBA would give you a runtime error when it executed the Property Get statement.
+
+<P>With <U>early</U> <U>binding</U>, VBA can preprocess the Visual Basic code, converting property and method symbols to DISPIDs before it runs the component program. In so doing, it can check property types, method return types, and method parameters, giving you compile-time error messages. Where can 
+VBA get the advance information it needs? From the component's type library, of course. It can use that same type library to allow the VBA programmer to browse the component's properties and methods. VBA reads the type library before it even loads the component program.
+
+<A NAME="547"><H2><B>Registering a Type Library</B></H2></A>
+<P>You've already seen that Visual C++ generates a TLB file for each component. For VBA to locate that type library, its location must be specified in the Windows Registry. The simplest way of doing this is to write a text REG file that the Windows Regedit program can import. Here's the ex25b.reg file for 
+the EX25B DLL component:
+
+<P><pre>
+REGEDIT4
+
+[HKEY_CLASSES_ROOT\TypeLib\{A9515ACA-5B85-11D0-848F-00400526305B}]
+
+[HKEY_CLASSES_ROOT\TypeLib\{A9515ACA-5B85-11D0-848F-00400526305B}\1.0]
+@=&quot;Ex25b&quot;
+
+[HKEY_CLASSES_ROOT\TypeLib\{A9515ACA-5B85-11D0-848F-00400526305B}\1.0\0]
+
+[HKEY_CLASSES_ROOT\TypeLib\{A9515ACA-5B85-11D0-848F-00400526305B}\1.0\0\win32]
+@=&quot;C:\\vcpp32\\ex25b\\Debug\\ex25b.tlb&quot;
+
+[HKEY_CLASSES_ROOT\TypeLib\{A9515ACA-5B85-11D0-848F-00400526305B}\1.0\FLAGS]
+@=&quot;0&quot;
+
+[HKEY_CLASSES_ROOT\TypeLib\{A9515ACA-5B85-11D0-848F-00400526305B}\1.0\HELPDIR]
+@=&quot;C:\\vcpp32\\ex25b\\Debug&quot;
+
+[HKEY_CLASSES_ROOT\Interface\{A9515AD7-5B85-11D0-848F-00400526305B}]
+@=&quot;IEx25bAuto&quot;
+
+[HKEY_CLASSES_ROOT\Interface\{A9515AD7-5B85-11D0-848F-00400526305B}\ProxyStubClsid]
+@=&quot;{00020420-0000-0000-C000-000000000046}&quot;
+
+[HKEY_CLASSES_ROOT\Interface\{A9515AD7-5B85-11D0-848F-00400526305B}\ProxyStubClsid32]
+@=&quot;{00020420-0000-0000-C000-000000000046}&quot;
+
+[HKEY_CLASSES_ROOT\Interface\{A9515AD7-5B85-11D0-848F-00400526305B}\TypeLib]
+@=&quot;{A9515ACA-5B85-11D0-848F-00400526305B}&quot;
+&quot;Version&quot;=&quot;1.0&quot;
+</pre>
+
+<P>Notice that this file generates subtrees under the Registry's TypeLib and Interface keys. The third entry specifies the path for the version 1.0 TLB file. The 0 subkey stands for &quot;neutral language.&quot; If you had a multilingual application, you would have separate entries for English, French, and so forth. Browsers use the TypeLib entries, and the Interface entries are used for runtime 
+type-checking and, for an EXE component, marshaling the dispinterface.
+
+<A NAME="548"><H2><B>How a Component Can Register Its Own Type Library</B></H2></A>
+<P>When an EXE component is run stand-alone, it can call the MFC <I>AfxRegisterTypeLib</I> function to make the necessary Registry entries, as shown here:
+
+<P><pre>
+VERIFY(AfxOleRegisterTypeLib(AfxGetInstanceHandle(), theTypeLibGUID,
+       &quot;ex25b.tlb&quot;));
+</pre>
+
+<P>Shown here is <I>theTypeLibGUID</I>, a static variable of type <I>GUID</I>:
+
+<P><pre>
+// {A9515ACA-5B85-11D0-848F-00400526305B}
+static const GUID theTypeLibGUID =
+{ 0xa9515aca, 0x5b85, 0x11d0, { 0x84, 0x8f, 0x00, 0x40, 0x05, 0x26,
+    0x30, 0x5b } };
+</pre>
+
+<P>The <I>AfxRegisterTypeLib</I> function is declared in the afxwin.h header, which requires <I>_AFXDLL</I> to be defined. That means you can't use it in a regular DLL unless you copy the code from the MFC source files.
+
+<A NAME="549"><H2><B>The ODL File</B></H2></A>
+<P>Now is a good time to look at the ODL file for the same project.
+
+<P><pre>
+// ex25b.odl : type library source for ex25b.dll
+
+// This file will be processed by the MIDL compiler to produce the
+//  type library (ex25b.tlb)
+
+[ uuid(A9515ACA-5B85-11D0-848F-00400526305B), version(1.0) ]
+
+// GUID for the type library&#151;matches TypeLib Registry key and 
+//  AfxOleRegisterTypeLib parameter
+library Ex25b
+{
+    // library name for Excel's object borrower
+
+    importlib(&quot;stdole32.tlb&quot;);
+    // primary dispatch interface for CEx25bAuto
+
+    [ uuid(A9515AD7-5B85-11D0-848F-00400526305B) ]
+
+    // GUID from component's interface map&#151;matches Registry Interface 
+    //  entry
+
+    dispinterface IEx25bAuto
+    {
+        // name used in VBA Dim statement and Object list
+        properties:
+            // NOTE - ClassWizard will maintain property
+            //  information here.
+            //  Use extreme caution when editing this section.
+            //{{AFX_ODL_PROP(CEx25bAuto)
+            [id(1)] long LongData;
+            [id(2)] VARIANT TextData;
+            //}}AFX_ODL_PROP
+
+        methods:
+            // NOTE - ClassWizard will maintain method 
+            //  information here.
+            //  Use extreme caution when editing this section.
+            //{{AFX_ODL_METHOD(CEx25bAuto)
+            [id(3)] boolean DisplayDialog();
+            //}}AFX_ODL_METHOD
+    };
+
+
+
+    [ uuid(A9515AD8-5B85-11D0-848F-00400526305B) ]
+    
+// component's CLSID
+    
+    coclass Ex25bAuto
+    {
+        [default] dispinterface IEx25bAuto;
+    };
+
+    //{{AFX_APPEND_ODL}}
+};
+</pre>
+
+<P>As you can see, numerous connections exist among the Registry, the type library, the component, and the VBA client.
+
+<DIV CLASS=note>
+<BLOCKQUOTE>
+<IMG SRC="note.jpg" width=123 height=18 BORDER=0><P>A useful Visual C++ utility, OLEVIEW, lets you examine registered components and their type libraries.</blockquote></div>
+
+<A NAME="550"><H2><B>How Excel Uses a Type Library</B></H2></A>
+<P>Let's examine the sequence of steps Excel uses to utilize your type library:
+<ol>
+<P><LI>When Excel starts up, it reads the TypeLib section of the Registry to compile a list of all type libraries. It loads the type libraries for VBA and for the Excel object library.
+<P><LI>After starting Excel, loading a workbook, and switching to the Visual Basic Editor, the user (or workbook author) chooses References from the Tools menu and checks the EX25B LIB line.
+<P>When the workbook is saved, this reference information is 
+saved with it.
+<P><LI>Now the Excel user will be able to browse through the EX25B properties and methods by choosing Object Browser from the Visual Basic Editor's View menu to view the Object Browser dialog.
+<P><LI>To make use of the type library in your VBA program, you simply replace the line
+<P><pre>
+Dim DllComp as Object
+</pre>
+
+<P>with
+
+<P><pre>
+Dim DllComp as IEx25bAuto
+</pre>
+
+<P>The VBA program will exit immediately if it can't find <I>IEx25bAuto</I> in its list of references.
+
+
+<P><A HREF="javascript:fullSize('g25og12x.htm')"> <img src="g25og12.jpg" width=404 height=332 border=0 ALT = "Click to view at full size."> </A>
+
+<P><img src="g25og13x.gif" width=411 height=259 border=0>
+</ol>
+<ol start=5>
+<P><LI>Immediately after VBA executes the CreateObject statement and loads the component program, it calls <I>QueryInterface</I> for <I>IID_IEx25bAuto</I>, which is defined in the Registry, the type library, and the component class's interface map. (<I>IEx25bAuto</I> is really an <I>IDispatch</I> interface.) This is a sort of security check. If the component can't deliver this interface, the VBA program exits. Theoretically, Excel could use the CLSID in the type library to load the component program, but it uses the CLSID from the Registry instead, just as it did in late binding mode.
+</ol>
+<A NAME="551"><H2><B>Why Use Early Binding?</B></H2></A>
+<P>You might think that early binding would make your Automation component run faster. You probably won't notice any speed increase, though, because the <I>IDispatch::Invoke</I> calls are the limiting factor. A typical MFC <I>Invoke</I> call from a compiled C++ client to a compiled C++ component requires about 0.5 millisecond, which is pretty gross.
+
+<P>The browse capability that the type library provides is probably more valuable than the compiled linkage. If you are writing a C++ controller, for example, you can load the type library through various COM functions, including <I>LoadTypeLib</I>, and then you can access it through the 
+<I>ITypeLib</I> and <I>ITypeInfo</I> interfaces. Plan to spend some time on that project, however, because the type library interfaces are tricky.
+
+<A NAME="552"><H2><B>Faster Client-Component Connections</B></H2></A>
+<P>Microsoft has recognized the limitations of the <I>IDispatch</I> interface. It's naturally slow because all data must be funneled through <I>VARIANT</I>s and possibly converted on both ends. There's a new variation called a <U>dual</U> <U>interface</U>. (A discussion of dual interfaces is beyond the scope of this book. See Kraig Brockschmidt's <I>Inside OLE,</I> 2d ed. [Microsoft Press, 1995], for more information.) In a dual interface, you define your own custom interface, derived from <I>IDispatch</I>. The <I>Invoke</I> and <I>GetIDsOfNames</I> functions are included, but so are other functions. If the client is smart enough, it can bypass the inefficient <I>Invoke</I> calls and use the specialized functions instead. Dual interfaces can support only standard Automation types, or they can support arbitrary types.
+
+<P>There is no direct MFC support for dual interfaces in Visual C++ 6.0, but the ACDUAL Visual C++ sample should get you started.
+
+</BODY>
+</HTML>
+
+
+

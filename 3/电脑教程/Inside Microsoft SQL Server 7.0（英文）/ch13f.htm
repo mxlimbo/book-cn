@@ -1,0 +1,86 @@
+<HTML>
+<HEAD>
+<link rel="STYLESHEET" type="text/css" href="squeal7.css">
+<TITLE>Row-Level vs. Page-Level Locking</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch13e.htm">[Previous]</A> <A HREF="ch13g.htm">[Next]</A><P>
+
+<A NAME="522"><H1>Row-Level vs. Page-Level Locking</H1></A>
+
+
+<p>
+The debate over whether row-level locking is better than page-level locking 
+or vice versa has been one of those near-religious wars and warrants a few 
+comments here. Although some people would have you believe that one is always 
+better, it's not really that simple.
+</P>
+<p>
+Prior to SQL Server version 7, the smallest unit of data that SQL Server could lock was a page. Even though many people argued that this was unacceptable and it was impossible to maintain good concurrency while locking 
+entire pages, many large and powerful applications were written and deployed using only page-level locking. If they were well designed and tuned, concurrency was not an issue, and some of these applications supported hundreds of active 
+user connections with acceptable response times and throughput. However, with the change in page size from 2 KB to 8 KB for SQL Server 7, the issue has become more critical. Locking an entire page means locking four times as much data as in previous versions. SQL Server 7 implements full row-level locking, so any potential problems due to lower concurrency with the larger page size should not be an issue. However, locking isn't free. Considerable resources are required to manage locks. Recall that a lock is an in-memory structure of about 32 bytes, with another 32 bytes for each process holding the lock and each process waiting for the lock. If you need a lock for every row and you scan a million rows, you need more than 30 MB of RAM just to hold locks for that one process.
+</P>
+
+<p>
+Beyond the memory consumption issues, locking is a fairly 
+processing-intensive operation. Managing locks requires substantial bookkeeping. (Recall that, internally, SQL Server uses a lightweight mutex called a spinlock to 
+guard resources, and it uses latches&#8212;also lighter than full-blown locks&#8212;to protect non-leaf-level index pages. These performance optimizations avoid the overhead 
+of full locking.) If a page of data contains 50 rows of data, all of which will be used, it is obviously more efficient to issue and manage one lock on the page than 
+to manage 50. That's the obvious benefit of page locking&#8212;a reduction in 
+the number of lock structures that must exist and be managed.
+</P>
+
+<p>
+If two different processes each need to update a few separate rows of 
+data and some of the rows needed by each process happen to exist on the same 
+page, one process must wait until the page locks of the other process are released. 
+If, in this case, you use row-level locking instead of page-level locking, the 
+other process does not have to wait. The finer granularity of the locks means that 
+no conflict occurs in the first place because each process is concerned with 
+different rows. That's the obvious benefit of row-level locking. Which of 
+these obvious benefits wins? Well, the decision isn't clear cut, and it depends on 
+the application and the data. Each type of locking can be shown to be superior 
+for different types of applications and usage.
+</P>
+
+<p>
+The stored procedure <I>sp_indexoption</I> lets you manually control the unit of locking within an index. It also lets you disallow page locks or row locks within an index. Since these options are available only for indexes, there is no way to control the locking within the data pages of a heap. (But remember that if a table has a clustered index, the data pages are part of the index and are affected by the <I>sp_indexoption</I> setting.) The index options are set 
+for each table or index individually. Two options, AllowRowLocks and AllowPageLocks, are both set to TRUE initially for every table and index. If both of these options are set to FALSE for a table, only full table locks are allowed.
+</P>
+
+<A NAME="523"><H2>Lock Escalation</H2></A>
+
+
+<p>
+SQL Server automatically escalates row, key, or page locks to coarser table locks as appropriate. This escalation protects system resources&#8212;it prevents the system from using too much memory for keeping track of locks&#8212;and increases efficiency. For example, after a query acquires many row locks, the lock level can be escalated to a table lock. If every row in a table must be visited, it probably 
+makes more sense to acquire and hold a single table lock than to hold many row locks. A single table lock is acquired and the many row locks are released. This escalation to a table lock reduces locking overhead and keeps the system from running out of locks. Recall that a lock is a memory structure. Because there is a finite amount of memory, there must be a finite number of locks. You can configure SQL Server for the maximum number of locks your system is 
+expected to need, but the default is for the <I>locks</I> configuration parameter to be tuned automatically by SQL Server.
+</P>
+
+<p>
+As mentioned earlier, SQL Server determines at runtime whether to lock rows, pages, or the entire table. The locking of rows (or keys) is heavily favored if at all possible. The type of locking chosen is based on the number of rows and pages to be scanned, the number of rows on a page, the isolation level in effect, the update activity going on, the number of users on the system needing 
+memory for their own purposes, and so on. Perhaps the best of both worlds would be to &quot;deescalate&quot; locks&#8212;that is, to start at a coarser level of locking and change to more granular locks if and only if there is a conflict for the coarse lock.
+</P>
+
+<p>
+For example, suppose you have two processes that each update a few rows. Process A might start with page locking. If no other process requests a lock of the same page, no contention occurs, so the additional overhead of doing 
+locking for every row does not happen. But if process B asks for a lock on one of the pages locked by process A, those held locks can be deescalated to row locks for only the rows that are actually needed. After failing to obtain the page-level lock, process B might then try to get a lock on only the specific rows it needs rather than on the entire page. If the rows needed are not the same between 
+the processes, there is no contention and each gets its own row locks. But if there is no contention for rows, the reduced overhead of locking only at the page level can be realized. You can begin the locking at an even coarser level, such as at the table level, and deescalate as needed to a page, and then further to a row, and conceptually even further to perhaps a column level, although this 
+might be stretching the model.
+</P>
+
+<p>
+A deescalation locking strategy is being considered for future releases. As of version 7, SQL Server uses predominantly row-level locking. As mentioned, sometimes page locks or a table lock are chosen initially, or if too many individual row locks are acquired, SQL Server dynamically escalates those to a table lock. In version 7, lock escalation converts many individual row or page 
+locks to a table lock; escalation never converts row locks to page locks. Lock deescalation is not implemented.
+</P>
+
+</BODY>
+</HTML>
+
+
+

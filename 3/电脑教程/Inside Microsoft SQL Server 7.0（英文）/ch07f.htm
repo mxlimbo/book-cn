@@ -1,0 +1,313 @@
+<HTML>
+<HEAD>
+<link rel="STYLESHEET" type="text/css" href="squeal7.css">
+<TITLE>Views and Derived Tables</TITLE>
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch07e.htm">[Previous]</A> <A HREF="ch07g.htm">[Next]</A><P>
+
+<A NAME="284"><H1>Views and Derived Tables</H1></A>
+
+<P>Think of a view as a virtual table. Simply put, a view is a named SELECT 
+statement that dynamically produces a result set that you can further operate on. 
+A view doesn't actually store any data. It acts as a filter to underlying tables in 
+which the data is stored. The SELECT statement that defines the view can be 
+from one or more underlying tables or from other views. To relieve users of the 
+complexity of having to know how to write an outer join properly, we can turn 
+the prior outer-join query into a view:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+CREATE VIEW outer_view AS
+(
+SELECT 
+    'Author'=RTRIM(au_lname) + ', ' + au_fname, 'Title'=title
+FROM (titleauthor AS TA 
+FULL OUTER JOIN titles AS T ON (TA.title_id=T.title_id))
+RIGHT OUTER JOIN authors AS A ON (A.au_id=TA.au_id)
+WHERE 
+A.state &lt;&gt; 'CA' OR A.state IS NULL
+)
+</pre>
+</td></tr></table></p>
+
+<P>Now, instead of formulating the outer join, we can simply query 
+the outer-join view, <I>outer_view</I>. Then we can do a search for author names 
+starting with <I>Ri</I>.</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+SELECT * FROM outer_view WHERE Author LIKE 'Ri%' ORDER BY Author
+</pre>
+</td></tr></table></p>
+
+<P>Here's the output:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+Author            Title
+--------------    ---------------------
+Ringer, Albert    Is Anger the Enemy?
+Ringer, Albert    Life Without Fear
+Ringer, Anne      The Gourmet Microwave
+Ringer, Anne      Is Anger the Enemy?
+</pre>
+</td></tr></table></p>
+
+<P>Notice that the view defines the set of rows that are included, but it 
+doesn't define the rows' ordering. If we want a specific order, we must specify 
+the ORDER BY clause in the SELECT statement on the view rather than on 
+the SELECT statement that defines the view.</P>
+
+<P>A <I>derived table</I> is a fancy name for the result of using another 
+SELECT statement in the FROM clause of a SELECT statement. This fits the 
+relational model nicely, because the result of a SELECT statement should be a 
+table&#8212;so that it's nicely orthogonal and we can subsequently select from it. You 
+can think of a view as a named derived table. A view is named, and its definition 
+is persistent and reusable; a derived table is a completely dynamic, temporal 
+concept. To show the difference, here's an equivalent 
+<I>LIKE 'Ri%'</I> query using a derived table instead of a view:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+SELECT * 
+FROM 
+    (SELECT 
+    'Author'=RTRIM(au_lname) + ', ' + au_fname, 'Title'=title
+    FROM (titleauthor AS TA 
+    FULL OUTER JOIN titles AS T ON (TA.title_id=T.title_id))
+    RIGHT OUTER JOIN authors AS A ON (A.au_id=TA.au_id) 
+    WHERE A.state &lt;&gt; 'CA' OR A.state IS NULL
+    ) AS T
+WHERE T.Author LIKE 'Ri%'
+</pre>
+</td></tr></table></p>
+
+<P>You can insert, update, and delete rows in a view but not in a derived 
+table. Keep in mind that you're always modifying rows in the tables on which a 
+view is based, because the view has no data of its own. Think of it as modifying 
+data <I>through</I> a view rather than modifying data 
+<I>in</I> a view. Some limitations to modifying data through a view exist; although the SQL Server documentation 
+explains them, they bear repeating here with a bit more comment:</P>
+
+<P><B>Modifications restricted to one base 
+table</B> Data modification statements (INSERT and UPDATE only) are allowed on multiple-table views if 
+the data modification statement affects only one base table. DELETE 
+statements are never allowed on multiple-table views, because you can't use 
+data modification statements on more than one underlying table in a 
+single statement. You can never modify through a view that's based on a UNION.</P>
+
+<P><B>INSERT statements and NOT NULL columns</B> INSERT statements 
+aren't accepted unless all the NOT NULL columns without defaults in 
+the underlying table or view are included in the view through which 
+you're inserting new rows, and values for those columns are included in 
+the INSERT statement. (SQL Server has no way to supply values for 
+NOT NULL columns in the underlying table or view if no default value 
+has been defined.)</P>
+
+<P><B>Data restrictions</B> All columns being modified must adhere to all 
+restrictions for the data modification statement as if they were executed 
+directly against the base table. This applies to column nullability, 
+con-straints, identity columns, and columns with rules and/or defaults and base table triggers.</P>
+
+<P><B>Limitations on INSERT and UPDATE statements</B> INSERT and 
+UPDATE statements can't add or change any column in a view that's a 
+computation, nor can they change a view that includes aggregate functions, 
+built-in functions, UNION, a GROUP BY clause, or DISTINCT.</P>
+
+<P><B>READTEXT or WRITETEXT</B> You can't use READTEXT or 
+WRITETEXT on text or image columns in views.</P>
+
+<P><B>Modifications and view criteria</B> By default, data modification 
+statements through views aren't checked to determine whether the rows affected 
+are within the scope of the view. For example, you can issue an 
+INSERT statement for a view that adds a row to the underlying base table, but 
+that doesn't add the row to the view. This behavior occurs because the 
+column values are all valid to the table, so they can be added; however, if the 
+column values don't meet the view's criteria, they aren't represented in 
+the selection for the view. Similarly, you can issue an UPDATE statement 
+that changes a row in a way that the row no longer meets the criteria for 
+the view. If you want all modifications to be checked, use the WITH 
+CHECK OPTION option when creating the view.</P>
+
+<P>For the most part, these restrictions are logical and understandable, 
+except for WITH CHECK OPTION. For instance, if you use a view that defines 
+some select criteria and allows the rows produced by the view to be modified, you 
+must use WITH CHECK OPTION or you might experience the bizarre results 
+of inserting a row that you can never see or updating rows in such a way that 
+they disappear from the view.</P>
+
+<P>Here's an example:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+CREATE VIEW CA_authors AS
+(
+SELECT * FROM authors
+WHERE state='CA'
+)
+GO
+
+BEGIN TRAN -- So we can roll back this nonsense
+SELECT * FROM CA_authors
+
+-- (returns 15 rows)
+
+UPDATE CA_authors SET state='IL'
+SELECT * FROM CA_authors
+
+-- (returns 0 rows)
+
+ROLLBACK TRAN
+</pre>
+</td></tr></table></p>
+
+<P>Should we be able to update rows in a way that causes them to 
+disappear from the view or add rows and never see them again? It's a matter of 
+opinion. But because the SQL Server behavior is as ANSI SQL specifies, and such 
+disappearing rows are as specified, you should consider 
+<I>always</I> using WITH CHECK OPTION if a view is to be updated and the criteria are such 
+that WITH CHECK OPTION might be violated.</P>
+
+<P>If we rewrite the view, as follows</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+CREATE VIEW CA_authors AS
+(
+SELECT * FROM authors
+WHERE state='CA'
+)
+WITH CHECK OPTION
+</pre>
+</td></tr></table></p>
+
+<P>when we attempt to update the state column to 
+<I>IL</I>, the command fails and we get this error message:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+Msg 550, Level 16, State 2
+The attempted insert or update failed because the target view either 
+specifies WITH CHECK OPTION or spans a view which specifies WITH CHECK 
+OPTION and one or more rows resulting from the operation did not qualify 
+under the CHECK OPTION constraint. Command has been aborted.
+</pre>
+</td></tr></table></p>
+
+<P>Views also have an often overlooked ability to use a system function in 
+the view definition, making it dynamic for the connection. For example, 
+suppose that we keep a personnel table that has a column called 
+<I>sqldb_name</I>, which is the person's login name to SQL Server. The function 
+SUSER_NAME (<I>server_user_id</I>) returns the login name for the current connection. We can 
+create a view using the SUSER_NAME system function to limit that user to only 
+his or her specific row in the table:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+CREATE VIEW My_personnel AS
+(
+SELECT * FROM personnel WHERE sqldb_name = SUSER_NAME() 
+)
+WITH CHECK OPTION
+</pre>
+</td></tr></table></p>
+
+<P>SQL Server provides system functions that return the application 
+name, database username (which might be different from the server login name), 
+and workstation name, and these functions can be used in similar ways. You can 
+see from the previous example that a view can also be important in dealing 
+with security. For details on the system functions, see the SQL Server 
+documentation.</P>
+
+<A NAME="285"><H2>Altering Views</H2></A>
+
+<P>SQL Server 7 allows you to alter the definition of a view. The syntax is 
+almost identical to the syntax for creating the view initially:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+ALTER VIEW <I>view_name </I>[<B>(</B><I>column</I> [<B>,</B>...<I>n</I>]<B>)</B>]
+[WITH ENCRYPTION]
+AS
+<I>select_statement</I> 
+[WITH CHECK OPTION]
+</pre>
+</td></tr></table></p>
+
+<P>The big difference is that <I>view_name</I> must already exist, and the 
+definition specified replaces whatever definition the view had before ALTER 
+VIEW was executed. You might wonder why this is a useful command, since the 
+entire definition must be reentered in the ALTER VIEW. Why don't we just drop 
+the view and recreate it? The benefit comes from the fact that the view's 
+<I>object_id</I> won't change, meaning all the internal references to this view remain intact. 
+If other views reference this one, they'll be unaffected. If stored procedures 
+access this view, they won't need to be recompiled. If you've assigned permissions 
+on this view to various users and roles, dropping the view would lose all 
+permission information. Altering the view keeps the permissions intact.</P>
+
+<P>There is one gotcha when dealing with permissions on views, if the 
+permissions have been assigned on individual columns. Internally, SQL Server 
+keeps track of permissions by the column ID number. If you alter a view and 
+change the order of the columns, the permissions might no longer be what you 
+expect. Suppose you've created a view on the 
+<I>authors</I> table to select the authors' names and phone numbers. You want all users to be able to see the authors' names, 
+but you want the phone numbers to be unavailable.</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+CREATE VIEW authorlist (first, last, phone)
+AS
+SELECT au_lname, au_fname, phone 
+FROM authors
+GO
+GRANT SELECT ON authorlist (first, last) TO PUBLIC
+GO
+</pre>
+</td></tr></table></p>
+
+<P>All users in the <I>pubs</I> database can now execute this command:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+SELECT first, last FROM authorlist
+</pre>
+</td></tr></table></p>
+
+<P>We now alter the view to put the phone number column in the first 
+position:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+ALTER VIEW authorlist (phone, first, last)
+AS
+SELECT phone, au_lname, au_fname 
+FROM authors
+</pre>
+</td></tr></table></p>
+
+<P>Because the permissions have been granted on the first two columns, 
+users will get an error message when they run this same query:</P>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+Server: Msg 230, Level 14, State 1
+SELECT permission denied on column 'last' of object 'authorlist', 
+database 'pubs', owner 'dbo'.
+</pre>
+</td></tr></table></p>
+
+<P>However, all users can now select the values in the 
+<I>phone</I> column, which we were trying to keep hidden.</P>
+
+
+</BODY>
+</HTML>
+
+
+
