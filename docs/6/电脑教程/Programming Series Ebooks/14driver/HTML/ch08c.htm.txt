@@ -1,0 +1,70 @@
+<HTML>
+<HEAD>
+<TITLE>Managing Power Transitions</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch08b.htm">[Previous]</A> <A HREF="ch08d.htm">[Next]</a>
+</p>
+
+<A NAME="271"><H1>Managing Power Transitions</H1></A>
+
+<p>Performing power management tasks correctly requires very accurate coding, and there are
+many complicating factors. For example, your device might have the ability to wake up the
+system from a sleeping state. Deciding whether to succeed or fail a query, and deciding which
+device power state corresponds to a given new system power state, depends on whether your
+wake-up feature is currently armed. You may have powered down your own device because of
+inactivity, and you need to provide for restoring power when a substantive IRP comes along.
+Maybe your device is an &quot;inrush&quot; device that needs a large spike of current to power
+on, in which case the Power Manager treats you specially. And so on.</p>
+
+<p>When I thought about solving all the problems of handling query-power and set-power
+operations in a traditional way&#8212;that is, with normal-looking dispatch and completion
+routines&#8212;I was daunted by the sheer number of different subroutines that would be required
+and that would end up doing fairly similar things. I therefore decided to build my power
+support around a finite state machine that could easily deal with the asynchronous nature of
+the activities.</p>
+
+<p>I'll explain this finite state machine as it appears in GENERIC.SYS, which is a support
+driver that most of the code samples on the companion disc use. Appendix B, &quot;<A HREF="chaba.htm#436">Using GENERIC.SYS</A>,&quot; explains the client interface to GENERIC.SYS in complete detail. GENERIC.SYS
+amounts to a kernel-mode DLL containing helper functions for WDM drivers. You could think of it
+as a generic class driver with broad applicability. Client drivers, including most of my own
+sample drivers, delegate handling of power IRPs to GENERIC.SYS by calling <b>
+GenericDispatchPower</b>. GENERIC.SYS also implements the DEVQUEUE object I discussed in
+Chapter 6, &quot;<A HREF="ch06a.htm#180">Plug and Play</A>.&quot;</p>
+
+<A NAME="272"><H2>Overview of the Finite State Machine</H2></A>
+
+<p>I wrote a function named <b>HandlePowerEvent</b> to implement the finite state machine that
+manages power IRPs. I call this function with two arguments:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>NTSTATUS燞andlePowerEvent(PPOWCONTEXT燾tx,爀num燩OWEVENT爀vent);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The first argument is a context structure that contains a state variable, among other
+things:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>typedef爏truct燺POWCONTEXT爗
+牋LONG爄d;
+牋LONG爀ventcount;
+牋PGENERIC_EXTENSION爌dx;
+牋PIRP爄rp;
+牋enum燩OWSTATE爏tate;
+牋NTSTATUS爏tatus;
+牋PKEVENT爌ev;
+牋DEVICE_POWER_STATE燿evstate;
+牋UCHAR燤inorFunction;
+牋BOOLEAN燯nstallQueue;
+}燩OWCONTEXT,

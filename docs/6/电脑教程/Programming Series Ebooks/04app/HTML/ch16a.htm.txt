@@ -1,0 +1,167 @@
+<html>
+<head>
+<title>Chapter 16 -- A Thread's Stack</title>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<body bgcolor="#ffffff" text="#000000">
+<A HREF="ch15i.htm">[Previous]</A> <A HREF="ch17a.htm">[Next]</A><P>
+<font size="+3">Chapter 16</font>
+
+<A NAME="204"><H1>A Thread's Stack</H1></A>
+
+<p>Sometimes the system reserves regions in your own process's
+address space. I mentioned in <A HREF="ch13a.htm">Chapter 13</A> that this happens for process
+and thread environment blocks. Another time that the system reserves
+regions in your own process's address space is for a thread's
+stack.</p>
+
+<p>Whenever a thread is created, the system reserves a region of
+address space for the thread's stack (each thread gets its very own
+stack) and also commits some physical storage to this reserved region.
+By default, the system reserves 1 MB of address space and commits 2
+pages of storage. However, these defaults can be changed by specifying
+the /STACK option to Microsoft's linker when you link your
+application:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+/STACK:<i>reserve</i>[,<i>commit</i>]
+</pre></td></tr></table></p>
+
+<p>When a thread's stack is created, the system reserves a region
+of address space indicated by the linker's /STACK switch. However,
+you can override the amount of storage that is initially committed when
+you call the <i>CreateThread</i> or the <i>_beginthreadex</i> function.
+Both functions have a parameter that allows you to override the storage
+that is initially committed to the stack's address space region. If
+you specify 0 for this parameter, the system uses the commit size
+indicated by the /STACK switch. For the remainder of this discussion,
+I'll assume we're using the default stack sizes: 1 MB of
+reserved region with storage committed one page at a time.</p>
+
+<p>Figure 16-1 shows what a stack region (reserved starting at address
+0x08000000) might look like on a machine whose page size is 4 KB. The
+stack's region and all of the physical storage committed to it have
+a page protection of PAGE_READWRITE.</p>
+
+<p>After reserving this region, the system commits physical storage to
+the top 2 pages of the region. Just before allowing the thread to begin
+execution, the system sets the thread's stack pointer register to
+point to the end of the top page of the stack region (an address very
+close to 0x08100000). This page is where the thread will begin using
+its stack. The second page from the top is called the <i>guard
+page</i>. As the thread increases its call tree by calling more
+functions, the thread needs more stack space.</p>
+
+<p>
+<A HREF="javascript:fullSize('F16SI01x.htm')"> <img src="images/F16SI01.JPG" width=404 height=417 border=0 ALT="Click to view at full size."> </A>
+</p><p>
+<!-- CAPTION --><b>Figure 16-1.</b> <i>What a thread's stack region looks like when it is first created</i><!-- /CAPTION -->
+</p>
+
+<p>Whenever the thread attempts to access storage in the guard page,
+the system is notified. In response, the system commits another page of
+storage just below the guard page. Then the system removes the guard
+page protection flag from the current guard page and assigns it to the
+newly committed page of storage. This technique allows the stack
+storage to increase only as the thread requires it. Eventually, if the
+thread's call tree continues to expand, the stack region will look
+like Figure 16-2.</p>
+
+<p>Referring to Figure 16-2, assume that the thread's call tree is
+very deep and that the stack pointer CPU register points to the stack
+memory address 0x08003004. Now, when the thread calls another function,
+the system has to commit more physical storage. However, when the
+system commits physical storage to the page at address 0x08001000, the
+system does not do exactly what it did when committing physical storage
+to the rest of the stack's memory region. Figure 16-3 shows what
+the stack's reserved memory region looks like.</p>
+
+<p>
+<A HREF="javascript:fullSize('F16SI02x.htm')"> <img src="images/F16SI02.JPG" width=404 height=417 border=0 ALT="Click to view at full size."> </A>
+</p><p>
+<!-- CAPTION --><b>Figure 16-2.</b> <i>A nearly full thread's stack region</i><!-- /CAPTION -->
+</p>
+
+<p>As you'd expect, the page starting at address 0x08002000 has the
+guard attribute removed, and physical storage is committed to the page
+starting at 0x08001000. The difference is that the system does not
+apply the guard attribute to the new page of physical storage
+(0x08001000). This means that the stack's reserved address space
+region contains all the physical storage that it can ever contain. The
+bottommost page is always reserved and never gets committed. I will
+explain the reason for this shortly.</p>
+
+<p>The system performs one more action when it commits physical storage
+to the page at address 0x08001000&#8212;it raises an
+EXCEPTION_STACK_ 
+OVERFLOW exception (defined as 0xC00000FD in WinNT.h). By using
+structured exception handling (SEH), your program will be notified of
+this condition and can recover gracefully. For more information on SEH,
+see <a href="ch23a.htm">Chapters 23</a>, <a href="ch24a.htm">24</a>, and <a href="ch25a.htm">25</a>. The Summation sample at the end of this
+chapter demonstrates how to recover gracefully from stack
+overflows.</p>
+
+<p>
+<A HREF="javascript:fullSize('F16SI03x.htm')"> <img src="images/F16SI03.JPG" width=404 height=417 border=0 ALT="Click to view at full size."> </A>
+</p><p>
+<!-- CAPTION --><b>Figure 16-3.</b> <i>A full thread stack region</i><!-- /CAPTION -->
+</p>
+
+<p>If the thread continues to use the stack after the stack overflow
+exception is raised, all the memory in the page at 0x08001000 will be
+used and the thread will attempt to access memory in the page starting
+at 0x08000000. When the thread attempts to access this reserved
+(uncommitted) memory, the system raises an access violation exception.
+If this access violation exception is raised while the thread is
+attempting to access the stack, the thread is in deep trouble. The
+system takes control at this point and terminates the process&#8212;not
+just the thread, but also the whole process. The system doesn't
+even show a message box to the user&#8212;the whole process just
+disappears!</p>
+
+<p>Now I will explain why the bottommost page of a stack's region
+is always reserved. Doing so protects against accidental overwriting of
+other data being used by the process. You see, it's possible that
+at address 0x07FFF000 (one page below 0x08000000) another region of
+address space has committed physical storage. If the page at 0x08000000
+contained physical storage, the system would not catch attempts by the
+thread to access the reserved stack region. If the stack were to dip
+below the reserved stack region, the code in your thread would
+overwrite other data in your process's address space&#8212;a very,
+very difficult bug to catch.</p>
+
+<A NAME="205"><H2>A Thread's Stack Under Windows 98</H2></A>
+
+<p>Under Windows 98, stacks behave similarly to their Windows 2000
+counterparts. However, there are some significant differences.</p>
+
+<p>Figure 16-4 shows what a stack region (reserved starting at address
+0x00530000) might look like for a 1-MB stack under Windows 98.</p>
+
+<p>
+<A HREF="javascript:fullSize('F16SI04x.htm')"> <img src="images/F16SI04.JPG" width=404 height=283 border=0 ALT="Click to view at full size."> </A>
+</p><p>
+<!-- CAPTION --><b>Figure 16-4.</b> <i>What a thread's stack region looks like when it is first created under Windows 98</i><!-- /CAPTION -->
+</p>
+
+<p>First notice that the region is actually 1 MB plus 128 KB in size,
+even though we wanted to create a stack that was only up to 1 MB in
+size. In Windows 98, whenever a region is reserved for a stack, the
+system actually reserves a region that is 128 KB larger than the
+requested size. The stack is in the middle of this region, with a 64-KB
+block before the stack and another 64-KB block after the stack.</p>
+
+<p>The 64 KB at the beginning of the stack are there to catch stack
+overflow conditions, while the 64 KB at the end of the stack are there
+to catch stack underflow conditions. To see why stack underflow
+detection is useful, examine the following code fragment:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+int燱INAPI燱inMain

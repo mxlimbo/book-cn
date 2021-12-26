@@ -1,0 +1,95 @@
+<HTML>
+<HEAD>
+<TITLE>Local Input State</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch27b.htm">[Previous]</A> <A HREF="ch27d.htm">[Next]</A><P>
+
+<A NAME="361"><H1>Local Input State</H1></A>
+
+<p>Having threads independently handle input&#8212;preventing one thread from adversely affecting another thread&#8212;is just part of what makes the input model robust. However, this feature alone is not enough to keep threads isolated from one another, so the system has additional infrastructure. This additional infrastructure is called <i>local input state</i>.</p>
+
+<p>Each thread has its own local input state, which is managed inside a thread's THREADINFO structure (discussed in <A HREF="ch26a.htm">Chapter 26</A>). This input state consists of the thread's virtualized input queue as well as a set of variables. These variables keep track of the following input state management information:</p>
+
+<p>Keyboard input and window focus information, such as</p>
+
+<ul>
+<p><li>Which window has keyboard focus</li></p>
+<p><li>Which window is active</li></p>
+<p><li>Which keys are considered pressed down</li></p>
+<p><li>The state of the caret</li></p>
+</ul>
+
+<p>The variables also keep track of mouse cursor management
+information, such as</p>
+
+<ul>
+<p><li>Which window has mouse capture</li></p>
+<p><li>The shape of the mouse cursor</li></p>
+<p><li>The visibility of the mouse cursor</li></p>
+</ul>
+
+<p>Because each thread gets its very own set of input state variables, each thread has a different notion of focus window, mouse capture window, and so on. From a thread's perspective, either one of its windows has keyboard focus or no window in the system has keyboard focus, either one of its windows has mouse capture or no window has mouse capture, and so on. As you might expect, this separatism has some ramifications, which we'll discuss in this chapter.</p>
+
+<A NAME="362"><H2>Keyboard Input and Focus</H2></A>
+
+<p>As we know, the RIT directs the user's keyboard input to a
+thread's virtualized input queue&#8212;not to a window. The RIT
+places the keyboard events into the thread's virtualized input
+queue without referring to a particular window. When the thread calls <i>GetMessage</i>, the keyboard event is removed from the queue and assigned to the window (created by the thread) that currently has input focus. Figure 27-2 illustrates this process.</p>
+
+<p>
+<A HREF="javascript:fullSize('F27si02x.htm')"> <img src="images/F27si02.JPG" width=404 height=162 border=0 ALT="Click to view at full size."> </A>
+</p><p>
+<!-- CAPTION --><b>Figure 27-2.</b> <i>The RIT directs the user's keyboard input to one thread's virtualized input queue at a time.</i><!-- /CAPTION -->
+</p>
+
+<p>To instruct a different window to accept keyboard input, you need to specify to which thread's virtualized input queue the RIT should direct keyboard input <i>and</i> you need to tell the thread's input state variables which window will have keyboard focus. Calling <i>SetFocus</i> alone does not accomplish both tasks. If Thread 1 is currently receiving input from the RIT, a call to <i>SetFocus</i>&#8212;passing the handle of Window A, Window B, or Window C&#8212;causes the focus to change. The window losing focus removes its focus rectangle or hides its caret, and the window gaining focus draws a focus rectangle or shows its caret.</p>
+
+<p>However, let's say that Thread 1 is still receiving input from
+the RIT, and it calls <i>SetFocus</i>, passing the handle of Window E. In this case, the system prevents the call to <i>SetFocus</i> from doing anything because the window for which you are trying to set focus is not using the virtualized input queue that is currently &quot;connected&quot; to the RIT. After Thread 1 executes this call, there is no change in focus, and the appearance of the screen doesn't change.</p>
+
+<p>In another situation, Thread 1 might be connected to the RIT and Thread 2 might call <i>SetFocus</i>, passing the handle of Window E. In this case, Thread 2's local input state variables are updated to reflect that Window E is the window to receive keyboard input the next time the RIT directs keystrokes to Thread 2. The call doesn't cause the RIT to direct input to Thread 2's virtualized input queue.</p>
+
+<p>Because Window E now has focus for Thread 2, it receives a WM_SETFOCUS message. If Window E is a pushbutton, it draws a focus rectangle for itself, so two windows with focus rectangles (Window A and Window E) might appear on the screen. This can be quite disconcerting to an end user. You should be careful when you call <i>SetFocus</i> so that this situation doesn't occur. Call <i>SetFocus</i> only if your thread is connected to the RIT.</p>
+
+<p>By the way, if you give focus to a window that displays a caret when it receives a WM_SETFOCUS message, you can produce several windows on the screen that simultaneously display flashing carets. This can be a bit bewildering to a user.</p>
+
+<p>When focus is transferred from one window to another using
+conventional methods (such as clicking on a window with the mouse), the window losing focus receives a WM_KILLFOCUS message. If the window receiving focus belongs to a thread other than the thread associated with the window losing focus, the local input state variables of the thread that created the window losing focus are updated to reflect that no window has focus. Calling <i>GetFocus</i> at this time returns NULL, which makes the thread think that no window currently has the focus.</p>
+
+<p>The <i>SetActiveWindow</i> function activates a top-level window in the system and sets focus to that window:</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<PRE>
+HWND燬etActiveWindow(HWND爃wnd);
+</PRE>
+</TD></TR></TABLE></P>
+
+<p>Like the <i>SetFocus</i> function, this function does nothing if the calling thread did not create the window passed to it.</p>
+
+<p>The complement of <i>SetActiveWindow</i> is the <i>
+GetActiveWindow</i> function:</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<PRE>
+HWND燝etActiveWindow();
+</PRE>
+</TD></TR></TABLE></P>
+
+<p>This function works just like the <i>GetFocus</i> function except that it returns the handle of the active window indicated by the calling thread's local input state variables. So if the active window is owned by another thread, <i>GetActiveWindow</i> returns NULL.</p>
+
+<p>Other functions that can alter a window's z-order, activation
+status, and focus status include <i>BringWindowToTop</i> and <i>SetWindowPos</i>:</p>
+
+<P><TABLE CELLPADDING="5" WIDTH="95%"><TR><TD>
+<PRE>
+BOOL燘ringWindowToTop(HWND爃wnd);
+
+BOOL燬etWindowPos(
+牋燞WND爃wnd,

@@ -1,0 +1,123 @@
+<HTML>
+<HEAD>
+<TITLE>Completing I/O Requests</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch05c.htm">[Previous]</A> <A HREF="ch05e.htm">[Next]</a>
+</p>
+
+<A NAME="159"><H1>Completing I/O Requests</H1></A>
+
+<p>Every IRP has an urge toward completion. In the standard processing model, you might
+complete an IRP in at least two circumstances. The DpcForIsr routine would generally complete
+the request that's responsible for the most recent interrupt. A dispatch function might
+also complete an IRP in situations like these:</p>
+
+<ul>
+
+<p><li> If the request is erroneous in some easily determined way (such as a request to rewind a
+printer or to eject the keyboard), the dispatch routine should fail the request by completing
+it with an appropriate status code.</li></p>
+
+<p><li> If the request calls for information that the dispatch function can easily determine
+(such as a control request asking for the driver's version number), the dispatch routine
+should provide the answer and complete the request with a successful status code.</li></p>
+
+</ul>
+
+
+<A NAME="160"><H2>Completion Mechanics</H2></A>
+
+<p>Mechanically, completing an IRP entails filling in the <b>Status</b> and <b>Information</b> 
+members within the IRP's <b>IoStatus</b> block and calling <b>IoCompleteRequest</b>. The
+Status value is one of the codes defined by manifest constants in the DDK header file
+NTSTATUS.H. Refer to Table 5-1 for an abbreviated list of status codes for common situations.
+The Information value depends on what type of IRP you're completing and on whether
+you're succeeding or failing the IRP. Most of the time, when you're failing an IRP
+(that is, completing it with an error status of some kind), you'll set Information to zero.
+When you succeed an IRP that involves data transfer, you ordinarily set the Information field
+equal to the number of bytes transferred.</p>
+
+<p><b>Table 5-1.</b> <i>Some commonly used NTSTATUS codes.</i></p>
+
+<P>
+	<TABLE CELLPADDING=5 WIDTH="95%">
+
+		<TR>
+			<TH><i>Status Code</i></TH>
+			<TH><i>Description</i></TH>
+		</TR>
+
+		<TR>
+			<TD VALIGN="TOP">STATUS_SUCCESS</TD>
+			<TD VALIGN="TOP">Normal completion</TD>
+		</TR>
+		
+		<TR>
+			<TD VALIGN="TOP">STATUS_UNSUCCESSFUL</TD>
+			<TD VALIGN="TOP">Request failed, but no other status code describes the reason specifically</TD>
+		</TR>
+		
+		<TR>
+			<TD VALIGN="TOP">STATUS_NOT_IMPLEMENTED</TD>
+			<TD VALIGN="TOP">A function hasn't been implemented</TD>
+		</TR>
+
+		<TR>
+			<TD VALIGN="TOP">STATUS_INVALID_HANDLE</TD>
+			<TD VALIGN="TOP">An invalid handle was supplied for an operation</TD>
+		</TR>
+		
+		<TR>
+			<TD VALIGN="TOP">STATUS_INVALID_PARAMETER</TD>
+			<TD VALIGN="TOP">A parameter is in error</TD>
+		</TR>
+		
+		<TR>
+			<TD VALIGN="TOP">STATUS_INVALID_DEVICE_REQUEST</TD>
+			<TD VALIGN="TOP">The request is invalid for this device</TD>
+		</TR>
+
+		<TR>
+			<TD VALIGN="TOP">STATUS_END_OF_FILE</TD>
+			<TD VALIGN="TOP">End-of-file marker reached</TD>
+		</TR>
+		
+		<TR>
+			<TD VALIGN="TOP">STATUS_DELETE_PENDING</TD>
+			<TD VALIGN="TOP">The device is in the process of being removed from the system</TD>
+		</TR>
+		
+		<TR>
+			<TD VALIGN="TOP">STATUS_INSUFFICIENT_RESOURCES</TD>
+			<TD VALIGN="TOP">Not enough system resources (often memory) to perform an operation</TD>
+		</TR>
+
+	</TABLE>
+</P>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+Always be sure to consult the DDK documentation for the correct setting of
+IoStatus.Information for the IRP you're dealing with. In some flavors of IRP_MJ_PNP, for
+example, this field is used as a pointer to a data structure that the PnP Manager is
+responsible for releasing. If you were to overstore the Information field with zero when
+failing the request, you would unwittingly cause a resource leak.</blockquote></div>
+</p>
+
+<p>Since completing a request is something you do so often, I find it useful to have a helper
+routine to carry out the mechanics:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+NTSTATUS燙ompleteRequest(PIRP營rp,燦TSTATUS爏tatus,燯LONG_PTR營nformation)
+牋{
+牋Irp-&gt;IoStatus.Status

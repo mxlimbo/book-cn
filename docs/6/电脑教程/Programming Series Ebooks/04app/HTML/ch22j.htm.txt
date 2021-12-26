@@ -1,0 +1,154 @@
+<HTML>
+<HEAD>
+<TITLE>API Hooking: An Example</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch22i.htm">[Previous]</A> <A HREF="ch23a.htm">[Next]</A><P>
+
+<A NAME="297"><H1>API Hooking: An Example</H1></A>
+
+<p>Injecting a DLL into a process's address space is a wonderful
+way to determine what's going on within a process. However, simply
+injecting a DLL doesn't give you enough information. You'll
+often want to know exactly how threads in a particular process are
+calling various functions, and you might want to modify what a Windows
+function does.</p>
+ 
+<p>For example, I know of a company that produced a DLL that was loaded by
+a database product. The DLL's job was to enhance and extend the
+capabilities of the database product. When the database product was
+terminated, the DLL received a DLL_PROCESS_DETACH notification and only
+then executed all of its cleanup code. The DLL would call functions in
+other DLLs to close socket connections, files, and other resources, but
+by the time it received the DLL_PROCESS_DETACH notification, other DLLs
+in the process's address space had already gotten their
+DLL_PROCESS_DETACH notifications. So when the company's DLL tried
+to clean up, many of the functions it called would fail because the
+other DLLs had already uninitialized.</p>
+ 
+<p>The company hired me to help them solve this problem, and I suggested
+that we hook the <i>ExitProcess</i> function. As you know, calling <i>
+ExitProcess</i> causes the system to notify the DLLs with
+DLL_PROCESS_DETACH notifications. By hooking the <i>ExitProcess</i>
+function, we ensured that the company's DLL was notified when <i>
+ExitProcess</i> was called. This notification would come in before any
+DLLs got a DLL_PROCESS_DETACH notification; therefore, all of the DLLs
+in the process were still initialized and functioning properly. At this
+point, the company's DLL would know that the process was about to
+terminate and could perform all of its cleanup successfully. Then the
+operating system's <i>ExitProcess</i> function would be called,
+causing all of the DLLs to receive their DLL_PROCESS_DETACH notifications and clean up. The company's DLL would
+have no special cleanup to perform when it received this notification
+since it had already done what it needed to do.</p>
+ 
+<p>In this example, injecting the DLL came for free: the database
+application was already designed to allow this, and it loaded the
+company's DLL. When the company's DLL was loaded, it had to
+scan all the loaded executable and DLL modules for calls to <i>
+ExitProcess</i>. When it found calls to <i>ExitProcess</i>, the DLL had
+to modify the modules so that they would call a function in the
+company's DLL instead of the operating system's <i>
+ExitProcess</i> function. (This process is a lot simpler than it
+sounds.) Once the company's <i>ExitProcess</i> replacement function
+(or hook function, as it's more commonly called) executed its
+cleanup code, the operating system's <i>ExitProcess</i> function
+(in Kernel32.dll) was called.</p>
+ 
+<p>This example shows a typical use for API hooking. It solved a very real
+problem with very little code.</p>
+
+<A NAME="298"><H2>API Hooking by Overwriting Code</H2></A>
+
+<p>API hooking isn't new&#8212;developers have been using API
+hooking methods for years. When it comes to solving the problem I just
+described, the first &quot;solution&quot; that everyone comes to is to
+hook by overwriting code. Here's how this works:</p>
+
+<ol>
+<p><li> You locate the address of the function you want to hook in
+memory (say <i>ExitProcess</i> in Kernel32.dll).</li></p>
+
+<p><li> You save the first few bytes of this function in some memory of
+your own.</li></p>
+
+<p><li> You overwrite the first few bytes of this function with a JUMP
+CPU instruction that jumps to the memory address of your replacement
+function. Of course, your replacement function must have exactly the
+same signature as the function you're hooking: all the parameters
+must be the same, the return value must be the same, and the calling
+convention must be the same.</li></p>
+
+<p><li> Now, when a thread calls the hooked function, the JUMP
+instruction will actually jump to your replacement function. At this
+point, you can execute whatever code you'd like.</li></p>
+
+<p><li> You unhook the function by taking the saved bytes (from step 2)
+and placing them back at the beginning of the hooked function.</li></p>
+
+<p><li> You call the hooked function (which is no longer hooked), and
+the function performs its normal processing.</li></p>
+
+<p><li> When the original function returns, you execute steps 2 and 3
+again so that your replacement function will be called in the
+future.</li></p>
+</ol>
+
+<p>This method was heavily used by 16-bit Windows programmers and
+worked just fine in that environment. Today, this method has several
+serious shortcomings, and I strongly discourage its use. First, it is
+CPU-dependent: JUMP instructions on <i>x</i>86, Alpha, and other CPUs
+are different, and you must use hand-coded machine instructions to get
+this technique to work. Second, this method doesn't work at all in
+a preemptive, multithreaded environment. It takes time for a thread to
+overwrite the code at the beginning of a function. While the code is
+being overwritten, another thread might attempt to call the same
+function. The results are disastrous! So this method works only if you
+know that no more than one thread will attempt to call a particular
+function at any given time.</p>
+
+<p>
+<div class="note"><blockquote><b>Windows 98</b><hr>
+On Windows 98, the main Windows DLLs (Kernel32, AdvAPI32, User32, and
+GDI32) are protected in such a way that an application cannot overwrite
+their code pages. You can get around this by writing a virtual device
+driver (VxD).
+</blockquote></div>
+</p>
+
+<A NAME="299"><H2>API Hooking by Manipulating a Module's Import Section </H2></A>
+
+<p>As it turns out, another API hooking technique solves both of the
+problems I've mentioned. This technique is easy to implement and is
+quite robust. But to understand it, you must understand how dynamic
+linking works. In particular, you must understand what's contained
+in a module's imports section. While I haven't gone into the
+nitty-gritty details of data structures and the like, I did spend a
+good bit of <A HREF="ch19a.htm">Chapter 19</A> explaining how this section is generated and
+what's in it. You can refer back to that chapter as you read the
+information that follows.</p>
+ 
+<p>As you know, a module's import section contains the set of DLLs
+that the module requires in order to run. In addition, it contains the
+list of symbols that the module imports from each of the DLLs. When the
+module places a call to an imported function, the thread actually grabs
+the address of the desired imported function from the module's
+import section and then jumps to that address.</p>
+ 
+<p>So, to hook a particular function, all you do is change the address in
+the module's import section. That's it. No CPU-dependent stuff.
+And since you're not modifying the function's code in any way,
+you don't need to worry about any thread synchronization
+issues.</p>
+ 
+<p>The following function performs the magic. It looks in one module's
+import section for a reference to a symbol at a specific address. If
+such a reference exists, it changes the address of the symbol.</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+void燫eplaceIATEntryInOneMod(PCSTR爌szCalleeModName,

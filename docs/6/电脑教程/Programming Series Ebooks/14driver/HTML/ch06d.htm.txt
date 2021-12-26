@@ -1,0 +1,69 @@
+<HTML>
+<HEAD>
+<TITLE>Managing PnP State Transitions</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch06c.htm">[Previous]</A> <A HREF="ch06e.htm">[Next]</a>
+</p>
+
+<A NAME="188"><H1>Managing PnP State Transitions</H1></A>
+
+<p>As I said at the outset of this chapter, WDM drivers need to track their devices through the
+state transitions diagrammed in Figure 6-1. This state tracking also ties in with
+how you queue and cancel I/O requests. Cancellation in turn implicates the global cancel spin
+lock, which is a performance bottleneck in a multi-CPU system. The standard model of IRP
+processing can't solve all these interrelated problems. In this section, therefore,
+I'll present a new type of object&#8212;called a DEVQUEUE&#8212;that you can use in your PnP
+request handlers and in place of the standard model routines <b>StartPacket</b> and <b>StartNextPacket</b>. DEVQUEUE is my own invention, but it's based on sample drivers,
+especially PNPPOWER and CANCEL, that used to be in the DDK. See also the discussion of IRP
+cancellation in Ervin Peretz's &quot;The Windows Driver Model Simplifies Management of
+Device Driver I/O Requests,&quot; (<i>Microsoft Systems Journal,</i> January 1999). A portion
+of the IRP cancellation logic I'm describing also derives from work by Peretz and other
+Microsoft employees and by Jamie Hanrahan that had not been published at the time I was writing
+this book.</p>
+
+<p>I described the KDEVICE_QUEUE queue object in the previous chapter as encompassing an idle
+state, a busy but empty state, and a busy but not empty state. The support routines you use to
+manipulate a KDEVICE_QUEUE assume that if the device is not currently busy, all you want to do
+is start any new request running on the device. It's precisely this behavior that we need
+to overcome to successfully manage PnP states. Figure 6-4 illustrates the states of a
+DEVQUEUE.</p>
+
+<p>
+<A HREF="javascript:fullSize('F06wi04x.htm')"> <img src="images/F06wi04.JPG" width=404 height=352 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 6-4.</b> <i>States of a DEVQUEUE object.</i><!--/caption-->
+</p>
+
+
+<p>In the READY state, the queue operates much like a KDEVICE_QUEUE, accepting and forwarding
+requests to your <b>StartIo</b> routine in such a way that the device stays busy. In the
+STALLED state, however, the queue does not forward IRPs to StartIo even when the device is
+idle. In the REJECTING state, the queue doesn't even accept new IRPs. Figure 6-5
+illustrates the flow of IRPs through the queue.</p>
+
+<p>
+<A HREF="javascript:fullSize('F06wi05x.htm')"> <img src="images/F06wi05.JPG" width=404 height=340 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 6-5.</b> <i>Flow of IRPs through a DEVQUEUE.</i><!--/caption-->
+</p>
+
+
+<A NAME="189"><H2>Using DEVQUEUE for IRP Queuing and Cancellation</H2></A>
+
+<p>You define a DEVQUEUE object for each queue of requests you'll manage in the driver. For
+example, if your device manages reads and writes in a single queue, you'd define one
+DEVQUEUE:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>typedef爏truct燺DEVICE_EXTENSION爗
+牋...
+牋DEVQUEUE燿qReadWrite;

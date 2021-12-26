@@ -1,0 +1,120 @@
+<HTML>
+<HEAD>
+<TITLE>Kernel Dispatcher Objects</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch04d.htm">[Previous]</A> <A HREF="ch04f.htm">[Next]</a>
+</p>
+
+<A NAME="119"><H1>Kernel Dispatcher Objects</H1></A>
+
+<p>The Windows NT kernel provides five types of synchronization objects that you can use to
+control the flow of nonarbitrary threads. See Table 4-1 for a summary of these <i>kernel
+dispatcher object</i> types and their uses. At any moment, one of these objects is爄n one of
+two states: <i>signalled</i> or <i>not-signalled.</i> At times when it's permissible for
+you to block a thread in whose context you're running, you can wait for one or more爋bjects
+to reach the signalled state by calling <b>KeWaitForSingleObject</b> or <b>KeWaitForMultipleObjects</b>. The kernel also provides routines for initializing and
+controlling the state of each of these objects.</p>
+
+<p><b>Table 4-1.</b> <i>Kernel dispatcher objects.</i></p>
+
+<P>
+<table cellpadding=5 width="95%">
+<tr> 
+<th><i>Object</i>  </th>
+<th><i>Data Type</i>  </th>
+<th><i>Description</i>  </th></tr>
+<tr>
+<td valign="top">Event  </td>
+<td valign="top">KEVENT  </td>
+<td valign="top">Blocks a thread until some other thread detects that an event has occurred  </td></tr>
+<tr>
+<td valign="top">Semaphore  </td>
+<td valign="top">KSEMAPHORE  </td>
+<td valign="top">Used instead of an event when an arbitrary number of wait calls can be satisfied  </td></tr>
+<tr>
+<td valign="top">Mutex  </td>
+<td valign="top">KMUTEX  </td>
+<td valign="top">Excludes other threads from executing a particular section of code  </td></tr>
+<tr>
+<td valign="top">Timer  </td>
+<td valign="top">KTIMER  </td>
+<td valign="top">Delays execution of a thread for some period of time  </td></tr>
+<tr>
+<td valign="top">Thread  </td>
+<td valign="top">KTHREAD  </td>
+<td valign="top">Blocks one thread until another thread terminates  </td></tr></table></p>
+
+
+<p>In the next few sections, I'll describe how to use the kernel dispatcher objects.
+I'll start by explaining when you can block a thread by calling one of the wait primitives,
+and then I'll discuss the support routines that you use with each of the object types.
+I'll finish this section by discussing the related concepts of thread alerts and
+asynchronous procedure call delivery.</p>
+
+<A NAME="120"><H2>How and When You Can Block</H2></A>
+
+<p>To understand when and how it's permissible for a WDM driver to block a thread on a
+kernel dispatcher object, you have to know some basic facts about threads. In general, whatever
+thread was executing at the time of a software or hardware interrupt continues to be the
+&quot;current&quot; thread while the kernel processes the interrupt. We speak of executing
+kernel-mode code &quot;in the context&quot; of this current thread. In response to interrupts
+of various kinds, the Windows NT scheduler might decide to switch threads, of course, in which
+case a new thread becomes &quot;current.&quot;</p>
+
+<p>We use the terms <i>arbitrary thread context</i> and <i>nonarbitrary thread context</i> to
+describe the precision with which we can know the thread in whose context we're currently
+operating in a driver subroutine. If we know that we're in the context of the thread which
+initiated an I/O request, the context is not arbitrary. Most of the time, however, a WDM driver
+can't know this fact because chance usually controls which thread is active when the
+interrupt occurs that results in the driver being called. When applications issue I/O requests,
+they cause a transition from user mode to kernel mode. The I/O Manager routines that create an
+IRP and send it to a driver dispatch routine continue to operate in this nonarbitrary thread
+context, as does the first dispatch routine to see the IRP. We use the term <i>highest-level
+driver</i> to describe the driver whose dispatch routine first receives the IRP.</p>
+
+<p>As a general rule, only the highest-level driver for a given device can know for sure that
+it's operating in a nonarbitrary thread context. This is because driver dispatch routines
+often put requests onto queues and return back to their callers. Queued requests are then
+removed from their queues and forwarded to lower-level drivers from within callback routines
+that execute later. Once a dispatch routine pends a request, all subsequent processing of that
+request must occur in arbitrary thread context.</p>
+
+<p>Having explained these facts about thread context, we can state a simple rule about when
+it's okay to block a thread:</p>
+
+<blockquote><b>Block only the thread that originated the request you're working on.</b></blockquote>
+
+<p>To follow this rule, you generally have to be the highest-level driver for the device
+that's getting sent the IRP. One important exception occurs for requests like
+IRP_MN_START_DEVICE&#8212;see <A HREF="ch06a.htm">Chapter 6</A>&#8212;that all drivers process in a synchronous way. That
+is, drivers don't queue or pend certain requests. When you receive one of these requests,
+you can trace the call/return stack directly back to the originator of the request. As
+we'll see in <A HREF="ch06a.htm">Chapter 6</A>, it's not only okay for you to block the thread in which you
+process these requests, but blocking and waiting is the prescribed way to handle them.</p>
+
+<p>One more rule should be obvious from the fact that thread switching doesn't occur at
+elevated IRQL:</p>
+
+<blockquote><b>You can't block a thread if you're executing at or above DISPATCH_LEVEL.</b></blockquote>
+
+<p>As a practical matter, this rule means that you must be in your DriverEntry or AddDevice
+function to block the current thread, or else in a driver dispatch function. All of these
+functions execute at PASSIVE_LEVEL. I'm hard-pressed to think of why you might need to
+block to finish DriverEntry or AddDevice, even, because those functions merely initialize data
+structures for downstream use.</p>
+
+<A NAME="121"><H2>Waiting on a Single Dispatcher Object</H2></A>
+
+<p>You call KeWaitForSingleObject as illustrated in the following example:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql()

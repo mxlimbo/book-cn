@@ -1,0 +1,61 @@
+<HTML>
+<HEAD>
+<TITLE>Delay-Loading a DLL</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch20c.htm">[Previous]</A> <A HREF="ch20e.htm">[Next]</A><P>
+
+<A NAME="274"><H1>Delay-Loading a DLL</H1></A>
+
+<p>Microsoft Visual C++ 6.0 offers a fantastic new feature to make working with DLLs easier: delay-load DLLs. A delay-load DLL is a DLL that is implicitly linked but not actually loaded until your code attempts to reference a symbol contained within the DLL. Delay-load DLLs are helpful in these situations:</p>
+
+<ul>
+<p><li>If your application uses several DLLs, its initialization time might be slow because the loader maps all of the required DLLs into the process's address space. One way to alleviate this problem is to spread out the loading of the DLLs as the process executes. Delay-load DLLs let you accomplish this easily.</li></p>
+
+<p><li>If you call a new function in your code and then try to run your application on an older version of the system in which the function does not exist, the loader reports an error and does not allow the application to run. You need a way to allow your application to run and then, if you detect (at run time) that the application is running on an older system, you don't call the missing function. For example, let's say that an application wants to use the PSAPI functions when running on Windows 2000 and the ToolHelp functions (like <i>Process32Next</i>) when running on Windows 98. When the application initializes, it calls <i>GetVersionEx</i> to determine the host operating system and properly calls the appropriate functions. Attempting to run this application on Windows 98 causes the loader to display an error message because the PSAPI.dll module doesn't exist on Windows 98. Again, delay-load DLLs let you solve this problem easily.</li></p>
+</ul>
+
+<p>I've spent quite a bit of time playing with the delay-load DLL
+feature of Visual C++ 6.0, and I must say that Microsoft has done an excellent job in implementing it. It offers many features and works equally well on both Windows 98 and Windows 2000.</p>
+
+<p>Let's start with the easy stuff: getting delay-load DLLs to work. First, you create a DLL just as you normally would. You also create an executable as you normally would but you do have to change a couple of linker switches and relink the executable. Here are the two linker switches you need to add:
+<P> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;/Lib:DelayImp.lib<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;/DelayLoad:MyDll.dll
+<P>The /Lib switch tells the linker to embed a special function, <i>_ _delayLoadHelper</i>, into your executable. The second switch tells the linker the following things:</p>
+
+<ul>
+<p><li>Remove MyDll.dll from the executable module's import section so that the operating system loader does not implicitly load the DLL when the process initializes.</li></p>
+
+<p><li>Embed a new Delay Import section (called .didata) in the
+executable indicating which functions are being imported from
+MyDll.dll.</li></p>
+
+<p><li>Resolve calls to the delay-loaded functions by having calls jump to the <i>_ _delayLoadHelper</i> function.</li></p>
+</ul>
+
+<p>When the application runs, a call to a delay-loaded function
+actually calls the <i>_ _delayLoadHelper</i> function instead. This function references the special Delay Import section and knows to call <i>LoadLibrary</i> followed by <i>GetProcAddress</i>. Once the address of the delay-loaded function is obtained, <i>_ _delayLoadHelper</i> fixes up calls to that function so future calls go directly to the delay-loaded function. Note that other functions in the same DLL still have to be fixed up the first time you call them. Also note that you can specify the /DelayLoad linker switch multiple times&#8212;once for every DLL that you want to delay-load.</p>
+
+<p>OK, that's it. It's that simple! It is, really. But you
+should also consider a couple of other issues. Normally, when the
+operating system loader loads your executable, it tries to load the required DLLs. If a DLL can't be loaded, the loader displays an error message. But for delay-loaded DLLs, the existence of the DLL is not checked at initialization time. If the DLL can't be found when a delay-loaded function is called, the <i>_ _delayLoadHelper</i> function raises a software exception. You can trap this exception using structured exception handling (SEH) and keep your application running. If you don't trap the exception, your process is terminated. (SEH is discussed in Chapters <a href="ch23a.htm">23</a>, <a href="ch24a.htm">24</a>, and <a href="ch25a.htm">25</a>.)</p>
+
+<p>Another problem can occur when <i>_ _delayLoadHelper</i> does find your DLL but the function you're trying to call isn't in the
+DLL. This can happen if the loader finds an old version of the DLL, for example. In this case, <i>_ _delayLoadHelper</i> also raises a software exception and the same rules apply. The sample application presented in the next section shows how to properly write the SEH code to handle these errors.</p>
+
+<p>You'll notice a lot of other stuff in the code that has nothing to do with SEH and error handling. It has to do with additional features that are available when you use delay-load DLLs. I'll describe these features shortly. If you don't use the more advanced features, you can delete this additional code.</p>
+
+<p>As you can see, the Visual C++ team has defined two software
+exception codes: <i>VcppException(ERROR_SEVERITY_ERROR,
+ERROR_MOD_NOT_FOUND)</i> and <i>VcppException(ERROR_SEVERITY_ERROR, ERROR_PROC_NOT_FOUND)</i>. These indicate that the DLL module was not found and that the function was not found, respectively. My exception filter function, <i>DelayLoadDllExceptionFilter</i>, checks for these two exception codes. If neither code is thrown, the filter returns EXCEPTION_CONTINUE_SEARCH, as any good filter should. (Never swallow exceptions that you don't know how to handle.) However, if one of these codes is thrown, the <i>_ _delayLoadHelper</i> function provides a pointer to a <i>DelayLoadInfo</i> structure containing some additional
+information. The <i>DelayLoadInfo</i> structure is defined in Visual C++'s DelayImp.h file as follows:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+typedef爏truct燚elayLoadInfo爗
+牋燚WORD牋牋牋牋牋燾b;牋牋牋牋

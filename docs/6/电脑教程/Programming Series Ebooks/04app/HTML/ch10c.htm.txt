@@ -1,0 +1,89 @@
+<HTML>
+<HEAD>
+<TITLE>Creating Thread-Safe Datatypes  and Inverse Semaphores</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch10b.htm">[Previous]</A> <A HREF="ch10d.htm">[Next]</A><P>
+
+<A NAME="146"><H1>Creating Thread-Safe Datatypes  and Inverse Semaphores</H1></A>
+
+<p>One day I was writing some code and reached a point where I needed a
+kernel object whose behavior was opposite that of a semaphore object. I
+needed the object to be signaled when its current resource count was 0
+and nonsignaled when its current resource count was greater than 0.</p>
+
+<p>I could see many uses for this type of object. For example, you might
+have a thread that needs to wake up after you execute some operation
+100 times. To pull this off, you would need a kernel object that you
+could initialize to 100. When the kernel object's count is greater
+than 0, the object should not be signaled. Each time you execute some
+operation, you would want to decrement the count in the kernel object.
+When the count reaches 0, the object should be signaled so that your
+other thread can wake up to process something. This is a common
+problem, and I don't understand why Windows doesn't offer such
+a built-in primitive.</p>
+
+<p>Actually, Microsoft could easily solve this problem by allowing a
+semaphore's current resource count to be negative. You could
+initialize the semaphore's count to -99 and then call <i>
+ReleaseSemaphore</i> after each operation. When the semaphore's
+count reached 1, the object would be signaled and your other thread
+could wake up to do its processing. Alas, Microsoft prohibits a
+semaphore's count from being negative, and I don't expect them
+to change this code in the foreseeable future.</p>
+
+<p>In this section, I'll present a set of C++ template classes that
+have the behavior of an inverse semaphore plus a whole lot more. The
+code for these classes is in the Interlocked.h file. (See Figure 10-2.)</p>
+
+<p>When I first set out to tackle this problem, I realized that a
+thread-safe way to manipulate a variable was at the heart of the
+solution. I wanted to design an elegant solution that would make code
+that references the variable trivially easy to write. Obviously, the
+easiest way to make a resource thread-safe is to protect it with a
+critical section. Using C++, it is fairly easy to endow a data object
+with thread safety. All you do is create a C++ class that contains the
+variable you want to protect and a CRITICAL_SECTION data structure.
+Then, in the constructor, you call <i>InitializeCriticalSection</i>,
+and in the destructor you call <i>DeleteCriticalSection</i>. For all
+the other member variables you call <i>EnterCriticalSection</i>, you
+manipulate the variable, and then you call <i>LeaveCriticalSection</i>.
+If you implement a C++ class this way, it is easy to write code that
+accesses a data structure in a thread-safe fashion. This is the
+founding principle of all the C++ classes I present in this section.
+(Of course, I could have used the optex presented in the previous
+section instead of critical sections.)</p>
+
+<p>The first class is a resource guard class called CResGuard. It contains
+a CRITICAL_SECTION data member and a LONG data member. The LONG data
+member keeps track of how many times the owning thread has entered the
+critical section. This information can be useful for debugging. The
+CResGuard object's constructor and destructor call <i>
+InitializeCriticalSection</i> and <i>DeleteCriticalSection</i>,
+respectively. Since only a single thread can create an object, a C++
+object's constructor and destructor do not have to be thread-safe.
+The <i>IsGuarded</i> member function simply returns whether <i>
+EnterCriticalSection</i> has been called at least once against this
+object. As I said before, this is for debugging purposes. Placing a
+CRITICAL_SECTION inside a C++ object ensures that the critical section
+is properly initialized and deleted.</p>
+
+<p>The CResGuard class also offers a nested public C++ class: CGuard. A
+CGuard object contains a reference to a CResGuard object and offers
+only a constructor and a destructor. The constructor calls the
+CResGuard's <i>Guard</i> member function, which calls <i>
+EnterCriticalSection</i>, and the CGuard's destructor calls the
+CResGuard's <i>Unguard</i> member function, which calls <i>
+LeaveCriticalSection</i>. Setting up these classes this way makes it
+easy to manipulate a CRITICAL_SECTION. Here is small code fragment that
+uses these classes:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+struct燬omeDataStruct爗
+牋

@@ -1,0 +1,161 @@
+<HTML>
+<HEAD>
+<TITLE>Direct Memory Access</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch07e.htm">[Previous]</A> <A HREF="ch08a.htm">[Next]</a>
+</p>
+
+<A NAME="250"><H1>Direct Memory Access</H1></A>
+
+<p>Windows 2000 supports direct memory access transfers based on the abstract model of a
+computer depicted in Figure 7-6. In this model, the computer is considered to have a collection
+of <i>map registers</i> that translate between physical CPU address and bus addresses. Each map
+register holds the address of one physical page frame. Hardware accesses memory for reading or
+writing by means of a &quot;logical,&quot; or bus-specific, address. The map registers play the
+same role as page table entries for software by allowing hardware to use different numeric
+values for their addresses than the CPU understands.<br>
+
+<p>
+<A HREF="javascript:fullSize('F07wi06x.htm')"> <img src="images/F07wi06.JPG" width=404 height=386 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 7-6.</b> <i>Abstract computer model for DMA transfers.</i><!--/caption-->
+</p>
+
+
+<p>Some CPUs, such as the Alpha, have actual hardware map registers. One of the steps in
+initializing a DMA transfer&#8212;specifically, the MapTransfer step I'll discuss
+presently&#8212;reserves some of these registers for your use. Other CPUs, such as the
+Intel爔86, do not have map registers, but you write your driver as if they did. The MapTransfer
+step on such a computer might end up reserving use of physical memory buffers that belong to
+the system, in which case the DMA operation will proceed using the reserved buffer. Obviously,
+something has to copy data to or from the DMA buffer before or after the transfer. In certain
+cases&#8212;for example, when dealing with a bus-master device that has scatter/gather
+capability&#8212;the MapTransfer phase might do all of nothing on an architecture without map
+registers.</p>
+<p>The Windows 2000 kernel uses a data structure known as an <i>adapter object</i> to describe the
+DMA characteristics of a device and to control access to potentially shared resources, such as
+system DMA channels and map registers. You get a pointer to an adapter object by calling <b>
+IoGetDmaAdapter</b> during your StartDevice processing. The adapter object has a pointer to a
+structure named <b>DmaOperations</b> that, in turn, contains pointers to all the other
+functions you need to call. See Table 74. These functions take the place of global functions
+(such as <b>IoAllocateAdapter</b>, <b>IoMapTransfer</b>, and the like) that you would have used
+in previous versions of Windows NT. In fact, the global names are now macros that invoke the
+DmaOperations functions.</p>
+
+<b>Table 7-4.</b> <i>DmaOperations function pointers for DMA helper routines.</i></p>
+<table cellpadding="5" width="95%">
+<tr><th><i>DmaOperations Function Pointer</i></th><th><i>Description</i></th></tr>
+<tr><td valign="top">PutDmaAdapter</td><td valign="top">Destroys adapter object</td></tr>
+<tr><td valign="top">AllocateCommonBuffer</td><td valign="top">Allocates a common buffer</td></tr>
+<tr><td valign="top">FreeCommonBuffer</td><td valign="top">Releases a common buffer</td></tr>
+<tr><td valign="top">AllocateAdapterChannel</td><td valign="top">Reserves adapter and map registers</td></tr>
+<tr><td valign="top">FlushAdapterBuffers</td><td valign="top">Flushes intermediate data buffers after transfer</td></tr>
+<tr><td valign="top">FreeAdapterChannel</td><td valign="top">Releases adapter object and map registers</td></tr>
+<tr><td valign="top">FreeMapRegisters</td><td valign="top">Releases map registers only</td></tr>
+<tr><td valign="top">MapTransfer</td><td valign="top">Programs one stage of a transfer</td></tr>
+<tr><td valign="top">GetDmaAlignment</td><td valign="top">Gets address alignment required for adapter</td></tr>
+<tr><td valign="top">ReadDmaCounter</td><td valign="top">Determines residual count</td></tr>
+<tr><td valign="top">GetScatterGatherList</td><td valign="top">Reserves adapter and construct scatter/gather list</td></tr>
+<tr><td valign="top">PutScatterGatherList</td><td valign="top">Releases scatter/gather list</td></tr>
+</table>
+
+<A NAME="251"><H2>Transfer Strategies</H2></A>
+
+<p>How you perform a DMA transfer depends on several factors:</p>
+
+<ul>
+<p><li> If your device has bus-mastering capability, it has the necessary electronics to access
+main memory if you tell it a few basic facts, such as where to start, how many units of data to
+transfer, whether you're performing an input or an output operation, and so on. You'll
+consult with your hardware designers to sort out these details, or else you'll be working
+from a specification that tells you what to do at the hardware level.</li></p>
+
+<p><li> A device with scatter/gather capability can transfer large blocks of data to or from
+discontiguous areas of physical memory. Using scatter/gather is advantageous for software
+because it eliminates the need to acquire large blocks of contiguous page frames. Pages can
+simply be locked wherever they're found in physical memory, and the device can be told
+where they are.</li></p>
+
+<p><li> If your device is not a bus master, you'll be using the system DMA controller on the
+motherboard of the computer. This style of DMA is sometimes called <i>slave DMA</i>. The system
+DMA controller associated with the ISA bus has some limitations on what physical memory it can
+access and how large a transfer it can perform without reprogramming. The controller for an
+EISA bus lacks these limits. You won't have to know&#8212;at least, not in Windows
+2000&#8212;which type of bus your hardware plugs in to because the operating system is able to
+take account of these different restrictions automatically.</li></p>
+
+<p><li> Ordinarily, DMA operations involve programming hardware map registers or copying data
+either before or after the operation. If your device needs to read or write data continuously,
+you don't want to do either of these steps for each I/O request&#8212;they might slow down
+processing too much to be acceptable in your particular situation. You can, therefore, allocate
+what's known as a <i>common buffer</i> that your driver and your device can both
+simultaneously access at any time.</li></p>
+</ul>
+
+
+<p>Notwithstanding the fact that many details will be different depending on how these four
+factors interplay, the steps you perform will have many common features. Figure 7-7 illustrates
+the overall operation of a transfer. You start the transfer in your StartIo routine by
+requesting ownership of your adapter object. Ownership has meaning only if you're sharing a
+system DMA channel with other devices, but the Windows 2000 DMA model demands that you perform
+this step anyway. When the I/O Manager is able to grant you ownership, it allocates some map
+registers for your temporary use and calls back to an <i>adapter control</i> routine you
+provide. In your adapter control routine, you perform a <i>transfer mapping</i> step to arrange
+the first (maybe the only) stage of the transfer. Multiple stages can be necessary if
+sufficient map registers aren't available; your device must be capable of handling any
+delay that might occur between stages.</p>
+
+<p>
+<A HREF="javascript:fullSize('F07wi07x.htm')"> <img src="images/F07wi07.JPG" width=404 height=250 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 7-7.</b> <i>Flow of ownership during DMA.</i><!--/caption-->
+</p>
+
+
+<p>Once your adapter control routine has initialized the map registers for the first stage, you
+signal your device to begin operation. Your device will instigate an interrupt when this
+initial transfer completes, whereupon you'll schedule a DPC. The DPC routine will initiate
+another staged transfer, if necessary, or else it will complete the request.</p>
+
+<p>Somewhere along the way, you'll release the map registers and the adapter object. The
+timing of these two events is one of the details that differs based on the factors I summarized
+earlier in this section.</p>
+
+<A NAME="252"><H2>Performing DMA Transfers</H2></A>
+
+<p>Now I'll go into detail about the mechanics of what's often called a <i>
+packet-based</i> DMA transfer, wherein you transfer a discrete amount of data by using the data
+buffer that accompanies an I/O request packet. Let's start simply and suppose that you face
+what will be a very common case nowadays: your device is a PCI bus master but does not have
+scatter/gather capability.</p>
+
+<p>To start with, when you create your device object, you'd ordinarily indicate that you
+want to use the direct method of data buffering by setting the DO_DIRECT_IO flag. You'd
+choose the direct method because you'll eventually be passing the address of a memory
+descriptor list as one of the arguments to the MapTransfer function you'll be calling. This
+choice poses a bit of a problem with regard to buffer alignment, though. Unless the application
+uses the FILE_FLAG_NO_BUFFERING flag in its call to <b>CreateFile</b>, the I/O Manager
+won't enforce the device object's <b>Alignment-Requirement</b> on user-mode data
+buffers. (It doesn't enforce the requirement for a kernel-mode caller at all except in the
+checked build.) If your device or the HAL requires DMA buffers to begin on some particular
+boundary, therefore, you might end up copying a small portion of the user data to a correctly
+aligned internal buffer to meet the alignment requirement&#8212;either that or fail any request
+that has a misaligned buffer.</p>
+
+<p>In your StartDevice function, you create an adapter object by using code like the
+following:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>INTERFACE_TYPE燽ustype;
+ULONG爅unk;
+IoGetDeviceProperty(pdx-&gt;Pdo,燚evicePropertyLegacyBusType,
+牋sizeof(bustype),

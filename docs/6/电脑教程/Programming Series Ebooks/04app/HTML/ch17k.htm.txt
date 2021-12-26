@@ -1,0 +1,74 @@
+<HTML>
+<HEAD>
+<TITLE>Sparsely Committed Memory-Mapped Files</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch17j.htm">[Previous]</A> <A HREF="ch18a.htm">[Next]</A><P>
+
+<A NAME="232"><H1>Sparsely Committed Memory-Mapped Files</H1></A>
+
+<p>In all the discussion of memory-mapped files so far, we see that the
+system requires that all storage for the memory-mapped file be
+committed either in the data file on disk or in the paging file. This
+means that we can't use storage as efficiently as we might like.
+Let's return to the discussion of the spreadsheet from the section
+&quot;<A HREF="ch15e.htm#195">When to Commit Physical Storage</A>&quot; in <A HREF="ch15a.htm">Chapter 15</A>. Let's
+say that you want to share the entire spreadsheet with another process.
+If we were to use memory-mapped files, we would need to commit the
+physical storage for the entire spreadsheet:</p>
+
+<p><table cellpadding="5"><tr><td>
+<pre>
+CELLDATA燙ellData[200][256];
+</pre></td></tr></table></p>
+
+<p>If a CELLDATA structure is 128 bytes, this array requires 6,553,600
+(200 &times; 256 &times; 128) bytes of physical storage. As I said in
+<A HREF="ch15a.htm">Chapter 15</A>, &quot;That's a lot of physical storage to allocate from
+the paging file right up front for a spreadsheet, especially when you
+consider that most users put information into only a few spreadsheet
+cells, leaving the majority unused.&quot;</p>
+
+<p>It should be obvious that we would prefer to share the spreadsheet as a
+file-mapping object without having to commit all of the physical
+storage up front. <i>CreateFileMapping</i> offers a way to do this by
+specifying either the SEC_RESERVE or the SEC_COMMIT flag in the <i>fdwProtect</i>
+parameter.</p>
+
+<p>These flags are meaningful only if you're creating a file-mapping
+object that is backed by the system's paging file. The SEC_COMMIT
+flag causes <i>CreateFileMapping</i> to commit storage from the
+system's paging file. This is also the result if you specify
+neither flag.</p>
+
+<p>When you call <i>CreateFileMapping</i> and pass the SEC_RESERVE flag,
+the system does not commit physical storage from the system's
+paging file; it just returns a handle to the file-mapping object. You
+can now call <i>MapViewOfFile</i> or <i>MapViewOfFileEx</i> to create a
+view of this file-mapping object. <i>MapViewOfFile</i> and <i>
+MapViewOfFileEx</i> will reserve a region of address space and will not
+commit any physical storage to back the region. Any attempts to access
+a memory address in the reserved region will cause the thread to raise
+an access violation.</p>
+
+<p>What we have here is a region of reserved address space and a handle
+to a file-mapping object that identifies the region. Other processes
+can use the same file-mapping object to map a view of the same region
+of address space. Physical storage is still not committed to the
+region, and if threads in other processes attempt to access a memory
+address of the view in their regions, these threads will raise access
+violations.</p>
+
+<p>Now here is where things get exciting. To commit physical storage to
+the shared region, all a thread has to do is call <i>
+VirtualAlloc</i>:</p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<pre>
+PVOID燰irtualAlloc(
+牋燩VOID爌vAddress,

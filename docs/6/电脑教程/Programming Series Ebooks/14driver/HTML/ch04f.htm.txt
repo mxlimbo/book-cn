@@ -1,0 +1,102 @@
+<HTML>
+<HEAD>
+<TITLE>Other Kernel-Mode Synchronization Primitives</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch04e.htm">[Previous]</A> <A HREF="ch05a.htm">[Next]</a>
+</p>
+
+<A NAME="137"><H1>Other Kernel-Mode Synchronization Primitives</H1></A>
+
+<p>The Windows 2000 kernel offers some additional methods for synchronizing execution between
+threads or for guarding access to shared objects. In this section, I'll discuss the <i>fast
+mutex</i>, which is a mutual exclusion object that offers faster performance than a kernel
+mutex because it's optimized for the case where no contention is actually occurring.
+I'll also describe the category of support functions that include the word <i>
+Interlocked</i> in their name somewhere. These functions carry out certain common
+operations&#8212;such as incrementing or decrementing an integer or inserting or removing an
+entry from a linked list&#8212;in an atomic way that prevents multitasking or multiprocessing
+interference.</p>
+
+<A NAME="138"><H2>Fast Mutex Objects</H2></A>
+
+<p>Compared to kernel mutexes, fast mutexes have the strengths and weaknesses summarized in
+Table 4-6. On the plus side, a fast mutex is much faster to acquire and release if there's
+no actual contention for it. On the minus side, you must avoid trying to recursively acquire a
+fast mutex, and that can mean preventing the delivery of APCs while you own it. Preventing APCs
+means raising IRQL to APC_LEVEL or above, which effectively negates thread priority and gains
+you the assurance that your code will execute except while the processor handles a
+higher-priority interrupt.</p>
+
+<p><b>Table 4-6.</b> <i>Comparison of kernel and fast mutex objects.</i></p>
+
+<P>
+<table cellpadding=5 width="95%">
+<tr> 
+<th><i>Kernel Mutex</i>  </th>
+<th><i>Fast Mutex</i>  </th></tr>
+<tr>
+<td valign="top">Can be acquired recursively by a single thread (system maintains a claim counter)  </td>
+<td valign="top">Cannot be acquired recursively  </td></tr>
+<tr>
+<td valign="top">Relatively slower  </td>
+<td valign="top">Relatively faster  </td></tr>
+<tr>
+<td valign="top">Owner won't receive any but &quot;special&quot; kernel APCs </td>
+<td valign="top">Owner won't receive <i>any</i> APCs  </td></tr>
+<tr>
+<td valign="top">Owner can't be removed from &quot;balance set&quot; (that is, can't be paged out) </td>
+<td valign="top">No automatic priority boost (if you run at or above APC_LEVEL)  </td></tr>
+<tr>
+<td valign="top">Can be part of a multiple object wait  </td>
+<td valign="top">Cannot be used as an argument to KeWaitForMultipleObjects  </td></tr>
+</table></p>
+
+<p>Incidentally, the DDK documentation about kernel mutex objects has long said that the kernel
+gives a priority boost to a thread that claims a mutex. I'm reliably informed that this
+hasn't actually been true since 1992 (the year, that is, not the Windows 2000 build
+number).</p>
+
+<p>Table 4-7 summarizes the service functions you use to work with fast mutexes.</p>
+
+<p><b>Table 4-7.</b> <i>Service functions for use with executive fast mutexes.</i></p>
+
+<P>
+<table cellpadding=5 width="95%">
+<tr> 
+<th><i>Service Function</i>  </th>
+<th><i>Description</i>  </th></tr>
+<tr>
+<td valign="top">ExAcquireFastMutex  </td>
+<td valign="top">Acquires ownership of mutex, waiting if necessary  </td></tr>
+<tr>
+<td valign="top">ExAcquireFastMutexUnsafe  </td>
+<td valign="top">Acquires ownership of mutex, waiting if necessary, in circumstance where caller has already disabled receipt of APCs  </td></tr>
+<tr>
+<td valign="top">ExInitializeFastMutex  </td>
+<td valign="top">Initializes mutex object  </td></tr>
+<tr>
+<td valign="top">ExReleaseFastMutex  </td>
+<td valign="top">Releases mutex  </td></tr>
+<tr>
+<td valign="top">ExReleaseFastMutexUnsafe  </td>
+<td valign="top">Releases mutex without reenabling APC delivery  </td></tr>
+<tr>
+<td valign="top">ExTryToAcquireFastMutex  </td>
+<td valign="top">Acquires mutex if possible to do so without waiting  </td></tr>
+</table></p>
+
+<p> To create a fast mutex, you must first allocate a FAST_MUTEX data structure in nonpaged memory.
+Then you initialize the object by &quot;calling&quot; <b>ExInitializeFastMutex</b>, which is
+really a macro in WDM.H:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign="top">
+<pre>ASSERT(KeGetCurrentIrql()

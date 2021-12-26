@@ -1,0 +1,255 @@
+<HTML>
+<HEAD>
+<TITLE>Memory-Mapped Executables and DLLs</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch17a.htm">[Previous]</A> <A HREF="ch17c.htm">[Next]</A><P>
+
+<A NAME="209"><H1>Memory-Mapped Executables and DLLs</H1></A>
+
+<p>When a thread calls <i>CreateProcess</i>, the system performs the
+following steps:</p>
+
+<ol>
+<p><li>The system locates the .exe file specified in the call to <i>
+CreateProcess</i>. If the .exe file cannot be found, the process is not
+created and <i>CreateProcess</i> returns FALSE.</li></p>
+
+<p><li>The system creates a new process kernel object.</li></p>
+
+<p><li>The system creates a private address space for this new
+process.</li></p>
+
+<p><li>The system reserves a region of address space large enough to
+contain the .exe file. The desired location of this region is specified
+inside the .exe file itself. By default, an .exe file's base
+address is 0x00400000 (this address might be different for a 64-bit
+application running on 64-bit Windows 2000). However, you can override
+this when you create your application's .exe file by using the
+linker's /BASE option when you link your application.</li></p>
+
+<p><li>The system notes that the physical storage backing the reserved
+region is in the .exe file on disk instead of the system's paging
+file.</li></p>
+</ol>
+
+<p>After the .exe file has been mapped into the process's address
+space, the system accesses a section of the .exe file that lists the
+DLLs containing functions that the code in the .exe calls. The system
+then calls <i>LoadLibrary</i> for each of these DLLs, and if any of the
+DLLs require additional DLLs, the system calls <i>LoadLibrary</i> to
+load those DLLs as well. Every time <i>LoadLibrary</i> is called to
+load a DLL, the system performs steps similar to steps 4 and 5
+above:</p>
+
+<ol>
+<p><li>The system reserves a region of address space large enough to
+contain the DLL file. The desired location of this region is specified
+inside the DLL file itself. By default, Microsoft Visual C++ makes the
+DLL's base address 0x10000000 (this address might be different for
+a 64-bit DLL running on 64-bit Windows 2000). However, you can override
+this when you build your DLL by using the linker's /BASE option.
+All the standard system DLLs that ship with Windows have different base
+addresses so that they don't overlap if loaded into a single
+address space.</li></p>
+
+<p><li>If the system is unable to reserve a region at the DLL's
+preferred base address, either because the region is occupied by
+another DLL or .exe or because the region just isn't big enough,
+the system will then try to find another region of address space to
+reserve for the DLL. It is unfortunate when a DLL cannot load at its
+preferred base address for two reasons. First, the system might not be
+able to load the DLL if it does not have relocation information. (You
+can remove relocation information from a DLL when it is created by
+using the linker's /FIXED switch. This makes the DLL file smaller,
+but it also means that the DLL <i>must</i> load at its preferred
+address or it can't load at all.) Second, the system must perform
+some relocations within the DLL. In Windows 98, the system can apply
+the relocations as pages are swapped into RAM. In Windows 2000, these
+relocations require additional storage from the system's paging
+file; they also increase the amount of time needed to load the
+DLL.</li></p>
+
+<p><li>The system notes that the physical storage backing the reserved
+region is in the DLL file on disk instead of in the system's paging
+file. If Windows 2000 has to perform relocations because the DLL could
+not load at its preferred base address, the system also notes that some
+of the physical storage for the DLL is mapped to the paging file.</li></p>
+</ol>
+
+<p>If for some reason the system is unable to map the .exe and all the
+required DLLs, the system displays a message box to the user and frees
+the process's address space and the process object. <i>
+CreateProcess</i> will return FALSE to its caller; the caller can call
+<i>GetLastError</i> to get a better idea of why the process could not
+be created.</p>
+
+<p>After all the .exe and DLL files have been mapped into the
+process's address space, the system can begin executing the .exe
+file's startup code. After the .exe file has been mapped, the
+system takes care of all the paging, buffering, and caching. For
+example, if code in the .exe causes it to jump to the address of an
+instruction that isn't loaded into memory, a fault will occur. The
+system detects the fault and automatically loads the page of code from
+the file's image into a page of RAM. Then the system maps the page
+of RAM to the proper location in the process's address space and
+allows the thread to continue executing as though the page of code were
+loaded all along. Of course, all this is invisible to the application.
+This process is repeated each time any thread in the process attempts
+to access code or data that is not loaded into RAM.</p>
+
+<A NAME="210"><H2>Static Data Is Not Shared by Multiple Instances of an Executable or a DLL</H2></A>
+
+<p>When you create a new process for an application that is already
+running, the system simply opens another memory-mapped view of the
+file-mapping object that identifies the executable file's image and
+creates a new process object and a new thread object (for the primary
+thread). The system also assigns new process and thread IDs to these
+objects. By using memory-mapped files, multiple running instances of
+the same application can share the same code and data in RAM.</p>
+
+<p>Note one small problem here. Processes use a flat address space.
+When you compile and link your program, all the code and data are
+thrown together as one large entity. The data is separated from the
+code but only to the extent that it follows the code in the .exe
+file.<a href="footnotesa.htm#ch1701"><sup>1</sup></a> The following illustration shows a simplified view of
+how the code and data for an application are loaded into virtual memory
+and then mapped into an application's address space.</p>
+
+<p>
+<A HREF="javascript:fullSize('G17SI01x.htm')"> <img src="images/G17SI01.JPG" width=404 height=153 border=0 ALT="Click to view at full size."> </A>
+</p>
+
+<p>As an example, let's say that a second instance of an
+application is run. The system simply maps the pages of virtual memory
+containing the file's code and data into the second
+application's address space, as shown here.</p>
+
+<p>
+<A HREF="javascript:fullSize('G17SI02x.htm')"> <img src="images/G17SI02.JPG" width=404 height=152 border=0 ALT="Click to view at full size."> </A>
+</p>
+
+
+
+<p>If one instance of the application alters some global variables
+residing in a data page, the memory contents for all instances of the
+application change. This type of change could cause disastrous effects
+and must not be allowed.</p>
+
+<p>The system prohibits this by using the copy-on-write feature of the
+memory management system. Any time an application attempts to write to
+its memory-mapped file, the system catches the attempt, allocates a new
+block of memory for the page containing the memory the application is
+trying to write to, copies the contents of the page, and allows the
+application to write to this newly allocated memory block. As a result,
+no other instances of the same application are affected. The following
+illustration shows what happens when the first instance of an
+application attempts to change a global variable in data page 2.</p>
+
+<p>
+<A HREF="javascript:fullSize('G17SI03x.htm')"> <img src="images/G17SI03.JPG" width=404 height=172 border=0 ALT="Click to view at full size."> </A>
+</p>
+
+<p>The system allocated a new page of virtual memory and copied the
+contents of data page 2 into it. The first instance's address space
+is changed so that the new data page is mapped into the address space
+at the same location as the original address page. Now the system can
+let the process alter the global variable without fear of altering the
+data for another instance of the same application.</p>
+
+<p>A similar sequence of events occurs when an application is being
+debugged. Let's say that you're running multiple instances of
+an application and want to debug only one instance. You access your
+debugger and set a breakpoint in a line of source code. The debugger
+modifies your code by changing one of your assembly language
+instructions to an instruction that causes the debugger to activate
+itself. So you have the same problem again. When the debugger modifies
+the code, it causes all instances of the application to activate the
+debugger when the changed assembly instruction is executed. To fix this
+situation, the system again uses copy-on-write memory. When the system
+senses that the debugger is attempting to change the code, it allocates
+a new block of memory, copies the page containing the instruction into
+the new page, and allows the debugger to modify the code in the page
+copy.</p>
+
+<p><div class="note"><blockquote><b>Windows 98</b><hr>
+When a process is loaded, the system examines all the file image's pages.
+The system commits storage in the paging file immediately for those
+pages that would normally be protected with the copy-on-write
+attribute. These pages are simply committed; they are not touched in
+any way. When a page in the file image is accessed, the system loads
+the appropriate page. If that page is never modified, it can be
+discarded from memory and reloaded when necessary. If the file's
+page is modified, however, the system swaps the modified page to one of
+the previously committed pages in the paging file.
+
+<p>The only difference in behavior between Windows 2000 and
+Windows 98 occurs when you have two copies of a module loaded and the
+writable data hasn't been modified. In this case, processes running
+under Windows 2000 share the data, while under Windows 98 each process
+receives its own copy of the data. Windows 2000 and Windows 98 behave
+exactly the same if only one copy of the module is loaded or if the
+writable data has been modified (which is normally the
+case).</p></blockquote></div></p>
+
+<A NAME="211"><H2>Sharing Static Data Across Multiple Instances of an Executable or a DLL</H2></A>
+
+<p>The fact that global and static data is not shared by multiple
+mappings of the same .exe or DLL is a safe default. However, on some
+occasions it is useful and convenient for multiple mappings of an .exe
+to share a single instance of a variable. For example, Windows offers
+no easy way to determine whether the user is running multiple instances
+of an application. But if you could get all the instances to share a
+single global variable, this global variable could reflect the number
+of instances running. When the user invoked an instance of the
+application, the new instance's thread could simply check the value
+of the global variable (which had been updated by another instance),
+and if the count were greater than 1, the second instance could notify
+the user that only one instance of the application is allowed to run
+and the second instance would terminate.</p>
+
+<p>This section discusses a technique that allows you to share
+variables among all instances of an .exe or a DLL. But before we dive
+too deeply into the details, you'll need a little background
+information....</p>
+
+<p>Every .exe or DLL file image is composed of a collection of
+sections. By convention, each standard section name begins with a
+period. For example, when you compile your program, the compiler places
+all the code in a section called <i>.text</i>. The compiler also places
+all the uninitialized data in a <i>.bss</i> section and all the
+initialized data in a <i>.data</i> section.</p>
+
+<p>Each section has a combination of the following attributes
+associated with it, as shown in the following table.</p>
+
+<p><table width="95%" cellpadding="5">
+<tr><th>Attribute</th>
+<th>Meaning</th></tr>
+
+<tr><td valign="TOP">READ</td>
+<td valign="TOP">The bytes in the section can be read from.</td></tr>
+
+<tr><td valign="TOP">WRITE</td>
+<td valign="TOP">The bytes in the section can be written to.</td></tr>
+
+<tr><td valign="TOP">EXECUTE</td>
+<td valign="TOP">The bytes in the section can be executed.</td></tr>
+
+<tr><td valign="TOP">SHARED</td>
+<td valign="TOP">The bytes in the section are shared across multiple instances. (This attribute effectively turns off the copy-on-write mechanism.)</td></tr>
+</table></p>
+
+<p>Using Microsoft Visual Studio's DumpBin utility (with the
+/Headers switch), you can see the list of sections in an .exe or DLL
+image file. The following excerpt was generated by running DumpBin on
+an executable file:</p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<pre>
+SECTION燞EADER

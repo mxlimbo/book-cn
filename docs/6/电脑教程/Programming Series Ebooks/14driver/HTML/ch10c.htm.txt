@@ -1,0 +1,180 @@
+<HTML>
+<HEAD>
+<TITLE>WDM Drivers and WMI</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch10b.htm">[Previous]</A> <A HREF="ch10d.htm">[Next]</a>
+</p>
+
+<A NAME="333"><H1>WDM Drivers and WMI</H1></A>
+
+<p>The kernel-mode support for WMI is based primarily on IRPs with the major code
+IRP_MJ_SYSTEM_CONTROL. You must register your desire to receive these IRPs by making the
+following call:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>IoWMIRegistrationControl(fdo,燱MI_ACTION_REGISTER);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>The appropriate time to make the registration call is in the <b>AddDevice</b> routine at a
+point when it would be safe for the system to send the driver a system control IRP. In due
+course, the system will send you an IRP_MJ_SYSTEM_CONTROL request to obtain detailed
+registration information about your device. You'll balance the registration call with
+another call at <b>RemoveDevice</b> time:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>IoWMIRegistrationControl(fdo,燱MI_ACTION_DEREGISTER);</pre>
+</td></tr>
+</table>
+</p>
+
+<p>If any WMI requests are outstanding at the time you make the deregistration call, <b>
+IoWMIRegistrationControl</b> waits until they complete. It's therefore necessary to make
+sure that your driver is still capable of responding to IRPs when you deregister. You can fail
+new IRPs with STATUS_DELETE_PENDING, but you have to respond.</p>
+
+<p>Before explaining how to service the registration request, I'll describe how you handle
+system control IRPs in general. An IRP_MJ_SYSTEM_CONTROL request can have any of the minor
+function codes listed in Table 10-1.</p>
+
+<p><b>Table 10-1.</b> <i>Minor function codes for IRP_MJ_SYSTEM_CONTROL.</i></p>
+
+<p><table cellpadding=5 width="95%"><tr>
+<th><i>Minor Function Code</i></th>
+<th><i>Description</i></th>
+</tr><tr>
+<td valign="top">IRP_MN_QUERY_ALL_DATA</td>
+<td valign="top">Get all instances of every item in a data block</td>
+</tr><tr>
+<td valign="top">IRP_MN_QUERY_SINGLE_INSTANCE</td>
+<td valign="top">Get every item in a single instance of a data block</td>
+</tr><tr>
+<td valign="top">IRP_MN_CHANGE_SINGLE_INSTANCE</td>
+<td valign="top">Replace every item in a single instance of a data block</td>
+</tr><tr>
+<td valign="top">IRP_MN_CHANGE_SINGLE_ITEM</td>
+<td valign="top">Change one item in a data block</td>
+</tr><tr>
+<td valign="top">IRP_MN_ENABLE_EVENTS</td>
+<td valign="top">Enable event generation</td>
+</tr><tr>
+<td valign="top">IRP_MN_DISABLE_EVENTS</td>
+<td valign="top">Disable event generation</td>
+</tr><tr>
+<td valign="top">IRP_MN_ENABLE_COLLECTION</td>
+<td valign="top">Start collecting &quot;expensive&quot; statistics</td>
+</tr><tr>
+<td valign="top">IRP_MN_DISABLE_COLLECTION</td>
+<td valign="top">Stop collecting &quot;expensive&quot; statistics</td>
+</tr><tr>
+<td valign="top">IRP_MN_REGINFO</td>
+<td valign="top">Get detailed registration information</td>
+</tr><tr>
+<td valign="top">IRP_MN_EXECUTE_METHOD</td>
+<td valign="top">Execute a method function</td>
+</tr></table></p>
+
+
+
+<p>The <b>Parameters</b> union in the stack location includes a <b>WMI</b> substructure with
+parameters for the system control request:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>struct爗
+牋ULONG_PTR燩roviderId;
+牋PVOID燚ataPath;
+牋ULONG燘ufferSize;
+牋PVOID燘uffer;
+牋}燱MI;</pre>
+</td></tr>
+</table>
+</p>
+
+<p><b>ProviderId</b> is a pointer to the device object to which the request is directed. <b>
+Buffer</b> is the address of an input/output area where the first several bytes are mapped by
+the WNODE_HEADER structure. <b>BufferSize</b> gives the size of the buffer area. Your dispatch
+function will extract some information from this buffer and will also return results in the
+same memory area. For all the minor functions except IRP_MN_REGINFO, <b>DataPath</b> is the 
+address of a 128-bit GUID that identifies a class of data block. The DataPath field is either 
+WMIREGISTER or WMIUPDATE (0 or 1, respectively) for an IRP_MN_REGINFO request, depending on 
+whether you're being told to provide initial registration information or just to update the 
+information you supplied earlier.</p>
+
+<p>When you design your driver, you must choose between two ways of handling system control IRPs.
+One method is relying on the facilities of the WMILIB support &quot;driver.&quot; WMILIB is
+really a kernel-mode DLL that exports services you can call from your driver to handle some of
+the annoying mechanics of IRP processing. The other method is simply handling the IRPs
+yourself. If you use WMILIB, you'll end up writing less code but you won't be able to
+use every last feature of WMI to its fullest&#8212;you'll be limited to the subset supported
+by WMILIB. Furthermore, your driver won't run under the original retail release of
+Microsoft Windows 98 because WMILIB wasn't available then. <i>Before you let the lack of
+WMILIB in original Windows 98 ruin your day, consult the compatibility notes at the end of this
+chapter.</i></p>
+
+<p>WMILIB suffices for most drivers, so I'm going to limit my discussion to using WMILIB.
+The DDK documentation describes how to handle system control IRPs yourself if you absolutely
+have to.</p>
+
+<A NAME="334"><H2>Delegating IRPs to WMILIB</H2></A>
+
+<p>In your dispatch routine for system control IRPs, you delegate most of the work to WMILIB
+with code like the following:</p>
+
+<table width="95%" cellpadding="5" valign="TOP" border=0>
+<tr><td valign=top>
+<pre>
+1 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+2 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+
+
+
+3 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+4 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+
+
+
+
+5 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+
+
+6 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+
+7 <img src="images/arorite2.jpg" width=17 height=10 alt="" border="0">
+</pre>
+</td>
+<td valign=top>
+<pre>
+WMIGUIDREGINFO爂uidlist[]

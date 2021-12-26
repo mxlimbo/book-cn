@@ -1,0 +1,89 @@
+<HTML>
+<HEAD>
+<TITLE>Using IP_HDRINCL</title>
+<link rel="STYLESHEET" type="text/css" href="Library.css">
+
+
+</head>
+<BODY BGCOLOR="#FFFFFF" TEXT="#000000">
+<SCRIPT LANGUAGE="JavaScript">
+<!--
+
+function fullSize(sURL){
+	window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+
+function LibraryHeaderNav(sBackward, sForward, sImgLeftOff, sImgLeftOn, sImgRightOff, sImgRightOn, iH, iW, sImgLeftStyle, sImgRightStyle, sImgRuleStyle, sRuleColor, sRuleSize){
+	var tableStr;
+	//validate questionable args for defs
+	tableStr = "<TABLE BORDER=0 CELLPADDING=0 CELLSPACING=0 border=0 width=100%>";
+	tableStr += "<TR VALIGN=top ALIGN=right>";
+
+	tableStr += "<TD align=right class=" + sImgRuleStyle + ">&nbsp;</TD>";	
+	
+	tableStr += "<TD width=34 align=right class=" + sImgLeftStyle + ">";
+	tableStr += "<A href='" + sBackward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgLeftOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgLeftOff + '\'\"';
+	tableStr += " SRC='" + sImgLeftOff + "' vspace=0 hspace=0></a></TD>";
+	
+	tableStr += "<TD width=34 align=left class=" + sImgRightStyle + ">";
+	tableStr += "<A href='" + sForward + "'>";
+	tableStr += "<IMG HEIGHT=" + iH + " WIDTH=" + iW + " BORDER=0";
+	tableStr += ' OnMouseOver=\"this.src=\'' + sImgRightOn + '\'\"';
+	tableStr += ' OnMouseOut=\"this.src=\'' + sImgRightOff + '\'\"';
+	tableStr += " SRC='" + sImgRightOff + "' vspace=0 hspace=0></a></TD></TR>";
+
+	tableStr += "<TR VALIGN=top>";
+	tableStr += "<TD height=3 align=center colspan=3 class=" + sImgRuleStyle + ">";
+	tableStr += "<HR color=" + sRuleColor + " size=" + sRuleSize + "></TD></TR></TABLE>";
+	//alert(tableStr);
+	document.write(tableStr);
+}
+
+ 																						     //purple is: #aa22aa   orange is: #ff9900
+LibraryHeaderNav("ch13d.htm" , "ch13f.htm", "images/unit_o_a1.gif", "images/unit_o_a2.gif", "images/unit_o_b1.gif", "images/unit_o_b2.gif", 18, 34, "unit01", "unit02", "headerrule", "#ff9900", "2");
+//--></SCRIPT>
+
+
+
+<A NAME="410"><h1>Using <i>IP_HDRINCL</i></h1></A>
+<p>The one limitation of raw sockets is that you can work only with certain protocols that are already defined, such as ICMP and IGMP. You cannot create a raw socket with <i>IPPROTO_UDP</i> and manipulate the UDP header; likewise with TCP. To manipulate the IP header as well as either the TCP or UDP header (or any other protocol encapsulated in IP), you must use the <i>IP_HDRINCL</i> socket option with a raw socket. This option allows you to build your own IP header as well as the headers of other protocols.</p>
+
+<p>Additionally, if you want to implement your own protocol scheme that is encapsulated in IP, you can create a raw socket and use the <i>IPPROTO_RAW</i> value as the protocol. This allows you to set the protocol field in the IP header manually and build your own custom protocol header. In this section, we'll take a look at how to build your own UDP packets so that you can gain a good understanding of the steps involved. Once you understand how to manipulate the UDP header, creating your own protocol header or manipulating other protocols encapsulated in IP is fairly trivial.</p>
+
+<p>When you use the <i>IP_HDRINCL</i> option, you are required to fill in the IP header yourself for every send call, as well as the headers of any other protocols wrapped within. The IP header is described in <a href="ch09a.htm">Chapter 9</A>, Figure 9-3, in the section on the <i>IP_HDRINCL</i> option. The UDP header is quite a bit simpler than IP. It is only 8 bytes long and contains only four fields, as shown in Figure 13-5. The first two fields are the source and destination port numbers. They are 16 bits each. The third field is the UDP length, which is the length, in bytes, of the UDP header and data. The fourth field is the checksum, which we will discuss shortly. The last part of the UDP packet is the data.</p>
+
+<p>
+<img src="images/F13JI05.JPG" width=386 height=98  border=0>
+</p><p>
+<!-- caption --><b>Figure 13-5.</b> <i>UDP header format</i><!-- /caption -->
+</p>
+
+<p>Because UDP is an unreliable protocol, calculating the checksum is optional; however, we will cover it for the sake of completeness. Unlike the IP checksum, which covers only the IP header, the UDP checksum covers the data and also includes part of the IP header. The additional fields required to calculate the UDP checksum are known as a pseudo-header. A pseudo-header is composed of the following items:</p>
+
+<ul>
+<p><li>32-bit source IP address (IP header)</li></p>
+<p><li>32-bit destination IP address (IP header)</li></p>
+<p><li>8-bit field zeroed out</li></p>
+<p><li>8-bit protocol</li></p>
+<p><li>16-bit UDP length</li></p>
+</ul>
+
+<p>Added to these items are the UDP header and data. The method of calculating the checksum is the same as for IP and ICMP: the 16-bit one's complement sum. Because the data can be an odd number, it might be necessary to pad a zero byte to the end of the data in order to calculate the checksum. This pad field is not transmitted as part of the data. Figure 13-6 illustrates all the fields required for the checksum calculation. The first three 32-bit words make up the UDP pseudo-header. Following this is the UDP header and its data. Notice that because the checksum is calculated on 16-bit values, the data might need to be padded with a zero byte.</p>
+
+<p>
+<img src="images/F13JI06.JPG" width=387 height=290  border=0>
+</p><p>
+<!-- caption --><b>Figure 13-6.</b> <i>UDP pseudo-header</i><!-- /caption -->
+</p>
+
+<p>Our example program in Figure 13-7 simply sends a UDP packet to any given destination IP and port from any source IP and port of your choice. The first step is to create a raw socket and set the <i>IP_HDRINCL</i> flag:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<pre>
+SOCKET牋爏;
+BOOL牋牋燽Opt;
+
+s

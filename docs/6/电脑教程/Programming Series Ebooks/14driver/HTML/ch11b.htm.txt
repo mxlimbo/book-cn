@@ -1,0 +1,637 @@
+<HTML>
+<HEAD>
+<TITLE>Programming Architecture</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch11a.htm">[Previous]</A> <A HREF="ch11c.htm">[Next]</a>
+</p>
+
+<A NAME="360"><H1>Programming Architecture</H1></A>
+
+<p>The authors of the USB specification anticipated that programmers would need to understand
+how to write host and device software without necessarily needing or wanting to understand the
+electrical characteristics of the bus. Chapter 5, &quot;USB Data Flow Model,&quot; and Chapter
+9, &quot;USB Device Framework,&quot; of the specification describe the features most useful to
+driver authors. In this section, I'll summarize those chapters.</p>
+
+<A NAME="361"><H2>Device Hierarchy</H2></A>
+
+<p>Figure 11-1 illustrates the topology of a simple USB setup. A host controller unit connects
+to the system bus like other I/O devices might. The operating system communicates with the host
+controller by means of I/O ports or memory registers, and it receives event notifications from
+the host controller through an ordinary interrupt signal. The host controller in turn connects
+to a tree of USB devices. One kind of device, called a <i>hub,</i> serves as a connection point
+for other devices. Hubs can be daisy-chained together to a maximum depth defined by the USB
+specification. Other kinds of devices, such as cameras, mice, keyboards, and so on, plug into
+hubs. For the sake of precision, USB uses the term <i>function</i> to describe a device that
+isn't a hub.</p>
+
+<p>
+<A HREF="javascript:fullSize('F11wi01x.htm')"> <img src="images/F11wi01.JPG" width=404 height=360 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 11-1.</b> <i>Hierarchy of USB devices.</i><!--/caption-->
+</p>
+
+
+<A NAME="362"><H3>High-Speed and Low-Speed Devices</H3></A>
+
+<p>The USB specification provides for high-speed and low-speed devices. A low-speed device
+communicates at 1.5 megabits per second, whereas a high-speed device communicates eight times
+faster, at 12 megabits per second. A hub can tell the difference between high-speed and
+low-speed devices by electrical means. Communication normally occurs on the bus at the high
+speed, and hubs normally don't send data to low-speed devices. The operating system
+prefaces any message destined for a low-speed device with a special <i>preamble</i> packet that
+causes the hubs to temporarily enable the low-speed devices.</p>
+
+<A NAME="363"><H3>Power</H3></A>
+
+<p>The USB cable carries power as well as data signals. Each hub can supply electrical power to
+the devices attached to it and, in the case of subsidiary hubs, to downstream devices as well.
+USB imposes limits on how much power a bus-powered device can consume. These limits vary
+depending on whether the device is plugged in to a powered hub, how far the device is from the
+nearest powered hub, and so on. In addition, USB allows devices to operate in a low-power state
+and consume very little power&#8212;just enough to support wake-up and configuration signalling.
+Instead of relying on bus power, you can build independently powered hubs and devices.</p>
+
+<p>USB devices are able to wake up the system from a low-power state. When the system goes to
+low power, the operating system places the USB in the low-power state as well. A device
+possessing an enabled remote wake-up feature can later signal upstream to wake up upstream
+hubs, the USB host controller, and eventually the entire system.</p>
+
+<p>USB device designers should be aware of some limitations on wake-up signalling. First,
+remote system wake-up works only on a computer with an Advanced Configuration and Power
+Interface (ACPI) enabled BIOS. Older systems support either Advanced Power Management (APM) or
+no power management standard at all. Another limitation has to do with driver notification. WDM
+provides a method&#8212;the IRP_MN_WAIT_WAKE flavor of a power I/O request packet (IRP)&#8212;to
+notify a driver when its device wakes up the system. No notification occurs, however, if a
+device comes out of its low-power state when the system is already in the working state.</p>
+
+<A NAME="364"><H2>What's in a Device?</H2></A>
+
+<p>In general, each USB device can have one or more <i>configurations</i> that govern how it
+behaves. See Figure 11-2. A common reason to use more than one configuration relates to
+operating system support. You might, for example, have a simple configuration that the system
+BIOS uses and a more complex configuration that your Windows driver uses.</p>
+
+<p>
+<A HREF="javascript:fullSize('F11wi02x.htm')"> <img src="images/F11wi02.JPG" width=404 height=402 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 11-2.</b> <i>Device configurations, interfaces, and endpoints.</i><!--/caption-->
+</p>
+
+
+<p>Each configuration of a device embodies one or more <i>interfaces</i> that prescribe how
+software should access the hardware. This concept of an interface is similar to the concept I
+discussed in Chapter 2 (&quot;<A HREF="ch02a.htm#30">Basic Structure of a WDM Driver</A>&quot;) in connection with naming
+devices. That is, devices that support the same interface are essentially interchangeable in
+terms of software because they respond to the same commands in the same specified way. Also,
+interfaces frequently have <i>alternate settings</i> that correspond to different bandwidth
+requirements.</p>
+
+<p>A device interface exposes one or more <i>endpoints,</i> each of which serves as a terminus
+for a communications pipe. Figure 11-3 diagrams a layered communication model that illustrates
+the role of a pipe and an endpoint. At the lowest level, the USB wire connects the host bus
+controller to the bus interface on a device. At the second level, a <i>control pipe</i>
+connects system software to a logical device. At the third and highest level, a bundle of pipes
+connects client software with the collection of interfaces that constitutes the device's
+function. Information actually flows vertically up and down both sides of the diagram, but
+it's useful to think of the pipes as carrying information horizontally between the
+corresponding layers.</p>
+
+<p>
+<A HREF="javascript:fullSize('F11wi03x.htm')"> <img src="images/F11wi03.JPG" width=404 height=322 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 11-3.</b> <i>Layered model for USB communication.</i><!--/caption-->
+</p>
+
+
+<p>A set of drivers provided by Microsoft occupies the lower edge of the system software box in
+the figure. These drivers include a host controller driver (OPENHCI.SYS or UHCD.SYS), a hub
+driver (USBHUB.SYS), and a class driver used by the controller driver (USBD.SYS). For
+convenience, I'll lump all of these drivers together under the name <i>USBD</i> because
+that's the component our drivers primarily interact with. Collectively, they manage the
+hardware connection and the mechanics of communicating over the various pipes. WDM drivers,
+such as the ones you and I might write, occupy the upper edge of the system software box.
+Broadly speaking, the job of a WDM driver is to translate requests from client software into
+transactions that USBD can carry out. Client software deals with the actual functionality of
+the device. For example, an image-rendering application might occupy the client software slot
+opposite a still-image function such as that of a digital camera.</p>
+
+<A NAME="365"><H2>Information Flow</H2></A>
+
+<p>USB defines four methods of transferring data, as summarized in Table 11-1. The methods
+differ in the amount of data that can be moved in a single transaction&#8212;see the next
+section for an explanation of the term <i>transaction</i>&#8212;in whether any particular
+periodicity or latency can be guaranteed, and in whether errors will be automatically
+corrected. Each method corresponds to a particular type of endpoint. In fact, endpoints of a
+given type (that is, control, bulk, interrupt, or isochronous) always communicate with the host
+by using the corresponding transfer type.</p>
+
+<p><b>Table 11-1.</b> <i>Data transfer types.</i></p>
+
+<p><table cellpadding=5 width="95%"><tr>
+<th><i>Transfer Type</i></th>
+<th><i>Description</i></th>
+<th><i>Lossless?</i></th>
+<th><i>Size(s)</i></th>
+<th><i>Latency Guarantee?</i></th>
+</tr><tr>
+<td valign="top">Control</td>
+<td valign="top">Used to send and receive structured information of a control nature</td>
+<td valign="top">Yes</td>
+<td valign="top"><img src="images/lessthan.jpg" width=12 height=13 border="0"> 8, 16, 32, 
+ or 64 bytes</td>
+<td valign="top">Best effort</td>
+</tr><tr>
+<td valign="top">Bulk</td>
+<td valign="top">Used to send or receive small blocks of unstructured data</td>
+<td valign="top">Yes</td>
+<td valign="top"><img src="images/lessthan.jpg" width=12 height=13 border="0"> 8, 16, 32, or 64 bytes</td>
+<td valign="top">No</td>
+</tr><tr>
+<td valign="top">Interrupt</td>
+<td valign="top">Like a bulk pipe, butincludes a maximum latency</td>
+<td valign="top">Yes</td>
+<td valign="top"><img src="images/lessthan.jpg" width=12 height=13 border="0"> 64 bytes</td>
+<td valign="top">Polled at guaranteed minimum
+ rate</td>
+</tr><tr>
+<td valign="top">Isochronous</td>
+<td valign="top">Used to send or receive large blocks of unstructured data with guaranteed periodicity</td>
+<td valign="top">No</td>
+<td valign="top"><img src="images/lessthan.jpg" width=12 height=13 border="0"> 1023 bytes</td>
+<td valign="top">Fixed
+ portion of
+ every 1-ms
+  frame</td>
+</tr></table></p>
+
+
+
+<p>Endpoints have several attributes in addition to their type. One endpoint attribute is the
+maximum amount of data that the endpoint can provide or consume in a single transaction.
+Control and bulk endpoints must specify one of a few discrete values, whereas interrupt and
+isochronous endpoints can specify any value less than or equal to an overall maximum. In
+general, any single transfer can involve less than the maximum amount of data that the endpoint
+is capable of handling. Another attribute of an endpoint is its direction, described as either
+<i>input</i> (information moves from the device to the host) or <i>output</i> (information
+moves from the host to the device). Finally, each endpoint has a number that functions along
+with the input/output direction indicator as the address of the endpoint.</p>
+
+<p>USB uses a <i>polling</i> protocol in which the host requests the device to carry out some
+function on a more or less regular basis. When a device needs to send data to the host, the
+host must somehow note this and issue a request to the device to send the data. In particular,
+USB devices don't interrupt the host computer in the traditional sense. In place of an
+asynchronous interrupt, USB provides interrupt endpoints that the host polls periodically.</p>
+
+<A NAME="366"><H3>Information Packaging</H3></A>
+
+<p>When a client program sends or receives data over a USB pipe, it first calls a Win32 API
+that ultimately causes the function driver (that's us) to receive an IRP. The driver's
+job is to direct the client request into a pipe ending at the appropriate endpoint on the
+device. It submits the requests to the bus driver, which breaks the requests into <i>
+transactions</i>. The bus driver schedules the transactions for presentation to the hardware.
+Information flows on the bus in <i>frames</i> that occur once every millisecond. The bus driver
+must correlate the duration of all outstanding transactions so as to fit them into frames.
+Figure 11-4 illustrates the result of this process.</p>
+
+<p>
+<A HREF="javascript:fullSize('F11wi04x.htm')"> <img src="images/F11wi04.JPG" width=404 height=208 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 11-4.</b> <i>Transaction and frame model for information flow.</i><!--/caption-->
+</p>
+
+
+<p>In USB, a transaction has one or more <i>phases</i>. A phase is a token, data, or handshake
+packet. Depending on the type, a transaction consists of a <i>token phase,</i> an optional <i>
+data phase,</i> and an optional <i>handshake phase,</i> as shown in Figure 11-5. During the
+token phase, the host transmits a packet of data to all currently configured devices. The token
+packet includes a device address and (often) an endpoint number. Only the addressed device will
+process the transaction; devices neither read nor write data on the bus for the duration of
+transactions addressed to other devices. During the data phase, data is placed on the bus. For
+output transactions, the host puts data on the bus and the addressed device consumes it. For
+input transactions, the roles are reversed and the device places data onto the bus for
+consumption by the host. During the handshake phase, either the device or the host places a
+packet onto the bus that provides status information. When a device provides the handshake
+packet, it can send an ACK packet to indicate successful receipt of information, a NAK packet
+to indicate that it's busy and didn't attempt to receive information, or a STALL packet
+to indicate that the transaction was correctly received but logically invalid in some way. When
+the host provides the handshake, it can send only an ACK packet.</p>
+
+<p>
+<img src="images/F11wi05.JPG" width=360 height=181 border=0>
+</p><p>
+<!--caption--><b>Figure 11-5.</b> <i>Phases of a bus transaction.</i><!--/caption-->
+</p>
+
+
+<p>You'll notice that there's no handshake packet that means, &quot;I found a
+transmission error in this transaction.&quot; Whoever is waiting for an acknowledgment is
+expected to realize that lack of acknowledgment implies an error and to retry the transaction.
+The USB designers believe that errors will be infrequent, by the way, which means that any
+occasional delay because of retries won't have a big effect on throughput.</p>
+
+<p><div class="sidebar"><blockquote>
+<b>More About Device Addressing</b>
+
+<p>The previous text says that <i>all</i> configured devices receive the electrical signals
+associated with every transaction. This is almost true, but a true renaissance programmer
+should know two more details. When a USB device first comes on line, it responds to a default
+address (which happens to be numerically zero, but you don't need to know that). Certain
+electrical signalling occurs to alert the host bus driver that a new device has arrived on the
+scene, whereupon the bus driver assigns a device address and sends a control transaction to
+tell &quot;device number zero&quot; what its real address is. From then on, the device answers
+only to the real address.</p>
+<p>The other detail concerns low-speed devices. The electronics of a low-speed device
+might misinterpret data arriving eight times faster than it expects. Furthermore, the cable
+connecting a low-speed device to the hub is not shielded and might generate undesirable
+electromagnetic interference if driven at high speed. Consequently, low-speed devices are not
+connected most of the time. That is, a hub keeps low-speed devices electrically isolated while
+high-speed transactions are occurring. When the host wants to communicate with a low-speed
+device, it sends a special <i>preamble packet</i> to switch the bus to low-speed operation for
+the duration of a single packet that begins shortly after the preamble. Thus, low-speed devices
+get an opportunity to see only low-speed transactions, but high-speed devices see all
+transactions.</p>
+</blockquote></div></p>
+
+<A NAME="367"><H3>States of an Endpoint</H3></A>
+
+<p>In general, an endpoint can be in any of the states illustrated in Figure 11-6. In the Idle
+state, the endpoint is ready to process a new transaction initiated by the host. In the Busy
+state, the endpoint is busy processing a transaction and can't handle a new one. If the
+host tries to initiate a transaction to a busy endpoint (other than a control endpoint, as
+described in the next section), the device will respond with a NAK handshake packet to cause
+the host to retry later. Errors that the device detects in its own functionality (not including
+transmission errors) cause the device to send a STALL handshake packet for its current
+transaction and to enter the Stalled state. Control endpoints automatically unstall when they
+get a new transaction, but the host must send a clear feature control request to any other kind
+of endpoint before addressing another request to a stalled endpoint.</p>
+
+<p>
+<img src="images/F11wi06.JPG" width=337 height=221 border=0>
+</p><p>
+<!--caption--><b>Figure 11-6.</b> <i>States of an endpoint.</i><!--/caption-->
+</p>
+
+
+<A NAME="368"><H3>Control Transfers</H3></A>
+
+<p>A <i>control</i> <i>transfer</i> conveys control information to or from a control endpoint
+on a device. For example, one part of the overall process by which the operating system
+configures a USB device is performing input control transfers to read various <i>descriptor</i>
+structures kept onboard the device. Another part of the configuration process involves an
+output control transfer to establish one of the many possible configurations as current and to
+enable one or more interfaces. Control transfers are lossless in that the bus driver retries
+erroneous transfers up to three times before giving up and reporting an error status to
+upstream software. As indicated in Table 11-1, control endpoints must specify a maximum data
+transfer length of 8, 16, 32, or 64 bytes. An individual transaction can involve less data than
+the indicated maximum but not more.</p>
+
+<p>Control transactions are a high priority in USB. A device isn't allowed to claim
+business as an excuse to avoid handling a control transaction. Moreover, the bus driver
+reserves up to 10 percent of each frame time for control transactions. Assuming a light enough
+load, therefore, the host can be sure of completing a control transaction within one
+millisecond. A heavier load, however, might force a pending control transaction into a later
+frame, with the result that higher latencies are possible.</p>
+
+<p>Every device has at least one control endpoint numbered 0 that responds to input and output
+control transactions. Strictly speaking, endpoints belong to configurations, but endpoint 0 is
+an exception in that it terminates the default control pipe for a device. Endpoint 0 is active
+even before the device receives its configuration and no matter what other endpoints (if any)
+are available. A device need not have additional control endpoints besides endpoint 0 (although
+the USB specification allows for the possibility) because endpoint 0 can service most control
+requests perfectly well. If you define a vendor-specific request that can't complete within
+the frame, however, you should create an additional control endpoint to forestall having your
+onboard handler preempted by a new transaction.</p>
+
+<p>Each control transaction includes a SETUP token, which can be followed by an optional data
+phase in which additional data moves to or from the device and a handshake phase in which the
+device responds with an ACK packet, a STALL packet, or not at all. See Figure 11-7. Devices are
+required to accept control transfers at all times and can therefore not respond with NAK to
+indicate a busy endpoint. Sending an invalid request to a control endpoint elicits a STALL
+response, but the device automatically clears the stall condition when it receives the next
+SETUP packet. This special case of stalling is called <i>protocol stall</i> in the USB
+specification&#8212;see Section 8.5.2.4.</p>
+
+<p>The SETUP token that prefaces a control transfer consists of eight data bytes, as
+illustrated in Figure 11-8. In this and other data layout figures, I'm showing data bytes
+in the order in which they're transmitted over the USB wire, but I'm showing bits
+within individual bytes starting with the high-order bit. Bits are transmitted over the wire
+starting with the least-significant bit, but host software and device firmware typically work
+with data after the bits have been reversed. Intel computers and the USB bus protocols employ
+the little-endian data representation in which the least-significant byte of a multibyte data
+item occupies the lowest address. The 8051 microprocessor used in several USB chip sets,
+including the Anchor Chips chip set, is actually a big-endian computer. Firmware must therefore
+take care to reverse data bytes appropriately.</p>
+
+<p>
+<A HREF="javascript:fullSize('F11wi07x.htm')"> <img src="images/F11wi07.JPG" width=404 height=281 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 11-7.</b> <i>Phases of a control transfer.</i><!--/caption-->
+</p>
+
+
+<p>
+<A HREF="javascript:fullSize('F11wi08x.htm')"> <img src="images/F11wi08.JPG" width=404 height=218 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 11-8.</b> <i>Contents of a SETUP token.</i><!--/caption-->
+</p>
+
+
+<p>Notice in the figure that the first byte of a SETUP token indicates the direction of
+information flow, a request type, and the type of entity that is the target of the control
+transfer. The request types are <i>standard</i> (defined as part of the USB specification), <i>
+class</i> (defined by the USB working group responsible for a given class of device), and <i>
+vendor</i> (defined by the maker of the device). Control requests can be addressed to the
+device as a whole, to a specified interface, to a specified endpoint, or to some other
+vendor-specific entity on the device. The second byte of the SETUP token indicates which
+request of the type indicated in the first byte is being made. Table 11-2 lists the standard
+requests that are currently defined. For information about class-specific requests, consult the
+appropriate device class specification. (See the first URL I gave you at the beginning of this
+chapter for information on how to find these specifications.) Device manufacturers are free to
+define their own vendor-specific request codes. For example, Anchor Chips uses the request code
+A0h to download firmware from the host.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+Note that control requests that affect the state of some particular endpoint
+are sent to a <i>control endpoint</i> and not to the endpoint whose state is
+affected.</blockquote></div>
+</p>
+
+<p><b>Table 11-2.</b> <i>Standard device requests.</i></p>
+
+<p><table cellpadding=5 width="95%"><tr>
+<th><i>Request Code</i></th>
+<th><i>Symbolic Name</i></th>
+<th><i>Description</i></th>
+<th><i>Possible Recipients</i></th>
+</tr><tr>
+<td valign="top">0</td>
+<td valign="top">GET_STATUS</td>
+<td valign="top">Gets status information</td>
+<td valign="top">Any</td>
+</tr><tr>
+<td valign="top">1</td>
+<td valign="top">CLEAR_FEATURE</td>
+<td valign="top">Clears a two-state feature</td>
+<td valign="top">Any</td>
+</tr><tr>
+<td valign="top">2</td>
+<td valign="top"></td>
+<td valign="top">(Reserved)</td>
+<td valign="top"></td>
+</tr><tr>
+<td valign="top">3</td>
+<td valign="top">SET_FEATURE</td>
+<td valign="top">Sets a two-state feature</td>
+<td valign="top">Any</td>
+</tr><tr>
+<td valign="top">4</td>
+<td valign="top"></td>
+<td valign="top">(Reserved)</td>
+<td valign="top"></td>
+</tr><tr>
+<td valign="top">5</td>
+<td valign="top">SET_ADDRESS</td>
+<td valign="top">Sets device address</td>
+<td valign="top">Device</td>
+</tr><tr>
+<td valign="top">6</td>
+<td valign="top">GET_DESCRIPTOR</td>
+<td valign="top">Gets device, configuration, or string descriptor</td>
+<td valign="top">Device</td>
+</tr><tr>
+<td valign="top">7</td>
+<td valign="top">SET_DESCRIPTOR</td>
+<td valign="top">Sets a descriptor
+ (optional)</td>
+<td valign="top">Device</td>
+</tr><tr>
+<td valign="top">8</td>
+<td valign="top">GET_CONFIGURATION</td>
+<td valign="top">Gets current configuration index</td>
+<td valign="top">Device</td>
+</tr><tr>
+<td valign="top">9</td>
+<td valign="top">SET_CONFIGURATION</td>
+<td valign="top">Sets new current configuration</td>
+<td valign="top">Device</td>
+</tr><tr>
+<td valign="top">10</td>
+<td valign="top">GET_INTERFACE</td>
+<td valign="top">Gets current alternate 
+ setting index</td>
+<td valign="top">Interface</td>
+</tr><tr>
+<td valign="top">11</td>
+<td valign="top">SET_INTERFACE</td>
+<td valign="top">Enables alternate setting</td>
+<td valign="top">Interface</td>
+</tr><tr>
+<td valign="top">12</td>
+<td valign="top">SYNCH_FRAME</td>
+<td valign="top">Reports synchronization 
+ frame number</td>
+<td valign="top">(Isochronous) Endpoint</td>
+</tr></table></p>
+
+
+<p>The remainder of the SETUP packet contains a <b>value</b> code whose meaning depends on
+which request is being made, an <b>index</b> value with similarly mutable meaning, and a <b>
+length</b> field that indicates how many bytes of data are to be transferred during the data
+phase of the control transaction. The index field contains the endpoint or interface number
+when a control request addresses an endpoint or interface. A 0 value for the data length
+implies that this particular transaction has no data phase.</p>
+
+<p>I'm not going to exhaustively describe all of the details of the various standard
+control requests; you should consult Section 9.4 of the USB specification for full information.
+I do want to briefly discuss the concept of a device <i>feature,</i> however. USB envisages
+that any of the addressable entities belonging to a device can have features that can be
+represented by the state of a single bit. Two such features are standardized for all
+devices.</p>
+
+<p>The DEVICE_REMOTE_WAKEUP feature&#8212;a feature belonging to the device as a
+whole&#8212;indicates whether or not the device should use its ability (if any) to remotely wake
+up the computer when external events occur. Host software (specifically, the bus driver)
+enables or disables this feature by addressing a SET_FEATURE or CLEAR_FEATURE command,
+respectively, to the device and specifying a value code of 1 to designate the wake-up feature.
+The DDK uses the symbolic name USB_FEATURE_REMOTE_WAKEUP for this feature code.</p>
+
+<p>The ENDPOINT_HALT feature&#8212;a feature belonging to an endpoint&#8212;indicates whether or
+not the endpoint is in the <i>functional stall</i> state. Host software can force an endpoint
+to stall by sending the endpoint a SET_FEATURE command with a value code of 0 to designate
+ENDPOINT_HALT. The firmware that manages the endpoint might independently decide to stall, too.
+Host software (once again, the bus driver) clears the stall condition by sending a
+CLEAR_FEATURE command with a value code of 0. The DDK uses the symbolic name
+USB_FEATURE_ENDPOINT_STALL for this feature code.</p>
+
+<p>The USB specification does not prescribe ranges of device or endpoint feature codes for
+vendor use. To avoid possible standardization issues later, you should avoid defining
+device-level or endpoint-level features. Instead, define your own vendor-type control
+transactions. Notwithstanding this advice, later in this chapter I'll show you a sample
+driver (FEATURE) that controls the 7-segment LED display on the Anchor Chips development board.
+For purposes of that sample, I defined an interface-level feature numbered 42. (USB currently
+defines a few interface-level features for power management, so you would not want to emulate
+my example except for learning about how features work.)</p>
+
+<A NAME="369"><H3>Bulk Transfers</H3></A>
+
+<p>A <i>bulk</i> <i>transfer</i> conveys up to 64 bytes of data to or from a bulk endpoint.
+Like control transfers, bulk transfers are lossless. Unlike control transfers, bulk transfers
+don't have any particular guaranteed latency. If the host has room left over in a frame
+after accommodating other bandwidth reservations, it will schedule pending bulk transfers.</p>
+
+<p>Figure 11-9 illustrates the phases that make up a bulk transfer. The transfer begins with
+either an IN or an OUT token that addresses the device and endpoint. In the case of an output
+transaction, a data phase follows in which data moves from the host to the device and then a
+handshake phase in which the device provides status feedback. If the endpoint is busy and
+unable to accept new data, it generates a NAK packet during the handshake phase&#8212;the host
+will retry the output transaction later. If the endpoint is stalled, it generates a STALL
+packet during the handshake phase&#8212;the host must later clear the halt condition before
+retrying the transmission. If the endpoint receives and processes the data correctly, it
+generates an ACK packet in the handshake phase. The only remaining case is the one in which the
+endpoint doesn't correctly receive the data for some reason and simply doesn't generate
+a handshake&#8212;the host will detect the absence of any acknowledgment and automatically retry
+up to three times.</p>
+
+<p>Following the IN token that introduces an input bulk transfer, the device performs one of
+two operations. If it can, it sends data to the host, whereupon the host either generates an
+ACK handshake packet to indicate error-free receipt of the data or stays mute to indicate some
+sort of error. If the host detects an error, the absence of an ACK to the device causes the
+data to remain available&#8212;the host will retry the input operation later on. If the endpoint
+is busy or halted, however, the device generates a NAK or STALL handshake instead of sending
+data. The NAK indicates that the host should retry the input operation later, and the STALL
+requires the host to eventually send a clear feature command to reset the halt condition.</p>
+
+<p>
+<A HREF="javascript:fullSize('F11wi09x.htm')"> <img src="images/F11wi09.JPG" width=404 height=605 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 11-9.</b> <i>Phases of a bulk or interrupt transfer.</i><!--/caption-->
+</p>
+
+
+<A NAME="370"><H3>Interrupt Transfers</H3></A>
+
+<p>An <i>interrupt</i> <i>transfer</i> is practically identical to a bulk transfer insofar as
+the operation of the bus and the device are concerned. It moves up to 64 bytes of data
+losslessly to or from an interrupt endpoint. The only difference between interrupt and bulk
+transfers has to do with latency. An interrupt endpoint specifies a polling interval in the
+range 1-255 milliseconds. The host reserves sufficient bandwidth to make sure of performing an
+IN or OUT transaction directed toward the endpoint at least as frequently as the polling
+interval.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+Note that USB devices don't generate asynchronous interrupts: they always
+respond to a poll. You might need to know that the Microsoft host controller drivers
+effectively round the polling interval specified in an interrupt endpoint descriptor down to a
+power of 2 no greater than 32. For example, an endpoint that specifies a polling interval of 31
+milliseconds will actually be polled every 16 milliseconds. A specified polling interval
+between 32 and 255 milliseconds results in an actual polling interval of 32
+milliseconds.</blockquote></div>
+</p>
+
+<A NAME="371"><H3>Isochronous Transfers</H3></A>
+
+<p>An <i>isochronous transfer</i> moves up to 1023 data bytes to or from an isochronous
+endpoint during every bus frame. Because of the guaranteed periodicity of isochronous
+transfers, they are ideal for time-sensitive data such as audio signals. The guarantee of
+periodicity comes at a price, however: isochronous transfers that fail because of data
+corruption don't get retried automatically. The USB designers assumed that isochronous data
+streams can tolerate occasional small losses.</p>
+
+<p>An isochronous transaction consists of an IN or OUT token followed by a data phase in which
+data moves to or from the host. No handshake phase occurs because no errors are retried. See
+Figure 11-10.</p>
+
+<p>
+<img src="images/F11wi10.JPG" width=252 height=346 border=0>
+</p><p>
+<!--caption--><b>Figure 11-10.</b> <i>Phases of an isochronous transfer.</i><!--/caption-->
+</p>
+
+
+<p>The host reserves up to 90 percent of the bus bandwidth for isochronous and interrupt
+transfers. In fact, system software needs to reserve bandwidth in advance to make sure that all
+active devices can be accommodated.</p>
+
+<A NAME="372"><H2>Descriptors</H2></A>
+
+<p>USB devices maintain onboard data structures known as <i>descriptors</i> to allow for
+self-identification to host software. Table 11-3 lists the different descriptor types. Each
+descriptor begins with a two-byte header containing the byte count of the entire descriptor
+(including the header) and a type code. As a matter of fact, if you ignore the special case of
+a string descriptor&#8212;concerning which, see &quot;<A HREF="ch11b.htm#377">String Descriptors</A>&quot; a bit further
+on&#8212;the length of a descriptor is implied by its type because all descriptors of a given
+type have the same length. The explicit length is nonetheless present in the header to provide
+for future extensibility. Additional, type-specific data follows the fixed header.</p>
+
+<p>In the remainder of this section, I'll describe the layout of each type of descriptor by
+using the data structures defined in the DDK (specifically, in USB100.H). The official
+rendition of this information is in Section 9.6 of the USB specification.</p>
+
+<p><b>Table 11-3.</b> <i>Descriptor types.</i></p>
+
+<p><table cellpadding=5 width="95%"><tr>
+<th><i>Descriptor Type</i></th>
+<th><i>Description</i></th>
+</tr><tr>
+<td valign="top">Device</td>
+<td valign="top">Describes an entire device</td>
+</tr><tr>
+<td valign="top">Configuration</td>
+<td valign="top">Describes one of the configurations of a device</td>
+</tr><tr>
+<td valign="top">Interface</td>
+<td valign="top">Describes one of the interfaces that's part of a configuration</td>
+</tr><tr>
+<td valign="top">Endpoint</td>
+<td valign="top">Describes one of the endpoints belonging to an interface</td>
+</tr><tr>
+<td valign="top">String</td>
+<td valign="top">Contains a human-readable Unicode string describing the device, a configuration, an
+interface, or an endpoint</td>
+</tr><tr>
+<td valign="top">Configuration</td>
+<td valign="top">Describes power-management capabilities of a device
+power configuration</td>
+</tr><tr>
+<td valign="top">Interface power</td>
+<td valign="top">Describes power-management capabilities of a device function</td>
+</tr></table></p>
+
+
+
+<A NAME="373"><H3>Device Descriptors</H3></A>
+
+<p>Each device has a single device descriptor that identifies the device to host software. The
+host uses a GET_DESCRIPTOR control transaction directed to endpoint 0 to read this descriptor.
+The device descriptor has the following definition in the DDK:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+typedef爏truct燺USB_DEVICE_DESCRIPTOR爗
+牋UCHAR燽Length;
+牋UCHAR燽DescriptorType;
+牋USHORT燽cdUSB;
+牋UCHAR燽DeviceClass;
+牋UCHAR燽DeviceSubClass;
+牋UCHAR燽DeviceProtocol;
+牋UCHAR燽MaxPacketSize0;
+牋USHORT爄dVendor;
+牋USHORT爄dProduct;
+牋USHORT燽cdDevice;
+牋UCHAR爄Manufacturer;
+牋UCHAR爄Product;
+牋UCHAR爄SerialNumber;
+牋UCHAR燽NumConfigurations;
+}燯SB_DEVICE_DESCRIPTOR,

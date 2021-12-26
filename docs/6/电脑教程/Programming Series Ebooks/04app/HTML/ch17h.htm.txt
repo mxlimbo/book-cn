@@ -1,0 +1,89 @@
+<HTML>
+<HEAD>
+<TITLE>Implementation Details of Memory-Mapped Files</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch17g.htm">[Previous]</A> <A HREF="ch17i.htm">[Next]</A><P>
+
+<A NAME="228"><H1>Implementation Details of Memory-Mapped Files</H1></A>
+
+<p>Windows 98 and Windows 2000 implement memory-mapped files
+differently. You need to be aware of these differences because they can
+affect the way you write your code and how other applications can
+adversely manipulate your data.</p>
+
+<p>Under Windows 98, a view is always mapped in the address space
+partition that ranges from 0x80000000 to 0xBFFFFFFF. Because of this,
+all successful calls to <i>MapViewOfFile</i> return an address within
+this range. You might recall that all processes share the data in this
+partition. This means that if a process maps a view of a file-mapping
+object, the data of the file-mapping object is physically accessible to
+all processes whether or not they have mapped a view of the
+file-mapping object. If another process calls <i>MapViewOfFile</i>
+using the same file-mapping object, Windows 98 will return the same
+memory address to the second process that it did to the first process.
+The two processes are accessing the same data, and the views are
+coherent.</p>
+
+<p>In Windows 98, it is possible for one process to call <i>
+MapViewOfFile</i> and pass the returned memory address to another
+process's thread using some form of interprocess communication.
+Once this thread has received the memory address, there is nothing to
+stop the thread from successfully accessing the same view of the
+file-mapping object. However, you should not do this for two
+reasons:</p>
+
+<ul>
+<p><li>Your application will not run under Windows 2000, for reasons
+I'll describe shortly.</li></p>
+
+<p><li>If the first process calls <i>UnmapViewOfFile</i>, the address
+space region will revert to the free state; this means that the second
+process's thread will raise an access violation when it attempts to
+access the memory where the view once was.</li></p>
+</ul>
+
+<p>For the second process to access the view of the memory-mapped file,
+a thread in the second process should call <i>MapViewOfFile</i> on its
+own behalf. When the second process does this, the system increments a
+usage count for the memory-mapped view. So if the first process calls
+<i>UnmapViewOfFile</i>, the system will not release the region of
+address space occupied by the view until the second process also calls
+<i>UnmapViewOfFile</i>.</p>
+
+<p>When the second process calls <i>MapViewOfFile</i>, the address
+returned will be the same address that was returned to the first
+process. This averts the need for the first process to send the memory
+address to the second process using interprocess communication.</p>
+
+<p>The Windows 2000 implementation of memory-mapped files is better than
+the Windows 98 implementation because Windows 2000 <i>requires</i> a
+process to call <i>MapViewOfFile</i> before the file's data is
+accessible in the process's address space. If one process calls <i>
+MapViewOfFile</i>, the system reserves a region of address space for
+the view in the calling process's address space&#8212;no other
+process can see the view. If another process wants to access the data
+in the same file-mapping object, a thread in the second process must
+call <i>MapViewOfFile,</i> and the system will reserve a region for the
+view in the second process's address space.</p>
+
+<p>It is important to note that the memory address returned by the first
+process's call to <i>MapViewOfFile</i> will most likely <i>not</i>
+be the same memory address returned by the second process's call to
+<i>MapViewOfFile</i>. This is true even though both processes are
+mapping a view of the same file-mapping object. In Windows 98, the
+memory addresses returned from <i>MapViewOfFile</i> are the
+same&#8212;but you should absolutely not <i>count</i> on them being the
+same if you want your application to run under Windows 2000!</p>
+
+<p>Let's look at another implementation difference. Here is a small
+program that maps two views of a single file-mapping object:</p>
+
+<p><table width="95%" cellpadding="5"><tr><td>
+<pre>
+#include

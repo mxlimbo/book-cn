@@ -1,0 +1,100 @@
+<HTML>
+<HEAD>
+<TITLE>Filter Drivers</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch09a.htm">[Previous]</A> <A HREF="ch09c.htm">[Next]</a>
+</p>
+
+<A NAME="300"><H1>Filter Drivers</H1></A>
+
+<p>The Windows Driver Model assumes that a hardware device can have several drivers that each
+contribute in some way to the successful management of the device. The WDM accomplishes the
+layering of drivers by means of a stack of device objects. I discussed this concept in Chapter
+2, &quot;<A HREF="ch02a.htm#30">Basic Structure of a WDM Driver</A>.&quot; Up until now, I've been talking exclusively
+about the <i>function driver</i> that manages the main functionality of a device. In this
+section, I'll describe how you write a <i>filter driver</i> that resides above or below the
+function driver and modifies the behavior of the device in some way by filtering the I/O
+request packets (IRPs) that flow through it.</p>
+
+<p>A filter driver that's above the function driver is called an <i>upper filter
+driver;</i> a filter driver that's below the function driver (but still above the bus
+driver) is called a <i>lower filter driver.</i> The mechanics of building either type of filter
+are exactly the same, even though the drivers themselves serve different purposes. In fact, you
+build a filter driver just as you build any other WDM driver&#8212;with a <b>DriverEntry</b> 
+routine, an <b>AddDevice</b> routine, a bunch of dispatch functions, and so on.</p>
+
+<p>The intended purpose of an upper filter driver is to facilitate supporting a device that
+behaves in most respects like a generic device of its class but that has some additional
+functionality. You can rely, perhaps, on a generic function driver to support the generic
+behavior. To deal with the extra functionality, you write an upper filter driver to intervene
+in the flow of I/O requests. To give a silly example, suppose there existed a standard class of
+toaster device for which someone had written a standard driver. And suppose that your
+particular toaster had an Advanced Waffle Eject feature that caused your toaster to pop toasted
+waffles two feet into the air. Controlling this AWEsome feature would be a natural job for an
+upper filter driver. See Figure 9-1.</p>
+
+<p>
+<img src="images/F09wi01.JPG" width=404 height=309 border="0">
+</p><p>
+<!--caption--><b>Figure 9-1.</b> <i>Role of an upper filter driver.</i><!--/caption-->
+</p>
+
+
+<p>Another use for upper filter drivers is to compensate for bugs in the hardware or in the
+function driver. If you're going to deploy a filter driver for this purpose, Microsoft
+implores you to version-stamp the driver and, insofar as it's under your control, to change
+the version number of whatever component you're compensating for when the bug someday gets
+fixed. Otherwise, it will be harder for Microsoft to install automatic updates.</p>
+
+<p>Lower filter drivers can't intervene in the normal operation of a device with which the
+function driver communicates directly. That's because the function driver will implement
+most substantive requests by making hardware abstraction layer (HAL) calls that directly access
+the hardware. The filter driver, of course, sees only those IRPs that something above chooses
+to pass down to it, and it never knows about the HAL calls.</p>
+
+<p>A lower filter driver might find employment in the stack of drivers for a USB (universal
+serial bus) device, however. For such devices, the function driver uses internal control IRPs
+as containers for USB request blocks (URBs). A lower filter driver could monitor and modify
+these IRPs, perhaps. See Figure 9-2.</p>
+
+<p>
+<img src="images/F09wi02.JPG" width=404 height=377 border="0">
+</p><p>
+<!--caption--><b>Figure 9-2.</b> <i>Role of a lower filter driver.</i><!--/caption-->
+</p>
+
+
+<p>Another possible use for a lower filter driver, suggested by one of my seminar students, is
+to help you write a bus-independent driver. Imagine a device packaged as a PCI (Peripheral
+Component Interconnect) expansion card, a PCMCIA (Personal Computer Memory Card International
+Association) card, a USB device, and so on. You could write a function driver that is totally
+independent of the bus architecture, except that it wouldn't be able to talk to the device.
+You'd also write several lower filter drivers, one for each possible bus architecture, as
+illustrated in Figure 9-3. You'd install the appropriate one of these for a particular
+instance of the hardware. When your function driver needed to talk to the hardware, it would
+send an IRP (perhaps an IRP_MJ_INTERNAL_DEVICE_CONTROL) down to the filter.</p>
+
+<p>
+<A HREF="javascript:fullSize('F09wi03x.htm')"> <img src="images/F09wi03.JPG" width=404 height=399 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 9-3.</b> <i>Using lower filter drivers to achieve bus independence.</i><!--/caption-->
+</p>
+
+
+<A NAME="301"><H2>DriverEntry Routine</H2></A>
+
+<p>The <b>DriverEntry</b> routine for a filter driver is very similar to that for a function
+driver. The major difference is that a filter driver must install dispatch routines for every
+type of IRP, not just for the types of IRP it expects to handle:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>extern

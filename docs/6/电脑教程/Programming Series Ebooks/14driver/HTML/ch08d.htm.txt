@@ -1,0 +1,130 @@
+<HTML>
+<HEAD>
+<TITLE>Additional Power Management Details</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch08c.htm">[Previous]</A> <A HREF="ch08e.htm">[Next]</a>
+</p>
+
+<A NAME="285"><H1>Additional Power Management Details</H1></A>
+
+<p>In this section, I'll describe some additional details about power management, including
+flags you might need to set in your device object, controlling your device's wake-up
+feature, arranging for power-down requests after your device has been idle for a predetermined
+time, and optimizing context restore operations.</p>
+
+<A NAME="286"><H2>Flags to Set in AddDevice</H2></A>
+
+<p>Three flag bits in a device object&#8212;see Table 8-6&#8212;control various aspects of power
+management. After you call <b>IoCreateDevice</b> in your <b>AddDevice</b> function, all three
+of these bits will be set to 0, and you can set one or more of them depending on
+circumstances.</p>
+
+<p><b>Table 8-6.</b> <i>Power-management flags in DEVICE_OBJECT.</i></p>
+
+<p><table cellpadding=5 width="95%"><tr>
+<th><i>Flag</i></th>
+<th><i>Brief Description</i></th>
+</tr><tr>
+<td valign="top">DO_POWER_PAGABLE</td>
+<td valign="top">Driver's IRP_MJ_POWER dispatch routine must run at PASSIVE_LEVEL</td>
+</tr><tr>
+<td valign="top">DO_POWER_INRUSH</td>
+<td valign="top">Powering on this device requires a large amount of current</td>
+</tr><tr>
+<td valign="top">DO_POWER_NOOP</td>
+<td valign="top">Device doesn't participate in power management</td>
+</tr></table></p>
+
+
+
+<p>Set the DO_POWER_PAGABLE flag if your dispatch function for IRP_MJ_POWER requests must run
+at PASSIVE_LEVEL. The flag has the name it does because, as you know, paging is allowed at
+PASSIVE_LEVEL only. If you leave this flag set to 0, the Power Manager is free to send you
+power requests at DISPATCH_LEVEL. In fact, it always will do so in the current release of
+Windows 2000.</p>
+
+<p>Set the DO_POWER_INRUSH flag if your device draws so much current when powering up that
+other devices should not be allowed to power up simultaneously. The problem solved by this flag
+is familiar to people who've experienced multiple simultaneous spikes of electricity demand
+at the end of a power outage&#8212;having all your appliances trying to cycle on at the same
+time can blow the main breaker. The Power Manager guarantees that only one inrush device at a
+time will be powered up. Furthermore, it sends power requests to inrush devices at
+DISPATCH_LEVEL, which implies that you may not also set the DO_POWER_PAGABLE flag.</p>
+
+<p>The system's ACPI filter driver will set the INRUSH flag in the PDO automatically if the
+ASL description of the device so indicates. All that's required for the system to properly
+serialize inrush power is that some device object in the stack have the INRUSH flag set, so you
+won't need to set the flag in your own device object too. If the system can't
+automatically determine that you require inrush treatment, however, you would need to set the
+flag yourself.</p>
+
+<p>Set the DO_POWER_NOOP flag if your driver isn't managing hardware and needn't
+participate in power management. When PoCallDriver sees this flag set in a device object, it
+simply completes the IRP with STATUS_SUCCESS without even calling the corresponding
+driver's dispatch routine.</p>
+
+<p>The settings of the PAGABLE and INRUSH flags need to be consistent in all the device objects
+for a particular device. If the PDO has the PAGABLE flag set, every device object should also
+have PAGABLE set. Otherwise, a bug check with the code DRIVER_POWER_STATE_FAILURE may occur.
+(It's legal for a PAGABLE device to be layered on top of a non-PAGABLE device, just not the
+other way around.) If a device object has the INRUSH flag set, neither it nor any lower device
+objects should be PAGABLE, or else an INTERNAL_POWER_ERROR bug check will occur. If you're
+writing a disk driver, don't forget that you may change back and forth from time to time
+between pagable and nonpagable status in response to device usage PnP notifications about
+paging files.</p>
+
+<A NAME="287"><H2>Device Wake-Up Features</H2></A>
+
+<p>Some devices have a hardware wake-up feature, which allows them to wake up a sleeping
+computer when an external event occurs. See Figure 8-15. The power switch on the current crop
+of PCs is such a device. So are many modems and network cards, which are able to listen for
+incoming calls and packets, respectively.</p>
+
+<p>
+<A HREF="javascript:fullSize('F08wi15x.htm')"> <img src="images/F08wi15.JPG" width=404 height=195 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 8-15.</b> <i>Examples of devices that wake the system.</i><!--/caption-->
+</p>
+
+
+<p>If your device has a wake-up feature, your function driver has additional power management
+responsibilities beyond the ones we've already discussed. The first additional
+responsibility is to handle the IRP_MN_WAIT_WAKE flavor of IRP_MJ_POWER. Most devices don't need to do any processing in their dispatch functions for
+WAIT_WAKE requests beyond installing a standard I/O completion routine and passing the IRP down
+the driver stack. The bus drivers for the USB and Peripheral Component Interconnect (PCI) bus,
+for example, implement the bus specifications for arming, disarming, and detecting wake-up.
+More explicitly, if your device doesn't have additional features related to device wake-up
+beyond the ones prescribed by the relevant bus specification, you don't need any special
+processing.</p>
+
+<p>You want to fail IRP_MN_QUERY_POWER requests that specify a power state incompatible with
+your wake-up feature. If the query is for a system state, compare the proposed new state with
+the SystemWake field in the device capabilities structure, which gives the lowest system state
+from which your device can wake up the system. If the query is for a device state, compare the
+proposed new state with the DeviceWake field, which gives the lowest device state from which
+your device can issue the wake-up signal. If the result of the comparison shows that the
+proposed power state is too low, fail the query with STATUS_INVALID_DEVICE_STATE. Otherwise,
+process the query in the way I've already discussed.</p>
+
+<p>You need to <i>originate</i> an IRP_MN_WAIT_WAKE at appropriate times. To do this, call
+PoRequestPowerIrp as illustrated by this code fragment:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>typedef爏truct燺DEVICE_EXTENSION爗
+牋PIRP燱aitWakeIrp;
+牋};
+
+NTSTATUS燬omeFunction(...)
+牋{
+牋...
+牋POWER_STATE爅unk;
+牋junk.SystemState

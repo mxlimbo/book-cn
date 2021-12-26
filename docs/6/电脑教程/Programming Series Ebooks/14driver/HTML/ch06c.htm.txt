@@ -1,0 +1,97 @@
+<HTML>
+<HEAD>
+<TITLE>Starting and Stopping Your Device</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch06b.htm">[Previous]</A> <A HREF="ch06d.htm">[Next]</a>
+</p>
+
+<A NAME="182"><H1>Starting and Stopping Your Device</H1></A>
+
+<p>Working with the bus driver, the PnP Manager automatically detects hardware and assigns I/O
+resources in Windows 2000 and Windows 98. Most modern devices have Plug and Play features that
+allow system software to detect them automatically and to electronically determine which I/O
+resources they require. In the case of legacy devices that have no electronic means of
+identifying themselves to the operating system or of expressing their resource requirements,
+the registry database contains the information needed for the detection and assignment
+operations.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+I find it hard to give an abstract definition of the term <i>I/O resource</i>
+that isn't circular (for example, a resource used for I/O), so I'll give a concrete one
+instead. The WDM encompasses four standard I/O resource types: I/O ports, memory registers,
+direct memory access (DMA) channels, and interrupt requests.</blockquote></div>
+</p>
+
+<p>When the PnP Manager detects hardware, it consults the registry to learn which filter
+drivers and function drivers will manage the hardware. As I discussed in Chapter 2, &quot;<A HREF="ch02a.htm#30">Basic Structure of a WDM Driver</A>,&quot; it loads these drivers (if necessary&#8212;one or more of them
+might already be present, having been called into memory on behalf of some other hardware) and
+calls their <b>AddDevice</b> functions. The AddDevice functions, in turn, create device objects
+and link them into a stack. At this point, the stage is set for the PnP Manager, working with
+all of the device drivers, to assign I/O resources.</p>
+
+<p>The PnP Manager initially creates a list of resource requirements for each device and allows
+the drivers to <i>filter</i> that list. I'm going to ignore the filtering step for now
+because not every driver will need to take this step. Given a list of requirements, the PnP
+Manager can then assign resources so as to harmonize the potentially conflicting requirements
+of all the hardware present on the system. Figure 6-2 illustrates how the PnP Manager can
+arbitrate between two different devices that have overlapping requirements for an interrupt
+request number, for example.</p>
+
+<p>
+<A HREF="javascript:fullSize('F06wi02x.htm')"> <img src="images/F06wi02.JPG" width=404 height=310 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 6-2.</b> <i>Arbitration of conflicting I/O resource requirements.</i><!--/caption-->
+</p>
+
+
+<p>Once the resource assignments are known, the PnP Manager notifies each device by sending it
+a PnP request with the minor function code IRP_MN_START_DEVICE. Filter drivers are typically
+not interested in this IRP, so they usually pass the request down the stack by using the
+DefaultPnpHandler technique I showed you in &quot;<A HREF="ch06b.htm#181">IRP_MJ_PNP Dispatch Function</A>.&quot; Function
+drivers, on the other hand, need to do a great deal of work on the IRP to allocate and
+configure additional software resources and to prepare the device for operation. This work
+needs to be done, furthermore, at PASSIVE_LEVEL <i>after</i> the lower layers in the device
+hierarchy have processed this IRP.</p>
+
+<A NAME="183"><H2>Forwarding and Awaiting the IRP</H2></A>
+
+<p>To regain control of the IRP_MN_START_DEVICE request after passing it down, the dispatch
+routine needs to wait for a kernel event that will be signalled by the eventual completion of
+the IRP in the lower layers. In Chapter 4, &quot;<A HREF="ch04a.htm#108">Synchronization</A>,&quot; I燾autioned you not to
+block an arbitrary thread. PnP IRPs are sent to you in the context of a system thread that you
+<i>are</i> allowed to block, so that caution is unnecessary. Since forwarding and awaiting an
+IRP is a potentially useful function in other contexts, I suggest writing a helper routine to
+perform the mechanics:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+
+
+1<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+2<img src="images/arorite2.jpg" width=17 height=10 border="0">
+3<img src="images/arorite2.jpg" width=17 height=10 border="0">
+
+
+
+4<img src="images/arorite2.jpg" width=17 height=10 border="0">
+5<img src="images/arorite2.jpg" width=17 height=10 border="0">
+6<img src="images/arorite2.jpg" width=17 height=10 border="0">
+</pre></td>
+<td valign="top">
+<pre>NTSTATUS燜orwardAndWait(PDEVICE_OBJECT爁do,燩IRP營rp)
+牋{
+牋KEVENT爀vent;
+牋KeInitializeEvent(&amp;event,燦otificationEvent,燜ALSE);
+牋IoCopyCurrentIrpStackLocationToNext(Irp);
+牋IoSetCompletionRoutine(Irp,

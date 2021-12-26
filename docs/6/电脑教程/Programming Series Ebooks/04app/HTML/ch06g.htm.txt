@@ -1,0 +1,75 @@
+<HTML>
+<HEAD>
+<TITLE>Some Thread Internals</TITLE>
+<link rel="STYLESHEET" type="text/css" href="advwin4.css">
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</HEAD>
+<BODY BGCOLOR="#ffffff" TEXT="#000000">
+<A HREF="ch06f.htm">[Previous]</A> <A HREF="ch06h.htm">[Next]</A><P>
+
+<A NAME="90"><H1>Some Thread Internals</H1></A>
+
+<p>So far, I've explained how to implement a thread function and
+how to have the system create a thread to execute that function. In
+this section, we'll look at how the system pulls this off. </p>
+<p>Figure 6-1 shows what the system must do to create and initialize a
+thread. Let's look closely at this figure to understand exactly
+what's going on. A call to <i>CreateThread</i> causes the system to
+create a thread kernel object. This object has an initial usage count
+of 2. (The thread kernel object is not destroyed until the thread stops
+running <i>and</i> the handle returned from <i>CreateThread</i> is
+closed.) Other properties of the thread's kernel object are also
+initialized: the suspension count is set to 1, the exit code is set to
+STILL_ACTIVE (0x103), and the object is set to the nonsignaled
+state. </p>
+<p>Once the kernel object has been created, the system allocates memory,
+which is used for the thread's stack. This memory is allocated from
+the process's address space since threads don't have an address
+space of their own. The system then writes two values to the upper end
+of the new thread's stack. (Thread stacks always build from high
+memory addresses to low memory addresses.) The first value written to
+the stack is the value of the <i>pvParam</i> parameter that you passed
+to <i>CreateThread</i>. Immediately below it is the <i>pfnStartAddr</i>
+value that you also passed to <i>CreateThread</i>.</p>
+
+<p>
+<A HREF="javascript:fullSize('F06SI01x.htm')"> <img src="images/F06SI01.JPG" width=404 height=213 border=0 ALT="Click to view at full size."> </A>
+</p><p>
+<!-- CAPTION --><b>Figure 6-1.</b> <i>How a thread is created and initialized</i><!-- /CAPTION -->
+</p>
+
+<p>Each thread has its own set of CPU registers, called the
+thread's <i>context</i>. The context reflects the state of the
+thread's CPU registers when the thread last executed. The set of
+CPU registers for the thread is saved in a CONTEXT structure (defined
+in the WinNT.h header file). The CONTEXT structure is itself contained
+in the thread's kernel object.</p>
+
+<p>The instruction pointer and stack pointer registers are the two most
+important registers in the thread's context. Remember that threads
+always run in the context of a process. So both these addresses
+identify memory in the owning process's address space. When the
+thread's kernel object is initialized, the CONTEXT structure's
+stack pointer register is set to the address of where <i>
+pfnStartAddr</i> was placed on the thread's stack. The instruction
+pointer register is set to the address of an undocumented (and
+unexported) function called <i>BaseThreadStart</i>. This function is
+contained inside the Kernel32.dll module (which is also where the <i>
+CreateThread</i> function is implemented). Figure 6-1 shows all of
+this.</p>
+
+<p>Here is what <i>BaseThreadStart</i> basically does:</p>
+
+<p><table cellpadding=5 width="95%"><tr><td>
+<PRE>
+VOID燘aseThreadStart(PTHREAD_START_ROUTINE爌fnStartAddr,燩VOID爌vParam)爗
+牋燺 _try爗
+牋牋牋ExitThread((pfnStartAddr)(pvParam));
+牋爙
+牋燺 _except(UnhandledExceptionFilter(GetExceptionInformation()))爗
+牋牋牋ExitProcess(GetExceptionCode());
+牋爙
+牋

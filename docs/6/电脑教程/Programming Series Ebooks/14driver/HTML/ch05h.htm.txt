@@ -1,0 +1,91 @@
+<HTML>
+<HEAD>
+<TITLE>Loose Ends</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch05g.htm">[Previous]</A> <A HREF="ch06a.htm">[Next]</a>
+</p>
+
+<A NAME="176"><H1>Loose Ends</H1></A>
+
+<p>I'll close this chapter by describing some other things you need to know that I
+didn't cover earlier. These include two more ways of building IRPs and a word or two about
+how to locate a device object to use as a target for IoCallDriver.</p>
+
+
+<A NAME="177"><H2>Using IoBuildDeviceIoControlRequest</H2></A>
+
+<p>I'll discuss <b>IoBuildDeviceIoControlRequest</b> in <A HREF="ch09a.htm">Chapter 9</A> when I discuss how to
+perform I/O control operations. As far as cleanup and cancellation are concerned, IRPs created
+with this function are like ones created by IoBuildSynchronousFsdRequest.</p>
+
+
+<A NAME="178"><H2>Using IoBuildAsynchronousFsdRequest</H2></A>
+
+<p><b>IoBuildAsynchronousFsdRequest</b> is another routine that you can use to build one of the
+IRPs listed in Table 5-3. The prototype of the function is as follows:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+PIRP營oBuildAsynchronousFsdRequest(ULONG燤ajorFunction,
+牋PDEVICE_OBJECT燚eviceObject,燩VOID燘uffer,燯LONG燣ength,
+牋PLARGE_INTEGER燬tartingOffset,燩IO_STATUS_BLOCK營oStatusBlock);
+</pre>
+</td></tr>
+</table>
+</p>
+
+<p>This prototype differs from that for IoBuildSynchronousFsdRequest in that there's no <b>
+Event</b> argument and the <b>IoStatusBlock</b> pointer can be NULL. The DDK goes on to tell
+you to install a completion routine whose job will be to call IoFreeIrp on this IRP and return
+STATUS_MORE_PROCESSING_REQUIRED.</p>
+
+<p>I wondered about the different treatment for IRPs built with the two
+IoBuild<i>Xxx</i>FsdRequest functions, so I dug a little deeper. The code for these two
+functions is essentially identical. In fact, IoBuildSynchronousFsdRequest calls
+IoBuildAsynchronous FsdRequest as a subroutine. I'm not telling you anything here that you
+couldn't find out on your own after five minutes with a kernel debugger.
+IoBuildSynchronousFsdRequest's only additional actions are saving your event pointer in the
+IRP (reasonable, since that's how the I/O Manager can find it to signal it) and putting the
+IRP on the queue of IRPs for the current thread, which allows the IRP to be cancelled when the
+thread dies.</p>
+
+<p>I've been able to discern only two situations in which you'd want to call
+IoBuildAsynchronousFsdRequest. The first situation is when you find yourself executing in an
+arbitrary thread context and need to create an IRP. IoBuildAsynchronousFsdRequest is ideal for
+this purpose, since termination of the current (arbitrary) thread should not爎esult in
+cancelling the new IRP. The other situation is when you're running at APC_LEVEL in a
+nonarbitrary thread and need to synchronously&#8212;yes, <i>synchronously</i>&#8212;execute an
+IRP. IoBuildSynchronousFsdRequest won't work for this purpose because the IRQL blocks the
+APC that would normally set the event. So you call IoBuildAsynchronousFsdRequest and wait on an
+event that your completion routine will set. This second case won't come up often, if ever,
+for a device driver.</p>
+
+<p>In a general case, the completion routine you use with IoBuildAsynchronousFsdRequest has to do
+quite a bit more work than just call IoFreeIrp. In fact, you need to duplicate the
+functionality of the internal routine (<b>IopCompleteRequest</b> ) that the I/O Manager uses to
+clean up completed IRPs. You can't just create an IRP with IoBuildAsynchronousFsdRequest
+and launch it into the void, relying on the I/O Manager to clean up. Since the cleanup requires
+an APC in the current releases of Windows 98 and Windows 2000, and since it would be incorrect
+to depend on executing an APC in an arbitrary thread, the I/O Manager doesn't do the
+cleanup for you. You must do all the cleanup yourself.</p>
+
+<p>If the device object to which you send the IRP has the DO_DIRECT_IO flag set,
+IoBuildAsynchronousFsdRequest will create an MDL that you must release with code like the
+following:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+NTSTATUS燙ompletionRoutine(...)
+牋{
+牋PMDL爉dl;
+牋while

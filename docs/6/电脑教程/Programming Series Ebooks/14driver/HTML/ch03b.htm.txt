@@ -1,0 +1,110 @@
+<HTML>
+<HEAD>
+<TITLE>The Kernel-Mode Programming Environment</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch03a.htm">[Previous]</A> <A HREF="ch03c.htm">[Next]</a>
+</p>
+
+<A NAME="66"><H1>The Kernel-Mode Programming Environment</H1></A>
+
+<p>Figure 3-1 illustrates some of the components that make up the Microsoft
+Windows燦T operating system. Each component exports service functions whose names begin with a
+particular two-letter prefix:</p>
+
+<ul>
+<p><li> The I/O Manager (prefix <b>Io</b>) contains many service functions that drivers use, and
+I'll be discussing them all throughout this book.</li></p>
+
+<p><li> The Process Structure module (prefix <b>Ps</b>) creates and manages kernel-mode threads.
+An ordinary WDM driver might use an independent thread to repeatedly poll a device incapable of
+generating interrupts.</li></p>
+
+<p><li> The Memory Manager (prefix <b>Mm</b>) controls the page tables that define the mapping of
+virtual addresses onto physical memory.</li></p>
+
+<p><li> The executive (prefix <b>Ex</b>) supplies heap management and synchronization services.
+I'll discuss the heap management service functions in this chapter. The <a href="ch04a.htm">next chapter</a> covers
+the synchronization services.</li></p>
+
+<p><li> The Object Manager (prefix <b>Ob</b>) provides centralized control over the many data
+objects with which Windows NT works. WDM drivers rely on the Object Manager only for keeping a
+reference count that prevents an object from disappearing while someone is still using it.</li></p>
+
+<p><li> The Security Reference Monitor (prefix <b>Se</b>) allows file system drivers to perform
+security checks. Someone else has usually dealt with security concerns by the time an I/O
+request reaches a WDM driver, so I won't be discussing these functions in this book.</li></p>
+
+<p><li> The so-called run-time library component (prefix <b>Rtl</b>) contains utility routines,
+such as list and string management routines, that kernel-mode drivers can use instead of
+regular ANSI standard library routines. For the most part, the operation of these functions is
+obvious from their names, and you would pretty much know how to use them in a program if you
+just were aware of them. I'll describe a few of them in this chapter.</li></p>
+
+<p><li> Windows NT implements user-mode calls to the Win32 subsystem in kernel mode with routines
+whose names begin with the <b>Zw</b> prefix. The Microsoft Windows 2000 DDK exposes just a few
+of these functions for use by drivers, including functions for accessing files and the
+registry. I'll discuss those functions in this chapter.</li></p>
+
+<p><li> The Windows NT kernel (prefix <b>Ke</b>) is where all the low-level synchronization of
+activities between threads and processors occurs. I'll discuss the Ke<i>Xxx</i> functions
+in the <a href="ch04a.htm">next chapter</a>.</li></p>
+
+<p><li> The very bottom layer of the operating system, on which the support sandwich rests, is
+the hardware abstraction layer (or HAL, prefix <b>Hal</b>). All the operating system's
+knowledge of how the computer is actually wired together reposes in the HAL. The HAL
+understands how interrupts work on a particular platform, how to implement spin locks, how to
+address I/O and memory-mapped devices, and so on. Instead of talking directly to their
+hardware, WDM drivers call functions in the HAL to do it. The driver ends up being
+platform-independent and bus-independent.</li></p>
+</ul>
+
+
+<p>
+<A HREF="javascript:fullSize('F03wi01x.htm')"> <img src="images/F03wi01.JPG" width=404 height=225 border=0 ALT = "Click to view at full size."> </A>
+</p><p>
+<!--caption--><b>Figure 3-1.</b> <i>Overview of kernel-mode support routines.</i><!--/caption-->
+</p>
+
+
+<A NAME="67"><H2>Using Standard Run-Time Library Functions</H2></A>
+
+<p>Historically, the Windows NT architects have preferred that drivers not use the run-time
+libraries supplied by vendors of C compilers. In part, the initial disapproval arose from
+simple timing. Windows NT was designed at a time when there was no ANSI standard for what
+functions belonged in a standard library and when many compiler vendors existed, each with its
+own idea of what might be cool to include and its own unique quality standards. Another factor
+is that standard run-time library routines sometimes rely on initialization that can only
+happen in a user-mode application and are sometimes implemented in a thread-unsafe or
+multiprocessor-unsafe way.</p>
+
+<p>Until now, the official rule has been that kernel-mode drivers should call only functions
+specifically documented in the DDK. Rather than call <b>wcscmp</b>, for example, one should
+call <b>RtlCompareUnicodeString</b>. It's been a pretty open secret, however, that the
+standard import library that one uses to build a driver (ntoskrnl.lib) defines many of the
+functions declared by application header files such as string.h, stdio.h, stdlib.h, and
+ctypes.h. So why not call them? In fact, there's no reason not to call them, provided you
+understand all the implications. Don't, for example, switch to always calling <b>memcpy</b> 
+instead of <b>RtlCopyBytes</b>, because there's a subtle difference between the two.
+(RtlCopyBytes is guaranteed to proceed byte by byte instead of in larger chunks, which can
+matter on particular RISC [reduced instruction set computing] platforms.)</p>
+
+<A NAME="68"><H2>A Caution About Side Effects</H2></A>
+
+<p>Many of the support &quot;functions&quot; that you use in a driver are defined as macros in
+the DDK header files. We were all taught to avoid using expressions that have side effects
+(that is, expressions that alter the state of the computer in some persistent way) as arguments
+to macros for the obvious reason that the macro can invoke the argument more or less than
+exactly once. Consider, for example, the following code:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+int燼

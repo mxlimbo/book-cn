@@ -1,0 +1,95 @@
+<HTML>
+<HEAD>
+<TITLE>Memory Management</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch03c.htm">[Previous]</A> <A HREF="ch03e.htm">[Next]</a>
+</p>
+
+<A NAME="78"><H1>Memory Management</H1></A>
+
+<p>In this section, I'll discuss the topic of memory management. Windows 2000 divides the
+available virtual address space in several ways. One division&#8212;a very firm one based on
+security and integrity concerns&#8212;is between user-mode addresses and kernel-mode addresses.
+Another division, which is almost but not quite coextensive with the first, is between paged
+and nonpaged memory. All user-mode addresses and some kernel-mode addresses reference page
+frames that the Memory Manager swaps to and from the disk over time, while some kernel-mode
+addresses always reference the same page frames in physical memory. Since Windows 2000 allows
+portions of drivers to be paged, I'll explain how you control the pagability of your driver
+at the time you build your driver and at run time.</p>
+
+<p>Windows 2000 provides several methods for managing memory. I'll describe two basic
+service functions&#8212;ExAllocatePool and ExFreePool&#8212;that you use for allocating and
+releasing randomly sized blocks from a heap. I'll also describe the primitives that you use
+for organizing memory blocks into linked lists of structures. Finally, I'll describe the
+concept of a <i>lookaside list</i>, which allows you to efficiently allocate and release blocks
+that are all the same size.</p>
+
+<A NAME="79"><H2>User-Mode and Kernel-Mode Address Spaces</H2></A>
+
+<p>Windows NT and Microsoft Windows 98 run on computers that support a virtual address space,
+wherein virtual addresses are mapped either to physical memory or (conceptually, anyway) to
+page frames within a swap file on disk. To grossly simplify matters, you can think of the
+virtual address space as being divided into two parts: a kernel-mode part and a user-mode part.
+See Figure 3-7.</p>
+
+<p>
+<img src="images/F03wi07.JPG" width=286 height=303 border="0">
+</p><p>
+<!--caption--><b>Figure 3-7.</b> <i>User-mode and kernel-mode portions of the address space.</i><!--/caption-->
+</p>
+
+
+<p>Each user-mode process has its own address context, which maps the user-mode virtual
+addresses to a unique collection of physical page frames. In other words, the meaning of any
+particular virtual address changes from one moment to the next as the Windows NT scheduler
+switches from a thread in one process to a thread in another process. Part of the work in
+switching threads is to change the page tables used by a processor so that they refer to the
+incoming thread's process context.</p>
+
+<p>
+<div class="note"><blockquote><b>NOTE</b> <hr>
+If you're familiar with the Alpha and you're a stickler for accuracy,
+you'll know that Alphas don't have <i>page tables</i>. They have something different
+called <i>translation buffers</i> that map virtual page addresses to physical page addresses.
+To me, this is a distinction without a difference&#8212;on a par with saying that <i>The</i> <i>
+Odyssey</i> was written by a different Homer than the one historians used to think wrote it.
+But someone would have sent me an email pointing this out if I didn't say it
+first.</blockquote></div>
+</p>
+
+<p>It's generally unlikely that a WDM driver will execute in the same thread context as the
+initiator of the I/O requests it handles. We say that we're running &quot;in arbitrary
+thread context&quot; if we don't know for sure to which process the current user-mode
+address context belongs. In arbitrary thread context, we simply can't use a virtual address
+that belongs to user mode because we can't have any idea to what physical memory it might
+point. In view of this uncertainty, we generally obey the following rule inside a driver
+program:</p>
+
+<blockquote><b>Never (well, hardly ever) directly reference user-mode memory.</b></blockquote>
+
+<p>In other words, don't take an address that a user-mode application provides and treat
+that address as a pointer that we can directly dereference. I'll discuss in later chapters
+a few techniques for accessing data buffers that originate in user mode. All we need to know
+right now, though, is that we're (nearly) always going to be using kernel-mode virtual
+addresses whenever we want to access the computer's memory.</p>
+
+<A NAME="80"><H3>How Big Is a Page?</H3></A>
+
+<p>In a virtual memory system, the operating system organizes physical memory and the swap file
+into like-sized page frames. In a WDM driver, you can use the manifest constant PAGE_SIZE to
+tell you how big a page is. In some Windows NT computers, a page is 4096 bytes long; in others,
+it's 8192 bytes long. There's a related constant named PAGE_SHIFT that equals the page
+size as a power of two. That is:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td>
+<pre>
+PAGE_SIZE

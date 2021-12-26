@@ -1,0 +1,127 @@
+<HTML>
+<HEAD>
+<TITLE>Cancelling I/O Requests</TITLE>
+<link rel="STYLESHEET" type="text/css" href="waltoney.css">
+
+<SCRIPT LANGUAGE="JavaScript"><!-- 
+function fullSize(sURL){window.open(sURL,'scrshot','width=500,height=375,top=20,left=20,directories=no , Toolbar = no, resizable = yes, menubar = no, ScrollBars = yes ');
+}
+--></SCRIPT>
+</head>
+<BODY bgcolor="#ffffff" text="#000000">
+<p>
+<A HREF="ch05e.htm">[Previous]</A> <A HREF="ch05g.htm">[Next]</a>
+</p>
+
+<A NAME="165"><H1>Cancelling I/O Requests</H1></A>
+
+<p>Just as happens with people in real life, programs sometimes change their mind about the I/O
+requests they've asked you to perform for them. We're not talking about simple
+fickleness here. Applications might issue requests that will take a long time to complete and
+then terminate, leaving the request outstanding. Such an occurrence is especially likely in the
+WDM world, where the insertion of new hardware might require us to stall requests while the
+Configuration Manager rebalances resources or where you might be told at any moment to power
+down your device.</p>
+
+<p>To cancel a request in kernel mode, the creator of the IRP calls <b>IoCancelIrp</b>. The
+operating system automatically calls IoCancelIrp for every IRP that belongs to a thread
+that's terminating with requests still outstanding. A user-mode application can call <b>
+CancelIo</b> to cancel all outstanding asynchronous operations issued by a given thread on a
+file handle. IoCancelIrp would like to simply complete the IRP it's given with
+STATUS_CANCELLED, but there's a hitch: it doesn't know where <i>you</i> have salted
+away pointers to the IRP, and it doesn't know for sure whether you're currently
+processing the IRP. So it relies on a cancel routine you provide to do most of the work of
+cancelling an IRP.</p>
+
+<p>It turns out that a call to IoCancelIrp is more of a suggestion than a mandate. It would be
+nice if every IRP that something tried to cancel really got completed with STATUS_CANCELLED.
+But it's okay if a driver wants to go ahead and finish the IRP normally if that can be done
+relatively quickly. You should provide a way to cancel I/O requests that might spend
+significant time waiting in a queue between a dispatch routine and a StartIo routine. How long
+is significant is a matter for your own sound judgment; my advice is to err on the side of
+providing for cancellation because it's not that hard to do and makes your driver fit
+better into the operating system.</p>
+
+<p>
+<img src="images/nerdalert.JPG" width=73 height=54 alt="" border="0">
+</p>
+<P><DIV CLASS="NOTE"><BLOCKQUOTE>
+The explanation of how to put cancellation logic into your 
+driver is unusually intricate, even for kernel-mode programming. You might 
+want to simply cut to the chase and read the code samples without worrying 
+overmuch about how they work.
+</BLOCKQUOTE></DIV>
+</P>
+
+
+<A NAME="166"><H2>If It Weren't for Multitasking&#8230;</H2></A>
+
+<p>There's an intricate synchronization problem associated with cancelling IRPs. Before I
+explain the problem and the solution, I want to describe the way cancellation would work in a
+world where there was no multitasking and no concern with multiprocessor computers. In that
+Utopia, several pieces of the I/O Manager would fit together with your StartIo routine and with
+a cancel routine you'd provide, as follows:</p>
+
+<ul>
+
+<p><li> When you call IoStartPacket, you specify the address of a cancel routine that gets saved
+in the IRP. When you call IoStartNextPacket (from your DPC routine), you specify TRUE for the
+Boolean argument that indicates that you're going to use the standard cancellation
+mechanism. Before IoStartPacket or IoStartNextPacket calls your StartIo routine, it sets the
+CurrentIrp field of your device object to point to the IRP it's about to send.
+IoStartNextPacket sets CurrentIrp to NULL if there are no more requests in the queue.</li></p>
+
+<p><li> One of the first things your StartIo routine does is set the cancel routine pointer in
+the IRP to NULL.</li></p>
+
+<p><li> IoCancelIrp unconditionally sets the Cancel flag in the IRP. Then it checks to see
+whether the IRP specifies a cancel routine. In between the time you call IoStartPacket and the
+time your StartIo routine gets control, the cancel routine pointer in the IRP will be non-NULL.
+In this case, IoCancelIrp calls your cancel routine. You remove the IRP from the queue where
+it燾urrently resides&#8212;this is the DeviceQueue member of the device object&#8212;and complete
+the IRP with STATUS_CANCELLED. After StartIo starts processing the IRP, however, the cancel
+routine pointer will be NULL and IoCancelIrp won't do anything more.</li></p>
+
+</ul>
+
+
+<A NAME="167"><H2>Synchronizing Cancellation</H2></A>
+
+<p>Unfortunately for us as programmers, we write code for a multiprocessing, multitasking
+environment in which effects can sometimes appear to precede causes. There are at least three
+race conditions in the logic I just described. Figure 5-10 illustrates these race conditions,
+and I'll explain them here:</p>
+
+<ul>
+
+<p><li> Suppose IoCancelIrp gets as far as setting the Cancel flag and then (on another CPU)
+IoStartNextPacket dequeues the IRP and sends it to StartIo. Since IoCancelIrp will soon send
+the same IRP to your cancel routine, your StartIo routine shouldn't do anything else with
+it.</li></p>
+
+<p><li> It's possible for two actors (your cancel routine and IoStartNextPacket) to both try,
+more or less simultaneously, to remove the same IRP from the request queue. That obviously
+won't work.</li></p>
+
+<p><li> It's possible for StartIo to get past the test for the Cancel flag, the one that
+you're going to put in because of the first race, and for IoCancelIrp to sneak in to test
+the cancel routine pointer before StartIo can manage to nullify that pointer. Now you've
+got a cancel routine that will complete a request that something (probably your DPC routine)
+will also try to complete. Oops!</li></p>
+
+</ul>
+
+<p>The standard way of preventing these races relies on a systemwide spin lock called the
+cancel spin lock. A thread that wants to cancel an IRP acquires the spin lock once inside
+IoCancelIrp and releases it inside the driver cancel routine. A thread that wants to start an
+IRP acquires and releases the spin lock twice: once just before calling StartIo and again
+inside StartIo. The code in your driver will be as follows:</p>
+
+<p>
+<table cellpadding=5 width="95%"><tr><td valign=top>
+<pre>
+VOID燬tartIo(PDEVICE_OBJECT爁do,燩IRP營rp)
+牋{
+牋KIRQL爋ldirql;
+牋IoAcquireCancelSpinLock(&amp;oldirql);
+牋if
