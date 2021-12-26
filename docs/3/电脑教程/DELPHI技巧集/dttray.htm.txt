@@ -1,0 +1,102 @@
+<HTML>
+<HEAD>
+   <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=gb2312">
+   <META NAME="Author" CONTENT="FuGui">
+   <META NAME="GENERATOR" CONTENT="Mozilla/4.04 [en] (Win95; I) [Netscape]">
+   <TITLE>如何创建任务栏的应用程序</TITLE>
+</HEAD>
+<BODY BACKGROUND="../../bgimage/pink_fabric.gif" NOSAVE>
+
+<H1>
+怎样建立简单的任务栏应用程序:</H1>
+&nbsp;
+
+<P>&nbsp;&nbsp;&nbsp; Windows 95 和 Windows NT 4.0包含一个令人兴奋的特性：任务栏。这个通常位于区域任务条右面的区域能包含小的图标，这些图标能引出大的应用程序或者菜单。本篇文章主要讨论如何使用Delphi建立这样的应用程序。
+
+<P>&nbsp;&nbsp;&nbsp; 在开始之前，请看下面的需要的接口方面的内容：
+
+<P>&nbsp;&nbsp;&nbsp; 从技术方面来说，一个任务栏应用程序非常象普通的应用程序，它有一个消息循环，相应Windows的消息来完成相应的功能。
+<UL>
+<PRE>Procedure RunTrayApplication;
+Var Msg : TMsg;
+Begin
+&nbsp; CreateWindow;
+&nbsp; AddTrayIcon;
+&nbsp; While GetMessage(Msg,0,0,0) do Begin
+&nbsp;&nbsp;&nbsp; TranslateMessage(Msg);
+&nbsp;&nbsp;&nbsp; DispatchMessage(Msg);
+&nbsp; End;
+&nbsp; DeleteTrayIcon;
+End;</PRE>
+</UL>
+&nbsp;&nbsp;&nbsp; 你能看到：所有需要做的工作是创建一个窗口，注册一个图标到任务栏，设置它的消息循环，最后关闭它。当然，必须还有增加其他代码完成相应的功能，但是，它是真的不需要担心。
+
+<P>&nbsp;&nbsp;&nbsp; 让我们从窗口的创建开始。实际上，这个窗口是不是能在任务栏上能见到的窗口。相应的，这个窗口只是处理消息循环、其它父类的工作。任务窗口(Windows
+95 &amp; NT)句柄创建消息（例如鼠标单击等）和将消息发到我们的窗口。
+<UL>
+<PRE>Procedure CreateWindow;
+Var
+&nbsp; WC : TWndClass;
+&nbsp; W&nbsp; : hWnd;
+Begin
+&nbsp; With WC do Begin
+&nbsp;&nbsp;&nbsp; Style := 0;
+&nbsp;&nbsp;&nbsp; lpfnWndProc := @WndProc;
+&nbsp;&nbsp;&nbsp; cbClsExtra := 0;
+&nbsp;&nbsp;&nbsp; cbWndExtra := 0;
+&nbsp;&nbsp;&nbsp; hIcon := 0;
+&nbsp;&nbsp;&nbsp; hCursor := 0;
+&nbsp;&nbsp;&nbsp; hbrBackground := 0;
+&nbsp;&nbsp;&nbsp; lpszMenuName := nil;
+&nbsp;&nbsp;&nbsp; lpszClassName := 'MyTrayIconClass';
+&nbsp;&nbsp;&nbsp; hInstance := System.hInstance;
+&nbsp; end;
+&nbsp; RegisterClass(WC);
+&nbsp; W := Windows.CreateWindow('MyTrayIconClass','MyVeryOwnTrayIconWindow',
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ws_OverlappedWindow,0,0,0,0,0,0,hInstance,nil);
+&nbsp; ShowWindow(W,sw_Hide);
+&nbsp; UpdateWindow(W);
+&nbsp; MainWindow := W;
+End;</PRE>
+</UL>
+<FONT SIZE=+0>&nbsp;&nbsp;&nbsp; 这个窗口使用普通的窗口函数创建。注意这个窗口的类型是“ws_OverlappedWindow”，但是这个尺寸是0，并且它是隐藏的，所有，它将不会显示出来。</FONT>
+
+<P>&nbsp;&nbsp;&nbsp; 下一步是加(注册)我们的图标。这将需要使用<FONT SIZE=+0>Shell_NotifyIcon这个API函数，这个函数实际上可以完成三个功能，这里只需要它的增加的特性。</FONT>
+<UL>
+<PRE>Procedure AddTrayIcon;
+Var IconData : TNotifyIconData;
+Begin
+&nbsp; With IconData do Begin
+&nbsp;&nbsp;&nbsp; cbSize := SizeOf(IconData);
+&nbsp;&nbsp;&nbsp; Wnd := MainWindow;
+&nbsp;&nbsp;&nbsp; uID := 0;
+&nbsp;&nbsp;&nbsp; uFlags := nif_Icon Or nif_Message Or nif_Tip;
+&nbsp;&nbsp;&nbsp; uCallBackMessage := wm_MyCallBack;
+&nbsp;&nbsp;&nbsp; hIcon := LoadIcon(hInstance,'MYICON');
+&nbsp;&nbsp;&nbsp; StrCopy(szTip,PChar(TrayIconTip));
+&nbsp; End;
+&nbsp; Shell_NotifyIcon(nim_Add,@IconData);
+End;</PRE>
+</UL>
+<FONT SIZE=+0>&nbsp;&nbsp;&nbsp; 这个最重要的事情是TNotifyIconData的数据结构，它是一个设置Window句柄的数据结构，是一个记录参数，对我们来说，我们需要设置这个图标的窗口句柄(这将定义哪个窗口处理消息循环)，回调消息号，图标，工具提示等。一旦这个数据设置了，我们就可以增加一个图标到任务栏上了。为了完成这个工作，使用nim_Add程序。</FONT>
+
+<P><FONT SIZE=+0>&nbsp;&nbsp;&nbsp; 现行我们已经加了我们的图标到任务栏，下面需要决定如何处理消息。</FONT>
+<UL>
+<PRE>Const
+&nbsp; wm_MyCallback = wm_User+1000;
+&nbsp; cm_Exit&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; = 100; { we worry about... }
+&nbsp; cm_About&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; = 101; { ...these later&nbsp;&nbsp;&nbsp; }</PRE>
+</UL>
+<FONT SIZE=+0>&nbsp;&nbsp;&nbsp; 这个实际的窗口处理过程也是相当普通。几个窗口消息(如wm_NCCreate)必须处理。然而，对我们来说，更重要的事情是处理wm_MyCallback和wm_Command消息：</FONT>
+<UL>
+<PRE>Function WndProc(Window : hWnd; Msg,WParam,LParam : Integer): Integer; StdCall;
+Begin
+&nbsp; Result := 0;
+&nbsp; Case Msg of
+&nbsp;&nbsp;&nbsp; wm_NCCreate&nbsp;&nbsp; : Result := 1;
+&nbsp;&nbsp;&nbsp; wm_Destroy&nbsp;&nbsp;&nbsp; : PostQuitMessage(0);
+&nbsp;&nbsp;&nbsp; wm_Command&nbsp;&nbsp;&nbsp; : Begin { a command was chosen from the popup menu }
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; If (WParam = cm_Exit) Then
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; PostMessage(Window,wm_Destroy,0,0)
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Else If (WParam = cm_About) Then
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; MessageBox(0,'Shell Test Copyright 
